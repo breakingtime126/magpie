@@ -300,3 +300,36 @@ menu containing GPT and deepseek-flash-ft, both doing an unpredictable local
 file/tool task and a follow-up, stop/error behavior, process/route evidence,
 company policy compliance and reversible activation. A code build, HTTP 200,
 model self-identification or catalog visibility cannot replace those checks.
+
+### Experimental Windows artifact workflow
+
+The fork's [experimental Windows workflow](../../.github/workflows/experimental-bridge-windows.yml)
+checks out the exact triggering commit on
+`experiment/app-server-bridge-v0.1.3035`, uses the Go version in `go.mod`,
+and builds the `nogui` Windows amd64 command on a GitHub-hosted Windows runner.
+It runs the native synthetic bridge tests, the bridge CLI isolation test,
+Windows `go vet -tags nogui ./...`, and the built command's help smoke test.
+Native tests can skip platform-specific cases; in particular the Unix process
+group cleanup test does not establish Windows descendant cleanup. This is not
+the full repository suite or official-child/Desktop acceptance.
+
+The unsigned artifact includes the exact source commit/tree and run URL,
+executable Go build information, unchanged MIT license and third-party
+notices, an illustrative config, this design document, and SHA-256 checksums.
+Its name includes the full source SHA and it expires after 14 days. The job
+records the uploaded archive digest separately. Hashes provide integrity and
+provenance context, not a trusted code signature or deployment approval.
+
+Only this fork and experimental branch can run the job. It has read-only
+repository permissions, does not retain checkout credentials, references
+Actions by commit SHA, and never invokes the upstream release workflow,
+creates tags/releases, changes `main`, installs software on a user's machine,
+or bundles accounts or an official Codex backend. The `workflow_dispatch`
+trigger is declared, but GitHub may not expose manual dispatch until a workflow
+is on the default branch. Do not modify `main` merely to enable that UI; the
+experimental branch's push trigger is the intended initial run.
+
+This independent CI artifact is not a workaround for an organization's
+blocked dependency downloads. Do not download, install or use it in a managed
+environment without the applicable software/network approval. Actual Desktop
+integration and deployment remain separate, unverified steps.

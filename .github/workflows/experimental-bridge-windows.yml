@@ -1,0 +1,66 @@
+name: Experimental bridge Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experiment/app-server-bridge-v0.1.3035
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-bridge-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-amd64:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      CGO_ENABLED: '0'
+      GOOS: windows
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out the triggering commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up the pinned Go version
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test and package the experimental command
+        run: ./build/package-bridge-windows.ps1
+      - name: Upload the unsigned experimental artifact
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: magpie-bridge-windows-amd64-${{ github.sha }}
+          path: ${{ runner.temp }}/bridge-package
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+      - name: Record artifact identity
+        env:
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.artifact-digest }}
+        run: |
+          @"
+          Source commit: $env:GITHUB_SHA
+          Artifact ID: $env:ARTIFACT_ID
+          Artifact URL: $env:ARTIFACT_URL
+          Uploaded archive SHA-256: $env:ARTIFACT_DIGEST
+
+          Unsigned experimental CLI only. No release, installation, Desktop integration or live model acceptance.
+          "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
