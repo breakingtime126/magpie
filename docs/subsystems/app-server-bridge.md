@@ -6,7 +6,8 @@ Codex relay, provider gateway, or a replacement Codex implementation. There is
 no HTTP client or listener in this package. Each official child performs its
 own model requests using its own configuration and authentication.
 
-**Status:** cloud implementation and offline fixtures only. The official
+**Status:** cloud implementation, offline fixtures and limited official-process
+smoke checks only. The official
 Codex Desktop model picker, actual GPT subscription/AIHub tool tasks, company
 network policy, and Windows process behavior have not been accepted. A merged
 `model/list` response does not prove those features work in Desktop. Native
@@ -169,6 +170,31 @@ history and provider invariance. CLI tests verify help/invalid configuration
 bypass normal startup and leave agent files unchanged. See the delivery's
 verification report for the actual checks run and any blocked whole-repo
 checks; commands here are not evidence they passed.
+
+### Official-process smoke check, 2026-11-05
+
+The built bridge launched two unmodified `codex-cli 0.167.0-alpha.4`
+app-server children with separate empty homes, no supplied credentials, and
+two loopback-only synthetic Responses services. Both children initialized,
+the bridge returned the two explicitly static test model cards, and it
+forwarded the official `thread/start` error without changing providers.
+Client EOF shut down the bridge and its children normally.
+
+Thread creation was blocked before either synthetic service received an
+HTTP request: the official filesystem sandbox helper rejected its reserved
+app-server socket directory. The current cloud environment exposes that
+directory with mode `000`, whereas the official check requires a user-owned
+directory with mode `0700`. Fresh test homes with mode `0700` did not change
+the result. The [official socket-directory implementation](https://github.com/openai/codex/blob/e7f32cf1928a35a9232a633a51c2a03b5a7e2c72/codex-rs/uds/src/daemon_directory.rs)
+uses a fixed `/tmp/codex-daemon-<uid>` path, independent of `HOME`, `TMPDIR`
+and `CODEX_HOME`. Its permissions and the sandbox were not changed.
+
+Therefore real official-child Responses streaming, tool execution, follow-up
+and interruption were **not reached** in this environment. The synthetic
+process tests cover those bridge behaviors, but do not establish this missing
+runtime integration. Optional syscall tracing was also denied and stopped;
+configuration and local fixture logs are not kernel-level proof of no egress.
+No real OpenAI/AIHub inference or Desktop acceptance is claimed.
 
 Future real acceptance remains: authorized isolated Desktop instance, same
 menu containing GPT and deepseek-flash-ft, both doing an unpredictable local
