@@ -386,12 +386,26 @@ compatible. Native stdio launcher tests are not proof of Desktop support.
 
 ### Remaining Desktop bootstrap boundaries
 
-A public [Windows startup report](https://github.com/openai/codex/issues/40853)
-quotes Desktop's `CODEX_CLI_PATH` diagnostic. That identifies a possible
-executable-selection mechanism, not a verified or supported contract for
-Desktop 26.1029.7803.0. The exact app's executable resolution, arguments,
-transport, environment inheritance and single-instance behavior still need
-read-only evidence. No `CODEX_CLI_PATH` setting is made by this project.
+A supplied investigation handoff records installed Desktop 26.1029.7803.0's
+backend resolver order as internal `hostConfig.codex_cli_command`, then
+`CODEX_CLI_PATH`, then the default backend. It identifies
+`CODEX_APP_RUNTIME_CLI_PATH` as a derived export, not a selection input. This
+is a recorded, version-specific package investigation, not merely speculation
+from a public issue and not an official long-term compatibility guarantee.
+The internal host-config field is not thereby a supported top-level
+`config.toml` field. A public [Windows startup report](https://github.com/openai/codex/issues/40853)
+also quotes the `CODEX_CLI_PATH` diagnostic.
+
+The original version-2 resolver extraction and dispatch report were not
+available in the cloud workspace or uploaded with that handoff. The accessible
+historical task records report enabling the local code execution host, but do
+not include the exact executable argument array or bootstrap RPC trace. Those
+records establish a useful lead; they do not independently verify every launch
+argument, environment-inheritance rule or single-instance behavior. In the
+[official 0.166 code-mode argument definition](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/code_mode_host.rs),
+local is the default transport, while `--code-mode-host URL` selects a remote
+host. Do not infer that flag, a feature override, or its value from the historical
+phrase alone. No `CODEX_CLI_PATH` setting is made by this project.
 
 Two real 0.166 methods deliberately remain unsupported:
 
