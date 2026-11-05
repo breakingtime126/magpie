@@ -85,8 +85,8 @@ $env:MAGPIE_BRIDGE_ADAPTER_TEST_EXE = $adapter
 # These synthetic tests do not start official Codex or contact model services.
 & go test -v -count=1 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge
 Assert-NativeExit 'Native stdio adapter unit and lifecycle tests'
-& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapterStdio$'
-Assert-NativeExit 'Repeated compiled adapter stdio and EOF tests'
+& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapter(Stdio|DesktopArguments)$'
+Assert-NativeExit 'Repeated compiled adapter stdio, Desktop arguments and EOF tests'
 & go test -v -count=1 -timeout=10m -tags nogui ./internal/appserverbridge
 Assert-NativeExit 'Native bridge tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestRun(WindowsReapsStartedBackendFamilies|InterruptPreservesOtherBackendAndAllowsFollowup)$'
@@ -131,12 +131,30 @@ try {
     if ($mutationExit -eq 0 -or ($mutationLog -join "`n") -notmatch '--- FAIL: TestStartTreeStrictAssignedBeforeExecution') {
         throw 'Startup mutation did not produce the expected behavioral regression failure.'
     }
+
+    # Restore strict process startup before testing the independent argument
+    # regression, so a process-start failure cannot explain that result.
+    [IO.File]::WriteAllText($mutationFile, $mutationSource)
+    $launchFile = Join-Path $mutationRoot 'internal/appserverbridge/launch.go'
+    $launchSource = [IO.File]::ReadAllText($launchFile)
+    $granularToggle = '"features.code_mode_host.enabled=true"'
+    if ([regex]::Matches($launchSource, [regex]::Escape($granularToggle)).Count -ne 1) {
+        throw 'Granular code-mode mutation target is not unique.'
+    }
+    [IO.File]::WriteAllText($launchFile, $launchSource.Replace($granularToggle, '"features.code_mode_host=true"'))
+    $argumentMutationLog = & go test -v -count=1 -timeout=2m -tags nogui ./cmd/magpie-codex-bridge -run '^TestNativeAdapterDesktopArguments$' 2>&1
+    $argumentMutationExit = $LASTEXITCODE
+    $argumentMutationLog | Write-Output
+    if ($argumentMutationExit -eq 0 -or ($argumentMutationLog -join "`n") -notmatch '--- FAIL: TestNativeAdapterDesktopArguments') {
+        throw 'Scalar code-mode mutation did not produce the expected argument-policy regression failure.'
+    }
 } finally {
     Set-Location -LiteralPath $env:GITHUB_WORKSPACE
     Remove-Item -LiteralPath $mutationRoot -Recurse -Force
     Remove-Item -LiteralPath $mutationArchive -Force
 }
 Write-Output 'Strict startup regression failed with CREATE_SUSPENDED removed, as required.'
+Write-Output 'Desktop argument-policy regression failed with granular code-mode toggle replaced, as required.'
 
 $binary = Join-Path $package 'magpie-app-server-bridge-windows-amd64.exe'
 & go build -tags nogui -trimpath -buildvcs=true -ldflags "-s -w -X main.version=$version" -o $binary .
@@ -183,8 +201,8 @@ $manifest = [ordered]@{
     nativeAdapterSHA256 = (Get-FileHash -LiteralPath $adapter -Algorithm SHA256).Hash.ToLowerInvariant()
     nativeAdapterBuildFlags = '-tags nogui -trimpath -buildvcs=true -ldflags=-s -w -X main.buildVersion=<version>'
     signing = 'unsigned'
-    checks = @('Native stdio adapter unit and lifecycle tests', 'Repeated compiled adapter initialize and EOF tests', 'Desktop bootstrap auth/config local rejection tests', 'Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help', 'Built native adapter truthful help and version')
-    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration and exact launcher arguments', 'Desktop-required auth/config bootstrap support', 'Native adapter OS-signal handling', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
+    checks = @('Native stdio adapter unit and lifecycle tests', 'Repeated compiled adapter initialize and EOF tests', 'Repeated compiled adapter observed Desktop argument tests', 'Granular code-mode policy mutation rejected by regression', 'Desktop bootstrap auth/config local rejection tests', 'Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help', 'Built native adapter truthful help and version')
+    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration and exact launcher arguments', 'Desktop-required auth/config bootstrap support', 'Startup inspection and sign-out (explicitly unsupported)', 'Real official backend granular feature merge', 'Native adapter OS-signal handling', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
 }
 [IO.File]::WriteAllText((Join-Path $package 'BUILD.json'), ($manifest | ConvertTo-Json -Depth 5) + "`n", $utf8)
 $readme = @'
@@ -201,14 +219,18 @@ executable override at this ordinary Magpie binary.
 magpie-codex-bridge-windows-amd64.exe is the separate bridge-only native stdio
 adapter. It accepts only reviewed app-server stdio forms, needs the explicit
 MAGPIE_APP_SERVER_BRIDGE_CONFIG process environment, and truthfully identifies
-itself as an experimental adapter. It does not establish a Desktop launch hook.
+itself as an experimental adapter. The reviewed Desktop base argv is accepted;
+its code-mode toggle is normalized to the granular enabled field to preserve
+existing policy. Startup inspection, sign-out and unreviewed overrides are
+explicitly unsupported. It does not establish working Desktop integration.
 Neither executable is a standalone official Codex installation. The package
 bundles no official Codex backend, credentials, AIHub account or integration.
 The example configuration contains placeholders, not usable authentication.
 See DESIGN.md for arguments, unsupported auth/config RPCs and remaining limits.
 
 CI runs synthetic bridge/CLI/process tests, static checks, a startup mutation,
-compiled adapter initialize/EOF tests and truthful help/version smoke tests.
+compiled adapter initialize/EOF and observed Desktop-argument tests, a granular
+code-mode policy mutation check, and truthful help/version smoke tests.
 It does not establish working Desktop integration, real tools/model inference,
 full-suite correctness or complete Windows process-tree containment.
 

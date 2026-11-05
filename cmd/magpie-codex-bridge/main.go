@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/yetone/magpie/internal/appserverbridge"
@@ -21,13 +22,17 @@ const configEnv = "MAGPIE_APP_SERVER_BRIDGE_CONFIG"
 const identity = "magpie-codex-bridge (experimental stdio adapter)"
 const usage = `magpie-codex-bridge (experimental stdio adapter)
 Usage:
-  magpie-codex-bridge app-server [--listen stdio:// | --stdio]
+  magpie-codex-bridge [-c features.code_mode_host=true] app-server [--analytics-default-enabled] [--listen stdio:// | --stdio]
   magpie-codex-bridge --check
   magpie-codex-bridge --help
   magpie-codex-bridge --version
 
 Set MAGPIE_APP_SERVER_BRIDGE_CONFIG to an absolute bridge JSON file path.
---listen=stdio:// is also accepted. --stdio selects the same transport. No other server arguments are supported.
+--listen=stdio:// is also accepted. --stdio selects the same transport.
+-c or --config accepts only features.code_mode_host=true, before or after app-server.
+It is emitted as features.code_mode_host.enabled=true to preserve existing structured policy.
+--analytics-default-enabled is accepted only after app-server. No other overrides are supported.
+Startup inspection and sign-out commands are unsupported and never start children.
 --check validates configuration without starting children or changing state.
 This is not the official Codex CLI. Desktop launcher compatibility is unverified.
 `
@@ -41,39 +46,100 @@ const (
 	check
 )
 
-// parseArgs accepts only documented forms, including help/version without any
-// other options. Invalid arguments must never trigger configuration reads.
-func parseArgs(args []string) (operation, error) {
+const maxArgumentCount = 32
+const maxArgumentBytes = 4096
+
+var (
+	errUnsupportedArguments         = errors.New("unsupported arguments; use --help")
+	errUnsupportedStartupInspection = errors.New("unsupported startup inspection; no configuration read or children started")
+	errUnsupportedStartupSignOut    = errors.New("unsupported startup sign-out; no configuration read or children started")
+)
+
+// parseArgs accepts only reviewed literal forms. It does not interpret TOML or
+// forward arbitrary configuration. Invalid arguments never read configuration.
+func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, error) {
+	var options appserverbridge.LaunchOptions
+	if len(args) > maxArgumentCount {
+		return serve, options, errUnsupportedArguments
+	}
+	total := 0
+	for _, arg := range args {
+		if len(arg) > maxArgumentBytes-total {
+			return serve, options, errUnsupportedArguments
+		}
+		total += len(arg)
+	}
+	inspectionSeen := false
+	for _, arg := range args {
+		switch {
+		case arg == "--print-startup-config", strings.HasPrefix(arg, "--print-startup-config="),
+			arg == "--startup-client-info", strings.HasPrefix(arg, "--startup-client-info="):
+			inspectionSeen = true
+		case arg == "--startup-sign-out", strings.HasPrefix(arg, "--startup-sign-out="):
+			return serve, options, errUnsupportedStartupSignOut
+		}
+	}
+	if inspectionSeen {
+		return serve, options, errUnsupportedStartupInspection
+	}
 	if len(args) == 1 {
 		switch args[0] {
 		case "--help", "-h":
-			return help, nil
+			return help, options, nil
 		case "--version", "-V":
-			return version, nil
+			return version, options, nil
 		case "--check":
-			return check, nil
+			return check, options, nil
+		}
+	}
+	if len(args) == 2 && args[0] == "app-server" && (args[1] == "--help" || args[1] == "-h") {
+		return help, options, nil
+	}
+	serverSeen := false
+	transportSeen := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "app-server":
-			return serve, nil
-		}
-	}
-	if len(args) == 2 && args[0] == "app-server" {
-		switch args[1] {
+			if serverSeen {
+				return serve, options, errUnsupportedArguments
+			}
+			serverSeen = true
+		case "-c", "--config":
+			if i+1 >= len(args) || args[i+1] != "features.code_mode_host=true" || options.CodeModeHost {
+				return serve, options, errUnsupportedArguments
+			}
+			options.CodeModeHost = true
+			i++
+		case "--analytics-default-enabled":
+			if !serverSeen || options.AnalyticsDefaultEnabled {
+				return serve, options, errUnsupportedArguments
+			}
+			options.AnalyticsDefaultEnabled = true
 		case "--listen=stdio://", "--stdio":
-			return serve, nil
-		case "--help", "-h":
-			return help, nil
+			if !serverSeen || transportSeen {
+				return serve, options, errUnsupportedArguments
+			}
+			transportSeen = true
+		case "--listen":
+			if !serverSeen || transportSeen || i+1 >= len(args) || args[i+1] != "stdio://" {
+				return serve, options, errUnsupportedArguments
+			}
+			transportSeen = true
+			i++
+		default:
+			return serve, options, errUnsupportedArguments
 		}
 	}
-	if len(args) == 3 && args[0] == "app-server" && args[1] == "--listen" && args[2] == "stdio://" {
-		return serve, nil
+	if !serverSeen {
+		return serve, options, errUnsupportedArguments
 	}
-	return serve, errors.New("unsupported arguments; use --help")
+	return serve, options, nil
 }
 
 type dependencies struct {
 	getenv func(string) string
 	load   func(string) (appserverbridge.Config, error)
-	run    func(context.Context, appserverbridge.Config, io.ReadCloser, io.WriteCloser) error
+	run    func(context.Context, appserverbridge.Config, appserverbridge.LaunchOptions, io.ReadCloser, io.WriteCloser) error
 }
 
 func loadConfig(path string) (appserverbridge.Config, error) {
@@ -91,9 +157,9 @@ func loadConfig(path string) (appserverbridge.Config, error) {
 }
 
 func execute(ctx context.Context, args []string, input io.ReadCloser, output io.WriteCloser, diagnostics io.Writer, deps dependencies) int {
-	op, err := parseArgs(args)
+	op, options, err := parseArgs(args)
 	if err != nil {
-		fmt.Fprintln(diagnostics, "magpie-codex-bridge: unsupported arguments; use --help")
+		fmt.Fprintln(diagnostics, "magpie-codex-bridge:", err)
 		return 2
 	}
 	switch op {
@@ -122,7 +188,7 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 	if err := ctx.Err(); err != nil {
 		return 0
 	}
-	if err := deps.run(ctx, cfg, input, output); err != nil {
+	if err := deps.run(ctx, cfg, options, input, output); err != nil {
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 			return 0
 		}
@@ -136,10 +202,10 @@ func main() {
 	code := execute(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr, dependencies{
 		getenv: os.Getenv,
 		load:   loadConfig,
-		run: func(parent context.Context, cfg appserverbridge.Config, input io.ReadCloser, output io.WriteCloser) error {
+		run: func(parent context.Context, cfg appserverbridge.Config, options appserverbridge.LaunchOptions, input io.ReadCloser, output io.WriteCloser) error {
 			ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			err := appserverbridge.Run(ctx, cfg, input, output)
+			err := appserverbridge.RunWithOptions(ctx, cfg, options, input, output)
 			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 				return nil
 			}

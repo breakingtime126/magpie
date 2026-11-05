@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
@@ -36,6 +35,12 @@ type childServer struct {
 // client is normal shutdown; losing either backend fails the entire connection.
 // It never restarts a backend or redirects requests to a different account.
 func Run(parent context.Context, cfg Config, input io.ReadCloser, output io.WriteCloser) error {
+	return RunWithOptions(parent, cfg, LaunchOptions{}, input, output)
+}
+
+// RunWithOptions preserves the reviewed Desktop startup controls on both
+// children. It has the same stream ownership and shutdown contract as Run.
+func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, input io.ReadCloser, output io.WriteCloser) error {
 	if input == nil || output == nil {
 		return errors.New("bridge requires input and output")
 	}
@@ -75,7 +80,7 @@ func Run(parent context.Context, cfg Config, input io.ReadCloser, output io.Writ
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		command := proc.CommandContext(processContext, b.Command, "app-server", "-c", "model_provider="+strconv.Quote(b.Provider))
+		command := proc.CommandContext(processContext, b.Command, options.backendArgs(b.Provider)...)
 		command.Env = backendEnvironment(b)
 		command.Dir = b.Home
 		if workingDirectory != "" {

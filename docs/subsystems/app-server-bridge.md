@@ -368,44 +368,113 @@ This matters because the older Magpie executable's special early entry point is
 `app-server-bridge`, while a Codex client normally launches `app-server`.
 **Do not point a Desktop executable override at the ordinary Magpie binary.**
 
-The adapter's reviewed invocation forms are `app-server`, `app-server --stdio`,
-`app-server --listen stdio://`, and `app-server --listen=stdio://`. These stdio
-forms come from the [official 0.166 CLI argument definitions](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/cli/src/main.rs#L573-L632).
+The adapter accepts the reviewed stdio forms `app-server`, `app-server --stdio`,
+`app-server --listen stdio://`, and `app-server --listen=stdio://`. It also accepts
+the installed Desktop's observed base argument array:
+
+```text
+-c features.code_mode_host=true app-server --analytics-default-enabled
+```
+
+The exact scalar feature toggle may appear before or after `app-server`, using
+`-c` or `--config`. The analytics default flag is server-only. Duplicate controls,
+conflicting transports, false/structured/quoted toggle values and every unknown
+argument fail before configuration or environment access and before any child
+starts. Argument count and total bytes are bounded. Diagnostics never repeat
+raw arguments or values. See the [official CLI definitions](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/cli/src/main.rs#L573-L632).
+
 Set `MAGPIE_APP_SERVER_BRIDGE_CONFIG` in that process's environment to an
 absolute bridge JSON file. `--check` validates it without starting any child;
 help and version identify the adapter truthfully, not as an official Codex CLI.
 Nothing sets a persistent environment variable, edits the registry, changes a
 Desktop shortcut or installs this executable as a backend.
 
-The adapter rejects extra arguments before reading configuration. That includes
-`-c`, provider/model overrides, permission/sandbox controls, remote or daemon
-modes, and `--analytics-default-enabled`. Some are valid official CLI flags, but
-the bridge cannot silently discard their semantics. A Desktop that requires
-one of these flags or expects a different version-probe response is not yet
-compatible. Native stdio launcher tests are not proof of Desktop support.
+### Reviewed startup controls and policy preservation
 
-### Remaining Desktop bootstrap boundaries
+`RunWithOptions` takes two typed controls, not a raw argument or TOML map. The
+legacy `Run` path supplies no controls and retains its existing child command.
+Both backends receive the same requested controls, followed by their own pinned
+provider selection. Incoming provider, URL, authentication-storage, plugin,
+permission and arbitrary config overrides remain rejected.
 
-A supplied investigation handoff records installed Desktop 26.1029.7803.0's
-backend resolver order as internal `hostConfig.codex_cli_command`, then
-`CODEX_CLI_PATH`, then the default backend. It identifies
-`CODEX_APP_RUNTIME_CLI_PATH` as a derived export, not a selection input. This
-is a recorded, version-specific package investigation, not merely speculation
-from a public issue and not an official long-term compatibility guarantee.
-The internal host-config field is not thereby a supported top-level
-`config.toml` field. A public [Windows startup report](https://github.com/openai/codex/issues/40853)
-also quotes the `CODEX_CLI_PATH` diagnostic.
+The scalar Desktop toggle is deliberately normalized to
+`-c features.code_mode_host.enabled=true` for each official child. This preserves
+the feature-enable intent without replacing an existing structured feature
+table, including its `disable_in_process_fallback` setting. It is an explicit,
+conservative translation, not byte-for-byte emulation of upstream scalar
+replacement. In 0.166, `code_mode_host` accepts an `enabled` field but is absent
+from the special scalar-to-structured merge list. See the [feature fields](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/features/src/feature_configs.rs#L69-L83)
+and [merge implementation](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/config/src/merge.rs#L63-L154).
+Synthetic policy fixtures cover the granular override contract; real official
+backend policy merging remains an integration acceptance item.
 
-The original version-2 resolver extraction and dispatch report were not
-available in the cloud workspace or uploaded with that handoff. The accessible
-historical task records report enabling the local code execution host, but do
-not include the exact executable argument array or bootstrap RPC trace. Those
-records establish a useful lead; they do not independently verify every launch
-argument, environment-inheritance rule or single-instance behavior. In the
-[official 0.166 code-mode argument definition](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/code_mode_host.rs),
-local is the default transport, while `--code-mode-host URL` selects a remote
-host. Do not infer that flag, a feature override, or its value from the historical
-phrase alone. No `CODEX_CLI_PATH` setting is made by this project.
+`--analytics-default-enabled` is passed unchanged, never rewritten as
+`analytics.enabled=true`. An explicit backend analytics opt-out still wins for
+the official built-in metrics default. It is not a global analytics/network
+switch, and isolated homes do not automatically inherit preferences from the
+original Desktop home. See the [official metrics default resolution](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/core/src/otel_init.rs#L68-L79).
+
+Conditional `features.prefer_mxc` and `features.windows_sandbox_service` overrides
+remain rejected in this version. The former selects a Windows sandbox
+implementation; the latter can enable provisioning through an installed service
+when a later elevated setup request and other gates permit it. Neither is safe
+to discard or infer automatically from a platform or version. Remote
+`--code-mode-host URL`, daemon controls and additional unreviewed startup args
+are rejected too. Their presence is an explicit compatibility blocker, not a
+request to relax permission policy.
+
+### Installed Desktop launch evidence
+
+An authorized read-only reinspection of Desktop 26.1029.7803.0 verified the
+version-2 resolver extraction against the installed package. Its order is
+internal `hostConfig.codex_cli_command`, then `CODEX_CLI_PATH`, then the official
+backend. The host-config array's first item selects the executable and remaining
+items supply its full arguments. The environment override selects an executable
+but retains Desktop's default argument construction. `CODEX_APP_RUNTIME_CLI_PATH`
+is a derived export, not a selection input. The internal host-config field is
+not thereby a supported top-level `config.toml` field. This remains a
+version-specific implementation finding, not an official long-term contract.
+
+The base arguments above can be followed by `startupCommand.args` and additional
+`-c` overrides from Desktop configuration, including conditional sandbox,
+authentication-storage and plugin settings. The nonoverride Windows core path
+may add `features.windows_sandbox_service=true`. These are possible code paths;
+no private effective values were read. The launch uses Node `spawn` with piped
+stdio, environment and working-directory inputs. This confirms construction
+logic, not that a separate Desktop instance or bridge was launched successfully.
+No `CODEX_CLI_PATH` setting is made by this project.
+
+### Startup inspection and sign-out are separate, unsupported operations
+
+Desktop's startup inspection appends `--print-startup-config` and
+`--startup-client-info` with a JSON client identity. A separate recovery/sign-out
+call also appends `--startup-sign-out`. The adapter recognizes these before any
+configuration read or child startup, emits a fixed rejection to stderr and
+exits unsuccessfully with empty stdout. Sign-out takes precedence in rejection
+diagnostics regardless of argument order. It never treats these calls as an
+ordinary JSONL connection or fabricates a successful startup configuration.
+
+Official [startup configuration](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/startup_config.rs#L28-L76)
+is a one-shot JSON command that returns before normal app-server initialization.
+Its success envelope contains `appServerVersion` and `configRequirements`; its
+error envelope contains `error` and accompanies a failed process exit. It does
+not use the bridge's JSONL initialize exchange. A fixed `requirements:null`
+response would conceal real managed restrictions and is not a valid workaround.
+
+Even ordinary inspection can load stored authentication, refresh credentials,
+fetch account or enterprise policy and update caches. The official CLI preamble
+also prepares its own helper directories. Startup sign-out can revoke tokens,
+delete configured authentication, clear account policy caches and update certain
+provider settings before a later error occurs. A failure is not proof that
+nothing changed. The bridge neither performs nor retries those actions.
+See [managed startup loading](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/config_manager.rs#L417-L430),
+[credential refresh](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/login/src/auth/manager.rs#L2495-L2512)
+and [startup sign-out](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/startup_config.rs#L86-L150).
+
+These startup commands are a known Desktop integration blocker. Supporting the
+normal base argv alone does not establish working Desktop startup.
+
+### Remaining JSONL bootstrap boundaries
 
 Two real 0.166 methods deliberately remain unsupported:
 
@@ -428,11 +497,11 @@ preserve request IDs, send nothing to either backend and leave supported calls
 usable afterward. If the exact Desktop bootstrap needs them, this remains an
 explicit integration blocker rather than an invented successful response.
 
-Next acceptance requires a sanitized command line and RPC method/field-shape
-trace from the exact Desktop version, or an authorized read-only inspection of
-that version's officially obtained package. Such evidence must omit token
-values, auth files, request content and private environment values. Review
-any additional interface support first, then test in an authorized isolated
+Next acceptance requires a reviewed startup-inspection authority and permission
+model, any additional effective non-sensitive argument shapes, and a sanitized
+RPC method/field-shape trace from the exact Desktop version. Such evidence must
+omit token values, auth files, request content and private environment values.
+Review additional interface support first, then test in an authorized isolated
 Desktop instance with reversible process-scoped configuration. Actual company
 software/network approval, backend authentication and live model/tool checks
 remain separate. No cloud artifact is an alternative to a denied local access
@@ -442,6 +511,8 @@ The Windows CI package includes both the ordinary Magpie binary and the separate
 native adapter, with per-file checksums and build provenance. It runs the built
 adapter itself against two native synthetic backend processes, verifies clean
 JSONL initialization and EOF shutdown, and checks both backend exit markers.
+The observed Desktop base argv is also exercised through the compiled adapter;
+both synthetic children assert normalized controls and their own provider pins.
 These checks do not test Desktop's launch hook, official model traffic, or native
 OS-signal delivery to the adapter. Unsupported authentication and configuration
 bootstrap methods are covered by local-rejection regressions, not mocked success.
