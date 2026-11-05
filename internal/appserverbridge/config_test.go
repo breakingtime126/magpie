@@ -194,3 +194,71 @@ func TestConfigValidatesEveryModelBeforeStartingBackends(t *testing.T) {
 		}
 	}
 }
+
+func TestSharedWorkingDirectoryValidation(t *testing.T) {
+	cfg := fixtureConfig(t)
+	shared := filepath.Join(filepath.Dir(cfg.Backends[0].Home), "shared-start")
+	if err := os.Mkdir(shared, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg.WorkingDirectory = shared
+	encoded, _ := json.Marshal(cfg)
+	loaded, err := LoadConfig(bytes.NewReader(encoded))
+	if err != nil || loaded.WorkingDirectory != shared {
+		t.Fatalf("explicit working directory rejected: %v", err)
+	}
+	entries, err := os.ReadDir(shared)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("validation changed the selected directory")
+	}
+	invalid := []string{"relative", filepath.Join(shared, "missing"), cfg.Backends[0].Command}
+	for _, b := range cfg.Backends {
+		for _, home := range []string{b.Home, b.CodexHome} {
+			nested := filepath.Join(home, "nested-start")
+			if err := os.Mkdir(nested, 0700); err != nil {
+				t.Fatal(err)
+			}
+			invalid = append(invalid, home, nested, filepath.Dir(home))
+		}
+	}
+	for _, directory := range invalid {
+		cfg.WorkingDirectory = directory
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("accepted unsafe working directory %q", directory)
+		}
+	}
+	cfg.WorkingDirectory = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatal("legacy per-home startup rejected", err)
+	}
+}
+
+func TestSharedWorkingDirectoryRejectsStateAliasAndMissingPathBeforeLaunch(t *testing.T) {
+	cfg := fixtureConfig(t)
+	alias := filepath.Join(filepath.Dir(cfg.Backends[0].Home), "shared-alias")
+	t.Run("alias", func(t *testing.T) {
+		if err := os.Symlink(cfg.Backends[1].CodexHome, alias); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		cfg.WorkingDirectory = alias
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("working directory alias reached private state")
+		}
+	})
+	cfg.WorkingDirectory = filepath.Join(filepath.Dir(alias), "not-created")
+	input := io.NopCloser(strings.NewReader(""))
+	reader, output := io.Pipe()
+	defer reader.Close()
+	defer output.Close()
+	if err := Run(context.Background(), cfg, input, output); err == nil {
+		t.Fatal("missing shared working directory accepted")
+	}
+	for _, b := range cfg.Backends {
+		if _, err := os.Stat(filepath.Join(b.Home, "fixture-report")); !os.IsNotExist(err) {
+			t.Fatal("started a child after invalid working directory")
+		}
+	}
+	if _, err := os.Stat(cfg.WorkingDirectory); !os.IsNotExist(err) {
+		t.Fatal("created the missing directory")
+	}
+}

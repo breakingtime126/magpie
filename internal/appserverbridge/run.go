@@ -42,6 +42,14 @@ func Run(parent context.Context, cfg Config, input io.ReadCloser, output io.Writ
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	workingDirectory := cfg.WorkingDirectory
+	if workingDirectory != "" {
+		var err error
+		workingDirectory, err = filepath.EvalSymlinks(workingDirectory)
+		if err != nil {
+			return errors.New("cannot resolve working_directory")
+		}
+	}
 	router, err := NewRouter(cfg.Backends)
 	if err != nil {
 		return err
@@ -70,6 +78,9 @@ func Run(parent context.Context, cfg Config, input io.ReadCloser, output io.Writ
 		command := proc.CommandContext(processContext, b.Command, "app-server", "-c", "model_provider="+strconv.Quote(b.Provider))
 		command.Env = backendEnvironment(b)
 		command.Dir = b.Home
+		if workingDirectory != "" {
+			command.Dir = workingDirectory
+		}
 		// A nil Stderr connects the child directly to the null device. Unlike
 		// an io.Discard copy pipe, descendants cannot keep a copier alive.
 		// Backend diagnostics may contain credentials or model input.

@@ -16,6 +16,9 @@ import (
 // Loading it never creates directories, copies credentials or changes settings.
 type Config struct {
 	Backends []Backend `json:"backends"`
+	// WorkingDirectory explicitly selects one shared startup context. Empty
+	// preserves each child's private home as its process working directory.
+	WorkingDirectory string `json:"working_directory,omitempty"`
 }
 
 // Backend keeps credentials and state in explicit private directories. Models,
@@ -141,6 +144,24 @@ func (cfg Config) Validate() error {
 				return fmt.Errorf("backend %s has an invalid, reserved or duplicate inherited environment name", b.ID)
 			}
 			seen[upper] = true
+		}
+	}
+	if cfg.WorkingDirectory != "" {
+		if !filepath.IsAbs(cfg.WorkingDirectory) {
+			return errors.New("working_directory must be absolute")
+		}
+		real, err := filepath.EvalSymlinks(cfg.WorkingDirectory)
+		if err != nil {
+			return errors.New("working_directory must already exist")
+		}
+		st, err := os.Stat(real)
+		if err != nil || !st.IsDir() {
+			return errors.New("working_directory must be a directory")
+		}
+		for _, home := range homes {
+			if pathsOverlap(home, real) {
+				return errors.New("working_directory must not overlap any backend home")
+			}
 		}
 	}
 	return nil

@@ -98,7 +98,8 @@ an error. Initialization capabilities are not enabled or widened by the bridge.
 `environment/info` reports the child's startup cwd. The two private homes
 normally yield different values, so that query can remain blocked by an
 ambiguity error even when both children are healthy. The bridge does not erase
-cwd or change startup directories to hide the difference. Arbitrary remote
+cwd to hide the difference. An explicitly selected shared startup directory
+can make the real cwd values agree, as described below. Arbitrary remote
 environment queries and `environment/add` are unsupported: native environment
 IDs are process-local and an info query may start or recover a connection.
 There is no literal `environment/status/info` method in the checked protocol.
@@ -181,6 +182,43 @@ Create four separate directories outside the live Codex home and configure
 both official backends independently. Authentication setup and AIHub endpoint
 configuration are intentionally not performed by Magpie or this change.
 
+### Optional shared startup directory
+
+By default each child starts in its own private HOME, preserving the original
+behavior. To deliberately choose a common startup context, add the optional
+top-level setting `"working_directory": "/absolute/isolated/shared-start"`
+beside `backends`. It must name an existing absolute directory outside all
+four state directories, including their ancestors, descendants and symlink
+aliases. The bridge neither creates this directory nor changes its own/global
+cwd. A missing or invalid directory fails startup; it never falls back to a
+different directory.
+
+Both child processes then genuinely start in that same directory. Their
+HOME/CODEX_HOME, provider selection, environment filtering and permission
+configuration remain separate. No `environment/info` fields are rewritten,
+and every full-result comparison remains in force: different shell, status or
+other metadata still yields an error. The setting changes process startup
+cwd only; it does not replace a client's thread/turn cwd or workspace roots.
+
+This is a real configuration choice, **not a cosmetic compatibility toggle**.
+Official Codex loads startup configuration in the context of cwd. Its project
+trust lookup can affect default approval behavior; trusted project config,
+hooks, execution policies, skills, instructions and default workspace roots
+can also change. Untrusted project configuration is not an inert directory:
+official startup warnings say skills still load. Choose an intentionally
+reviewed neutral directory and review each child's effective configuration.
+The bridge does not change trust settings, erase restrictions, or copy one
+child's profile into the other.
+
+Matching shell/cwd and `ready` attest only to those reported metadata fields
+and connection status. They do **not** establish equal permissions, network
+grants, account entitlement or successful tools. The checked public TUI uses
+environment cwd for relative project paths and reads trust/config separately;
+the proprietary Desktop's exact behavior is not verified here. Sources:
+[official startup](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/lib.rs#L557),
+[trust-dependent configuration](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/core/src/config/mod.rs#L3637),
+and [public client use](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/tui/src/config_update.rs#L198).
+
 The primary backend should be official Codex configured for OpenAI directly;
 the secondary should be another instance of the same official executable
 configured for its named AIHub Responses provider. The bridge does not read
@@ -246,6 +284,16 @@ shared `ready` result; `environment/info` returned the bridge's expected
 ambiguity error because their startup cwd values differed. The children exited
 normally. This check made no thread, turn, or model-service request and does
 not resolve the Desktop environment workflow or the earlier sandbox blocker.
+
+A final read-only A/B check used the optional shared startup directory with
+fresh official `0.167.0-alpha.4` children. With the setting omitted, local info
+still failed with the expected cwd ambiguity. With an explicitly created,
+reviewed neutral directory selected, both native replies agreed and the bridge
+returned its actual `file:` cwd plus `bash` at `/bin/bash`. Both runs returned
+shared status `ready` and exited normally. This verifies the narrow process-cwd
+solution on cloud Linux without rewriting metadata. It makes no statement
+about equal permission profiles and did not retry the blocked thread/tool path.
+Desktop 26.1029.7803.0 with backend 0.166.0-alpha.6 remains untested.
 
 Future real acceptance remains: authorized isolated Desktop instance, same
 menu containing GPT and deepseek-flash-ft, both doing an unpredictable local

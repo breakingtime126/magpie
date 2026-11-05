@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -118,6 +119,20 @@ func fixtureServer() {
 		}
 		if method == "model/list" {
 			result = json.RawMessage(`{"data":[],"nextCursor":null}`)
+		}
+		if method == "environment/status" {
+			result = json.RawMessage(`{"status":"ready"}`)
+		}
+		if method == "environment/info" {
+			path := filepath.ToSlash(dir)
+			if !strings.HasPrefix(path, "/") {
+				path = "/" + path
+			}
+			shell := "fixture"
+			if value, err := os.ReadFile(filepath.Join(home, "fixture-shell")); err == nil {
+				shell = string(value)
+			}
+			result = raw(map[string]any{"shell": map[string]string{"name": shell, "path": shell}, "cwd": (&url.URL{Scheme: "file", Path: path}).String()})
 		}
 		var completed object
 		if requestLog != nil {
@@ -528,5 +543,102 @@ func TestRunRoutesIndependentConversationsEndToEnd(t *testing.T) {
 		if counts["thread/start"] != 1 || counts["turn/start"] != 2 || counts["turn/interrupt"] != 1 || counts["model/list"] != 0 {
 			t.Fatalf("backend %s request counts: %v", b.ID, counts)
 		}
+	}
+}
+
+func TestRunSharedWorkingDirectoryKeepsHomesAndRealEnvironmentInfo(t *testing.T) {
+	for _, differingShell := range []bool{false, true} {
+		t.Run(strconv.FormatBool(differingShell), func(t *testing.T) {
+			cfg := fixtureConfig(t)
+			cfg.Backends[1].Provider = "custom_provider"
+			cfg.WorkingDirectory = filepath.Join(filepath.Dir(cfg.Backends[0].Home), "shared-start")
+			if err := os.Mkdir(cfg.WorkingDirectory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if differingShell {
+				if err := os.WriteFile(filepath.Join(cfg.Backends[1].Home, "fixture-shell"), []byte("different-shell"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			parentCWD, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := startFixtureBridge(t, cfg)
+			lines := make(chan []byte, 8)
+			go func() {
+				defer close(lines)
+				scanner := bufio.NewScanner(r.output)
+				for scanner.Scan() {
+					lines <- append([]byte(nil), scanner.Bytes()...)
+				}
+			}()
+			ask := func(message string) object {
+				t.Helper()
+				if _, err := fmt.Fprintln(r.input, message); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case line := <-lines:
+					m, err := parseObject(line)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return m
+				case <-time.After(30 * time.Second):
+					t.Fatal("shared directory fixture timed out")
+					return nil
+				}
+			}
+			init := ask(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"fixture","version":"1"},"capabilities":{"experimentalApi":true}}}`)
+			if !exists(init, "result") {
+				t.Fatal("shared working directory initialization failed", init)
+			}
+			fmt.Fprintln(r.input, `{"method":"initialized"}`)
+			response := ask(`{"id":2,"method":"environment/info","params":{"environmentId":"local"}}`)
+			if exists(response, "error") != differingShell {
+				t.Fatalf("real environment equality changed: %s", raw(response))
+			}
+			if !differingShell {
+				info, _ := child(response, "result")
+				if text(info, "cwd") == "" || !strings.HasSuffix(text(info, "cwd"), "/shared-start") {
+					t.Fatal("response did not report actual shared cwd", info)
+				}
+			}
+			for _, b := range cfg.Backends {
+				data, err := os.ReadFile(filepath.Join(b.Home, "fixture-report"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var report fixtureReport
+				if err := json.Unmarshal(data, &report); err != nil {
+					t.Fatal(err)
+				}
+				dir, _ := filepath.EvalSymlinks(report.Directory)
+				shared, _ := filepath.EvalSymlinks(cfg.WorkingDirectory)
+				if dir != shared {
+					t.Fatalf("child cwd %s, want shared %s", dir, shared)
+				}
+				env := strings.Join(report.Environment, "\n")
+				if !strings.Contains(env, "HOME="+b.Home) || !strings.Contains(env, "CODEX_HOME="+b.CodexHome) {
+					t.Fatal("shared cwd changed private homes")
+				}
+				expectedArgs := []string{"app-server", "-c", `model_provider="` + b.Provider + `"`}
+				if !reflect.DeepEqual(report.Args, expectedArgs) {
+					t.Fatalf("startup added a config or permission override: %q", report.Args)
+				}
+			}
+			current, err := os.Getwd()
+			if err != nil || current != parentCWD {
+				t.Fatal("bridge changed parent working directory")
+			}
+			r.input.Close()
+			if err := r.wait(t); err != nil {
+				t.Fatal(err)
+			}
+			if _, open := <-lines; open {
+				t.Fatal("unexpected extra fixture message")
+			}
+		})
 	}
 }
