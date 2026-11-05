@@ -50,12 +50,10 @@ $package = Join-Path $env:RUNNER_TEMP 'bridge-package'
 if (Test-Path -LiteralPath $package) { throw 'Artifact directory already exists.' }
 New-Item -ItemType Directory -Path $package | Out-Null
 
-$formatDiff = & gofmt -d internal/appserverbridge internal/proc cmd/magpie-codex-bridge
-Assert-NativeExit 'Check Go formatting'
-if ($formatDiff) {
-    $formatDiff | Write-Output
-    throw 'Go source needs gofmt.'
-}
+$formatDiff = & gofmt -d internal/appserverbridge internal/proc cmd/magpie-codex-bridge 2>&1
+$formatExit = $LASTEXITCODE
+if ($formatDiff) { $formatDiff | Write-Output }
+if ($formatExit -ne 0 -or $formatDiff) { throw 'Go source formatting check failed; see the diagnostics above.' }
 
 # Build the dedicated native entry point before its integration test. The test
 # must exercise the packaged executable, not just an injected Go function.
