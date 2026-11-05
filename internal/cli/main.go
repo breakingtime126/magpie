@@ -126,6 +126,7 @@ const usage = `magpie — one place to pick every agent's model
                                   --web: the service serves magpie web's page too, with a key kept across restarts; installed again, it keeps what it served
   magpie daemon web [on|off] [--lan] [--addr host:port]
                                   the service's page: its link, or turn it on or off
+  magpie app-server-bridge --config <absolute-file.json>   experimental stdio protocol bridge; no HTTP gateway or automatic desktop setup
   magpie healthcheck              exit 0 when the gateway answers (a container's HEALTHCHECK)
   magpie heap [<file>]            a Go heap profile of the running magpie, with its memory numbers, for a report of it using too much memory
   magpie cpu [<file>] [--seconds N]   a Go CPU profile of the running magpie over 30s (5..120) while you use it, for a report of it using too much CPU
@@ -187,6 +188,16 @@ var (
 // Main runs magpie with os.Args, at the version the build was stamped with.
 func Main(v string) {
 	version = v
+	// The protocol bridge must not run normal startup: that discovers sign-ins,
+	// migrates agent settings and installs HTTP proxy behavior. It owns only
+	// its two explicitly configured child processes and stdio connection.
+	if len(os.Args) > 1 && os.Args[1] == "app-server-bridge" {
+		if err := appServerBridgeCmd(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "magpie:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	// before anything reads or writes a file: no home, or a relative one,
 	// would put the agents' configs and magpie's keys under the working
 	// folder. What needs no file still answers (magpie version in a
@@ -304,6 +315,10 @@ func servesPages(args []string) bool {
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "app-server-bridge" {
+		return appServerBridgeCmd(args[1:])
+	}
+
 	// a command that saved a provider or a group ends with the agents'
 	// files written, which its save no longer waits for; and a test's run
 	// leaves catalog.Changed as it found it

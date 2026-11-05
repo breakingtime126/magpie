@@ -36,6 +36,8 @@ func helpFor(args []string) string {
 	switch cmd {
 	case "-h", "--help", "help":
 		return usage
+	case "app-server-bridge":
+		return appServerBridgeUsage
 	case "model":
 		if len(args) > 1 && (args[1] == "spec" || args[1] == "specs") {
 			return specUsage

@@ -1,0 +1,41 @@
+{
+  "backends": [
+    {
+      "id": "openai",
+      "provider": "openai",
+      "command": "/absolute/path/to/official/codex",
+      "home": "/absolute/isolated/openai-home",
+      "codex_home": "/absolute/isolated/openai-codex"
+    },
+    {
+      "id": "aihub",
+      "provider": "aihub",
+      "command": "/absolute/path/to/official/codex",
+      "home": "/absolute/isolated/aihub-home",
+      "codex_home": "/absolute/isolated/aihub-codex",
+      "models": [
+        {
+          "id": "deepseek-flash-ft",
+          "model": "deepseek-flash-ft",
+          "displayName": "deepseek-flash-ft",
+          "description": "Illustrative declared metadata only. Verify against your AIHub provider before use.",
+          "hidden": false,
+          "isDefault": false,
+          "supportedReasoningEfforts": [],
+          "defaultReasoningEffort": "none",
+          "inputModalities": ["text"],
+          "supportsPersonality": false,
+          "upgrade": null,
+          "upgradeInfo": null,
+          "availabilityNux": null,
+          "modelSpecialty": null,
+          "multiAgentVersion": null,
+          "additionalSpeedTiers": [],
+          "serviceTiers": [],
+          "defaultServiceTier": null,
+          "availableAccessPrograms": null
+        }
+      ]
+    }
+  ]
+}
