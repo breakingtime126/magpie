@@ -94,7 +94,7 @@ func Run(parent context.Context, cfg Config, input io.ReadCloser, output io.Writ
 			in.Close()
 			return fmt.Errorf("cannot prepare backend %s output", b.ID)
 		}
-		tree, err := proc.StartTree(command)
+		tree, err := proc.StartTreeStrict(command)
 		if err != nil {
 			in.Close()
 			out.Close()

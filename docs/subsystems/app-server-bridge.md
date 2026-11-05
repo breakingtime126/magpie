@@ -159,11 +159,21 @@ Likewise, a backend's own config may define endpoints. Check those configs and
 binary provenance before any real acceptance test; never point OpenAI at
 Magpie's gateway or AIHub.
 
-`proc.StartTree` owns a Unix session or Windows job. Shutdown closes stdin,
-gives an EOF cleanup grace period, then stops/reaps the owned tree. A process
-that deliberately starts another Unix session can escape the group, and the
-existing Windows helper can fall back when job assignment fails. These are
-not absolute containment guarantees. There is no process-name-wide kill.
+The bridge uses `proc.StartTreeStrict`: a Unix session, or a strict Windows
+kill-on-close job. Windows starts the process with its initial thread suspended,
+assigns the exact owned process to the job, verifies its sole initial thread,
+and resumes it once. This prevents the ordinary child-spawns-before-job-assignment
+race in the general-purpose `StartTree` helper. Job denial, ambiguous threads,
+conflicting creation flags or failed resume cause startup failure and owned-child
+cleanup; the bridge never falls back to an uncontained Windows child. Other
+Magpie callers retain the original helper and its existing behavior.
+
+Shutdown closes stdin, gives an EOF cleanup grace period, then stops/reaps the
+owned tree. A Unix descendant can deliberately create another session; hostile
+external process injection and security-product interference are not contained
+by this lifecycle helper. Conservative Windows thread checks can reject such an
+environment rather than weaken policy. There is no process-name-wide kill,
+breakaway flag, privilege escalation or change to OS security settings.
 
 Limits: 16 MiB per JSONL message and combined list, at most 10,000 rows and
 100 backend pages, 128 active frontend requests with 32 MiB of stored input,
@@ -309,9 +319,14 @@ checks out the exact triggering commit on
 and builds the `nogui` Windows amd64 command on a GitHub-hosted Windows runner.
 It runs the native synthetic bridge tests, the bridge CLI isolation test,
 Windows `go vet -tags nogui ./...`, and the built command's help smoke test.
-Native tests can skip platform-specific cases; in particular the Unix process
-group cleanup test does not establish Windows descendant cleanup. This is not
-the full repository suite or official-child/Desktop acceptance.
+It also repeats targeted Windows process-family cleanup and interruption tests,
+and strict process-start tests. The Windows cases hold real process handles to
+both fixture backends and their descendants before testing EOF, cancellation,
+forced cleanup, malformed output and backend exit. Synthetic interruption cases
+keep both providers active, reject unknown/foreign turn IDs, observe the intended
+interruption while the sibling stays active, and start follow-up turns. The
+Unix-only process-group test still skips on Windows. This is not the full
+repository suite or official-child/Desktop acceptance.
 
 The unsigned artifact includes the exact source commit/tree and run URL,
 executable Go build information, unchanged MIT license and third-party
@@ -333,3 +348,11 @@ This independent CI artifact is not a workaround for an organization's
 blocked dependency downloads. Do not download, install or use it in a managed
 environment without the applicable software/network approval. Actual Desktop
 integration and deployment remain separate, unverified steps.
+
+The strict-start regression samples the Windows thread suspension count before
+job assignment and checks no fixture startup marker exists. A separate temporary
+checkout removes `CREATE_SUSPENDED` and must produce a named regression failure;
+the artifact is built only from the untouched triggering commit. Assignment and
+resume failure tests verify no fixture execution, owned-child reaping and handle
+cleanup. These tests exercise native Windows processes and jobs with synthetic
+children, not official Codex tools or a managed corporate Windows installation.

@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 type fixtureReport struct {
 	Args, Environment []string
 	Directory         string
+	PID               int
 }
 
 // This is a copied native test executable, not a shell script or a model call.
@@ -46,7 +47,7 @@ func fixtureServer() {
 	home := os.Getenv("HOME")
 	mode, _ := os.ReadFile(filepath.Join(home, "fixture-mode"))
 	dir, _ := os.Getwd()
-	report, _ := json.Marshal(fixtureReport{os.Args[1:], os.Environ(), dir})
+	report, _ := json.Marshal(fixtureReport{Args: os.Args[1:], Environment: os.Environ(), Directory: dir, PID: os.Getpid()})
 	if os.WriteFile(filepath.Join(home, "fixture-report"), report, 0600) != nil {
 		os.Exit(3)
 	}
@@ -63,7 +64,7 @@ func fixtureServer() {
 		io.Copy(io.Discard, os.Stdin)
 		return
 	}
-	if string(mode) == "descendant" {
+	if strings.HasPrefix(string(mode), "descendant") {
 		self, _ := os.Executable()
 		command := proc.CommandContext(context.Background(), self, "bridge-fixture-descendant")
 		command.Env = os.Environ()
@@ -84,7 +85,8 @@ func fixtureServer() {
 	var requestLog *os.File
 	provider := ""
 	turnNumber := 0
-	if string(mode) == "conversations" {
+	activeTurn := ""
+	if string(mode) == "conversations" || string(mode) == "interruptions" {
 		var err error
 		provider, err = strconv.Unquote(strings.TrimPrefix(os.Args[3], "model_provider="))
 		if err != nil {
@@ -99,6 +101,14 @@ func fixtureServer() {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64<<10), MaxMessageBytes+1)
 	for scanner.Scan() {
+		if string(mode) == "descendant-malformed" {
+			fmt.Println("not JSON")
+			io.Copy(io.Discard, os.Stdin)
+			return
+		}
+		if string(mode) == "descendant-exit" {
+			return
+		}
 		if requestLog != nil {
 			if _, err := fmt.Fprintln(requestLog, scanner.Text()); err != nil {
 				os.Exit(11)
@@ -135,26 +145,55 @@ func fixtureServer() {
 			result = raw(map[string]any{"shell": map[string]string{"name": shell, "path": shell}, "cwd": (&url.URL{Scheme: "file", Path: path}).String()})
 		}
 		var completed object
+		var delta object
 		if requestLog != nil {
 			params, _ := child(msg, "params")
 			switch method {
 			case "thread/start":
 				result = raw(map[string]any{"thread": map[string]any{"id": provider + "-thread", "modelProvider": provider, "model": text(params, "model"), "turns": []any{}}, "model": text(params, "model"), "modelProvider": provider})
 			case "turn/start":
+				if string(mode) == "interruptions" && activeTurn != "" {
+					fmt.Println(string(raw(object{"id": msg["id"], "error": raw(map[string]any{"code": -32001, "message": "fixture turn is still active"})})))
+					continue
+				}
 				turnNumber++
 				turnID := fmt.Sprintf("%s-turn-%d", provider, turnNumber)
 				result = raw(map[string]any{"turn": map[string]any{"id": turnID, "items": []any{}, "status": "inProgress", "error": nil}})
-				if turnNumber == 1 {
+				if string(mode) == "interruptions" {
+					activeTurn = turnID
+					delta = object{"threadId": params["threadId"], "turnId": raw(turnID), "itemId": raw(turnID + "-message"), "delta": raw("synthetic-" + turnID)}
+				}
+				if string(mode) == "conversations" && turnNumber == 1 {
 					completed = object{"threadId": params["threadId"], "turn": raw(map[string]any{"id": turnID, "items": []any{}, "status": "completed", "error": nil})}
 				}
 			case "turn/interrupt":
+				if string(mode) == "interruptions" {
+					if text(params, "turnId") != activeTurn {
+						fmt.Println(string(raw(object{"id": msg["id"], "error": raw(map[string]any{"code": -32002, "message": "fixture turn is not active"})})))
+						continue
+					}
+					activeTurn = ""
+				}
 				completed = object{"threadId": params["threadId"], "turn": raw(map[string]any{"id": text(params, "turnId"), "items": []any{}, "status": "interrupted", "error": nil})}
 			}
 		}
+		// Completion may precede the interrupt acknowledgement in the real protocol.
+		if completed != nil && string(mode) == "interruptions" {
+			fmt.Println(string(raw(object{"method": raw("turn/completed"), "params": raw(completed)})))
+			completed = nil
+		}
 		out, _ := json.Marshal(map[string]json.RawMessage{"id": msg["id"], "result": result})
 		fmt.Println(string(out))
+		if delta != nil {
+			fmt.Println(string(raw(object{"method": raw("item/agentMessage/delta"), "params": raw(delta)})))
+		}
 		if completed != nil {
 			fmt.Println(string(raw(object{"method": raw("turn/completed"), "params": raw(completed)})))
+		}
+	}
+	if string(mode) == "descendant-stubborn" {
+		for {
+			time.Sleep(time.Hour)
 		}
 	}
 	_ = os.WriteFile(filepath.Join(home, "fixture-clean-exit"), []byte("done"), 0600)

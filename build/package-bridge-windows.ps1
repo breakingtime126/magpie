@@ -1,6 +1,7 @@
 # Build only on the explicitly authorized GitHub-hosted experimental branch.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$PSNativeCommandUseErrorActionPreference = $false
 
 function Assert-NativeExit([string] $Operation) {
     if ($LASTEXITCODE -ne 0) {
@@ -49,13 +50,64 @@ $package = Join-Path $env:RUNNER_TEMP 'bridge-package'
 if (Test-Path -LiteralPath $package) { throw 'Artifact directory already exists.' }
 New-Item -ItemType Directory -Path $package | Out-Null
 
+$formatDiff = & gofmt -d internal/appserverbridge internal/proc
+Assert-NativeExit 'Check Go formatting'
+if ($formatDiff) {
+    $formatDiff | Write-Output
+    throw 'Go source needs gofmt.'
+}
+
 # These synthetic tests do not start official Codex or contact model services.
 & go test -v -count=1 -timeout=10m -tags nogui ./internal/appserverbridge
 Assert-NativeExit 'Native bridge tests'
+& go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestRun(WindowsReapsStartedBackendFamilies|InterruptPreservesOtherBackendAndAllowsFollowup)$'
+Assert-NativeExit 'Repeated Windows cleanup and interruption tests'
+& go test -v -count=20 -timeout=10m -tags nogui ./internal/proc -run '^TestStartTreeStrict'
+Assert-NativeExit 'Repeated strict Windows process startup tests'
 & go test -v -count=1 -timeout=10m -tags nogui ./internal/cli -run '^TestAppServerBridgeHelpAndInvalidConfigDoNotStartMagpie$'
 Assert-NativeExit 'Native bridge CLI test'
 & go vet -tags nogui ./...
 Assert-NativeExit 'Windows Go vet'
+try {
+    $env:GOOS = 'linux'
+    & go vet -tags nogui ./...
+    Assert-NativeExit 'Linux cross-platform Go vet'
+} finally {
+    $env:GOOS = 'windows'
+}
+
+
+# Prove the startup regression detects the old runnable-before-assignment
+# behavior. Mutate a separate source archive, never the artifact checkout.
+$mutationRoot = Join-Path $env:RUNNER_TEMP 'bridge-mutation'
+$mutationArchive = Join-Path $env:RUNNER_TEMP 'bridge-mutation.zip'
+if ((Test-Path -LiteralPath $mutationRoot) -or (Test-Path -LiteralPath $mutationArchive)) {
+    throw 'Mutation scratch path already exists.'
+}
+& git archive --format=zip --output=$mutationArchive HEAD
+Assert-NativeExit 'Archive exact source for regression mutation'
+Expand-Archive -LiteralPath $mutationArchive -DestinationPath $mutationRoot
+$mutationFile = Join-Path $mutationRoot 'internal/proc/tree_strict_windows.go'
+$mutationSource = [IO.File]::ReadAllText($mutationFile)
+$flagLine = 'attr.CreationFlags |= windows.CREATE_SUSPENDED'
+if ([regex]::Matches($mutationSource, [regex]::Escape($flagLine)).Count -ne 1) {
+    throw 'Strict startup mutation target is not unique.'
+}
+[IO.File]::WriteAllText($mutationFile, $mutationSource.Replace($flagLine, '// Mutation: initial thread is allowed to execute before assignment.'))
+try {
+    Set-Location -LiteralPath $mutationRoot
+    $mutationLog = & go test -v -count=1 -timeout=2m -tags nogui ./internal/proc -run '^TestStartTreeStrictAssignedBeforeExecution$' 2>&1
+    $mutationExit = $LASTEXITCODE
+    $mutationLog | Write-Output
+    if ($mutationExit -eq 0 -or ($mutationLog -join "`n") -notmatch '--- FAIL: TestStartTreeStrictAssignedBeforeExecution') {
+        throw 'Startup mutation did not produce the expected behavioral regression failure.'
+    }
+} finally {
+    Set-Location -LiteralPath $env:GITHUB_WORKSPACE
+    Remove-Item -LiteralPath $mutationRoot -Recurse -Force
+    Remove-Item -LiteralPath $mutationArchive -Force
+}
+Write-Output 'Strict startup regression failed with CREATE_SUSPENDED removed, as required.'
 
 $version = 'v0.1.3035-bridge.' + $head.Substring(0, 12)
 $binary = Join-Path $package 'magpie-app-server-bridge-windows-amd64.exe'
@@ -100,8 +152,8 @@ $manifest = [ordered]@{
     buildFlags = '-tags nogui -trimpath -buildvcs=true -ldflags=-s -w -X main.version=<version>'
     executableSHA256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
     signing = 'unsigned'
-    checks = @('Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Windows go vet -tags nogui ./...', 'Built executable bridge help')
-    notValidated = @('Full repository test suite', 'Windows descendant cleanup', 'Official Codex runtime and tools', 'Codex Desktop integration', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
+    checks = @('Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help')
+    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
 }
 [IO.File]::WriteAllText((Join-Path $package 'BUILD.json'), ($manifest | ConvertTo-Json -Depth 5) + "`n", $utf8)
 $readme = @'
@@ -118,7 +170,8 @@ official Codex backend, credentials, AIHub account or Desktop integration.
 The example configuration contains placeholders, not usable authentication.
 See DESIGN.md and the source documentation for behavior and remaining limits.
 
-CI runs only synthetic bridge/CLI tests, static checks and a help smoke test.
+CI runs synthetic bridge/CLI/process tests, static checks, a startup mutation
+check and a help smoke test.
 It does not establish working Desktop integration, real tools/model inference,
 full-suite correctness or complete Windows process-tree containment.
 
