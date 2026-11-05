@@ -1,9 +1,11 @@
 package appserverbridge
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -190,6 +192,21 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return []Delivery{fail(g.id, -32600, "initialize and initialized are required")}, nil
 	}
 	switch method {
+	case "environment/info", "environment/status":
+		// Environment IDs belong to each child's registry, not the model
+		// catalog or most recently used thread. Only the reserved local ID
+		// is safe to inspect on both children; remote info can reconnect.
+		if text(p, "environmentId") != "local" {
+			return []Delivery{fail(g.id, -32602, "unscoped environment queries support only the shared local environment")}, nil
+		}
+		r.active[key] = true
+		r.activeBytes += g.size
+		g.remaining = len(r.backends)
+		out := []Delivery{}
+		for _, b := range r.backends {
+			out = append(out, r.send(g, b.ID, p))
+		}
+		return out, nil
 	case "model/list", "thread/list", "thread/loaded/list":
 		if method == "thread/list" {
 			key := text(p, "sortKey")
@@ -408,6 +425,27 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		return nil, errors.New("backend response has no result object")
 	}
 	switch g.method {
+	case "environment/info", "environment/status":
+		encoded := raw(result)
+		g.bytes += len(encoded)
+		if g.bytes > 64<<10 {
+			return r.reject(g, -32000, "combined environment response exceeds bridge size limit"), nil
+		}
+		if err := validateEnvironmentResult(g.method, result); err != nil {
+			return nil, err
+		}
+		g.results[backend] = []json.RawMessage{encoded}
+		g.remaining--
+		if g.remaining != 0 {
+			return nil, nil
+		}
+		first := g.results[r.backends[0].ID][0]
+		second := g.results[r.backends[1].ID][0]
+		if !sameJSON(first, second) {
+			return r.reject(g, -32000, "local environment differs between backends; no shared environment result is available"), nil
+		}
+		original, _ := parseObject(first)
+		return r.finish(g, original), nil
 	case "initialize":
 		g.results[backend] = []json.RawMessage{raw(result)}
 		g.remaining--
@@ -505,6 +543,50 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		r.rewriteModel(backend, result, "model")
 		return r.finish(g, result), nil
 	}
+}
+
+func sameJSON(a, b []byte) bool {
+	decode := func(encoded []byte) any {
+		var value any
+		d := json.NewDecoder(bytes.NewReader(encoded))
+		d.UseNumber()
+		_ = d.Decode(&value) // Both inputs already passed parseObject.
+		return value
+	}
+	return reflect.DeepEqual(decode(a), decode(b))
+}
+
+func validateEnvironmentResult(method string, result object) error {
+	if method == "environment/status" {
+		switch text(result, "status") {
+		case "ready", "pending", "disconnected", "unknown":
+		default:
+			return errors.New("invalid environment status")
+		}
+		if value, ok := result["error"]; ok {
+			var s string
+			if !exists(result, "error") || json.Unmarshal(value, &s) != nil {
+				return errors.New("invalid environment status error")
+			}
+		}
+		return nil
+	}
+	shell, err := child(result, "shell")
+	if err != nil {
+		return errors.New("invalid environment shell info")
+	}
+	for _, field := range []string{"name", "path"} {
+		var s string
+		if !exists(shell, field) || json.Unmarshal(shell[field], &s) != nil {
+			return errors.New("invalid environment shell info")
+		}
+	}
+	value, ok := result["cwd"]
+	var cwd string
+	if !ok || (exists(result, "cwd") && json.Unmarshal(value, &cwd) != nil) {
+		return errors.New("invalid environment cwd info")
+	}
+	return nil
 }
 
 func (r *Router) bindThread(backend string, t object) error {

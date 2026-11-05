@@ -109,9 +109,9 @@ func validateParams(method string, p object) error {
 		"model/list":              "cursor limit includeHidden",
 		"thread/list":             "currentAccountOnly cursor limit excludedThreadIds sortKey sortDirection modelProviders sourceKinds originators archived sectionId cwd useStateDbOnly searchTerm",
 		"thread/loaded/list":      "cursor limit",
-		"thread/start":            "model modelProvider serviceTier cwd approvalPolicy approvalsReviewer sandbox config serviceName baseInstructions developerInstructions personality ephemeral sessionStartSource threadSource",
-		"thread/resume":           "threadId model modelProvider serviceTier cwd approvalPolicy approvalsReviewer sandbox config baseInstructions developerInstructions personality excludeTurns",
-		"thread/fork":             "threadId lastTurnId model modelProvider serviceTier cwd approvalPolicy approvalsReviewer sandbox config baseInstructions developerInstructions ephemeral threadSource excludeTurns",
+		"thread/start":            "model modelProvider serviceTier cwd runtimeWorkspaceRoots environments permissions approvalPolicy approvalsReviewer sandbox config serviceName baseInstructions developerInstructions personality ephemeral sessionStartSource threadSource",
+		"thread/resume":           "threadId model modelProvider serviceTier cwd runtimeWorkspaceRoots permissions approvalPolicy approvalsReviewer sandbox config baseInstructions developerInstructions personality excludeTurns",
+		"thread/fork":             "threadId lastTurnId model modelProvider serviceTier cwd runtimeWorkspaceRoots permissions approvalPolicy approvalsReviewer sandbox config baseInstructions developerInstructions ephemeral threadSource excludeTurns",
 		"thread/read":             "threadId includeTurns",
 		"thread/turns/list":       "threadId cursor limit sortDirection itemsView",
 		"thread/items/list":       "threadId turnId cursor limit sortDirection",
@@ -122,11 +122,13 @@ func validateParams(method string, p object) error {
 		"thread/revert":           "threadId turnId",
 		"thread/rollback":         "threadId numTurns",
 		"thread/unsubscribe":      "threadId",
-		"turn/start":              "threadId disabledPluginIds clientUserMessageId input turnTrigger parentTurnId rootTurnId toolOutput cwd approvalPolicy approvalsReviewer sandboxPolicy model serviceTier serviceTierForTurn effort summary personality outputSchema",
+		"turn/start":              "threadId disabledPluginIds clientUserMessageId input turnTrigger parentTurnId rootTurnId toolOutput cwd runtimeWorkspaceRoots environments permissions approvalPolicy approvalsReviewer sandboxPolicy model serviceTier serviceTierForTurn effort summary personality outputSchema",
 		"turn/interrupt":          "threadId turnId",
 		"turn/steer":              "threadId clientUserMessageId input expectedTurnId",
 		"account/read":            "refreshToken",
 		"account/rateLimits/read": "",
+		"environment/info":        "environmentId",
+		"environment/status":      "environmentId",
 	}
 	list, ok := fields[method]
 	if !ok {
@@ -139,6 +141,72 @@ func validateParams(method string, p object) error {
 	for name := range p {
 		if !allowed[name] {
 			return fmt.Errorf("unsupported %s field: %s", method, name)
+		}
+	}
+	return validateAccessParams(p)
+}
+
+// These fields select access within the chosen official child, never a model
+// provider. Preserve their raw values, including omitted/null/empty arrays.
+// The child resolves named profiles, environment IDs and native path semantics.
+func validateAccessParams(p object) error {
+	if exists(p, "permissions") {
+		if _, err := fieldString(p, "permissions"); err != nil {
+			return err
+		}
+		if exists(p, "sandbox") || exists(p, "sandboxPolicy") {
+			return errors.New("permissions cannot be combined with sandbox or sandboxPolicy")
+		}
+	}
+	if err := validateWorkspaceRoots(p); err != nil {
+		return err
+	}
+	if !exists(p, "environments") {
+		return nil
+	}
+	var environments []json.RawMessage
+	if json.Unmarshal(p["environments"], &environments) != nil {
+		return errors.New("environments must be an array")
+	}
+	seen := map[string]bool{}
+	for _, encoded := range environments {
+		environment, err := parseObject(encoded)
+		if err != nil {
+			return errors.New("environment entries must be objects")
+		}
+		for key := range environment {
+			if key != "environmentId" && key != "cwd" && key != "runtimeWorkspaceRoots" {
+				return fmt.Errorf("unsupported environment field: %s", key)
+			}
+		}
+		id, err := fieldString(environment, "environmentId")
+		if err != nil || id == "" || seen[id] {
+			return errors.New("environments require unique non-empty environmentId strings")
+		}
+		seen[id] = true
+		cwd, err := fieldString(environment, "cwd")
+		if err != nil || cwd == "" {
+			return errors.New("environment cwd must be a non-empty string")
+		}
+		if err := validateWorkspaceRoots(environment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateWorkspaceRoots(p object) error {
+	if !exists(p, "runtimeWorkspaceRoots") {
+		return nil
+	}
+	var paths []json.RawMessage
+	if json.Unmarshal(p["runtimeWorkspaceRoots"], &paths) != nil {
+		return errors.New("runtimeWorkspaceRoots must be an array of strings")
+	}
+	for _, path := range paths {
+		var s string
+		if json.Unmarshal(path, &s) != nil || s == "" {
+			return errors.New("runtimeWorkspaceRoots must contain non-empty strings")
 		}
 	}
 	return nil

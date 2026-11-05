@@ -38,7 +38,9 @@ and existing third-party notices remain unchanged. Protocol shapes were checked
 against schemas generated without credentials by an unmodified cloud binary,
 `codex-cli 0.167.0-alpha.4`, plus
 [official app-server documentation](https://learn.chatgpt.com/docs/app-server).
-This does not certify the user's older installed Desktop/backend version.
+The access fields and environment read methods were also checked against
+the exact [official 0.166.0-alpha.6 protocol](https://github.com/openai/codex/tree/rust-v0.166.0-alpha.6/codex-rs/app-server-protocol/src/protocol/v2).
+Schema compatibility does not certify a Desktop/backend runtime combination.
 
 ## Routing contracts
 
@@ -84,12 +86,53 @@ backend's account/rate-limit reads. `thread/rollback` is the older protocol
 spelling, forwarded unchanged; `thread/revert` is the newer spelling. The child
 version determines availability. Unsupported methods return `-32601`.
 
+The separate experimental methods `environment/info` and `environment/status`
+accept only `{ "environmentId": "local" }` in this bridge. The native local ID, when enabled,
+belongs independently to each child's registry. Both children must return the
+same complete result before it is exposed; different status, shell, cwd, or
+other result fields produce an explicit ambiguity error, never a synthesized
+`ready` or a last-model/primary-backend fallback. Combined results are bounded
+to 64 KiB. Each child's own error, including experimental API gating, remains
+an error. Initialization capabilities are not enabled or widened by the bridge.
+
+`environment/info` reports the child's startup cwd. The two private homes
+normally yield different values, so that query can remain blocked by an
+ambiguity error even when both children are healthy. The bridge does not erase
+cwd or change startup directories to hide the difference. Arbitrary remote
+environment queries and `environment/add` are unsupported: native environment
+IDs are process-local and an info query may start or recover a connection.
+There is no literal `environment/status/info` method in the checked protocol.
+
 Unknown request fields, config/history/path overrides, collaboration modes,
 provider fallbacks and delegated parent/root turn lineage fail locally with
 `-32602`. Section-position thread sorting is unsupported. `created_at`,
 `updated_at` and `recency_at` are merged in the requested direction. Parent
 subagent IDs may be learned from verified same-backend relationships, but
 cross-provider subagent dispatch is not implemented or required.
+
+## Permission and environment selection
+
+`permissions` names an opaque profile in the selected child's own config. It
+is forwarded unchanged on thread start/resume/fork and turn start. It cannot
+be combined with a non-null `sandbox` or `sandboxPolicy`. The bridge never
+replaces an unavailable profile, copies a profile across backends, removes a
+permission field, or retries a denial with weaker access. Effective permission
+profile information and permission approval requests/responses are preserved.
+
+`runtimeWorkspaceRoots` is supported on those same requests. `environments`
+is supported only on thread start and turn start, as in the checked schemas.
+Its IDs select environments inside the already chosen thread owner's child;
+they never select or change a model provider. Environment order, native cwd
+and nested roots are preserved. Omitted values, explicit null, and empty
+arrays remain distinct on the wire. In particular, `environments: []` is not
+replaced by a default, and empty roots are not expanded. The official child
+validates profile availability, environment membership, absolute native paths,
+and actual grants. Windows paths are not normalized by the bridge's host OS.
+Unknown nested environment fields and invalid field types fail locally.
+
+Thread environment connection notifications retain their native environment
+ID and are checked against the thread's backend owner, so both children may
+legitimately report `local` without transferring ownership of any thread.
 
 ## Limits and isolation
 
@@ -195,6 +238,14 @@ process tests cover those bridge behaviors, but do not establish this missing
 runtime integration. Optional syscall tracing was also denied and stopped;
 configuration and local fixture logs are not kernel-level proof of no egress.
 No real OpenAI/AIHub inference or Desktop acceptance is claimed.
+
+A subsequent read-only smoke check of the access-field compatibility patch
+used two fresh official `0.167.0-alpha.4` children with experimental capability
+enabled explicitly by the test client. `environment/status` returned their
+shared `ready` result; `environment/info` returned the bridge's expected
+ambiguity error because their startup cwd values differed. The children exited
+normally. This check made no thread, turn, or model-service request and does
+not resolve the Desktop environment workflow or the earlier sandbox blocker.
 
 Future real acceptance remains: authorized isolated Desktop instance, same
 menu containing GPT and deepseek-flash-ft, both doing an unpredictable local
