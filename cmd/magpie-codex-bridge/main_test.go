@@ -40,7 +40,7 @@ func fixtureServer() int {
 		}
 		if request.Method == "initialize" {
 			response := map[string]any{
-				"id":     request.ID,
+				"id": request.ID,
 				"result": map[string]string{
 					"userAgent":      "native-adapter-fixture",
 					"platformFamily": "fixture",
