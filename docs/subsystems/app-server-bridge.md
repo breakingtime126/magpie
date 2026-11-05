@@ -352,7 +352,82 @@ integration and deployment remain separate, unverified steps.
 The strict-start regression samples the Windows thread suspension count before
 job assignment and checks no fixture startup marker exists. A separate temporary
 checkout removes `CREATE_SUSPENDED` and must produce a named regression failure;
-the artifact is built only from the untouched triggering commit. Assignment and
-resume failure tests verify no fixture execution, owned-child reaping and handle
-cleanup. These tests exercise native Windows processes and jobs with synthetic
+the artifact is built only from the untouched triggering commit. Pre-resume
+assignment and resume failure tests verify no fixture execution,
+owned-child reaping and handle cleanup. Partial-resume failure tests deliberately
+start the fixture and its descendant, then verify both are terminated and reaped.
+These tests exercise native Windows processes and jobs with synthetic
 children, not official Codex tools or a managed corporate Windows installation.
+
+## Native stdio launcher adapter
+
+[`cmd/magpie-codex-bridge`](../../cmd/magpie-codex-bridge/main.go) builds a
+separate native executable. It imports the bridge directly and never enters
+Magpie's ordinary CLI, account discovery, gateway or settings-migration startup.
+This matters because the older Magpie executable's special early entry point is
+`app-server-bridge`, while a Codex client normally launches `app-server`.
+**Do not point a Desktop executable override at the ordinary Magpie binary.**
+
+The adapter's reviewed invocation forms are `app-server`, `app-server --stdio`,
+`app-server --listen stdio://`, and `app-server --listen=stdio://`. These stdio
+forms come from the [official 0.166 CLI argument definitions](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/cli/src/main.rs#L573-L632).
+Set `MAGPIE_APP_SERVER_BRIDGE_CONFIG` in that process's environment to an
+absolute bridge JSON file. `--check` validates it without starting any child;
+help and version identify the adapter truthfully, not as an official Codex CLI.
+Nothing sets a persistent environment variable, edits the registry, changes a
+Desktop shortcut or installs this executable as a backend.
+
+The adapter rejects extra arguments before reading configuration. That includes
+`-c`, provider/model overrides, permission/sandbox controls, remote or daemon
+modes, and `--analytics-default-enabled`. Some are valid official CLI flags, but
+the bridge cannot silently discard their semantics. A Desktop that requires
+one of these flags or expects a different version-probe response is not yet
+compatible. Native stdio launcher tests are not proof of Desktop support.
+
+### Remaining Desktop bootstrap boundaries
+
+A public [Windows startup report](https://github.com/openai/codex/issues/40853)
+quotes Desktop's `CODEX_CLI_PATH` diagnostic. That identifies a possible
+executable-selection mechanism, not a verified or supported contract for
+Desktop 26.1029.7803.0. The exact app's executable resolution, arguments,
+transport, environment inheritance and single-instance behavior still need
+read-only evidence. No `CODEX_CLI_PATH` setting is made by this project.
+
+Two real 0.166 methods deliberately remain unsupported:
+
+- `getAuthStatus`: `includeToken=false` prevents token export, but even
+  `refreshToken=false` calls an auth path that can proactively refresh ChatGPT
+  credentials. The bridge does not fabricate status or describe this as a
+  guaranteed no-refresh read. See the [handler](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/request_processors/account_processor.rs#L1097-L1169)
+  and [auth manager](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/login/src/auth/manager.rs#L2495-L2513).
+- `configRequirements/read`: its complete response can contain serialized
+  provider definitions with credential-bearing values. Reading requirements
+  also reloads application network policy. Comparing both responses does not
+  make secret export or policy refresh safe. See [provider mapping](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/request_processors/config_processor.rs#L445-L465),
+  [transparent string serialization](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/utils/redacted-string/src/lib.rs#L9-L12),
+  and [policy refresh](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/application_network.rs#L68-L128).
+
+`config/read` and account-login mutations remain unsupported too. Returning
+only the primary child's configuration would misrepresent the other child's
+provider and permission context. Tests assert these methods reject locally,
+preserve request IDs, send nothing to either backend and leave supported calls
+usable afterward. If the exact Desktop bootstrap needs them, this remains an
+explicit integration blocker rather than an invented successful response.
+
+Next acceptance requires a sanitized command line and RPC method/field-shape
+trace from the exact Desktop version, or an authorized read-only inspection of
+that version's officially obtained package. Such evidence must omit token
+values, auth files, request content and private environment values. Review
+any additional interface support first, then test in an authorized isolated
+Desktop instance with reversible process-scoped configuration. Actual company
+software/network approval, backend authentication and live model/tool checks
+remain separate. No cloud artifact is an alternative to a denied local access
+or installation policy.
+
+The Windows CI package includes both the ordinary Magpie binary and the separate
+native adapter, with per-file checksums and build provenance. It runs the built
+adapter itself against two native synthetic backend processes, verifies clean
+JSONL initialization and EOF shutdown, and checks both backend exit markers.
+These checks do not test Desktop's launch hook, official model traffic, or native
+OS-signal delivery to the adapter. Unsupported authentication and configuration
+bootstrap methods are covered by local-rejection regressions, not mocked success.

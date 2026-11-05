@@ -50,14 +50,45 @@ $package = Join-Path $env:RUNNER_TEMP 'bridge-package'
 if (Test-Path -LiteralPath $package) { throw 'Artifact directory already exists.' }
 New-Item -ItemType Directory -Path $package | Out-Null
 
-$formatDiff = & gofmt -d internal/appserverbridge internal/proc
+$formatDiff = & gofmt -d internal/appserverbridge internal/proc cmd/magpie-codex-bridge
 Assert-NativeExit 'Check Go formatting'
 if ($formatDiff) {
     $formatDiff | Write-Output
     throw 'Go source needs gofmt.'
 }
 
+# Build the dedicated native entry point before its integration test. The test
+# must exercise the packaged executable, not just an injected Go function.
+$version = 'v0.1.3035-bridge.' + $head.Substring(0, 12)
+$adapter = Join-Path $package 'magpie-codex-bridge-windows-amd64.exe'
+& go build -tags nogui -trimpath -buildvcs=true -ldflags "-s -w -X main.buildVersion=$version" -o $adapter ./cmd/magpie-codex-bridge
+Assert-NativeExit 'Build native stdio adapter'
+$adapterBuildInfoLines = & go version -m $adapter
+Assert-NativeExit 'Read native adapter build information'
+$adapterBuildInfo = $adapterBuildInfoLines -join "`n"
+if ($adapterBuildInfo -notmatch ('vcs\.revision=' + [regex]::Escape($head) + '(\s|$)') -or
+    $adapterBuildInfo -notmatch 'vcs\.modified=false(\s|$)' -or
+    $adapterBuildInfo -notmatch 'GOOS=windows(\s|$)' -or
+    $adapterBuildInfo -notmatch 'GOARCH=amd64(\s|$)') {
+    throw 'Native adapter provenance does not match the clean Windows source commit.'
+}
+$adapterVersion = & $adapter --version
+Assert-NativeExit 'Native adapter version smoke test'
+if (($adapterVersion -join "`n") -ne "magpie-codex-bridge (experimental stdio adapter) $version") {
+    throw 'Native adapter did not identify itself truthfully.'
+}
+$adapterHelp = & $adapter --help
+Assert-NativeExit 'Native adapter help smoke test'
+if (($adapterHelp -join "`n") -notmatch 'Desktop launcher compatibility is unverified') {
+    throw 'Native adapter help omitted its compatibility boundary.'
+}
+$env:MAGPIE_BRIDGE_ADAPTER_TEST_EXE = $adapter
+
 # These synthetic tests do not start official Codex or contact model services.
+& go test -v -count=1 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge
+Assert-NativeExit 'Native stdio adapter unit and lifecycle tests'
+& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapterStdio$'
+Assert-NativeExit 'Repeated compiled adapter stdio and EOF tests'
 & go test -v -count=1 -timeout=10m -tags nogui ./internal/appserverbridge
 Assert-NativeExit 'Native bridge tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestRun(WindowsReapsStartedBackendFamilies|InterruptPreservesOtherBackendAndAllowsFollowup)$'
@@ -109,7 +140,6 @@ try {
 }
 Write-Output 'Strict startup regression failed with CREATE_SUSPENDED removed, as required.'
 
-$version = 'v0.1.3035-bridge.' + $head.Substring(0, 12)
 $binary = Join-Path $package 'magpie-app-server-bridge-windows-amd64.exe'
 & go build -tags nogui -trimpath -buildvcs=true -ldflags "-s -w -X main.version=$version" -o $binary .
 Assert-NativeExit 'Build Windows CLI'
@@ -137,6 +167,7 @@ Copy-Item -LiteralPath 'docs/examples/app-server-bridge.example.json' -Destinati
 Copy-Item -LiteralPath 'docs/subsystems/app-server-bridge.md' -Destination (Join-Path $package 'DESIGN.md')
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText((Join-Path $package 'build-info.txt'), $buildInfo + "`n", $utf8)
+[IO.File]::WriteAllText((Join-Path $package 'adapter-build-info.txt'), $adapterBuildInfo + "`n", $utf8)
 $goVersion = & go version
 Assert-NativeExit 'Read Go version'
 $manifest = [ordered]@{
@@ -151,27 +182,35 @@ $manifest = [ordered]@{
     version = $version
     buildFlags = '-tags nogui -trimpath -buildvcs=true -ldflags=-s -w -X main.version=<version>'
     executableSHA256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+    nativeAdapterSHA256 = (Get-FileHash -LiteralPath $adapter -Algorithm SHA256).Hash.ToLowerInvariant()
+    nativeAdapterBuildFlags = '-tags nogui -trimpath -buildvcs=true -ldflags=-s -w -X main.buildVersion=<version>'
     signing = 'unsigned'
-    checks = @('Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help')
-    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
+    checks = @('Native stdio adapter unit and lifecycle tests', 'Repeated compiled adapter initialize and EOF tests', 'Desktop bootstrap auth/config local rejection tests', 'Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help', 'Built native adapter truthful help and version')
+    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration and exact launcher arguments', 'Desktop-required auth/config bootstrap support', 'Native adapter OS-signal handling', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
 }
 [IO.File]::WriteAllText((Join-Path $package 'BUILD.json'), ($manifest | ConvertTo-Json -Depth 5) + "`n", $utf8)
 $readme = @'
-Magpie experimental app-server bridge, Windows amd64 CLI
+Magpie experimental app-server bridge, Windows amd64 executables
 
-This unsigned executable was built from the exact source commit in BUILD.json.
+These unsigned executables were built from the exact source commit in BUILD.json.
 LICENSE and THIRD_PARTY_NOTICES are copied unchanged from that commit.
 SHA256SUMS checks every packaged file except SHA256SUMS itself. The GitHub run
 also records the uploaded ZIP digest. Checksums are not a code signature.
 
-This is the nogui Magpie executable with an experimental app-server-bridge
-subcommand. It is not a standalone official Codex installation. It bundles no
-official Codex backend, credentials, AIHub account or Desktop integration.
+magpie-app-server-bridge-windows-amd64.exe is the nogui Magpie executable
+with an experimental app-server-bridge subcommand. Do not point a Desktop
+executable override at this ordinary Magpie binary.
+magpie-codex-bridge-windows-amd64.exe is the separate bridge-only native stdio
+adapter. It accepts only reviewed app-server stdio forms, needs the explicit
+MAGPIE_APP_SERVER_BRIDGE_CONFIG process environment, and truthfully identifies
+itself as an experimental adapter. It does not establish a Desktop launch hook.
+Neither executable is a standalone official Codex installation. The package
+bundles no official Codex backend, credentials, AIHub account or integration.
 The example configuration contains placeholders, not usable authentication.
-See DESIGN.md and the source documentation for behavior and remaining limits.
+See DESIGN.md for arguments, unsupported auth/config RPCs and remaining limits.
 
-CI runs synthetic bridge/CLI/process tests, static checks, a startup mutation
-check and a help smoke test.
+CI runs synthetic bridge/CLI/process tests, static checks, a startup mutation,
+compiled adapter initialize/EOF tests and truthful help/version smoke tests.
 It does not establish working Desktop integration, real tools/model inference,
 full-suite correctness or complete Windows process-tree containment.
 
