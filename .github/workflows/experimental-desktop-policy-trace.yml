@@ -11,7 +11,8 @@ on:
       - build/test-desktop-cold-start.ps1
       - build/test-desktop-public-catalog.ps1
       - build/inspect-desktop-static-metadata*.mjs
-      - build/inspect-desktop-public-plugin-metadata*.mjs
+      - build/inspect-desktop-public-plugin-*.mjs
+      - build/vendor/acorn-8.15.0/**
       - internal/appserverbridge/**
       - cmd/magpie-codex-bridge/**
 
@@ -114,6 +115,36 @@ jobs:
           test "$status" -ne 0
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestPublicPluginOverridesRecognizedWithoutMutation'
           echo 'The old observer does not recognize these fixed public keys; the current code must pass next.'
+      - name: Check out exact pre-AST and pre-shape diagnostic behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: e1ceddf7542163cfaacdc975a72387e51b2aeb82
+          path: .ci-modern-js-baseline
+          persist-credentials: false
+      - name: Prove complete modern JavaScript parsing fails behaviorally on the old scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/inspect-desktop-public-plugin-ast-red.test.mjs .ci-modern-js-baseline/build/
+          status=0
+          output="$(cd .ci-modern-js-baseline && node --test --test-reporter=tap build/inspect-desktop-public-plugin-ast-red.test.mjs 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- 'not ok 1 - complete modern JavaScript retains public plugin literals'
+          printf '%s\n' "$output" | grep -F -- 'complete modern JavaScript must retain the public identity after a v-flag regexp'
+          echo 'The old scanner fails the modern-syntax behavior assertion; missing imports or APIs do not qualify.'
+      - name: Prove fixed plugin path shapes fail behaviorally on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/config_plugin_shape_red_test.go .ci-modern-js-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-modern-js-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestPluginShapeUnknownPathMetadataRed$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestPluginShapeUnknownPathMetadataRed'
+          printf '%s\n' "$output" | grep -F -- 'unknown plugin path missing fixed app_tool_enabled shape'
+          echo 'The old observer fails the fixed-shape assertion; compilation or setup failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |
@@ -130,7 +161,7 @@ jobs:
             exit 1
           fi
           pwsh -NoProfile -File build/test-desktop-public-catalog.ps1
-          node --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs
+          node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs
           go test -race -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           go vet -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
 
@@ -198,7 +229,7 @@ jobs:
         run: |
           powershell -NoProfile -File build/test-desktop-public-catalog.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Public catalog validation tests failed.' }
-          node --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs
+          node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Static metadata inspector tests failed.' }
           go test -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           if ($LASTEXITCODE -ne 0) { throw 'Windows observer tests failed.' }

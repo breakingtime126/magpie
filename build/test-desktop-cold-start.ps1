@@ -36,8 +36,97 @@ function Assert-PublicCanonicalJSON([string]$text, $value) {
         throw 'Noncanonical or duplicate metadata JSON fields.'
     }
 }
+function Get-PublicPluginShapes {
+    return @('direct_enabled', 'direct_auto_provision', 'mcp_server_enabled', 'app_enabled',
+        'app_destructive_enabled', 'app_open_world_enabled', 'app_default_tools_enabled', 'app_tool_enabled')
+}
+function Assert-PublicPluginShapeEvent($record) {
+    if (-not $record.PSObject.Properties['configPluginShape']) { return }
+    Assert-PublicShape $record @('seq', 'pid', 'kind', 'class', 'configShape', 'configFamily',
+        'configLiteral', 'configLexicalRoot', 'configKeyClasses', 'configPluginShape')
+    Assert-PublicInteger $record.seq 1 4294967296
+    Assert-PublicInteger $record.pid 1 4294967296
+    foreach ($name in @('kind', 'class', 'configShape', 'configFamily', 'configLiteral', 'configLexicalRoot')) {
+        if ($record.$name -isnot [string]) { throw 'Invalid plugin path shape label type.' }
+    }
+    if ($record.kind -cne 'argv_config' -or $record.class -cne 'unknown' -or
+        $record.configShape -cne 'other_key' -or $record.configFamily -cne 'other' -or
+        $record.configLexicalRoot -cne 'plugins' -or $record.configPluginShape -isnot [string] -or
+        @(Get-PublicPluginShapes) -cnotcontains $record.configPluginShape -or
+        $record.configLiteral -isnot [string] -or @('bool_true', 'bool_false', 'other') -cnotcontains $record.configLiteral) {
+        throw 'Invalid unknown plugin path shape metadata.'
+    }
+    $classes = $record.configKeyClasses
+    if ($classes -isnot [System.Array] -or $classes.Count -lt 1 -or $classes.Count -gt 3 -or
+        $classes[0] -cne 'at_sign') { throw 'Plugin path shape has inconsistent key classes.' }
+    $allowed = @('at_sign', 'ascii_space', 'ascii_control')
+    $previous = -1
+    foreach ($label in $classes) {
+        if ($label -isnot [string]) { throw 'Invalid plugin path shape class type.' }
+        $index = [Array]::IndexOf($allowed, $label)
+        if ($index -le $previous) { throw 'Plugin path shape has an invalid or duplicate key class.' }
+        $previous = $index
+    }
+}
+function Assert-PublicAnalysis($analysis, $sources) {
+    Assert-PublicShape $analysis @('parser', 'methods', 'constructions')
+    if ($analysis.parser -isnot [string] -or $analysis.parser -cne 'acorn_8_15_0') {
+        throw 'Unreviewed public JavaScript parser.'
+    }
+    $methodNames = @('getConfigOverrides', 'startupCommand')
+    if ($analysis.methods -isnot [System.Array] -or $analysis.methods.Count -ne 2) {
+        throw 'Invalid public method diagnostic count.'
+    }
+    $seenMethods = @{}
+    $methodIndex = 0
+    [long]$definitionTotal = 0
+    [long]$unresolvedTotal = 0
+    foreach ($method in $analysis.methods) {
+        Assert-PublicShape $method @('name', 'definitions', 'unresolved')
+        if ($method.name -isnot [string] -or $methodNames -cnotcontains $method.name -or
+            $seenMethods.ContainsKey($method.name) -or $method.name -cne $methodNames[$methodIndex]) {
+            throw 'Invalid, unordered or duplicate public method diagnostic.'
+        }
+        Assert-PublicInteger $method.definitions 0 4000000
+        Assert-PublicInteger $method.unresolved 0 4000000
+        if ($method.definitions -eq 0 -and $method.unresolved -ne 0) {
+            throw 'Unresolved constructions have no public method definition.'
+        }
+        $definitionTotal += $method.definitions
+        $unresolvedTotal += $method.unresolved
+        if ($definitionTotal -gt 4000000 -or $unresolvedTotal -gt 4000000) {
+            throw 'Public method diagnostic aggregate bound exceeded.'
+        }
+        $seenMethods[$method.name] = $method.definitions
+        $methodIndex++
+    }
+    if ($analysis.constructions -isnot [System.Array] -or $analysis.constructions.Count -gt 128) {
+        throw 'Invalid public construction diagnostic count.'
+    }
+    $shapes = @(Get-PublicPluginShapes)
+    [long]$constructionTotal = 0
+    $seenConstructions = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($construction in $analysis.constructions) {
+        Assert-PublicShape $construction @('source', 'method', 'form', 'shape', 'value', 'count')
+        Assert-PublicInteger $construction.source 0 ($sources.Count - 1)
+        Assert-PublicInteger $construction.count 1 4000000
+        $constructionTotal += $construction.count
+        if ($constructionTotal -gt 4000000) { throw 'Public construction aggregate bound exceeded.' }
+        if ($sources[$construction.source].kind -cne 'asar_js' -or
+            $construction.method -isnot [string] -or $methodNames -cnotcontains $construction.method -or
+            $construction.form -isnot [string] -or @('literal', 'template', 'concat') -cnotcontains $construction.form -or
+            $construction.shape -isnot [string] -or $shapes -cnotcontains $construction.shape -or
+            $construction.value -isnot [string] -or @('bool_true', 'bool_false', 'dynamic', 'other') -cnotcontains $construction.value) {
+            throw 'Invalid public construction classification or source.'
+        }
+        if ($seenMethods[$construction.method] -eq 0) { throw 'Construction has no public method definition.' }
+        $identity = @($construction.source, $construction.method, $construction.form,
+            $construction.shape, $construction.value) -join '|'
+        if (-not $seenConstructions.Add($identity)) { throw 'Duplicate public construction diagnostic.' }
+    }
+}
 function ConvertTo-PublicPluginEnvironment($catalog, [string]$packageSha256) {
-    Assert-PublicShape $catalog @('schema', 'status', 'archiveSha256', 'keysSha256', 'coverage', 'sources', 'candidates')
+    Assert-PublicShape $catalog @('schema', 'status', 'archiveSha256', 'keysSha256', 'coverage', 'sources', 'candidates', 'analysis')
     Assert-PublicInteger $catalog.schema 1 1
     Assert-PublicHash $packageSha256
     Assert-PublicHash $catalog.archiveSha256
@@ -82,6 +171,7 @@ function ConvertTo-PublicPluginEnvironment($catalog, [string]$packageSha256) {
     if ($jsSources -gt $catalog.coverage.jsComplete -or $manifestSources -gt $catalog.coverage.manifestFiles) {
         throw 'Public source provenance is incomplete.'
     }
+    Assert-PublicAnalysis $catalog.analysis $catalog.sources
     $keys = @()
     $previous = $null
     foreach ($candidate in $catalog.candidates) {
@@ -546,7 +636,7 @@ namespace DesktopColdProbe {
         }
         $readStatic = New-Object Diagnostics.ProcessStartInfo
         $readStatic.FileName = $node
-        $readStatic.Arguments = '"' + $inspector + '" --package-root "' + $app.InstallLocation + '"'
+        $readStatic.Arguments = '--max-old-space-size=512 "' + $inspector + '" --package-root "' + $app.InstallLocation + '"'
         $readStatic.UseShellExecute = $false
         $readStatic.CreateNoWindow = $true
         $readStatic.RedirectStandardOutput = $true
@@ -986,7 +1076,7 @@ requires_openai_auth = false
                 'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
                 'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
-                'publicPluginCatalogSHA256', 'publicPluginRef')
+                'publicPluginCatalogSHA256', 'publicPluginRef', 'configPluginShape')
             $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
@@ -1363,6 +1453,7 @@ requires_openai_auth = false
                         $record = $line | ConvertFrom-Json
                         Assert-PublicCanonicalJSON $line $record
                     } catch { Block 'Observer metadata is not canonical valid JSON.' }
+                    Assert-PublicPluginShapeEvent $record
                     Assert-PublicPluginEvent $record $publicPluginCatalog $seenPublicCatalogs
                     foreach ($property in $record.PSObject.Properties) {
                         if ($keys -cnotcontains $property.Name) { Block 'Observer emitted an unexpected metadata field.' }
@@ -1409,6 +1500,7 @@ requires_openai_auth = false
                                 'configFamily' { $configFamilies }
                                 'configLexicalRoot' { $configFamilies }
                                 'configLiteral' { $configLiterals }
+                                'configPluginShape' { Get-PublicPluginShapes }
                             }
                             if ($allowed -cnotcontains $value) { Block 'Observer emitted an unreviewed metadata label.' }
                         }

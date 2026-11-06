@@ -297,8 +297,8 @@ Normal JSONL startup rejected the extra assignment, and none of the 16 frozen
 public plugin keys matched. A green diagnostic job did not establish a working
 bridge.
 
-The next diagnostic obtains candidates only from the same verified installed
-public package. The stdlib-only Node reader scans bounded packed JavaScript
+The source-bound diagnostic obtains candidates only from the same verified
+installed public package. The Node reader scans bounded packed JavaScript
 under `.vite/build/` and four fixed marketplace-manifest layouts under
 `app/resources/plugins/<marketdir>/`. It does not execute package code, read
 private homes or environment values, search accounts, or fetch plugin catalogs.
@@ -376,3 +376,93 @@ fail behaviorally against the pre-catalog `a54fd10a` code; its explicit Linux
 skip does not count as red evidence. These tests never install Desktop or contact an
 account; the separate fresh Windows observation retains the signed-package,
 registration, GUI-session and no-account gates.
+
+
+### Modern JavaScript parsing and construction diagnostics
+
+The source-bound observation at
+`e1ceddf7542163cfaacdc975a72387e51b2aeb82` completed with all three
+experimental workflows green. Its
+[policy trace](https://github.com/breakingtime126/magpie/actions/runs/42200500315)
+still did not identify the normal-launch plugin override or obtain a successful
+initialize response. One-shot startup exited zero; normal startup exited 2.
+The original signed package, bundled backend and production restrictions were
+unchanged.
+
+The public table had 16 keys from one bundled marketplace manifest. Of 29
+selected JavaScript files, 20 parsed and nine were skipped; all three fixed
+startup chunks reported `unsupported_lexical_syntax`. The scan covered
+12,431,638 source bytes. This establishes a parser coverage gap, not evidence
+that the unidentified runtime key is absent from the package.
+
+
+The public scanner now uses the pinned Acorn 8.15.0 full JavaScript parser,
+vendored with its MIT license under
+[build/vendor/acorn-8.15.0](../../build/vendor/acorn-8.15.0/README.md).
+The offline tests verify the parser and license bytes against their reviewed
+upstream Git blob and SHA-256 identities. No npm install, runtime download,
+package import, dynamic code evaluation or execution of Desktop source is
+introduced. The separate three-entry legacy launcher analysis remains labeled
+by its existing lexical status; it is not silently reclassified as an AST
+result.
+
+The public analysis must finish parsing a whole source before retaining that
+file's literal candidates or construction diagnostics. Syntax failure leaves
+no partial candidates or constructions from the file. Parser-time token, node,
+depth and deadline guards supplement the existing file and source-byte limits.
+The inspector process also has a 512 MiB V8 old-space limit and the existing
+120-second wall timeout; that heap setting is not a claim to bound total
+process memory. Parser exceptions and stderr are captured and never published
+as source excerpts or raw error messages. Resource exhaustion blocks the
+diagnostic rather than being interpreted as an empty catalog.
+
+The additive `publicPlugins.analysis` object identifies the parser as
+`acorn_8_15_0`. Its two ordered method rows describe `getConfigOverrides`
+and `startupCommand`. `definitions` counts recognized function or method
+definitions; `unresolved` counts maximal plugin-prefixed string, template or
+concatenation expressions in those definitions whose paths cannot be classified.
+Unresolved expressions can outnumber definitions. Both totals are independently
+bounded at four million.
+
+At most 128 coalesced construction rows carry only a verified ASAR source index,
+one of those two method labels, `literal`/`template`/`concat` form, a fixed
+path-shape label, `bool_true`/`bool_false`/`dynamic`/`other` value class,
+and a positive count. Their total count is independently bounded at four
+million. Sources can support these diagnostics without contributing a candidate
+key. These are static syntax observations, not evidence that a method executes
+or that any expression becomes a launch argument.
+
+The eight shared shape labels are `direct_enabled`, `direct_auto_provision`,
+`mcp_server_enabled`, `app_enabled`, `app_destructive_enabled`,
+`app_open_world_enabled`, `app_default_tools_enabled` and `app_tool_enabled`.
+They name only reviewed path forms. No plugin, marketplace, MCP server, app or
+tool identity, source expression, arbitrary property name or constructed value
+is emitted by a shape diagnostic. The catalog continues to accept only its
+original two direct public-key forms; nested shapes do not become candidates
+or extend production argument support.
+
+For comparison, the observer can attach the optional `configPluginShape`
+label to an existing unknown config argument. It remains unknown. Fixed known
+keys and catalog-reference events never carry this label. PowerShell validates
+the exact unknown-event shape and its relationship to the existing plugin root,
+at-sign character classification and literal-value class. The key and original
+argument bytes are never printed or changed. A shape match cannot establish
+identity, plugin trust, runtime activation, authentication or successful startup.
+
+PowerShell validates all new fields, scalar types, bounds, method order,
+source kinds and indices, and duplicate construction tuples before the existing
+original-MSIX provenance gate permits publication. Its tests cover valid forms,
+aggregate boundaries, impossible method/count relationships, mixed runtime
+event fields, malformed types and deliberate canary strings. A modern-syntax
+synthetic ASAR exercises the actual Node report through PowerShell on Linux and
+Windows. New behavioral red fixtures run against the exact `e1ceddf7` code
+for both modern JavaScript parsing and unknown plugin path shapes; their expected
+assertion messages must appear, so compile/setup failures do not count. Earlier
+red fixtures and the guarded Windows native-exit handling remain intact.
+
+The policy workflow watches the vendored parser, AST helper and standalone test
+files explicitly. Changes to these diagnostics run their Linux/Windows tests
+there without adding duplicate package installation to the separate baseline
+cold-start workflow. All prior signature, archive/source binding, account-free
+session, minimal-environment, per-PID catalog and production-policy boundaries
+remain in force.

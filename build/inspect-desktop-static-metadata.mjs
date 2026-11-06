@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { analyzePublicPluginAST, PublicPluginASTLimit, PLUGIN_METHODS } from './inspect-desktop-public-plugin-ast.mjs';
 
 export const TARGETS = Object.freeze([
   '.vite/build/early-bootstrap-339-fe39e0119f57b81e.js',
@@ -385,7 +386,6 @@ const MARKETPLACE_SUFFIXES = Object.freeze([
 ]);
 const PUBLIC_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const PUBLIC_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-const PUBLIC_KEY = /^plugins\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.(enabled|auto_provision)$/;
 
 function publicSourcePath(entry) {
   return /^\.vite\/build\/[A-Za-z0-9][A-Za-z0-9_.-]{0,190}\.js$/.test(entry);
@@ -401,42 +401,18 @@ function publicKeysForIdentity(identity) {
   return keys;
 }
 
-// Names enter this dictionary only from complete literal tokens in a public
-// package source. These are source candidates, not startup or semantic proof.
-// A lexical failure discards every candidate collected from that entire file.
+// Public-source extraction requires a complete, bounded AST. The legacy three
+// fixed-entry analyzer above remains separate and is not the catalog parser.
+function analyzePublicPluginMetadata(source) {
+  try { return analyzePublicPluginAST(source); }
+  catch (error) {
+    if (error instanceof PublicPluginASTLimit) fail(error.code);
+    throw error;
+  }
+}
 export function analyzePublicPluginSource(source) {
-  const lexer = new Lexer(source);
-  const found = new Map();
-  function add(key, derivation) {
-    if (key.length > PUBLIC_PLUGIN_LIMITS.key) fail('public_catalog_limit');
-    if (!found.has(key)) found.set(key, derivation);
-    if (found.size > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
-  }
-  try {
-    for (let token; (token = lexer.next());) {
-      if (!literal(token) || token.dynamic) continue;
-      if (PUBLIC_ID.test(token.value)) {
-        for (const key of publicKeysForIdentity(token.value)) add(key, 'id_literal');
-      }
-      const equals = token.value.indexOf('=');
-      const key = equals < 0 ? token.value : token.value.slice(0, equals);
-      const rhs = equals < 0 ? '' : token.value.slice(equals + 1);
-      if (PUBLIC_KEY.test(key) && (equals < 0 || rhs === '' || rhs === 'true' || rhs === 'false')) {
-        add(key, 'key_literal');
-      }
-    }
-    return {
-      complete: true,
-      candidates: [...found].map(([key, derivation]) => ({ key, derivation })),
-    };
-  } catch (error) {
-    if (!(error instanceof InspectionError)) throw error;
-    if (error.code === 'token_limit' || PUBLIC_PLUGIN_BLOCK_CODES.includes(error.code)) {
-      if (error.code === 'token_limit') fail('public_source_limit');
-      throw error;
-    }
-    return { complete: false, candidates: [] };
-  }
+  const { complete, candidates } = analyzePublicPluginMetadata(source);
+  return { complete, candidates };
 }
 
 function hashDescriptor(fd, size) {
@@ -521,15 +497,22 @@ export function inspectPublicPluginPackage(packageRoot) {
     const archive = packageNode(root, 'app/resources/app.asar', 'file');
     const before = fs.lstatSync(archive), fd = fs.openSync(archive, 'r');
     const sources = [], candidates = new Map();
+    const analysis = {
+      parser: 'acorn_8_15_0',
+      methods: PLUGIN_METHODS.map(name => ({ name, definitions: 0, unresolved: 0 })),
+      constructions: [],
+    };
     const coverage = { jsFiles: 0, jsComplete: 0, jsSkipped: 0, sourceBytes: 0, manifestFiles: 0 };
-    function addSource(kind, sourcePath, hash, found) {
+    function addSource(kind, sourcePath, hash, found, constructions = []) {
       const fresh = found.filter(item => !candidates.has(item.key));
-      if (fresh.length === 0) return;
+      if (fresh.length === 0 && constructions.length === 0) return;
       if (sources.length >= PUBLIC_PLUGIN_LIMITS.sources ||
           candidates.size + fresh.length > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
       const sourceIndex = sources.length;
       sources.push({ kind, path: sourcePath, sha256: hash });
       for (const item of fresh) candidates.set(item.key, { ...item, source: sourceIndex });
+      if (analysis.constructions.length + constructions.length > 128) fail('public_catalog_limit');
+      for (const item of constructions) analysis.constructions.push({ source: sourceIndex, ...item });
     }
     let archiveSha256;
     try {
@@ -547,10 +530,19 @@ export function inspectPublicPluginPackage(packageRoot) {
             coverage.sourceBytes + info.size > PUBLIC_PLUGIN_LIMITS.total) fail('public_source_limit');
         const bytes = readExact(fd, info.size, info.start);
         coverage.sourceBytes += bytes.length;
-        const analyzed = analyzePublicPluginSource(decode(bytes));
+        const analyzed = analyzePublicPluginMetadata(decode(bytes));
         if (!analyzed.complete) { coverage.jsSkipped++; continue; }
         coverage.jsComplete++;
-        addSource('asar_js', entry, sha256(bytes), analyzed.candidates);
+        for (let i = 0; i < analysis.methods.length; i++) {
+          analysis.methods[i].definitions += analyzed.methods[i].definitions;
+          analysis.methods[i].unresolved += analyzed.methods[i].unresolved;
+        }
+        addSource('asar_js', entry, sha256(bytes), analyzed.candidates, analyzed.constructions);
+        for (const total of [
+          analysis.methods.reduce((sum, item) => sum + item.definitions, 0),
+          analysis.methods.reduce((sum, item) => sum + item.unresolved, 0),
+          analysis.constructions.reduce((sum, item) => sum + item.count, 0),
+        ]) if (total > LIMITS.tokens) fail('public_source_limit');
       }
       if (!unchanged(opened, fs.fstatSync(fd)) || !unchanged(opened, fs.lstatSync(archive))) {
         fail('public_archive_changed');
@@ -584,7 +576,7 @@ export function inspectPublicPluginPackage(packageRoot) {
     return {
       schema: 1, status: coverage.jsSkipped ? 'partial' : 'complete',
       archiveSha256, keysSha256: publicPluginKeysDigest(ordered.map(item => item.key)),
-      coverage, sources, candidates: ordered,
+      coverage, sources, candidates: ordered, analysis,
     };
   } catch (error) {
     return { schema: 1, status: 'blocked', reason: codeOf(error) };

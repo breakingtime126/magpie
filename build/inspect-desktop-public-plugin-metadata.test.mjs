@@ -77,9 +77,9 @@ test('comments, regex, escaped or interpolated names never make public candidate
   assert.deepEqual(analyzePublicPluginSource(source), { complete: true, candidates: [] });
 });
 
-test('all candidates in a lexically incomplete file are discarded', () => {
-  for (const tail of ['const x="unterminated', 'if(x){} /ambiguous/.test(x);',
-    'const r=/[[a] "hidden@market" /b]/v;', 'const r=/[a]/v;']) {
+test('all candidates in a syntactically incomplete file are discarded', () => {
+  for (const tail of ['const x="unterminated', 'const broken=;',
+    'const r=/[[a] "hidden@market" /b]/v;', 'const duplicate=1;const duplicate=2;']) {
     const found = analyzePublicPluginSource('const a="earlier@market";' + tail);
     assert.equal(found.complete, false);
     assert.deepEqual(found.candidates, []);
@@ -153,10 +153,10 @@ test('candidate deduplication is stable and preserves one actual source', t => {
   assert.deepEqual(report.candidates.map(x => x.source), [0, 0]);
 });
 
-test('partial scanning names no key from an ambiguous file and does not claim absence', t => {
+test('partial scanning names no key from an invalid file and does not claim absence', t => {
   const root = fixture(t);
   writeArchive(root, [[JS, 'const x="good@market";'],
-    [OTHER_JS, 'const x="SYNTHETIC_PRIVATE@market"; if(x){} /ambiguous/;']]);
+    [OTHER_JS, 'const x="SYNTHETIC_PRIVATE@market"; const broken=;']]);
   const report = inspectPublicPluginPackage(root);
   assert.equal(report.status, 'partial');
   assert.equal(report.coverage.jsFiles, 2);
@@ -307,10 +307,13 @@ test('line comments stop at every JavaScript line terminator', () => {
   }
 });
 
-test('unsupported Annex B HTML comments invalidate all file candidates', () => {
-  for (const html of ['<!-- "comment@market"\nconst x=1;', '\n--> "comment@market"\nconst x=1;']) {
+test('Annex B HTML comments parse without exposing their text', () => {
+  for (const html of ['<!-- "comment@market"\nconst y=1;', '\n--> "comment@market"\nconst y=1;']) {
     const found = analyzePublicPluginSource('const x="earlier@market";\n' + html);
-    assert.deepEqual(found, { complete: false, candidates: [] });
+    assert.equal(found.complete, true);
+    assert.deepEqual(found.candidates.map(item => item.key), [
+      'plugins.earlier@market.enabled', 'plugins.earlier@market.auto_provision',
+    ]);
   }
   assert.equal(analyzePublicPluginSource('const x="<!--"; const y="actual@market";').complete, true);
 });
@@ -319,7 +322,11 @@ test('Unicode identifier boundaries never expose regex contents after labeled co
   for (const [keyword, end] of [['break', '\u2028'], ['continue', '\u2029'], ['break', '\r']]) {
     const source = 'const p="earlier@market"; outer: for (;;) { ' + keyword +
       ' outer' + end + '/"regex@market"/.test(""); }';
-    assert.deepEqual(analyzePublicPluginSource(source), { complete: false, candidates: [] });
+    const found = analyzePublicPluginSource(source);
+    assert.equal(found.complete, true);
+    assert.deepEqual(found.candidates.map(item => item.key), [
+      'plugins.earlier@market.enabled', 'plugins.earlier@market.auto_provision',
+    ]);
   }
 });
 
@@ -327,4 +334,47 @@ test('ordinary decrement followed by greater-than is not an HTML comment', () =>
   const found = analyzePublicPluginSource('let i=2;while(i-->0){} const p="actual@market";');
   assert.equal(found.complete, true);
   assert.equal(found.candidates.length, 2);
+});
+
+test('construction-only files have bound source records without invented identities', t => {
+  const root = fixture(t), tick = String.fromCharCode(96);
+  const source = 'class C{getConfigOverrides(){return [' + tick +
+    'plugins.$' + '{SYNTHETIC_PRIVATE_ID}.apps.$' + '{app}.enabled=true' + tick + ']}}';
+  const before = writeArchive(root, [[JS, source]]);
+  const report = inspectPublicPluginPackage(root);
+  assert.equal(report.status, 'complete');
+  assert.equal(report.archiveSha256, digest(before));
+  assert.deepEqual(report.candidates, []);
+  assert.deepEqual(report.sources, [{ kind: 'asar_js', path: JS, sha256: digest(source) }]);
+  assert.deepEqual(report.analysis, {
+    parser: 'acorn_8_15_0',
+    methods: [{ name: 'getConfigOverrides', definitions: 1, unresolved: 0 },
+      { name: 'startupCommand', definitions: 0, unresolved: 0 }],
+    constructions: [{ source: 0, method: 'getConfigOverrides', form: 'template',
+      shape: 'app_enabled', value: 'bool_true', count: 1 }],
+  });
+  assert.ok(!JSON.stringify(report).includes('SYNTHETIC_PRIVATE_ID'));
+  assert.deepEqual(fs.readFileSync(path.join(root, 'app/resources/app.asar')), before);
+});
+
+test('a malformed method source contributes neither definitions nor construction rows', t => {
+  const root = fixture(t);
+  writeArchive(root, [[JS, 'const p="good@market";'],
+    [OTHER_JS, 'function getConfigOverrides(){return "plugins.secret@market.enabled=true"} ???']]);
+  const report = inspectPublicPluginPackage(root);
+  assert.equal(report.status, 'partial');
+  assert.ok(report.analysis.methods.every(item => item.definitions === 0 && item.unresolved === 0));
+  assert.deepEqual(report.analysis.constructions, []);
+  assert.ok(!JSON.stringify(report).includes('secret'));
+});
+
+test('construction rows in different files retain separate source provenance', t => {
+  const root = fixture(t), tick = String.fromCharCode(96);
+  const source = 'function startupCommand(){return ' + tick + 'plugins.$' + '{id}.enabled=true' + tick + '}';
+  writeArchive(root, [[JS, source], [OTHER_JS, source]]);
+  const report = inspectPublicPluginPackage(root);
+  assert.equal(report.sources.length, 2);
+  assert.equal(report.analysis.methods[1].definitions, 2);
+  assert.deepEqual(report.analysis.constructions.map(item => item.source), [0, 1]);
+  assert.ok(report.analysis.constructions.every(item => item.count === 1));
 });

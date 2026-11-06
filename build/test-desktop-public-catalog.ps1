@@ -11,7 +11,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
-    'Assert-PublicCanonicalJSON', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
+    'Assert-PublicCanonicalJSON', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Assert-PublicAnalysis', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
     'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
@@ -49,6 +49,14 @@ function New-Catalog {
         keysSha256 = Fixture-Digest ([Text.Encoding]::UTF8.GetBytes(($keys -join "`n")))
         coverage = [pscustomobject]@{ jsFiles = 1; jsComplete = 1; jsSkipped = 0; sourceBytes = 64; manifestFiles = 0 }
         sources = @([pscustomobject]@{ kind = 'asar_js'; path = '.vite/build/public-identity.js'; sha256 = ('b' * 64) })
+        analysis = [pscustomobject]@{
+            parser = 'acorn_8_15_0'
+            methods = @(
+                [pscustomobject]@{ name='getConfigOverrides'; definitions=0; unresolved=0 },
+                [pscustomobject]@{ name='startupCommand'; definitions=0; unresolved=0 }
+            )
+            constructions = @()
+        }
         candidates = @($keys | ForEach-Object { [pscustomobject]@{ key = $_; source = 0; derivation = 'id_literal' } })
     }
 }
@@ -133,6 +141,97 @@ $invalidCatalogs = [ordered]@{
 foreach ($name in $invalidCatalogs.Keys) {
     $mutation = $invalidCatalogs[$name]
     Expect-Reject $name { $c = New-Catalog; & $mutation $c; ConvertTo-PublicPluginEnvironment $c $packageHash }
+}
+function New-Construction {
+    return [pscustomobject]@{
+        source=0; method='getConfigOverrides'; form='template'
+        shape='direct_enabled'; value='bool_true'; count=1
+    }
+}
+Expect-Pass 'all fixed construction labels remain metadata only' {
+    $c = New-Catalog
+    $c.analysis.methods[0].definitions = 1
+    $c.analysis.constructions = @(
+        foreach ($shape in @('direct_enabled', 'direct_auto_provision', 'mcp_server_enabled', 'app_enabled',
+            'app_destructive_enabled', 'app_open_world_enabled', 'app_default_tools_enabled', 'app_tool_enabled')) {
+            foreach ($form in @('literal', 'template', 'concat')) {
+                foreach ($value in @('bool_true', 'bool_false', 'dynamic', 'other')) {
+                    [pscustomobject]@{ source=0; method='getConfigOverrides'; form=$form; shape=$shape; value=$value; count=1 }
+                }
+            }
+        }
+    )
+    $before = ConvertTo-PublicPluginEnvironment (New-Catalog) $packageHash
+    $after = ConvertTo-PublicPluginEnvironment $c $packageHash
+    if ($before -cne $after) { throw 'Construction diagnostics changed the candidate handoff.' }
+}
+Expect-Pass 'analysis aggregate bounds are independent and inclusive' {
+    $c = New-Catalog
+    foreach ($method in $c.analysis.methods) { $method.definitions=2000000; $method.unresolved=2000000 }
+    $first = New-Construction; $first.count=2000000
+    $second = New-Construction; $second.form='concat'; $second.count=2000000
+    $c.analysis.constructions = @($first, $second)
+    ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+$invalidAnalysis = [ordered]@{
+    'definitions aggregate bound' = { param($c) foreach ($m in $c.analysis.methods) { $m.definitions=2000001 } }
+    'unresolved aggregate bound' = { param($c) foreach ($m in $c.analysis.methods) { $m.definitions=1; $m.unresolved=2000001 } }
+    'construction aggregate bound' = {
+        param($c)
+        $first = New-Construction; $first.count=2000001
+        $second = New-Construction; $second.form='concat'; $second.count=2000001
+        $c.analysis.constructions = @($first, $second)
+    }
+    'missing analysis' = { param($c) $c.PSObject.Properties.Remove('analysis') }
+    'unknown analysis field' = { param($c) $c.analysis | Add-Member -NotePropertyName text -NotePropertyValue PRIVATE_CANARY }
+    'unknown parser' = { param($c) $c.analysis.parser = 'legacy' }
+    'case parser' = { param($c) $c.analysis.parser = 'ACORN_8_15_0' }
+    'method count' = { param($c) $c.analysis.methods = @($c.analysis.methods[0]) }
+    'unordered methods' = { param($c) $c.analysis.methods = @($c.analysis.methods[1], $c.analysis.methods[0]) }
+    'unresolved without definition' = { param($c) $c.analysis.methods[1].unresolved = 1 }
+    'construction without definition' = { param($c) $c.analysis.methods[0].definitions = 0 }
+    'duplicate method' = { param($c) $c.analysis.methods[1].name = 'getConfigOverrides' }
+    'unknown method' = { param($c) $c.analysis.methods[1].name = 'PRIVATE_CANARY' }
+    'case method' = { param($c) $c.analysis.methods[1].name = 'StartupCommand' }
+    'extra method field' = { param($c) $c.analysis.methods[0] | Add-Member -NotePropertyName source -NotePropertyValue PRIVATE_CANARY }
+    'string definitions' = { param($c) $c.analysis.methods[0].definitions = '1' }
+    'negative definitions' = { param($c) $c.analysis.methods[0].definitions = -1 }
+    'definitions bound' = { param($c) $c.analysis.methods[0].definitions = 4000001 }
+    'fractional unresolved' = { param($c) $c.analysis.methods[0].unresolved = 0.5 }
+    'unresolved bound' = { param($c) $c.analysis.methods[0].unresolved = 4000001 }
+    'scalar constructions' = { param($c) $c.analysis.constructions = New-Construction }
+    'construction row limit' = { param($c) $c.analysis.constructions = @(1..129 | ForEach-Object { New-Construction }) }
+    'duplicate construction tuple' = { param($c) $c.analysis.constructions += $c.analysis.constructions[0] }
+    'unknown construction field' = { param($c) $c.analysis.constructions[0] | Add-Member -NotePropertyName identifier -NotePropertyValue PRIVATE_CANARY }
+    'string construction source' = { param($c) $c.analysis.constructions[0].source = '0' }
+    'missing construction source' = { param($c) $c.analysis.constructions[0].PSObject.Properties.Remove('source') }
+    'construction source out of range' = { param($c) $c.analysis.constructions[0].source = 1 }
+    'construction from manifest' = {
+        param($c)
+        $c.sources[0].kind = 'marketplace_manifest'
+        $c.sources[0].path = 'app/resources/plugins/public-market/.agents/plugins/marketplace.json'
+        $c.coverage.manifestFiles = 1
+        foreach ($candidate in $c.candidates) { $candidate.derivation = 'manifest_identity' }
+    }
+    'unknown construction method' = { param($c) $c.analysis.constructions[0].method = 'PRIVATE_CANARY' }
+    'unknown construction form' = { param($c) $c.analysis.constructions[0].form = 'call' }
+    'unknown construction shape' = { param($c) $c.analysis.constructions[0].shape = 'PRIVATE_CANARY' }
+    'case construction shape' = { param($c) $c.analysis.constructions[0].shape = 'DIRECT_ENABLED' }
+    'raw construction value' = { param($c) $c.analysis.constructions[0].value = 'PRIVATE_CANARY' }
+    'numeric construction value' = { param($c) $c.analysis.constructions[0].value = 1 }
+    'zero construction count' = { param($c) $c.analysis.constructions[0].count = 0 }
+    'floating construction count' = { param($c) $c.analysis.constructions[0].count = 1.0 }
+    'construction count bound' = { param($c) $c.analysis.constructions[0].count = 4000001 }
+}
+foreach ($name in $invalidAnalysis.Keys) {
+    $mutation = $invalidAnalysis[$name]
+    Expect-Reject $name {
+        $c = New-Catalog
+        $c.analysis.methods[0].definitions = 1
+        $c.analysis.constructions = @(New-Construction)
+        & $mutation $c
+        ConvertTo-PublicPluginEnvironment $c $packageHash
+    }
 }
 Expect-Reject 'catalog handoff byte limit' {
     $c = New-Catalog
@@ -221,6 +320,55 @@ foreach ($name in $invalidEvents.Keys) {
         $e = New-Reference; & $mutation $e; Assert-PublicPluginEvent $e $c $seen
     }
 }
+function New-UnknownPluginShape {
+    return [pscustomobject]@{
+        seq=3; pid=100; kind='argv_config'; class='unknown'; configShape='other_key'; configFamily='other'
+        configLiteral='bool_true'; configLexicalRoot='plugins'; configKeyClasses=@('at_sign')
+        configPluginShape='direct_enabled'
+    }
+}
+Expect-Pass 'runtime shapes expose no dynamic identity or raw value' {
+    foreach ($shape in @(Get-PublicPluginShapes)) {
+        foreach ($literal in @('bool_true', 'bool_false', 'other')) {
+            $event = New-UnknownPluginShape
+            $event.configPluginShape = $shape
+            $event.configLiteral = $literal
+            $event.configKeyClasses = @('at_sign', 'ascii_space', 'ascii_control')
+            Assert-PublicPluginShapeEvent $event
+        }
+    }
+}
+Expect-Pass 'runtime shape omission preserves old event API' {
+    Assert-PublicPluginShapeEvent ([pscustomobject]@{ kind='argv_config'; class='unknown' })
+    Assert-PublicPluginShapeEvent ([pscustomobject]@{ kind='argv_config'; configKey='known'; configValue='other' })
+    Assert-PublicPluginShapeEvent ([pscustomobject]@{ kind='argv_config'; publicPluginRef=1; configValue='bool_true' })
+}
+$invalidShapes = [ordered]@{
+    'runtime unknown shape' = { param($e) $e.configPluginShape = 'PRIVATE_CANARY' }
+    'runtime case shape' = { param($e) $e.configPluginShape = 'DIRECT_ENABLED' }
+    'runtime nonstring shape' = { param($e) $e.configPluginShape = @('direct_enabled') }
+    'runtime wrong kind' = { param($e) $e.kind = 'rpc' }
+    'runtime wrong class' = { param($e) $e.class = 'request' }
+    'runtime nonstring kind' = { param($e) $e.kind = @('argv_config') }
+    'runtime raw key field' = { param($e) $e | Add-Member -NotePropertyName configKey -NotePropertyValue PRIVATE_CANARY }
+    'runtime catalog ref mixed' = { param($e) $e | Add-Member -NotePropertyName publicPluginRef -NotePropertyValue 1 }
+    'runtime raw value field' = { param($e) $e | Add-Member -NotePropertyName configValue -NotePropertyValue PRIVATE_CANARY }
+    'runtime wrong root' = { param($e) $e.configLexicalRoot = 'other' }
+    'runtime wrong family' = { param($e) $e.configFamily = 'plugins' }
+    'runtime no assignment' = { param($e) $e.configShape = 'no_equals' }
+    'runtime quoted key' = { param($e) $e.configShape = 'quoted_key' }
+    'runtime no at-sign class' = { param($e) $e.configKeyClasses = @('ascii_space') }
+    'runtime extra class' = { param($e) $e.configKeyClasses = @('at_sign', 'slash') }
+    'runtime duplicate class' = { param($e) $e.configKeyClasses = @('at_sign', 'at_sign') }
+    'runtime unordered classes' = { param($e) $e.configKeyClasses = @('at_sign', 'ascii_control', 'ascii_space') }
+    'runtime string classes' = { param($e) $e.configKeyClasses = 'at_sign' }
+    'runtime raw literal' = { param($e) $e.configLiteral = 'PRIVATE_CANARY' }
+    'runtime missing classification' = { param($e) $e.PSObject.Properties.Remove('configLiteral') }
+}
+foreach ($name in $invalidShapes.Keys) {
+    $mutation = $invalidShapes[$name]
+    Expect-Reject $name { $e = New-UnknownPluginShape; & $mutation $e; Assert-PublicPluginShapeEvent $e }
+}
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('public-catalog-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporary | Out-Null
 function New-PackageFixture([string]$variant) {
@@ -270,7 +418,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const { inspectPackage } = await import(pathToFileURL(process.argv[2]).href);
 const root = process.argv[3];
-const body = Buffer.from('const x="browser@openai-curated-remote";');
+const body = Buffer.from('const modern=/[a&&b]/v; const x="browser@openai-curated-remote";');
 const header = Buffer.from(JSON.stringify({files:{'.vite':{files:{build:{files:{
   'public-plugin-fixture.js':{size:body.length,offset:'0'}
 }}}}}}));
@@ -287,7 +435,7 @@ fs.writeFileSync(path.join(root, 'app', 'resources', 'app.asar'), archive);
 process.stdout.write(JSON.stringify(inspectPackage(root)));
 '@
         [IO.File]::WriteAllText($generatorPath, $generator, (New-Object Text.UTF8Encoding($false)))
-        $nodeOutput = @(& node $generatorPath $modulePath $fixtureRoot)
+        $nodeOutput = @(& node --max-old-space-size=512 $generatorPath $modulePath $fixtureRoot)
         if ($LASTEXITCODE -ne 0 -or $nodeOutput.Count -ne 1) { throw 'Node fixture failed.' }
         $json = [string]$nodeOutput[0]
         $nodeReport = $json | ConvertFrom-Json

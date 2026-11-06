@@ -50,6 +50,7 @@ type event struct {
 	ConfigValue               string   `json:"configValue,omitempty"`
 	ConfigShape               string   `json:"configShape,omitempty"`
 	ConfigFamily              string   `json:"configFamily,omitempty"`
+	ConfigPluginShape         string   `json:"configPluginShape,omitempty"`
 	ConfigLiteral             string   `json:"configLiteral,omitempty"`
 	ConfigLexicalRoot         string   `json:"configLexicalRoot,omitempty"`
 	ConfigKeyClasses          []string `json:"configKeyClasses,omitempty"`
@@ -392,6 +393,11 @@ func (o *observer) argv(args []string) {
 			if e.Class == "unknown" && o.publicPlugins != nil {
 				if matched, known := o.publicPlugins.argument(value); known {
 					e = matched
+				}
+			}
+			if e.Class == "unknown" {
+				if key, _, hasEquals := strings.Cut(value, "="); hasEquals {
+					e.ConfigPluginShape = observedPluginPathShape(key)
 				}
 			}
 			o.emit(e)
