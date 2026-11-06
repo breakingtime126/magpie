@@ -46,6 +46,7 @@ type event struct {
 	ExperimentalAPI       *bool  `json:"experimentalApi,omitempty"`
 	Flag                  string `json:"flag,omitempty"`
 	ConfigKey             string `json:"configKey,omitempty"`
+	ConfigValue           string `json:"configValue,omitempty"`
 	ChildPID              int    `json:"child_pid,omitempty"`
 	Exit                  *int   `json:"exit,omitempty"`
 }
@@ -378,12 +379,10 @@ func (o *observer) argv(args []string) {
 			} else {
 				_, value, _ = strings.Cut(args[i], "=")
 			}
-			key, _, _ := strings.Cut(value, "=")
-			switch key {
-			case "features.code_mode_host", "features.prefer_mxc",
-				"features.windows_sandbox_service", "cli_auth_credentials_store":
-				o.emit(event{Kind: "argv_config", ConfigKey: key})
-			default:
+			key, configValue, _ := strings.Cut(value, "=")
+			if kind, known := observedConfigTypes[key]; known {
+				o.emit(event{Kind: "argv_config", ConfigKey: key, ConfigValue: observedConfigValue(kind, configValue)})
+			} else {
 				o.emit(event{Kind: "argv_config", Class: "unknown"})
 			}
 		default:

@@ -146,3 +146,22 @@ The transport observer deliberately classifies that shape as `unrecognized`
 without recording its body. That label alone is not a startup failure. Interpret
 it with the unchanged bytes, production validator, child exit code and complete
 output EOF, and examine a later JSONL invocation as separate evidence.
+
+## Static override identification
+
+At `f5e0a7e9f90876d583341b3fa7500797c28e809e`, the official one-shot
+startup path exited zero. Desktop then launched normal JSONL mode with an extra
+`-c` key outside the four initial metadata labels. The adapter rejected the
+arguments and exited 2 before reading configuration or starting JSONL backends.
+An initialize request seen by the observer is not proof that the adapter read it.
+[Observed run](https://github.com/breakingtime126/magpie/actions/runs/42176293112).
+
+A subsequent metadata-only refinement freezes 233 exact public config names
+from the reviewed official schema at `c40729ea5cf8e947481b130c59807273eda2f8e9`,
+blob `f5149c6efdf7ab9f1550aa0639dd5f2401205f25`. The finite feature names plus
+selected boolean/enum keys are not a wildcard. Known literal booleans and allowed
+per-key enum spellings become fixed classification labels. Objects, paths,
+credentials and other values remain redacted; unknown or dynamic keys remain
+unknown. Nothing is fetched from a schema during observation. This does not add
+production argument support or authorize any setting change. The exact actual
+override must be observed and its semantics reviewed before support is added.
