@@ -34,12 +34,12 @@ func TestDesktopFixtureAllowsUnsequencedSyntheticTurns(t *testing.T) {
 
 func TestDesktopFixtureRejectsUnsafeInput(t *testing.T) {
 	cases := map[string][]byte{
-		"arbitrary": desktopRequest("hello"),
+		"arbitrary":   desktopRequest("hello"),
 		"other route": desktopRequest("synthetic-beta-first"),
-		"url": desktopRequest("synthetic-alpha-https://example.com"),
-		"duplicate": []byte(`{"model":"gpt-5.5","model":"gpt-5.5","stream":true,"input":[]}`),
-		"tool": []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"function_call_output","output":"synthetic-alpha-first"}]}`),
-		"image": []byte(`{"model":"gpt-5.5","stream":true,"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com"}]}]}`),
+		"url":         desktopRequest("synthetic-alpha-https://example.com"),
+		"duplicate":   []byte(`{"model":"gpt-5.5","model":"gpt-5.5","stream":true,"input":[]}`),
+		"tool":        []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"function_call_output","output":"synthetic-alpha-first"}]}`),
+		"image":       []byte(`{"model":"gpt-5.5","stream":true,"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com"}]}]}`),
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -96,7 +96,7 @@ func TestDesktopInputRejectsWrongAssistantAndToolItems(t *testing.T) {
 		`{"role":"assistant","content":[{"type":"output_text","text":"fixture-answer-beta"}]}`,
 		`{"type":"function_call","name":"shell"}`,
 	} {
-		raw := json.RawMessage(`[{"role":"user","content":[{"type":"input_text","text":"synthetic-alpha-first"}]},`+item+`]`)
+		raw := json.RawMessage(`[{"role":"user","content":[{"type":"input_text","text":"synthetic-alpha-first"}]},` + item + `]`)
 		if desktopInputAllowed(raw, "alpha") {
 			t.Fatal("wrong-route or tool history accepted")
 		}

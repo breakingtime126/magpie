@@ -138,7 +138,7 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 		if err := writeNew(filepath.Join(ch, "config.toml"), config); err != nil {
 			return err
 		}
-		backends = append(backends, map[string]any{"id": f.name, "provider": f.name+"_provider", "command": codex, "home": home, "codex_home": ch, "startup_probe_sha256": nativeSHA})
+		backends = append(backends, map[string]any{"id": f.name, "provider": f.name + "_provider", "command": codex, "home": home, "codex_home": ch, "startup_probe_sha256": nativeSHA})
 	}
 	config := map[string]any{"backends": backends, "working_directory": cwd, "control_plane": controlMode, "control_home": control}
 	if err := writeNew(filepath.Join(scratch, "bridge.json"), jsonBytes(config)); err != nil {

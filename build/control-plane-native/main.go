@@ -278,4 +278,3 @@ func writeNew(path string, data []byte) error {
 }
 
 func jsonBytes(value any) []byte { data, _ := json.Marshal(value); return data }
-
