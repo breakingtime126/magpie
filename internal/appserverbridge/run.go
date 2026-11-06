@@ -47,6 +47,15 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if cfg.RequirementsRead != "" {
+		// Check both reviewed executables before either process can read or
+		// refresh account/policy state. This is not an OS security boundary.
+		for _, backend := range cfg.Backends {
+			if !startupProbeDigestMatches(parent, backend) {
+				return errors.New("config requirements backend digest verification failed")
+			}
+		}
+	}
 	workingDirectory := cfg.WorkingDirectory
 	if workingDirectory != "" {
 		var err error
@@ -59,6 +68,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err != nil {
 		return err
 	}
+	router.configRequirementsRead = cfg.RequirementsRead == ConfigRequirementsCompareSafe
 	ctx, cancel := context.WithCancel(parent)
 	processContext, stopProcesses := context.WithCancel(context.WithoutCancel(parent))
 	defer stopProcesses()

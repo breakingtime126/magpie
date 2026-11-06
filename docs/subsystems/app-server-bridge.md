@@ -523,39 +523,132 @@ can revoke tokens, delete configured authentication, clear policy caches and
 update some provider settings before a later error occurs. Failure is not proof
 that nothing changed. Supporting inspection does not authorize those actions.
 
-### Remaining JSONL bootstrap boundaries
+### Explicit comparison of public config requirements
 
-Two real 0.166 methods deliberately remain unsupported:
+The JSONL `configRequirements/read` operation is disabled by default. After
+reviewing and authorizing policy inspection of both configured authorities, set
+`config_requirements_read` to `compare-safe-v0.166`. This is independent of
+`startup_probe`; enabling either does not enable the other. Both backends must
+have a separately reviewed `startup_probe_sha256` executable pin. That existing
+field now also pins the requirements-read backend. The normal runner verifies
+**both** binaries before starting either process when this mode is enabled.
+A digest is not proof of official origin or protection against same-user
+executable/configuration replacement.
 
-- `getAuthStatus`: `includeToken=false` prevents token export, but even
-  `refreshToken=false` calls an auth path that can proactively refresh ChatGPT
-  credentials. The bridge does not fabricate status or describe this as a
-  guaranteed no-refresh read. See the [handler](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/request_processors/account_processor.rs#L1097-L1169)
-  and [auth manager](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/login/src/auth/manager.rs#L2495-L2513).
-- `configRequirements/read`: its complete response can contain serialized
-  provider definitions with credential-bearing values. Reading requirements
-  also reloads application network policy. Comparing both responses does not
-  make secret export or policy refresh safe. See [provider mapping](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/request_processors/config_processor.rs#L445-L465),
-  [transparent string serialization](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/utils/redacted-string/src/lib.rs#L9-L12),
-  and [policy refresh](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/application_network.rs#L68-L128).
+This mode is scoped to Codex 0.166.0-alpha.6, source commit
+`4f093f2748667f3b0e6a07e3d4055121cbd3ce64`. The source oracle is the complete
+[experimental Rust response model](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server-protocol/src/protocol/v2/config.rs#L411-L461)
+and [handler](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/request_processors/config_processor.rs#L445-L606).
+The stable generated schema omits experimental fields and is not the complete
+oracle for an experimental-enabled Desktop connection.
 
-`config/read` and account-login mutations remain unsupported too. Returning
-only the primary child's configuration would misrepresent the other child's
-provider and permission context. Tests assert these methods reject locally,
-preserve request IDs, send nothing to either backend and leave supported calls
-usable afterward. If the exact Desktop bootstrap needs them, this remains an
-explicit integration blocker rather than an invented successful response.
+Client requests may omit params, use null, or use an empty object. Other params
+are rejected. Empty objects from the inspected Desktop wrapper are adapted to
+`params:null` for each backend: the official request type is `Option<()>`.
+Every accepted read queries both children afresh, waits for both successful
+results and compares their complete validated public views. No cache, fallback,
+single-provider projection, or policy intersection is used.
 
-Next acceptance requires explicit permission for any real startup inspection,
-review of unsupported managed-policy cases, additional effective non-sensitive
-argument shapes, and a sanitized
-RPC method/field-shape trace from the exact Desktop version. Such evidence must
-omit token values, auth files, request content and private environment values.
-Review additional interface support first, then test in an authorized isolated
-Desktop instance with reversible process-scoped configuration. Actual company
-software/network approval, backend authentication and live model/tool checks
-remain separate. No cloud artifact is an alternative to a denied local access
-or installation policy.
+Both results must contain exactly `supportsIndependentSpeedModes:true` and
+`requirements`. Genuine null/null is accepted. A non-null requirements object
+must contain all 34 reviewed fields, with no unknown or missing fields. The
+validator accepts a deliberately narrow typed subset: login/approval/sandbox/
+web-search constraints, supported boolean controls, independent speed-feature
+requirements, feedback/browser-import controls, and reviewed agent/application
+network rules. It preserves restrictive values such as false, an empty
+`allowedLoginMethods` array, and an enabled application network with no allowed
+hosts. Null, empty objects and empty arrays are never treated as interchangeable.
+
+Network hosts are restricted to lowercase ASCII DNS labels; agent rules may
+add the reviewed wildcard prefixes, application rules may not. The canonical
+domain map and derived allowed/denied arrays must agree. Ports and controls are
+type-checked. Unix-socket rules, application storage, arbitrary feature keys and
+unsupported host formats are rejected rather than ignored.
+
+Opaque or credential-bearing branches must remain null in this first mode:
+model/provider overrides, custom ChatGPT URL, developer instructions, permission
+profiles/defaults, computer/browser-use definitions, hooks, auto-review, models,
+state/log/catalog paths and OTEL. A non-null unsupported branch fails even when
+the two backends return identical values. In particular, ordinary
+[RedactedString serialization](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/utils/redacted-string/src/lib.rs#L9-L69)
+does not hide provider bearer tokens, header values or authentication arguments;
+browser-extension request headers can likewise contain credentials. The bridge
+does not forward them, replace them with null, or echo them in errors.
+
+Raw envelopes/results are bounded to 64 KiB, nested containers to depth 12 and
+256 entries each, and the combined accepted results to 64 KiB. Duplicate keys,
+invalid UTF-8, malformed types and unsupported fields fail closed. Comparison
+ignores object-key order but preserves array order and all accepted values.
+Only the complete agreed result is returned. Errors are fixed bridge messages;
+untrusted backend error/data bodies are not forwarded for this method. Failed
+fanouts release retained policy payloads and keep bounded late-response state.
+
+This comparison is not an atomic snapshot across accounts and does not prove
+all hidden policy is identical. For example, the API intentionally omits core
+network header injections. Each official child still enforces its own current
+policy. An `account/updated` notification does not make an earlier result a
+lasting grant: the next client read queries both children again.
+
+**The read can have side effects.** It reloads configuration and publishes
+application network policy; cloud-policy initialization may use authentication,
+recover credentials and write caches. An already initialized cloud snapshot
+does not necessarily make a new HTTP request on every read, but there is no
+pure/no-refresh RPC option. Both authorities must be authorized before enabling
+the mode. Failed or partial fanouts are not transactional and are not retried by
+the bridge. No real policy service, credentials or account is used in the tests.
+
+This JSONL mode does not widen the separate one-shot
+`compare-unrestricted-v0.166` startup probe. That probe still rejects non-null
+requirements. Supporting a managed Desktop's full startup therefore requires
+additional reviewed work, not simply enabling this read option.
+
+### Observed Desktop bootstrap and remaining boundaries
+
+A later authorized read-only inspection of installed Desktop 26.1029.7803.0
+confirmed its ordinary local JSONL initialize uses client name `Codex Desktop`,
+`experimentalApi:true`, MCP UI/form extensions, `requestAttestation:true` and
+`explicitGatewayOauth:true`. This differs from the one-shot identity
+`codex_desktop`. The inspected network-requirements startup gate runs after the
+main connection becomes connected; unrecovered read failure can show an error
+and exit the application. Account updates trigger another requirements read.
+These are source-code construction and control-flow observations, not a runtime
+trace or successful bridge/GUI acceptance.
+
+**The bridge still rejects those two true capability flags.** They are not
+silently removed or changed to false:
+
+- `explicitGatewayOauth:true` prevents automatic gateway browser authorization.
+  It does not disable existing-credential refresh. Supporting it honestly also
+  needs an explicit gateway/account control-plane authority and real read/login/
+  cancellation ownership; these flows are not implemented here.
+- `requestAttestation:true` enables an unscoped `attestation/generate` request
+  with a 100 ms deadline, including before a thread-start response. Its lifecycle
+  does not emit `serverRequest/resolved`. Generic approval forwarding is not a
+  sufficient relay. Critically, the official provider's attestation eligibility
+  checks cached ChatGPT authentication, not the destination URL, so a custom
+  provider may request a Desktop proof token too. No such token is forwarded
+  without a reviewed recipient policy and dedicated bounded request handling.
+
+See the [capability implementation](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/request_processors/initialize_processor.rs),
+[attestation protocol](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/attestation.rs)
+and [provider eligibility](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/model-provider/src/provider.rs#L621-L625).
+
+`getAuthStatus` remains unsupported. The inspected local main connection
+defaults to `ensureAuth:false`; remote connections may enable it. It is therefore
+not a universal local handshake step. Even `includeToken:false,refreshToken:false`
+can reach credential-refresh behavior, so the bridge does not fabricate status
+or call it a guaranteed offline read. `config/read`, gateway/account login
+mutations and external-token refresh remain unsupported. The inspected
+`config/read` wrapper waits for readiness but is not a fixed serial step in the
+main initialization function. Returning only one backend's full configuration
+would misrepresent the other backend's provider and permission context.
+
+The new read-mode tests use synthetic peers with an ordinary fixture initialize;
+they do not remove the real Desktop capability blocker. Further acceptance needs
+reviewed attestation destination/binding evidence, an account authority design,
+any remaining sanitized request/notification dependency trace, and separately
+authorized real Desktop testing. No cloud artifact is a workaround for a denied
+local software, installation or network policy.
 
 The Windows CI package includes both the ordinary Magpie binary and the separate
 native adapter, with per-file checksums and build provenance. It runs the built
@@ -566,5 +659,7 @@ both synthetic children assert normalized controls and their own provider pins.
 Synthetic one-shot tests additionally exercise the compiled adapter, both digest
 pins, complete result validation, disabled mode and pre-config sign-out rejection.
 These checks do not test Desktop's launch hook, official startup effects, model traffic, or native
-OS-signal delivery to the adapter. Unsupported authentication and configuration
-bootstrap methods are covered by local-rejection regressions, not mocked success.
+OS-signal delivery to the adapter. Unsupported authentication/configuration flows remain covered by local-rejection
+regressions. The explicitly enabled requirements mode adds complete-policy
+validation, fresh dual-backend comparisons and native/compiled transport tests;
+none of these are represented as actual Desktop startup acceptance.

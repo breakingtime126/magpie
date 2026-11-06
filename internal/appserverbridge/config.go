@@ -18,6 +18,10 @@ import (
 type Config struct {
 	Backends []Backend `json:"backends"`
 
+	// RequirementsRead permits both reviewed backends to refresh policy state.
+	// It is separate from the one-shot startup inspection opt-in.
+	RequirementsRead string `json:"config_requirements_read,omitempty"`
+
 	// StartupProbe is disabled unless explicitly enabled after review of both
 	// authorities and the official probe's credential/network/cache effects.
 	StartupProbe string `json:"startup_probe,omitempty"`
@@ -39,7 +43,8 @@ type Backend struct {
 	Models     []json.RawMessage `json:"models,omitempty"`
 	InheritEnv []string          `json:"inherit_env,omitempty"`
 
-	// StartupProbeSHA256 pins a separately reviewed official executable.
+	// StartupProbeSHA256 pins the reviewed executable for startup inspection
+	// and the separately enabled config requirements read mode.
 	StartupProbeSHA256 string `json:"startup_probe_sha256,omitempty"`
 }
 
@@ -73,6 +78,9 @@ func LoadConfig(input io.Reader) (Config, error) {
 // Validate checks isolation before any subprocess starts. All paths must exist;
 // symlinks are resolved so aliases cannot silently share account state.
 func (cfg Config) Validate() error {
+	if cfg.RequirementsRead != "" && cfg.RequirementsRead != ConfigRequirementsCompareSafe {
+		return errors.New("unsupported config_requirements_read mode")
+	}
 	if cfg.StartupProbe != "" && cfg.StartupProbe != StartupProbeCompareUnrestricted {
 		return errors.New("unsupported startup_probe mode")
 	}
@@ -90,10 +98,10 @@ func (cfg Config) Validate() error {
 	ids := map[string]bool{}
 	var homes []string
 	for i, b := range cfg.Backends {
-		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" {
+		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" {
 			digest, err := hex.DecodeString(b.StartupProbeSHA256)
 			if err != nil || len(digest) != 32 {
-				return errors.New("startup probe requires a SHA256 pin for each backend")
+				return errors.New("policy inspection requires a SHA256 pin for each backend")
 			}
 		}
 		if !backendName.MatchString(b.ID) || ids[b.ID] {

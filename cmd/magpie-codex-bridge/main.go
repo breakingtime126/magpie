@@ -36,6 +36,9 @@ It is emitted as features.code_mode_host.enabled=true to preserve existing struc
 Startup inspection requires explicit startup_probe configuration and matching supported backend results.
 It may refresh authentication, fetch policy and update backend caches. Sign-out is unsupported.
 Startup inspection cannot be combined with --stdio or --listen.
+JSONL configRequirements/read is independently disabled unless config_requirements_read is enabled.
+That mode verifies both backend pins and returns only matching complete reviewed public policy views.
+It may refresh policy/authentication state. Desktop attestation/gateway capabilities remain unsupported.
 --check validates configuration without starting children or changing state.
 This is not the official Codex CLI. Desktop launcher compatibility is unverified.
 `

@@ -78,6 +78,11 @@ func fixtureServer() int {
 		if json.Unmarshal(scanner.Bytes(), &request) != nil {
 			return 3
 		}
+		if request.Method == "configRequirements/read" {
+			if handled, code := fixtureRequirementsRead(request.ID, scanner.Bytes()); handled && code != 0 {
+				return code
+			}
+		}
 		if request.Method == "initialize" {
 			response := map[string]any{
 				"id": request.ID,

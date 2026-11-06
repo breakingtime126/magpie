@@ -90,7 +90,7 @@ func fixtureServer() {
 	provider := ""
 	turnNumber := 0
 	activeTurn := ""
-	if string(mode) == "conversations" || string(mode) == "interruptions" {
+	if string(mode) == "conversations" || string(mode) == "interruptions" || string(mode) == "requirements" {
 		var err error
 		provider, err = strconv.Unquote(strings.TrimPrefix(os.Args[3], "model_provider="))
 		if err != nil {
@@ -130,6 +130,13 @@ func fixtureServer() {
 		result := json.RawMessage(`{}`)
 		if method == "initialize" {
 			result = json.RawMessage(`{"userAgent":"fixture","platformFamily":"unix","platformOs":"linux"}`)
+		}
+		if method == "configRequirements/read" && string(mode) == "requirements" {
+			data, err := os.ReadFile(filepath.Join(home, "fixture-requirements"))
+			if err != nil {
+				os.Exit(12)
+			}
+			result = json.RawMessage(data)
 		}
 		if method == "model/list" {
 			result = json.RawMessage(`{"data":[],"nextCursor":null}`)

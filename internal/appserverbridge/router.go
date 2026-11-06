@@ -41,6 +41,8 @@ type page struct {
 // loop, never concurrently. Losing the connection loses its ownership map;
 // a new connection must discover saved threads with thread/list again.
 type Router struct {
+	configRequirementsRead bool
+
 	backends           []Backend
 	byID               map[string]Backend
 	phase              string
@@ -192,6 +194,20 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return []Delivery{fail(g.id, -32600, "initialize and initialized are required")}, nil
 	}
 	switch method {
+	case "configRequirements/read":
+		if !r.configRequirementsRead {
+			return []Delivery{fail(g.id, -32601, "config requirements inspection is disabled")}, nil
+		}
+		r.active[key] = true
+		r.activeBytes += g.size
+		g.remaining = len(r.backends)
+		out := []Delivery{}
+		for _, b := range r.backends {
+			// The pinned official request is Option<()>: absent/null, not {}.
+			// Only an empty client object is adapted to the same no-args call.
+			out = append(out, r.send(g, b.ID, nil))
+		}
+		return out, nil
 	case "environment/info", "environment/status":
 		// Environment IDs belong to each child's registry, not the model
 		// catalog or most recently used thread. Only the reserved local ID
@@ -389,6 +405,14 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		return nil, e
 	}
 	if method := text(m, "method"); method != "" {
+		// A response must not masquerade as a request/notification and bypass
+		// method-specific payload validation or sanitized error handling.
+		if _, present := m["result"]; present {
+			return nil, errors.New("backend message mixes request and response fields")
+		}
+		if _, present := m["error"]; present {
+			return nil, errors.New("backend message mixes request and response fields")
+		}
 		return r.serverMessage(backend, method, m)
 	}
 	key, e := idKey(m["id"])
@@ -410,6 +434,34 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	g := pending.group
 	if g.failed {
 		return nil, nil
+	}
+	if g.method == "configRequirements/read" {
+		// Validate the original envelope before a permissive map decoder can
+		// hide duplicate keys. Backend error bodies may contain credentials.
+		if validateRequirementsJSON(line) != nil || len(m) != 2 || !exists(m, "result") || exists(m, "error") {
+			return r.reject(g, -32000, "shared config requirements unavailable"), nil
+		}
+		result, err := validateConfigRequirementsResponse(m["result"])
+		if err != nil {
+			return r.reject(g, -32000, "shared config requirements unavailable"), nil
+		}
+		encoded := raw(result)
+		g.bytes += len(encoded)
+		if g.bytes > 64<<10 {
+			return r.reject(g, -32000, "shared config requirements exceed bridge size limit"), nil
+		}
+		g.results[backend] = []json.RawMessage{encoded}
+		g.remaining--
+		if g.remaining != 0 {
+			return nil, nil
+		}
+		first := g.results[r.backends[0].ID][0]
+		second := g.results[r.backends[1].ID][0]
+		if !sameJSON(first, second) {
+			return r.reject(g, -32000, "config requirements differ between backends"), nil
+		}
+		accepted, _ := parseObject(first)
+		return r.finish(g, accepted), nil
 	}
 	if exists(m, "error") && exists(m, "result") {
 		return nil, errors.New("backend response has both result and error")

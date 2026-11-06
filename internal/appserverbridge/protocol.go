@@ -127,6 +127,7 @@ func validateParams(method string, p object) error {
 		"turn/steer":              "threadId clientUserMessageId input expectedTurnId",
 		"account/read":            "refreshToken",
 		"account/rateLimits/read": "",
+		"configRequirements/read": "",
 		"environment/info":        "environmentId",
 		"environment/status":      "environmentId",
 	}
