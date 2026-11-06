@@ -90,6 +90,23 @@ namespace DesktopColdProbe {
     [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern int GetPackageFullName(IntPtr process, ref uint length, StringBuilder name);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern IntPtr CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool DeviceIoControl(IntPtr file, uint code, IntPtr input, uint inputLength,
+      byte[] output, uint outputLength, out uint returned, IntPtr overlapped);
+    public static uint AliasTag(string path) {
+      // Query only the documented reparse tag; never parse unsupported APPEXECLINK payload strings.
+      IntPtr h = CreateFileW(path, 8, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+      if (h == new IntPtr(-1)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+      try {
+        var bytes = new byte[16384]; uint returned;
+        if (!DeviceIoControl(h, 0x000900A8, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero))
+          throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        if (returned < 8) throw new InvalidOperationException("Truncated reparse metadata.");
+        return BitConverter.ToUInt32(bytes, 0);
+      } finally { CloseHandle(h); }
+    }
     public static string PackageFor(uint pid) {
       IntPtr h = OpenProcess(0x1000, false, pid);
       if (h == IntPtr.Zero) return null;
@@ -206,6 +223,15 @@ namespace DesktopColdProbe {
         Block 'This runner does not expose the required interactive input desktop; GUI cold start not attempted.'
     }
 
+    $aliasRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+    $aliasesBefore = @()
+    if (Test-Path -LiteralPath $aliasRoot) {
+        $aliasesBefore = @(Get-ChildItem -LiteralPath $aliasRoot -Filter 'chatgpt-desktop.exe' -Force -Recurse -Depth 1)
+    }
+    $report.aliasEntriesBeforeInstall = $aliasesBefore.Count
+    if ($Mode -eq 'bridge' -and $aliasesBefore.Count -ne 0) {
+        Block 'A Desktop alias already exists before installation; ownership would be ambiguous.'
+    }
     $report.stage = 'licensed-install'
     # Exactly the official offline license path. Never skip licensing, resign, or relax security.
     $provisioned = Add-AppxProvisionedPackage -Online -PackagePath $package -LicensePath $license -Regions all
@@ -237,8 +263,27 @@ namespace DesktopColdProbe {
         $desktopAliases = @($desktopApp.SelectNodes(".//*[local-name()='ExecutionAlias']") |
             ForEach-Object { $_.GetAttribute('Alias') })
         if ($desktopAliases -notcontains 'chatgpt-desktop.exe') { Block 'No reviewed official Desktop execution alias exists.' }
-        $alias = Join-Path $env:LOCALAPPDATA ('Microsoft\WindowsApps\' + $app.PackageFamilyName + '\chatgpt-desktop.exe')
-        if (-not (Test-Path -LiteralPath $alias)) { Block 'The package-qualified registered Desktop alias is unavailable.' }
+        # APPEXECLINK is not a regular file/symlink. Enumerate directory entries rather than
+        # treating Test-Path on a guessed family-qualified path as the registration contract.
+        $aliasEntries = @(Get-ChildItem -LiteralPath $aliasRoot -Filter 'chatgpt-desktop.exe' -Force -Recurse -Depth 1)
+        $report.aliasEntriesAfterInstall = @($aliasEntries | ForEach-Object {
+            [ordered]@{ relativePath = $_.FullName.Substring($aliasRoot.Length).TrimStart('\'); attributes = [string]$_.Attributes }
+        })
+        $qualified = Join-Path $aliasRoot ($app.PackageFamilyName + '\chatgpt-desktop.exe')
+        $rootAlias = Join-Path $aliasRoot 'chatgpt-desktop.exe'
+        $selectedAliases = @($aliasEntries | Where-Object { $_.FullName -eq $qualified })
+        $aliasQualified = $true
+        if ($selectedAliases.Count -eq 0) {
+            $selectedAliases = @($aliasEntries | Where-Object { $_.FullName -eq $rootAlias })
+            $aliasQualified = $false
+        }
+        if ($selectedAliases.Count -ne 1) { Block 'No unique newly registered Desktop execution alias was enumerated.' }
+        $alias = $selectedAliases[0].FullName
+        $aliasTag = [DesktopColdProbe.Native]::AliasTag($alias)
+        $report.aliasReparseTag = ('0x{0:X8}' -f $aliasTag)
+        if ($aliasTag -ne 0x8000001BL) { Block 'Registered entry is not the documented CreateProcess application-alias tag.' }
+        # The alias was absent before the signed install and is declared by its Desktop manifest.
+        # Verify runtime package identity after launch; do not infer ownership from undocumented payload strings.
         # Discover the intact installed backend, never copy credentials or execute an extracted EXE.
         $officialBackends = @(Get-ChildItem -LiteralPath $app.InstallLocation -Filter codex.exe -File -Recurse)
         $report.backendCandidates = @($officialBackends | ForEach-Object { $_.FullName.Substring($app.InstallLocation.Length).TrimStart('\') })
@@ -277,7 +322,7 @@ requires_openai_auth = false
             sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $BridgeExecutable).Hash.ToLowerInvariant()
             backendRelativePath = $officialBackend.FullName.Substring($app.InstallLocation.Length).TrimStart('\')
             backendSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant()
-            aliasName = 'chatgpt-desktop.exe'; aliasPackageQualified = $true
+            aliasName = 'chatgpt-desktop.exe'; aliasPackageQualified = $aliasQualified
             configuration = 'Two empty homes, loopback discard endpoints, no auth or startup compatibility opt-in.'
             processObservationLimit = 'Start event identifies the uniquely named configured bridge and package parent; a short-lived image path may not be queryable.'
         }
@@ -326,7 +371,7 @@ requires_openai_auth = false
         $started = [Diagnostics.Process]::Start($start)
         if (-not $started) { Block 'Registered alias did not return a process.' }
         $activationPid = $started.Id
-        $report.activation = [ordered]@{ method = 'registered-package-qualified-alias'; processId = $activationPid }
+        $report.activation = [ordered]@{ method = 'newly-registered-application-alias'; processId = $activationPid }
     }
     $windows = @()
     $observed = @{}

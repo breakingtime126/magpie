@@ -33,8 +33,14 @@ or production acceptance.
 The first phase deliberately does not set `CODEX_CLI_PATH`. Normal MSIX activation
 has no per-launch environment-block parameter, so setting an environment variable
 in PowerShell does not prove that Desktop receives it. The second job uses another fresh VM and the same SHA-pinned official package.
-It launches only the already registered, package-qualified `chatgpt-desktop.exe`
-alias declared under that manifest's Desktop application. Non-shell process
+It launches only the newly registered `chatgpt-desktop.exe` alias declared under
+that manifest's Desktop application. An identically named alias existing before
+installation is a blocker. Directory-entry enumeration checks the documented
+root alias location as well as the family-qualified location; the latter did not
+exist in the first real runner test. The selected entry must have the documented
+CreateProcess alias reparse tag `0x8000001B`. The probe never parses undocumented
+APPEXECLINK payload strings or fabricates an alias. Actual runtime package identity
+remains a separate mandatory check. Non-shell process
 creation supplies a minimal, non-secret, process-local environment containing
 the exact commit-built bridge path. It never writes user/system environment.
 
