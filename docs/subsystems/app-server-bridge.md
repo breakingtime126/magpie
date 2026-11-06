@@ -796,7 +796,11 @@ The stdlib-only [Python harness](../../build/test-official-runtime.py) uses
 fresh synthetic authentication fixtures matching the official test helper,
 local HTTP/WebSocket Responses endpoints and an unmodified official catalog
 entry. These fixtures are not real login credentials, model responses or
-proofs. Direct official-process controls distinguish an actual JSON-RPC error
+proofs. The fresh fixture configuration disables optional Apps and plugins
+using the release-supported `features.apps=false` and `features.plugins=false`
+settings. It does not use debug-only startup hooks or relax sandbox/network
+policy. Optional plugin inventory and Apps MCP startup are outside this test.
+Direct official-process controls distinguish an actual JSON-RPC error
 from a clearly labelled arbitrary test string. They do not construct a Windows
 attestation wrapper, generate a device proof or test upstream acceptance.
 

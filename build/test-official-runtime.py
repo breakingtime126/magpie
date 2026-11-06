@@ -511,6 +511,12 @@ enabled = false
 [cloud.skills]
 enabled = false
 
+# This narrow runtime fixture does not exercise optional Apps or plugins.
+# These are stable release settings, not hidden test hooks or policy overrides.
+[features]
+apps = false
+plugins = false
+
 [model_providers.{provider}]
 name = "Synthetic {provider}"
 base_url = "{endpoint.url}/v1"
@@ -525,6 +531,10 @@ supports_websockets = true
 
 
 def verify_fixture(endpoint, expected, prompts):
+    REPORT.setdefault("observations", []).append({
+        "endpoint": endpoint.name, "handshakes": endpoint.handshakes,
+        "request_count": len(endpoint.requests), "fixture_errors": endpoint.errors,
+    })
     need(not endpoint.errors, "fixture errors: " + json.dumps(endpoint.errors))
     need(endpoint.handshakes, "no Responses connection observed")
     need(any(h["transport"] == "websocket" for h in endpoint.handshakes),
