@@ -209,6 +209,18 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestGetAuthStatusMetadataKeepsAuthenticationOpaque'
           printf '%s\n' "$output" | grep -F -- 'exact authentication method metadata was not correlated'
           echo 'The old observer lacks this exact metadata label; raw auth data must remain opaque in current tests.'
+      - name: Prove exact null-only requirements reads fail on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/requirements_167_red_test.go .ci-mcp-catalog-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-mcp-catalog-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestExactRequirements167LiteralModeFreshNativeReads$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestExactRequirements167LiteralModeFreshNativeReads'
+          printf '%s\n' "$output" | grep -F -- 'exact 0.167 null-only requirements mode must validate: unsupported config_requirements_read'
+          echo 'The old bridge rejects the exact new mode; compilation or setup failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

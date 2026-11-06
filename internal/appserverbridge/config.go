@@ -97,21 +97,21 @@ func (cfg Config) Validate() error {
 	} else if cfg.GatewayOAuthProviderName != "" {
 		return errors.New("gateway OAuth provider display name requires the read-only mode")
 	}
-	if cfg.RequirementsRead != "" && cfg.RequirementsRead != ConfigRequirementsCompareSafe {
+	if cfg.RequirementsRead != "" && cfg.RequirementsRead != ConfigRequirementsCompareSafe && cfg.RequirementsRead != ConfigRequirementsCompareNull167 {
 		return errors.New("unsupported config_requirements_read mode")
 	}
 	if cfg.StartupProbe != "" && !StartupProbeSupported(cfg.StartupProbe) {
 		return errors.New("unsupported startup_probe mode")
 	}
-	// These options select contracts for the same executable pair. A newer
-	// one-shot profile cannot silently authorize the older JSONL contracts.
-	if cfg.StartupProbe == StartupProbeCompareUnrestricted167 &&
-		(cfg.RequirementsRead != "" || cfg.Attestation == AttestationUnavailable || cfg.GatewayOAuth == GatewayOAuthPrimaryRead) {
-		return errors.New("startup_probe version is incompatible with the selected JSONL compatibility modes")
-	}
-	if cfg.auth167() && (cfg.RequirementsRead != "" || cfg.Attestation == AttestationUnavailable ||
-		cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.StartupProbe == StartupProbeCompareUnrestricted) {
-		return errors.New("auth compatibility version is incompatible with the selected compatibility modes")
+	// All selected contracts describe the same executable pair. Each mode
+	// remains an independent opt-in; none authorizes another version's mode.
+	legacy := cfg.RequirementsRead == ConfigRequirementsCompareSafe ||
+		cfg.Attestation == AttestationUnavailable || cfg.GatewayOAuth == GatewayOAuthPrimaryRead ||
+		cfg.StartupProbe == StartupProbeCompareUnrestricted
+	current := cfg.RequirementsRead == ConfigRequirementsCompareNull167 ||
+		cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167
+	if legacy && current {
+		return errors.New("incompatible versions in selected compatibility modes")
 	}
 	if len(cfg.Backends) != 2 {
 		return errors.New("bridge requires exactly two backends")
@@ -272,7 +272,7 @@ func (cfg Config) auth167() bool {
 
 func (cfg Config) authCompatibility() authCompatibility {
 	return authCompatibility{
-		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167,
+		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167,
 		attestationUnavailable: cfg.Attestation == AttestationUnavailable || cfg.Attestation == AttestationUnavailable167,
 		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167,
 		gatewayProviderName:    cfg.GatewayOAuthProviderName,

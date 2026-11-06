@@ -41,7 +41,8 @@ type page struct {
 // loop, never concurrently. Losing the connection loses its ownership map;
 // a new connection must discover saved threads with thread/list again.
 type Router struct {
-	configRequirementsRead bool
+	configRequirementsRead    bool
+	configRequirementsNull167 bool
 
 	auth authCompatibility
 
@@ -129,6 +130,11 @@ func (r *Router) abandon(g *request) {
 // Client accepts one client JSONL message. Unsupported operations fail
 // locally, rather than guessing a backend or broadcasting user input.
 func (r *Router) Client(line []byte) ([]Delivery, error) {
+	// In the exact 0.167 requirements mode, ambiguous routing keys must be
+	// rejected before a map can hide a requirements method behind another.
+	if r.configRequirementsNull167 && validateServerEnvelopeKeys(line) != nil {
+		return []Delivery{fail(nil, -32600, "invalid client envelope")}, nil
+	}
 	m, err := parseObject(line)
 	if err != nil {
 		return []Delivery{fail(nil, -32700, "invalid JSONL message")}, nil
@@ -207,6 +213,9 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 	case "configRequirements/read":
 		if !r.configRequirementsRead {
 			return []Delivery{fail(g.id, -32601, "config requirements inspection is disabled")}, nil
+		}
+		if r.configRequirementsNull167 && validateRequirementsRequest167(line) != nil {
+			return []Delivery{fail(g.id, -32602, "invalid config requirements request")}, nil
 		}
 		r.active[key] = true
 		r.activeBytes += g.size
@@ -471,11 +480,18 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		if validateRequirementsJSON(line) != nil || len(m) != 2 || !exists(m, "result") || exists(m, "error") {
 			return r.reject(g, -32000, "shared config requirements unavailable"), nil
 		}
-		result, err := validateConfigRequirementsResponse(m["result"])
-		if err != nil {
-			return r.reject(g, -32000, "shared config requirements unavailable"), nil
+		encoded := m["result"]
+		if r.configRequirementsNull167 {
+			if validateConfigRequirementsNull167(encoded) != nil {
+				return r.reject(g, -32000, "shared config requirements unavailable"), nil
+			}
+		} else {
+			result, err := validateConfigRequirementsResponse(encoded)
+			if err != nil {
+				return r.reject(g, -32000, "shared config requirements unavailable"), nil
+			}
+			encoded = raw(result)
 		}
-		encoded := raw(result)
 		g.bytes += len(encoded)
 		if g.bytes > 64<<10 {
 			return r.reject(g, -32000, "shared config requirements exceed bridge size limit"), nil
@@ -489,6 +505,12 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		second := g.results[r.backends[1].ID][0]
 		if !sameJSON(first, second) {
 			return r.reject(g, -32000, "config requirements differ between backends"), nil
+		}
+		if r.configRequirementsNull167 {
+			// Return the genuine validated primary result, compacted only by
+			// JSON encoding. Never construct a successful null-policy view.
+			r.end(g)
+			return []Delivery{deliver("", object{"id": g.id, "result": first})}, nil
 		}
 		accepted, _ := parseObject(first)
 		return r.finish(g, accepted), nil

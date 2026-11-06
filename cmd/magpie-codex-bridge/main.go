@@ -41,8 +41,11 @@ The 0.167 profile cannot be combined with the v0.166 JSONL requirements/auth mod
 It may refresh authentication, fetch policy and update backend caches. Sign-out is unsupported.
 Startup inspection cannot be combined with --stdio or --listen.
 JSONL configRequirements/read is independently disabled unless config_requirements_read is enabled.
-That mode verifies both backend pins and returns only matching complete reviewed public policy views.
-It may refresh policy/authentication state.
+compare-safe-v0.166 returns matching complete reviewed public policy views for 0.166.0-alpha.6.
+compare-null-v0.167.0-alpha.3.2 accepts only matching native requirements:null and speed-mode support:true.
+Both modes verify both backend pins before either child and fan out a fresh native no-argument read.
+The exact 0.167 mode may accompany only the same-version startup/auth modes; each stays default off.
+It may refresh policy/authentication state. Empty homes and earlier probes do not establish a null policy.
 Independent pinned auth modes can report attestation unavailable and read only the primary gateway status.
 Exact 0.167 auth modes require unavailable-v0.167.0-alpha.3.2 or primary-read-only-v0.167.0-alpha.3.2.
 They preserve true capability flags; no proof token, OAuth login or full Desktop compatibility is provided.

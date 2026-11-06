@@ -68,7 +68,8 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err != nil {
 		return err
 	}
-	router.configRequirementsRead = cfg.RequirementsRead == ConfigRequirementsCompareSafe
+	router.configRequirementsRead = cfg.RequirementsRead != ""
+	router.configRequirementsNull167 = cfg.RequirementsRead == ConfigRequirementsCompareNull167
 	router.auth = cfg.authCompatibility()
 	ctx, cancel := context.WithCancel(parent)
 	processContext, stopProcesses := context.WithCancel(context.WithoutCancel(parent))

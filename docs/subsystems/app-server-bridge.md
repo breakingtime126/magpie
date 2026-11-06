@@ -468,7 +468,8 @@ reviewed native executable. Neither profile is a range, automatic version
 detection, or permission to enable another compatibility mode. Unknown profile
 names fail configuration validation. The new 0.167 profile cannot be combined
 with the legacy 0.166 requirements/auth modes. Only the separately selected,
-exact 0.167 auth modes below may accompany it. Cross-version configurations
+exact 0.167 null-only requirements and auth modes below may accompany it.
+Cross-version configurations
 fail before either child starts, for one-shot and JSONL launches alike. Existing
 0.166 combinations remain unchanged. The shipped example enables neither profile.
 Config validation checks pin syntax; the probe hashes **both** binaries before starting either one. A pin
@@ -526,7 +527,8 @@ still contains only `supportsIndependentSpeedModes` and `requirements` inside
 prefers `permissions.network` over legacy `network`, and the requirements schema
 adds nested OTEL `log_sse_deltas`. Neither change widens this null-only profile:
 **every** non-null requirements value still fails, even if both backends agree.
-This is not a policy merge or a review of the newer JSONL requirements/auth paths.
+This one-shot profile is not a policy merge and does not enable the separately
+reviewed JSONL requirements/auth modes described below.
 
 Runtime/config failures emit a fixed bridge-specific JSON error and unsuccessful exit, with no backend
 payload, token, `configLoad` classification or suggested login recovery. Argument
@@ -911,9 +913,9 @@ against Codex `0.167.0-alpha.3.2`: `attestation: "unavailable-v0.167.0-alpha.3.2
 requires the reviewed provider display name. Neither mode enables the other,
 a startup probe, login, proof generation or requirements inspection. Legacy
 names keep their original scope. Partial mode names, cross-version mode combinations, the
-legacy startup profile and any requirements-read mode are rejected before
-either child starts. The exact 0.167 startup profile may accompany these modes
-but does not enable them. Both executables must pass their configured SHA256
+legacy startup profile and legacy requirements-read mode are rejected before
+either child starts. The exact 0.167 startup profile and null-only requirements
+mode may accompany these modes but do not enable them. Both executables must pass their configured SHA256
 pins before either JSONL child starts; naming a profile is not runtime version
 detection or an independent guarantee that the selected binary is official.
 The JSONL runner checks only the operator-supplied executable digests. The
@@ -943,3 +945,74 @@ and add version combinations, both pin positions, capability preservation,
 human-approval rejection and zero-child-request checks. These are synthetic
 protocol tests, not official Desktop handshake, proof, OAuth or service-acceptance
 evidence. The real Desktop startup launch-parameter investigation is separate.
+
+### Exact 0.167 null-only requirements reads
+
+The separate default-off `config_requirements_read:
+"compare-null-v0.167.0-alpha.3.2"` mode supports only the exact native
+unrestricted response for Codex `0.167.0-alpha.3.2`. It does not rename,
+weaken or enable `compare-safe-v0.166`; the legacy complete non-null policy
+validator remains scoped to its reviewed version. It may coexist with the exact
+0.167 startup, unavailable-attestation and primary gateway-read modes, each
+enabled independently. Cross-version combinations fail validation. Both
+configured executable SHA-256 pins must pass before either JSONL child starts;
+the operator still owns version and provenance review, as for the auth modes.
+
+The source oracle is official
+[`c40729ea5cf8e947481b130c59807273eda2f8e9`](https://github.com/openai/codex/tree/c40729ea5cf8e947481b130c59807273eda2f8e9).
+The [request declaration](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/common.rs#L1527-L1530)
+uses `Option<()>`, not an empty object. Absent, null and an explicitly empty
+client object are accepted by the bridge's existing no-argument adapter; each
+child always receives `params:null`. Selectors, overrides, extra envelope
+fields and duplicate keys fail locally. With this exact mode selected, duplicate
+top-level client routing keys are rejected before map decoding, even when the
+last duplicate method tries to hide an earlier requirements read. Ordinary
+valid thread/provider routing is unchanged.
+
+Every read creates two fresh requests. The complete
+[response](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/config.rs#L838-L846)
+from each child must contain exactly `requirements:null` and
+`supportsIndependentSpeedModes:true`. Both validated results are deeply
+compared before the genuine primary result is returned, with JSON whitespace
+compacted only. No startup snapshot, cached success, fabricated null, removed
+restriction or single-backend fallback can satisfy a later read. Unknown,
+missing or duplicate fields, wrong types, every non-null requirements value
+(including an empty object and a matching legacy policy), child RPC errors,
+malformed envelopes and disagreement fail closed. Backend error bodies are
+not forwarded.
+
+The fresh [handler](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/config_processor.rs#L140-L156)
+calls `read_requirements()` and maps the current allowed login methods.
+The [mapper](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/config_processor.rs#L445-L455)
+returns null only when requirements are absent and allowed login methods are
+exactly API and ChatGPT. Empty homes alone do not prove this condition; managed,
+system or credential-derived restrictions can still apply. The same policy,
+authentication and cache side-effect review required for requirements inspection
+still applies. A successful earlier probe is neither authorization nor evidence
+for a later successful read. Requirements-only mode also rejects the unreviewed
+`requiredHumanApproval` capability and does not enable either auth capability.
+
+Implementation:
+[`requirements_167.go`](../../internal/appserverbridge/requirements_167.go),
+[`Router.Client/Server`](../../internal/appserverbridge/router.go), and
+[`RunWithOptions`](../../internal/appserverbridge/run.go).
+[`requirements_167_test.go`](../../internal/appserverbridge/requirements_167_test.go)
+covers exact shapes, raw duplicates, malformed envelopes, both response orders,
+both pin positions, cross-version combinations, source-byte preservation and
+unsupported routes.
+[`requirements_167_red_test.go`](../../internal/appserverbridge/requirements_167_red_test.go)
+uses only APIs present at base `e1c8fb52c61406baba1a6d712c0fcea83aacaf0d`;
+copying that file alone to the base supports an assertion-level red check.
+Its native synthetic processes check a successful earlier one-shot followed by
+a changed non-null JSONL policy, fresh recovery to null, disagreement, no-argument
+wire params and EOF cleanup. They run through the existing `internal/proc`
+lifecycle helpers and do not contact a model service.
+
+These are test definitions, not an executed acceptance record. At authoring,
+no executor was available: gofmt, build, vet, the new behavioral red and green,
+race checks, the full suite and official-runtime tests were not run for this
+change. The integrating commit/CI record must name actual checks and the exact
+tested head. No Desktop GUI startup, real account, proof, OAuth login, model
+inference, tool execution or corporate policy acceptance is established.
+`getAuthStatus`, `config/read`, login/cancel and external-token refresh remain
+unsupported. This mode never produces a proof or grants login authority.
