@@ -11,7 +11,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
-    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'Get-PublicRPCMethods', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
+    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'Get-PublicRPCMethods', 'Assert-PublicAuthRequestEvent', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
     'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
@@ -60,6 +60,102 @@ Expect-Pass 'synthetic fixture failure details expose only fixed stages' {
         if ($message -cne $expected) { throw 'Synthetic failure stage was not safely classified.' }
     }
 }
+
+function New-AuthRequestEvent([bool]$Valid = $true) {
+    $record = [pscustomobject][ordered]@{
+        seq = 1; pid = 2; kind = 'rpc'; direction = 'to_bridge'; method = 'getAuthStatus'
+        correlation = 3; class = 'request'; authParamsValid = $Valid
+    }
+    if ($Valid) {
+        $record | Add-Member -NotePropertyName includeTokenRequested -NotePropertyValue $false
+        $record | Add-Member -NotePropertyName refreshTokenRequested -NotePropertyValue $false
+    }
+    return $record
+}
+Expect-Pass 'strict authentication request flags and invalid-only shape' {
+    foreach ($include in @($false, $true)) {
+        foreach ($refresh in @($false, $true)) {
+            $record = New-AuthRequestEvent
+            $record.includeTokenRequested = $include
+            $record.refreshTokenRequested = $refresh
+            $text = $record | ConvertTo-Json -Compress
+            Assert-PublicCanonicalJSON $text $record
+            if (@(Assert-PublicAuthRequestEvent $record).Count -ne 0) {
+                throw 'Authentication validation published unexpected output.'
+            }
+        }
+    }
+    Assert-PublicAuthRequestEvent (New-AuthRequestEvent $false)
+}
+Expect-Pass 'ordinary observer metadata without request flags remains unchanged' {
+    Assert-PublicAuthRequestEvent ([pscustomobject]@{
+        seq = 1; pid = 2; kind = 'rpc'; direction = 'from_bridge'; method = 'getAuthStatus'
+        correlation = 3; class = 'response'
+    })
+}
+foreach ($field in @('authParamsValid', 'includeTokenRequested', 'refreshTokenRequested')) {
+    foreach ($value in @($null, 0, 1, 'false', 'PRIVATE_CANARY', @($false), [pscustomobject]@{ secret = 'PRIVATE_CANARY' })) {
+        Expect-Reject ('authentication non-boolean ' + $field) {
+            $record = New-AuthRequestEvent; $record.$field = $value
+            Assert-PublicAuthRequestEvent $record
+        }
+    }
+    Expect-Reject ('authentication missing ' + $field) {
+        $record = New-AuthRequestEvent; $record.PSObject.Properties.Remove($field)
+        Assert-PublicAuthRequestEvent $record
+    }
+    Expect-Reject ('authentication wrong field casing ' + $field) {
+        $record = New-AuthRequestEvent
+        $value = $record.$field
+        $record.PSObject.Properties.Remove($field)
+        $record | Add-Member -NotePropertyName $field.ToUpperInvariant() -NotePropertyValue $value
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+foreach ($field in @('includeTokenRequested', 'refreshTokenRequested')) {
+    Expect-Reject ('invalid authentication params with a requested flag: ' + $field) {
+        $record = New-AuthRequestEvent $false
+        $record | Add-Member -NotePropertyName $field -NotePropertyValue $false
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+foreach ($row in @(
+    @('kind', 'rpc_error'), @('kind', 'argv_config'), @('direction', 'from_bridge'),
+    @('direction', 'stderr'), @('method', 'account/read'), @('method', 'GetAuthStatus'),
+    @('method', 'getAuthStatus/PRIVATE_CANARY'), @('class', 'response'),
+    @('class', 'notification'), @('class', 'duplicate_id'), @('class', 'correlation_limit'),
+    @('class', 'unrecognized'), @('class', 'oversized'))) {
+    Expect-Reject 'authentication flags outside the exact client request' {
+        $record = New-AuthRequestEvent; $record.($row[0]) = $row[1]
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+foreach ($field in @('seq', 'pid', 'correlation')) {
+    foreach ($value in @(0, -1, 4294967297, 1.5, '1', 'PRIVATE_CANARY')) {
+        Expect-Reject ('authentication invalid identity: ' + $field) {
+            $record = New-AuthRequestEvent; $record.$field = $value
+            Assert-PublicAuthRequestEvent $record
+        }
+    }
+}
+foreach ($field in @('params', 'result', 'error', 'token', 'includeToken', 'refreshToken',
+    'configKey', 'requestAttestation', 'PRIVATE_CANARY')) {
+    Expect-Reject ('authentication unexpected field: ' + $field) {
+        $record = New-AuthRequestEvent
+        $record | Add-Member -NotePropertyName $field -NotePropertyValue 'PRIVATE_CANARY'
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+foreach ($json in @(
+    '{"seq":1,"pid":2,"kind":"rpc","direction":"to_bridge","method":"getAuthStatus","correlation":3,"class":"request","authParamsValid":false,"authParamsValid":true,"includeTokenRequested":false,"refreshTokenRequested":false}',
+    '{"seq":1,"pid":2,"kind":"rpc","direction":"to_bridge","method":"getAuthStatus","correlation":3,"class":"request","authParamsValid":true,"includeTokenRequested":true,"\u0069ncludeTokenRequested":false,"refreshTokenRequested":false}')) {
+    Expect-Reject 'duplicate authentication metadata is never published' {
+        $record = $json | ConvertFrom-Json
+        Assert-PublicCanonicalJSON $json $record
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+
 function Fixture-Digest([byte[]]$bytes) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }

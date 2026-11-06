@@ -59,6 +59,32 @@ function Get-PublicRPCMethods {
         'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
         'thread/start', 'thread/read', 'turn/start', 'getAuthStatus', 'unknown')
 }
+function Assert-PublicAuthRequestEvent($record) {
+    $hasValid = [bool]$record.PSObject.Properties['authParamsValid']
+    $hasInclude = [bool]$record.PSObject.Properties['includeTokenRequested']
+    $hasRefresh = [bool]$record.PSObject.Properties['refreshTokenRequested']
+    if (-not $hasValid -and -not $hasInclude -and -not $hasRefresh) { return }
+    if (-not $hasValid -or $record.authParamsValid -isnot [bool]) {
+        throw 'Invalid authentication request metadata validity.'
+    }
+    $names = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class', 'authParamsValid')
+    if ($record.authParamsValid) { $names += @('includeTokenRequested', 'refreshTokenRequested') }
+    Assert-PublicShape $record $names
+    Assert-PublicInteger $record.seq 1 4294967296
+    Assert-PublicInteger $record.pid 1 4294967296
+    Assert-PublicInteger $record.correlation 1 4294967296
+    foreach ($name in @('kind', 'direction', 'method', 'class')) {
+        if ($record.$name -isnot [string]) { throw 'Invalid authentication request metadata label.' }
+    }
+    if ($record.kind -cne 'rpc' -or $record.direction -cne 'to_bridge' -or
+        $record.method -cne 'getAuthStatus' -or $record.class -cne 'request') {
+        throw 'Authentication flags occurred outside a client request.'
+    }
+    if ($record.authParamsValid -and
+        ($record.includeTokenRequested -isnot [bool] -or $record.refreshTokenRequested -isnot [bool])) {
+        throw 'Invalid authentication request flag type.'
+    }
+}
 function Get-PublicPluginShapes {
     return @('direct_enabled', 'direct_auto_provision', 'mcp_server_enabled', 'app_enabled',
         'app_destructive_enabled', 'app_open_world_enabled', 'app_default_tools_enabled', 'app_tool_enabled')
@@ -1287,7 +1313,8 @@ requires_openai_auth = false
                 'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
                 'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
-                'publicPluginCatalogSHA256', 'publicPluginRef', 'configPluginShape')
+                'publicPluginCatalogSHA256', 'publicPluginRef', 'configPluginShape',
+                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested')
             $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
@@ -1638,7 +1665,8 @@ requires_openai_auth = false
             $configKeyClasses = @('at_sign', 'slash', 'backslash', 'colon', 'ascii_space',
                 'ascii_control', 'non_ascii', 'other_ascii_punctuation')
             $configLiterals = @('bool_true', 'bool_false', 'other')
-            $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi')
+            $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
+                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested')
             $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit', 'publicPluginRef')
             $seenPublicCatalogs = @{}
             $allEvents = @()
@@ -1661,6 +1689,7 @@ requires_openai_auth = false
                         $record = $line | ConvertFrom-Json
                         Assert-PublicCanonicalJSON $line $record
                     } catch { Block 'Observer metadata is not canonical valid JSON.' }
+                    Assert-PublicAuthRequestEvent $record
                     Assert-PublicPluginShapeEvent $record
                     Assert-PublicPluginEvent $record $publicPluginCatalog $seenPublicCatalogs
                     foreach ($property in $record.PSObject.Properties) {

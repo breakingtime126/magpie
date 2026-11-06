@@ -45,8 +45,12 @@ Schema compatibility does not certify a Desktop/backend runtime combination.
 ## Routing contracts
 
 1. `initialize` is sent independently to both children. The primary child's
-   result is returned only after both succeed. Client `initialized` then goes
-   to both. Attestation and explicit gateway OAuth opt-ins are rejected by
+   genuine result is returned only after both succeed. At that point the
+   bridge is ready, before emitting the merged response; no client
+   `initialized` notification is required. A real `initialized` notification
+   is passed unchanged to both children when early, delayed, or repeated,
+   and never grants readiness. Failed or partial initialization stays closed.
+   Attestation and explicit gateway OAuth opt-ins are rejected by
    default. Separately configured pinned modes can preserve the true flags
    with the limited behavior documented below; neither grants login authority.
 2. `model/list` exhausts each child's pages, or uses that backend's explicitly
@@ -78,6 +82,18 @@ Schema compatibility does not certify a Desktop/backend runtime combination.
    IDs shared by a fork remain valid. Interrupt/steer requests must name a
    known turn in that thread. Errors are returned without retrying another
    provider. A backend crash or malformed/unmatched response ends the bridge.
+
+The handshake ordering is source-backed for both retained native profiles:
+[0.166 initialize processor](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/request_processors/initialize_processor.rs)
+and [0.167 initialize processor](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/initialize_processor.rs)
+commit the native session before sending success. The corresponding
+[0.166 message processor](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/message_processor.rs)
+and [0.167 message processor](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/message_processor.rs)
+only log client notifications; `initialized` does not advance native state.
+The earlier bridge incorrectly required that notification after two successful
+replies. This correction changes ordering only, not capability negotiation,
+authentication authority, account RPC support, or policy comparison.
+`getAuthStatus` remains unsupported (`-32601`) after readiness.
 
 Supported requests are enumerated in `Router.Client` and `validateParams`:
 initialization, model listing, ordinary thread start/resume/fork/list/read,
@@ -949,8 +965,13 @@ from a clearly labelled arbitrary test string. They do not construct a Windows
 attestation wrapper, generate a device proof or test upstream acceptance.
 
 The bridge case uses two real official child processes with separate state
-and local providers. Its assertions cover real handshake traffic, model
-selection, the actual null-policy requirements envelope and no-OAuth gateway
+and local providers. Direct controls now omit `initialized` before native
+model listing, and the bridge omits it before `account/read` with
+`refreshToken:false`, model listing and the actual null-policy requirements
+read. Account data comes only from fresh synthetic authentication fixtures. Two delayed real notifications each precede
+another requirements read, whose result must equal the first native result.
+No notification or successful native response is synthesized. Its assertions
+also cover model selection and the no-OAuth gateway
 read response, unavailable-proof
 handling without a frontend proof request, and two synthetic-response turns
 per provider. Each endpoint must observe an actual WebSocket handshake;
@@ -970,9 +991,15 @@ The production defaults, real-proof forwarding prohibition and unsupported
 methods are unchanged. CI failures or unavailable execution remain explicit
 verification gaps, even when the source-based design looks feasible.
 
-`getAuthStatus` remains unsupported. The inspected local main connection
-defaults to `ensureAuth:false`; remote connections may enable it. It is therefore
-not a universal local handshake step. Even `includeToken:false,refreshToken:false`
+`getAuthStatus` remains unsupported. Earlier static inspection found the local
+main connection defaulting to `ensureAuth:false`; that did not establish the
+actual installed Desktop startup sequence. The signed Desktop 26.1103.3517.0 /
+backend 0.167.0-alpha.3.2 trace in
+[run 42217188118](https://github.com/breakingtime126/magpie/actions/runs/42217188118/job/127891199826)
+observed `getAuthStatus`, `account/read` and `configRequirements/read` after
+successful initialize without a client `initialized` notification. Correcting
+that readiness gate does not authorize or implement `getAuthStatus`.
+Even `includeToken:false,refreshToken:false`
 can reach credential-refresh behavior, so the bridge does not fabricate status
 or call it a guaranteed offline read. `config/read`, gateway/account login
 mutations and external-token refresh remain unsupported. The inspected
@@ -1117,3 +1144,26 @@ tested head. No Desktop GUI startup, real account, proof, OAuth login, model
 inference, tool execution or corporate policy acceptance is established.
 `getAuthStatus`, `config/read`, login/cancel and external-token refresh remain
 unsupported. This mode never produces a proof or grants login authority.
+
+### Native initialize readiness regression
+
+[`initialize_test.go`](../../internal/appserverbridge/initialize_test.go)
+checks immediate reads after both successful native-shaped fixture responses,
+all supported native ID forms, response order, optional early/delayed/duplicate
+notifications, exact primary result and native error preservation, unchanged
+capabilities, and continued rejection before or after failed/partial
+initialization. It also keeps pre-response authentication traffic and
+unsupported RPCs behind their existing guards.
+[`initialize_run_test.go`](../../internal/appserverbridge/initialize_run_test.go)
+runs compiled synthetic children and checks the recorded child traffic:
+the first requirements read precedes every `initialized`, and only the two
+notifications actually sent by the test appear. Both policy profiles are
+covered. These are fixtures, not official-process or Desktop acceptance.
+
+The official-runtime omission/delay checks above extend the existing isolated
+Linux harness without new endpoints, dependencies, privileges or network
+access. Their pass/fail evidence must come from the exact-head CI run.
+No tests, Go formatting, vet, builds, race checks, full suite, or official-runtime
+checks were run while preparing this connector-only source change.
+The Windows Desktop trace remains a separate, non-network-none diagnostic;
+this fix makes no zero-egress or completed Desktop acceptance claim.

@@ -45,6 +45,9 @@ type event struct {
 	ExplicitGatewayOauth      *bool    `json:"explicitGatewayOauth,omitempty"`
 	RequiredHumanApproval     *bool    `json:"requiredHumanApproval,omitempty"`
 	ExperimentalAPI           *bool    `json:"experimentalApi,omitempty"`
+	AuthParamsValid           *bool    `json:"authParamsValid,omitempty"`
+	IncludeTokenRequested     *bool    `json:"includeTokenRequested,omitempty"`
+	RefreshTokenRequested     *bool    `json:"refreshTokenRequested,omitempty"`
 	Flag                      string   `json:"flag,omitempty"`
 	ConfigKey                 string   `json:"configKey,omitempty"`
 	ConfigValue               string   `json:"configValue,omitempty"`
@@ -145,7 +148,7 @@ func errorClass(s string) string {
 		return "startup_probe_unavailable"
 	case "unsupported authentication capability":
 		return "unsupported_authentication_capability"
-	case "initialize and initialized are required":
+	case "initialize and initialized are required", "successful initialization of both backends is required":
 		return "initialization_required"
 	case "config requirements inspection is disabled":
 		return "config_requirements_disabled"
@@ -243,6 +246,9 @@ func (o *observer) line(direction string, b []byte) {
 				clear(o.quarantined)
 				e.Class = "correlation_limit"
 			}
+		}
+		if direction == "to_bridge" && method == "getAuthStatus" && e.Class == "request" {
+			e.AuthParamsValid, e.IncludeTokenRequested, e.RefreshTokenRequested = observedGetAuthStatus(b)
 		}
 		if method == "initialize" {
 			var p, c map[string]json.RawMessage

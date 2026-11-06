@@ -144,10 +144,11 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return r.clientResponse(m)
 	}
 	if !exists(m, "id") {
-		if method != "initialized" || r.phase != "initialized" {
+		if method != "initialized" {
 			return nil, errors.New("unexpected client notification")
 		}
-		r.phase = "ready"
+		// Native initialized notifications are optional and do not change
+		// session readiness, including when early, delayed, or repeated.
 		out := []Delivery{}
 		for _, b := range r.backends {
 			out = append(out, deliver(b.ID, m))
@@ -197,7 +198,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return out, nil
 	}
 	if r.phase != "ready" {
-		return []Delivery{fail(g.id, -32600, "initialize and initialized are required")}, nil
+		return []Delivery{fail(g.id, -32600, "successful initialization of both backends is required")}, nil
 	}
 	switch method {
 	case "account/gatewayOAuth/read":
@@ -556,7 +557,9 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		if g.remaining != 0 {
 			return nil, nil
 		}
-		r.phase = "initialized"
+		// Both native sessions are ready before their successful initialize
+		// replies. Commit readiness before exposing the merged response.
+		r.phase = "ready"
 		first, _ := parseObject(g.results[r.backends[0].ID][0])
 		return r.finish(g, first), nil
 	case "model/list", "thread/list", "thread/loaded/list":

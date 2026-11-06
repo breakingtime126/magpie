@@ -18,14 +18,21 @@ func TestGetAuthStatusMetadataKeepsAuthenticationOpaque(t *testing.T) {
 		es[0].Correlation == 0 || es[0].Correlation != es[1].Correlation {
 		t.Fatal("exact authentication method metadata was not correlated")
 	}
-	for _, line := range bytes.Split(bytes.TrimSpace(log.Bytes()), []byte("\n")) {
+	for index, line := range bytes.Split(bytes.TrimSpace(log.Bytes()), []byte("\n")) {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(line, &fields); err != nil {
 			t.Fatal(err)
 		}
+		if index == 0 && string(fields["authParamsValid"]) != "false" {
+			t.Fatal("unsupported authentication params were not marked invalid")
+		}
 		for field := range fields {
 			switch field {
 			case "seq", "pid", "kind", "direction", "method", "correlation", "class":
+			case "authParamsValid":
+				if index != 0 {
+					t.Fatal("authentication response exposed request metadata")
+				}
 			default:
 				t.Fatal("authentication request or response exposed extra metadata")
 			}
@@ -37,6 +44,22 @@ func TestGetAuthStatusMetadataKeepsAuthenticationOpaque(t *testing.T) {
 	for _, neighbor := range []string{"getauthstatus", "GetAuthStatus", "getAuthStatus/PRIVATE", "getAuthStatus ", "getAuthStatus\n"} {
 		if allowedMethod(neighbor) != "unknown" {
 			t.Fatal("authentication method allowlist is not exact")
+		}
+	}
+}
+
+func TestSuccessfulInitializationErrorClassification(t *testing.T) {
+	for _, message := range []string{
+		"initialize and initialized are required",
+		"successful initialization of both backends is required",
+	} {
+		if errorClass(message) != "initialization_required" {
+			t.Fatal("reviewed initialization error classification missing")
+		}
+		for _, suffix := range []string{" ", ": PRIVATE_AUTH_ERROR"} {
+			if errorClass(message+suffix) != "unknown" {
+				t.Fatal("initialization error classification used non-exact matching")
+			}
 		}
 	}
 }

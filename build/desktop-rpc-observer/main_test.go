@@ -517,3 +517,17 @@ func TestStoppedObservationCannotWriteFromLateInput(t *testing.T) {
 		t.Fatal("late stdin wrote after trace finalization")
 	}
 }
+
+func TestInitializationErrorClassKeepsLegacyAndCurrentMessages(t *testing.T) {
+	for _, message := range []string{
+		"initialize and initialized are required",
+		"successful initialization of both backends is required",
+	} {
+		if got := errorClass(message); got != "initialization_required" {
+			t.Fatalf("initialization error class = %q", got)
+		}
+		if got := errorClass(message + ": private detail"); got != "unknown" {
+			t.Fatalf("non-allowlisted error class = %q", got)
+		}
+	}
+}

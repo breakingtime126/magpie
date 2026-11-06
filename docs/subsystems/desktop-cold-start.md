@@ -696,8 +696,59 @@ behavioral red tests use exact `e1c8fb52` APIs and require their named
 assertion failures before the current Linux/Windows suites run. The workflow
 watches the new MCP scanner tests explicitly and preserves all earlier reds.
 
-The RPC metadata allowlist also recognizes the single exact method spelling
-`getAuthStatus`. Differently cased or suffixed spellings remain unknown. Only
-the method label is exposed: request parameters, result bodies and authentication
-values remain opaque, and this does not add a production handler or change
-routing, sign-in or policy behavior.
+The RPC metadata allowlist recognizes the single exact method spelling
+`getAuthStatus`. Differently cased or suffixed spellings remain unknown.
+The bounded request diagnostic below does not add a production handler or
+change routing, sign-in or policy behavior.
+
+### Bounded getAuthStatus request flags
+
+The signed Desktop `26.1103.3517.0` and bundled backend
+`0.167.0-alpha.3.2`
+[observation](https://github.com/breakingtime126/magpie/actions/runs/42217188118/job/127891199826)
+showed `getAuthStatus`, `account/read` and `configRequirements/read` after
+the initialize response. The original method-only trace did not reveal the
+authentication request's flags. This motivates a narrowly scoped diagnostic,
+not a claim that initialization or authentication succeeds.
+
+Only an unambiguous client-to-bridge `getAuthStatus` request with ordinary
+request correlation is eligible for the
+[test-only parser](../../build/desktop-rpc-observer/auth_request_metadata.go). Its optional `authParamsValid` boolean is
+true only when `params` is an object containing no keys except the exact
+`includeToken` and `refreshToken` fields, each absent, null or a native JSON
+boolean. For valid params, two additional booleans,
+`includeTokenRequested` and `refreshTokenRequested`, report the native
+requested flags, with absent/null fields defaulting to false. Those defaults
+describe request syntax, not actual authentication state.
+
+Missing/null/non-object params, unknown fields, wrong types and duplicate
+parameter keys emit `authParamsValid:false` alone. They never emit partial
+requested flags or convert an invalid value to false. Escaped key spellings
+are decoded before duplicate comparison. Nested data, arbitrary keys,
+credentials, IDs, paths, response bodies and raw errors are never published.
+
+Ambiguous/duplicate envelopes, extra envelope fields, invalid JSON-RPC version
+fields, invalid IDs, notifications, responses, other directions/methods and
+duplicate-ID or correlation-limit records carry none of these three fields.
+Malformed, oversized and unterminated lines retain their existing generic
+classification. Missing diagnostics mean unknown, never false. Observation
+preserves every forwarded byte and all existing line/trace/correlation bounds.
+
+PowerShell validates the exact event shape, native boolean types, direction,
+method, request class and correlation before publication. A false validity
+field forbids both requested flags; a true one requires both. The focused
+public-catalog PowerShell fixtures exercise accepted and rejected shapes,
+casing, unknown fields, invalid types and duplicate encoded aliases. The
+self-contained
+[`auth_request_metadata_red_test.go`](../../build/desktop-rpc-observer/auth_request_metadata_red_test.go)
+checks flag combinations, invalid and nested canaries, ambiguous envelopes,
+both directions, unchanged correlation, exact wire bytes and existing caps.
+Copied alone onto `bcc80e7c31fa65f01e181c3eee08759862affa8a`,
+`TestGetAuthStatusRequestedFlagsObserved` is the behavioral red target.
+This is a test definition, not a claimed executed red/green result.
+
+The production bridge still rejects `getAuthStatus`. Even when
+`refreshTokenRequested:false`, the official implementation can perform
+implicit credential refresh. These diagnostics do not establish a pure,
+offline or side-effect-free read and do not authorize authentication changes,
+login, token disclosure or a production compatibility mode.

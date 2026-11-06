@@ -417,7 +417,7 @@ class Peer:
         need("result" in result, method + " missing result")
         return result["result"]
 
-    def initialize(self, gateway=False):
+    def initialize(self, gateway=False, notify=True):
         result = self.rpc("initialize", {
             "clientInfo": {
                 "name": "codex_desktop", "title": "Synthetic isolated CI",
@@ -428,7 +428,8 @@ class Peer:
                 "explicitGatewayOauth": gateway,
             },
         })
-        self.send({"method": "initialized", "params": {}})
+        if notify:
+            self.send({"method": "initialized", "params": {}})
         return result
 
     def turn(self, thread_id, text, endpoint):
@@ -566,7 +567,8 @@ def direct_control(root, workspace, catalog, mode):
                          "direct_provider", catalog)
         peer = Peer([CODEX, "app-server"], clean_env(home, ch),
                     workspace, mode)
-        peer.initialize()
+        peer.initialize(notify=False)
+        # The native session is ready after its response, without initialized.
         models = peer.rpc("model/list", {})
         need(any(m.get("model") == MODEL for m in models["data"]),
              "official model/list missing selected model")
@@ -622,7 +624,11 @@ def bridge_case(root, workspace, catalog):
         env = clean_env(front_home, front_codex)
         env["MAGPIE_APP_SERVER_BRIDGE_CONFIG"] = str(config_path)
         peer = Peer([BRIDGE, "app-server"], env, workspace, "forbidden")
-        peer.initialize(gateway=True)
+        peer.initialize(gateway=True, notify=False)
+        account = peer.rpc("account/read", {"refreshToken": False})
+        need(isinstance(account, dict) and "account" in account
+             and isinstance(account.get("requiresOpenaiAuth"), bool),
+             "unexpected real account result: " + json.dumps(account))
         # No injected descriptors: observe and route the actual official lists.
         models = peer.rpc("model/list", {})
         available = {m["model"] for m in models["data"]}
@@ -633,6 +639,17 @@ def bridge_case(root, workspace, catalog):
             "requirements": None, "supportsIndependentSpeedModes": True,
         }, "unexpected real requirements result: " + json.dumps(requirements))
         REPORT["requirements_read"] = requirements
+        # Both real initialize replies have arrived, but no initialized was sent.
+        # A delayed or duplicate real notification must not reset readiness.
+        for _ in range(2):
+            peer.send({"method": "initialized", "params": {}})
+            need(peer.rpc("configRequirements/read", {}) == requirements,
+                 "delayed initialized changed the native requirements result")
+        REPORT["initialize_without_notification"] = {
+            "account_read": account, "model_list": True,
+            "requirements_read": requirements,
+            "delayed_notifications": 2,
+        }
         gateway = peer.rpc("account/gatewayOAuth/read", {})
         need(gateway == {
             "providerId": "alpha_provider",

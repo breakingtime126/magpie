@@ -240,6 +240,36 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestDesktopPluginLiteralReachesLaunchOptions'
           printf '%s\n' "$output" | grep -F -- 'exact reviewed Desktop plugin literal must reach normal launch:'
           echo 'The old parser rejects the exact reviewed literal; compilation or setup failures do not qualify.'
+      - name: Check out exact pre-optional-initialized behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: bcc80e7c31fa65f01e181c3eee08759862affa8a
+          path: .ci-initialize-baseline
+          persist-credentials: false
+      - name: Prove omitted initialized fails behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/initialize_test.go .ci-initialize-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-initialize-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestInitializeReadyWithoutNotification$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestInitializeReadyWithoutNotification'
+          printf '%s\n' "$output" | grep -F -- 'account/read blocked after both initialize responses without initialized:'
+          echo 'The old bridge fails after genuine successful initialization; compilation or setup failures do not qualify.'
+      - name: Prove requested auth flags are not observed by the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/auth_request_metadata_red_test.go .ci-initialize-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-initialize-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestGetAuthStatusRequestedFlagsObserved$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestGetAuthStatusRequestedFlagsObserved'
+          printf '%s\n' "$output" | grep -F -- 'getAuthStatus requested flag metadata missing or incorrect'
+          echo 'The old observer lacks bounded requested-flag metadata; compilation or setup failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

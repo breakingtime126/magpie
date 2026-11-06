@@ -105,7 +105,7 @@ func TestAuthCompatRejectsRawMalformedMessages(t *testing.T) {
 
 func TestAuthCompatGatesCollisionsAndRate(t *testing.T) {
 	message := []byte(`{"id":0,"method":"attestation/generate","params":{}}`)
-	for _, phase := range []string{"cold", "initializing", "initialized"} {
+	for _, phase := range []string{"cold", "initializing"} {
 		r := authCompatRouter(t)
 		r.phase = phase
 		if _, err := r.attestationMessage("openai", message); err == nil {
@@ -271,7 +271,7 @@ func TestGatewayOAuthNotificationsPrimaryOnly(t *testing.T) {
 			t.Fatal("unsafe secondary accepted")
 		}
 	}
-	r.phase = "initialized"
+	r.phase = "initializing"
 	if _, err := r.gatewayNotification("openai", line); err == nil {
 		t.Fatal("notice before ready")
 	}
@@ -327,7 +327,7 @@ func TestAuthCompatIntegratedNegotiationAndPrewarm(t *testing.T) {
 	}
 	reply(t, r, out[0], `{"userAgent":"first"}`)
 	reply(t, r, out[1], `{"userAgent":"second"}`)
-	client(t, r, `{"method":"initialized"}`)
+	// Native prewarm can follow successful initialize without a notification.
 	for _, backend := range []string{"openai", "aihub"} {
 		got := server(t, r, backend, `{"id":8,"method":"attestation/generate","params":{}}`)
 		if len(got) != 1 || got[0].Backend != backend || len(r.threads) != 0 {
