@@ -493,7 +493,7 @@ func TestAuthCompatRejectsUnsolicitedClientTokens(t *testing.T) {
 	ids := []string{`"7"`, "7", `"9007199254740993"`, "9007199254740993"}
 	for _, backend := range []string{"openai", "aihub"} {
 		for _, id := range ids {
-			out, err := r.Server(backend, []byte(`{"id":` + id + `,"method":"attestation/generate","params":{}}`))
+			out, err := r.Server(backend, []byte(`{"id":`+id+`,"method":"attestation/generate","params":{}}`))
 			if err != nil || len(out) != 1 || out[0].Backend != backend {
 				t.Fatalf("terminal error did not stay at %s/%s: %v", backend, id, err)
 			}
