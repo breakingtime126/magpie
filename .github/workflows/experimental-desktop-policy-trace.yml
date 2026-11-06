@@ -41,8 +41,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          diff="$(gofmt -d build/desktop-rpc-observer)"
-          if [[ -n "$diff" ]]; then
+          format_status=0
+          diff="$(gofmt -d build/desktop-rpc-observer 2>&1)" || format_status=$?
+          if [[ "$format_status" -ne 0 || -n "$diff" ]]; then
             printf '%s\n' "$diff"
             for file in main.go main_test.go; do
               printf 'OBSERVER_FORMAT_%s=' "$file"
