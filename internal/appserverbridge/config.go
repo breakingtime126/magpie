@@ -32,6 +32,10 @@ type Config struct {
 	// authorities and the official probe's credential/network/cache effects.
 	StartupProbe string `json:"startup_probe,omitempty"`
 
+	// DesktopPluginOverride authorizes one exact normal-start plugin leaf.
+	// It never installs a plugin or adds the override when Desktop omits it.
+	DesktopPluginOverride string `json:"desktop_plugin_override,omitempty"`
+
 	// WorkingDirectory explicitly selects one shared startup context. Empty
 	// preserves each child's private home as its process working directory.
 	WorkingDirectory string `json:"working_directory,omitempty"`
@@ -50,7 +54,7 @@ type Backend struct {
 	InheritEnv []string          `json:"inherit_env,omitempty"`
 
 	// StartupProbeSHA256 pins the reviewed executable for startup inspection
-	// and the separately enabled requirements/auth compatibility modes.
+	// and the separately enabled requirements/auth/launch compatibility modes.
 	StartupProbeSHA256 string `json:"startup_probe_sha256,omitempty"`
 }
 
@@ -103,13 +107,17 @@ func (cfg Config) Validate() error {
 	if cfg.StartupProbe != "" && !StartupProbeSupported(cfg.StartupProbe) {
 		return errors.New("unsupported startup_probe mode")
 	}
+	if cfg.DesktopPluginOverride != "" && cfg.DesktopPluginOverride != DesktopPluginCodexAppTools167 {
+		return errors.New("unsupported desktop_plugin_override mode")
+	}
 	// All selected contracts describe the same executable pair. Each mode
 	// remains an independent opt-in; none authorizes another version's mode.
 	legacy := cfg.RequirementsRead == ConfigRequirementsCompareSafe ||
 		cfg.Attestation == AttestationUnavailable || cfg.GatewayOAuth == GatewayOAuthPrimaryRead ||
 		cfg.StartupProbe == StartupProbeCompareUnrestricted
 	current := cfg.RequirementsRead == ConfigRequirementsCompareNull167 ||
-		cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167
+		cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 ||
+		cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167
 	if legacy && current {
 		return errors.New("incompatible versions in selected compatibility modes")
 	}
@@ -127,7 +135,7 @@ func (cfg Config) Validate() error {
 	ids := map[string]bool{}
 	var homes []string
 	for i, b := range cfg.Backends {
-		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" {
+		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.DesktopPluginOverride != "" {
 			digest, err := hex.DecodeString(b.StartupProbeSHA256)
 			if err != nil || len(digest) != 32 {
 				return errors.New("reviewed compatibility requires a SHA256 pin for each backend")
@@ -272,7 +280,7 @@ func (cfg Config) auth167() bool {
 
 func (cfg Config) authCompatibility() authCompatibility {
 	return authCompatibility{
-		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167,
+		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167 || cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167,
 		attestationUnavailable: cfg.Attestation == AttestationUnavailable || cfg.Attestation == AttestationUnavailable167,
 		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167,
 		gatewayProviderName:    cfg.GatewayOAuthProviderName,

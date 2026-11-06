@@ -378,7 +378,8 @@ the installed Desktop's observed base argument array:
 -c features.code_mode_host=true app-server --analytics-default-enabled
 ```
 
-The exact scalar feature toggle may appear before or after `app-server`, using
+The exact scalar feature toggle (and separately gated plugin leaf below) may
+appear before or after `app-server`, using
 `-c` or `--config`. The analytics default flag is server-only. Duplicate controls,
 conflicting transports, false/structured/quoted toggle values and every unknown
 argument fail before configuration or environment access and before any child
@@ -393,11 +394,11 @@ Desktop shortcut or installs this executable as a backend.
 
 ### Reviewed startup controls and policy preservation
 
-`RunWithOptions` takes two typed controls, not a raw argument or TOML map. The
+`RunWithOptions` takes three typed controls, not a raw argument or TOML map. The
 legacy `Run` path supplies no controls and retains its existing child command.
 Both backends receive the same requested controls, followed by their own pinned
-provider selection. Incoming provider, URL, authentication-storage, plugin,
-permission and arbitrary config overrides remain rejected.
+provider selection. Incoming provider, URL, authentication-storage, permission,
+arbitrary config and all but the exact opt-in plugin leaf below remain rejected.
 
 The scalar Desktop toggle is deliberately normalized to
 `-c features.code_mode_host.enabled=true` for each official child. This preserves
@@ -424,6 +425,106 @@ to discard or infer automatically from a platform or version. Remote
 `--code-mode-host URL`, daemon controls and additional unreviewed startup args
 are rejected too. Their presence is an explicit compatibility blocker, not a
 request to relax permission policy.
+
+### Exact 0.167 bundled-plugin launch override
+
+The signed Desktop `26.1103.3517.0`, with backend `0.167.0-alpha.3.2`,
+was observed sending this additional normal-start argument:
+
+```text
+-c plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=true
+```
+
+The metadata-only [runtime trace](https://github.com/breakingtime126/magpie/actions/runs/42213706926/job/127879528998)
+and original signed package source chain distinguish it from a guessed
+configuration spelling. The one-shot startup probe did **not** send it.
+This evidence identifies the launch input, not successful Desktop integration.
+
+Acceptance is independently **disabled by default**. The explicit top-level
+setting `desktop_plugin_override: "codex-app-tools-v0.167.0-alpha.3.2"`
+authorizes only that exact leaf, represented by
+`LaunchOptions.CodexAppToolsMCPEnabled`. Both backend
+`startup_probe_sha256` pins must be present and verified before either
+JSONL child starts, including when only this mode is configured. Missing or
+wrong pins, unknown/partial mode names and combinations with any legacy
+0.166 startup, requirements or auth mode fail closed. Same-version modes remain
+separate opt-ins. The operator must independently verify the exact binary
+version and provenance; hashing operator-selected bytes does not check a
+signature or prevent same-user executable replacement.
+
+`-c` and `--config` accept the literal before or after
+`app-server`. Duplicate controls, case/spacing/value changes, quoted
+or structured alternatives, false, any other plugin/server name and every other
+nested setting remain rejected before environment/configuration access.
+Sign-out still takes precedence and starts nothing. This is not arbitrary
+TOML parsing or plugin-config passthrough.
+
+When requested and explicitly authorized, the exact unchanged leaf is appended
+to **both** official backend command lines, followed by each backend's own
+provider pin. Merely selecting the mode never synthesizes the override. The
+scalar code-mode normalization and default-only analytics flag keep their
+existing behavior. Both the CLI parser and the direct
+`ProbeStartup` API reject the plugin launch option for one-shot
+inspection. Selecting the mode in the shared config does not inject it into a
+probe. The direct `RunWithOptions` API enforces the same explicit gate.
+
+This is a real native plugin policy choice, not an inert compatibility label.
+At pinned official source
+`c40729ea5cf8e947481b130c59807273eda2f8e9`, the nested entry can
+[activate an installed outer plugin](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/core-plugins/src/loader.rs#L174-L190)
+and its true server override can
+[replace a manifest's false enablement](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/core-plugins/src/loader.rs#L1572-L1618).
+It applies only to a declared `codex_app` MCP server; native
+[requirements](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/core/src/config/mod.rs#L2312-L2342),
+authentication and transport gates still apply. The server can have subprocess,
+credential-use and network effects under the official backend's own policy. Review both independent
+backend configurations and installed plugin contents before enabling real use.
+The bridge does not install, download or copy plugins, populate plugin caches,
+write configuration, discard permissions, synthesize MCP results or retry
+failures with weaker settings. Missing/unavailable plugins remain native
+behavior, never repaired by copying the Desktop cache. In an empty cache the
+native [loader](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/core-plugins/src/loader.rs#L856-L908)
+records `plugin is not installed` and returns before manifest/MCP/app/hook
+loading. This leaf is not an installation command. The empty CI homes do not
+contain the Desktop cache, so their results cannot certify installed-plugin
+execution, IPC/credential dependencies or suitability for the secondary provider.
+Other native startup paths can independently perform
+[policy-permitted curated sync](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/core-plugins/src/manager.rs#L773-L789).
+The missing-plugin return is not proof that all startup is offline. The Windows
+Desktop startup trace is not network-none, and no zero-egress claim is made.
+Actual signed Desktop/native startup may contact policy or curated services.
+The separate Linux official-runtime harness uses a network-none container;
+that containment does not apply to the Windows Desktop trace.
+
+The sole launch mode also selects the exact 0.167
+`requiredHumanApproval` rejection boundary. It enables no auth,
+requirements-read or startup capability by itself and preserves native
+permission/approval checks.
+
+Implementation:
+[`launch.go`](../../internal/appserverbridge/launch.go),
+[`Config.Validate`](../../internal/appserverbridge/config.go),
+[`RunWithOptions`](../../internal/appserverbridge/run.go),
+[`probeStartup`](../../internal/appserverbridge/probe.go), and
+[adapter argument parsing](../../cmd/magpie-codex-bridge/main.go).
+The standalone
+[`desktop_plugin_red_test.go`](../../cmd/magpie-codex-bridge/desktop_plugin_red_test.go)
+uses only APIs present at base
+`643cc5d060659c68c75e342e7e0fd71590b6993c`. Copying that file
+alone to the base supports an assertion-level red for the exact launch input.
+The companion adapter/runtime fixtures check all gates, both digest positions
+before either child, no probe injection, no default injection, private
+diagnostics, unchanged on-disk policy and exact argv delivered to two native
+synthetic children through `internal/proc`. A synthetic native initialization
+error remains an error without fallback, followed by EOF cleanup.
+The compiled adapter case is `TestBuiltAdapterDesktopPluginOverride`.
+
+At authoring no executor was available. Gofmt, build, vet, red/green tests,
+race, the full suite and official installed-plugin runtime behavior were not
+run for this change. The integrating CI record must state the actual results
+at the exact tested head. Synthetic argv checks and empty-home Windows traces
+do not establish real account, plugin tool, model inference or complete
+Desktop acceptance.
 
 ### Installed Desktop launch evidence
 

@@ -85,7 +85,7 @@ $env:MAGPIE_BRIDGE_ADAPTER_TEST_EXE = $adapter
 # These synthetic tests do not start official Codex or contact model services.
 & go test -v -count=1 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge
 Assert-NativeExit 'Native stdio adapter unit and lifecycle tests'
-& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapter(Stdio|DesktopArguments|StartupProbe|ConfigRequirements|AuthCompat.*)$'
+& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapter(Stdio|DesktopArguments|DesktopPluginOverride|StartupProbe|ConfigRequirements|AuthCompat.*)$'
 Assert-NativeExit 'Repeated compiled adapter stdio, Desktop arguments, policy reads, startup probe and EOF tests'
 & go test -v -count=1 -timeout=10m -tags nogui ./internal/appserverbridge
 Assert-NativeExit 'Native bridge tests'

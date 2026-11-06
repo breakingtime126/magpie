@@ -44,10 +44,13 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if input == nil || output == nil {
 		return errors.New("bridge requires input and output")
 	}
+	if options.CodexAppToolsMCPEnabled && cfg.DesktopPluginOverride != DesktopPluginCodexAppTools167 {
+		return errors.New("Desktop plugin override is disabled")
+	}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" {
+	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.DesktopPluginOverride != "" {
 		// Check both reviewed executables before either process can read or
 		// refresh account/policy state. This is not an OS security boundary.
 		for _, backend := range cfg.Backends {

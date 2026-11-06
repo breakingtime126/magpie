@@ -30,9 +30,16 @@ Usage:
 
 Set MAGPIE_APP_SERVER_BRIDGE_CONFIG to an absolute bridge JSON file path.
 --listen=stdio:// is also accepted. --stdio selects the same transport.
--c or --config accepts only features.code_mode_host=true, before or after app-server.
+-c or --config accepts features.code_mode_host=true, before or after app-server.
 It is emitted as features.code_mode_host.enabled=true to preserve existing structured policy.
---analytics-default-enabled is accepted only after app-server. No other overrides are supported.
+--analytics-default-enabled is accepted only after app-server.
+Normal JSONL launch also accepts exactly:
+plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=true
+It requires desktop_plugin_override=codex-app-tools-v0.167.0-alpha.3.2 and both SHA-256 pins.
+This default-off mode forwards the exact leaf to both children only when supplied.
+Native plugin policy may activate an installed plugin and declared MCP subprocess/network effects.
+No plugin is installed or copied, no settings are written, and no other plugin override is accepted.
+The plugin override is rejected for startup inspection and cannot mix with legacy v0.166 modes.
 Startup inspection requires explicit startup_probe configuration and matching supported backend results.
 Supported profiles: compare-unrestricted-v0.166 (exact 0.166.0-alpha.6) and
 compare-unrestricted-v0.167.0-alpha.3.2 (exact 0.167.0-alpha.3.2).
@@ -121,10 +128,23 @@ func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, appserv
 			}
 			serverSeen = true
 		case "-c", "--config":
-			if i+1 >= len(args) || args[i+1] != "features.code_mode_host=true" || options.CodeModeHost {
+			if i+1 >= len(args) {
 				return serve, options, clientInfo, errUnsupportedArguments
 			}
-			options.CodeModeHost = true
+			switch args[i+1] {
+			case "features.code_mode_host=true":
+				if options.CodeModeHost {
+					return serve, options, clientInfo, errUnsupportedArguments
+				}
+				options.CodeModeHost = true
+			case appserverbridge.CodexAppToolsMCPOverride:
+				if options.CodexAppToolsMCPEnabled {
+					return serve, options, clientInfo, errUnsupportedArguments
+				}
+				options.CodexAppToolsMCPEnabled = true
+			default:
+				return serve, options, clientInfo, errUnsupportedArguments
+			}
 			i++
 		case "--analytics-default-enabled":
 			if !serverSeen || options.AnalyticsDefaultEnabled {
@@ -162,7 +182,7 @@ func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, appserv
 			return serve, options, clientInfo, errUnsupportedArguments
 		}
 	}
-	if !serverSeen || probeSeen != clientInfoSeen || probeSeen && transportSeen {
+	if !serverSeen || probeSeen != clientInfoSeen || probeSeen && (transportSeen || options.CodexAppToolsMCPEnabled) {
 		return serve, options, clientInfo, errUnsupportedArguments
 	}
 	if probeSeen {

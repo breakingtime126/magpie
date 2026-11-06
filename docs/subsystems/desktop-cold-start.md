@@ -55,8 +55,10 @@ model or authentication request.
 
 The baseline/direct bridge configuration has two new empty homes and loopback discard endpoints,
 no API key, and no startup, requirements, attestation or OAuth opt-ins. The separate
-instrumented startup follow-up below selects only its explicitly reviewed profile. The exact production bridge is built unchanged with a
-unique commit-derived filename and validated using `--check` before monitoring.
+instrumented follow-ups below record their separate startup and launch-compatibility
+opt-ins. Startup inspection alone still selects only its original profile. The exact
+commit-built production bridge uses a unique commit-derived filename and is
+validated using `--check` before monitoring.
 The probe requires a matching child process-start event under a package-verified
 Desktop parent, and records file hashes before/after. Short-lived events may not
 permit querying the running image path; this evidence is not proof of a successful
@@ -85,9 +87,11 @@ error origin, successful handshake, or a network denial.
 [Observed run](https://github.com/breakingtime126/magpie/actions/runs/42169742564).
 
 The separate `Experimental Desktop policy trace` workflow adds an explicitly
-instrumented `observe` mode. Its Windows-only test observer launches the unchanged
-production bridge and forwards arguments and stdio bytes without issuing extra
-requests, retries, invented results, changed capabilities or policy overrides.
+instrumented `observe` mode. Its Windows-only test observer launches the exact
+commit-built production bridge and forwards arguments and stdio bytes unchanged,
+without issuing extra requests, retries, invented results, changed capabilities or
+policy overrides. The bridge's separately selected compatibility modes are recorded
+in the report; the observer itself does not grant or select them.
 It is not installed or included in the production package.
 
 Only fixed method/flag/config-key names, generated correlation numbers, error
@@ -122,8 +126,8 @@ bridge emitted `startup_probe_unavailable` and exited 1. No initialize or
 configRequirements/read request occurred in that complete invocation.
 [Metadata and screenshot](https://github.com/breakingtime126/magpie/actions/runs/42173927946).
 
-The follow-up explicitly enables only the new exact-version unrestricted startup
-profile for the verified bundled 0.167.0-alpha.3.2 binary. Its SHA-256 is
+The separate `-EnableReviewedStartupProbe` switch enables only the exact-version
+unrestricted startup profile for the verified bundled 0.167.0-alpha.3.2 binary. Its SHA-256 is
 `40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39`.
 This does not enable any old authentication or JSONL requirements profile.
 Both independently configured official commands must return the same complete,
@@ -146,6 +150,79 @@ The transport observer deliberately classifies that shape as `unrecognized`
 without recording its body. That label alone is not a startup failure. Interpret
 it with the unchanged bytes, production validator, child exit code and complete
 output EOF, and examine a later JSONL invocation as separate evidence.
+
+
+## Explicit CI launch-compatibility follow-up
+
+At `643cc5d060659c68c75e342e7e0fd71590b6993c`, the
+[Windows policy trace](https://github.com/breakingtime126/magpie/actions/runs/42213706926)
+identified the actual normal-launch override by its source-bound public catalog:
+`plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=true`.
+Desktop was the signed, hash-verified 26.1103.3517.0 package and its backend was
+0.167.0-alpha.3.2. The one-shot startup exited zero while normal startup still
+exited 2 under the old argument parser. The positive spelling match does not prove
+plugin installation, loadability, successful initialization or authentication.
+
+The separate `-EnableReviewedLaunchCompatibility` switch in
+[the cold-start probe](../../build/test-desktop-cold-start.ps1) is default-off.
+It requires `-Mode observe` and the independent
+`-EnableReviewedStartupProbe` switch. The existing exact repository, experimental
+branch and GitHub-hosted-runner guards run before any probe filesystem or package
+actions. Only
+[the experimental policy-trace workflow](../../.github/workflows/experimental-desktop-policy-trace.yml)
+selects the additional switch. Baseline/direct-launch configurations and
+startup-only callers are not broadened. For the additional launch-compatibility
+switch, the signed package must also have exact manifest version
+`26.1103.3517.0` and SHA-256
+`ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643`.
+A changed floating download or mismatching version reports a package mismatch and
+stops before provisioning. Existing signature and registered-identity checks remain
+mandatory; startup-only and baseline gates are unchanged.
+
+The CI profile keeps `startup_probe=compare-unrestricted-v0.167.0-alpha.3.2`,
+the exact `codex-cli 0.167.0-alpha.3.2` version check and the
+`40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39`
+executable pin on both backend entries. It separately adds:
+
+- `desktop_plugin_override=codex-app-tools-v0.167.0-alpha.3.2`;
+- `attestation=unavailable-v0.167.0-alpha.3.2`;
+- `gateway_oauth=primary-read-only-v0.167.0-alpha.3.2`;
+- `gateway_oauth_provider_name="CI alpha launch-only"`;
+- `config_requirements_read=compare-null-v0.167.0-alpha.3.2`.
+
+These are configured modes, not assertions that their runtime exchanges succeeded.
+The native forwarding contract and fail-closed behavior are documented in
+[the app-server bridge reference](app-server-bridge.md).
+The probe does not install, copy, provision or link a plugin/cache, set a shared
+backend `working_directory`, load credentials or add inference, authentication or
+diagnostic requests. Each native child retains its separate empty HOME and
+CODEX_HOME, the existing loopback discard model endpoint, and its
+`features.apps=false` / `features.plugins=false` configuration. A successful
+argument parse is not evidence that a plugin was loaded or that a model is usable.
+No firewall, network policy or other security setting is changed; no zero-egress
+claim is made.
+
+Gateway OAuth reads remain primary-native and read-only. A false or null result is
+not logged in. Attestation remains explicitly unavailable; a failure there is not
+evidence of a Windows token or access-token problem. JSONL requirements reads must
+obtain actual successful `requirements:null` results from both backends on each
+read. Missing, malformed, failed, non-null or incompatible results fail closed,
+never become invented null requirements. The one-shot startup comparison remains
+independent and unchanged. Reports list the explicit profile and these limits
+without recording response bodies, credentials, proof tokens or raw arguments.
+A green observation still means bounded process/window/metadata evidence only.
+
+[Offline PowerShell profile tests](../../build/test-desktop-ci-profile.ps1)
+AST-load only the three allowlisted gate/configuration helpers. They cover missing
+opt-ins, baseline/direct modes, repository/branch/runner denials, unchanged default
+and startup-only JSON, all exact compatibility values, both executable pins,
+independent backend homes, unchanged caller inputs, exact Desktop version/package
+hash rejection, and backend version/hash/count rejection.
+They run on Linux and Windows alongside all prior catalog and observer regressions.
+The standalone `TestDesktopPluginLiteralReachesLaunchOptions` fixture is also
+copied onto the exact pre-change `643cc5d0` adapter; its named behavioral assertion
+must fail, so compilation, setup errors and skips are not accepted as red evidence.
+No fixture launches Desktop, contacts an account or tests a real plugin.
 
 ## Static override identification
 

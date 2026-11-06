@@ -87,6 +87,13 @@ func fixtureServer() int {
 			}
 		}
 		if request.Method == "initialize" {
+			if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "synthetic-plugin-error")); err == nil {
+				response := map[string]any{"id": request.ID, "error": json.RawMessage(desktopPluginFixtureError)}
+				if json.NewEncoder(os.Stdout).Encode(response) != nil {
+					return 4
+				}
+				continue
+			}
 			response := map[string]any{
 				"id": request.ID,
 				"result": map[string]string{
@@ -928,6 +935,16 @@ func testDesktopArgumentLifecycle(t *testing.T, adapter string) {
 
 func testAdapterLifecycle(t *testing.T, adapter string, args, wantChildPrefix []string) {
 	t.Helper()
+	testAdapterLifecycleConfig(t, adapter, args, wantChildPrefix, nil)
+}
+
+func testAdapterLifecycleConfig(t *testing.T, adapter string, args, wantChildPrefix []string, configure func(*appserverbridge.Config)) {
+	t.Helper()
+	testAdapterLifecycleCase(t, adapter, args, wantChildPrefix, configure, false)
+}
+
+func testAdapterLifecycleCase(t *testing.T, adapter string, args, wantChildPrefix []string, configure func(*appserverbridge.Config), initializeError bool) {
+	t.Helper()
 	root := t.TempDir()
 	self, err := os.Executable()
 	if err != nil {
@@ -961,6 +978,9 @@ func testAdapterLifecycle(t *testing.T, adapter string, args, wantChildPrefix []
 			t.Fatal(err)
 		}
 		cfg.Backends = append(cfg.Backends, appserverbridge.Backend{ID: id, Provider: "fixture-" + id, Command: command, Home: home, CodexHome: codex})
+	}
+	if configure != nil {
+		configure(&cfg)
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -1047,12 +1067,17 @@ func testAdapterLifecycle(t *testing.T, adapter string, args, wantChildPrefix []
 		var response struct {
 			ID     int               `json:"id"`
 			Result map[string]string `json:"result"`
+			Error  json.RawMessage   `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(line), &response); err != nil {
 			t.Fatalf("stdout was not JSONL: %q: %v", line, err)
 		}
 		want := map[string]string{"userAgent": "native-adapter-fixture", "platformFamily": "fixture", "platformOs": "fixture"}
-		if response.ID != 42 || !reflect.DeepEqual(response.Result, want) {
+		valid := response.ID == 42 && reflect.DeepEqual(response.Result, want) && len(response.Error) == 0
+		if initializeError {
+			valid = response.ID == 42 && response.Result == nil && string(response.Error) == desktopPluginFixtureError
+		}
+		if !valid {
 			t.Fatalf("unexpected initialize response: %q", line)
 		}
 	case <-finished:
@@ -1060,8 +1085,10 @@ func testAdapterLifecycle(t *testing.T, adapter string, args, wantChildPrefix []
 	case <-ctx.Done():
 		t.Fatal("adapter initialization timed out")
 	}
-	if _, err := fmt.Fprintln(inputWriter, `{"method":"initialized"}`); err != nil {
-		t.Fatal(err)
+	if !initializeError {
+		if _, err := fmt.Fprintln(inputWriter, `{"method":"initialized"}`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := inputWriter.Close(); err != nil {
 		t.Fatal(err)

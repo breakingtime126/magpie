@@ -6,6 +6,7 @@ param(
     [string]$BridgeExecutable = '',
     [string]$ObserverExecutable = '',
     [switch]$EnableReviewedStartupProbe,
+    [switch]$EnableReviewedLaunchCompatibility,
     [switch]$InspectStaticLauncher
 )
 
@@ -512,17 +513,72 @@ function Assert-PublicPluginEvent($record, $catalog, $seenCatalogs) {
     } elseif ($hasDigest) { throw 'Public catalog digest occurred outside its own event.' }
 }
 
+# These helpers are AST-loaded by offline fixtures; importing them never launches Desktop.
+function Assert-DesktopCIOptions(
+    [string]$Mode, [bool]$StartupProbe, [bool]$LaunchCompatibility, [bool]$StaticLauncher,
+    [string]$Actions, [string]$RunnerEnvironment, [string]$Repository, [string]$Ref
+) {
+    if ($Actions -ne 'true' -or $RunnerEnvironment -ne 'github-hosted' -or
+        $Repository -ne 'breakingtime126/magpie' -or
+        $Ref -ne 'refs/heads/experiment/app-server-bridge-v0.1.3035') {
+        throw 'This probe is restricted to the authorized disposable GitHub hosted branch job.'
+    }
+    if (($StartupProbe -or $StaticLauncher -or $LaunchCompatibility) -and $Mode -ne 'observe') {
+        throw 'Reviewed startup inspection is limited to the explicitly instrumented CI mode.'
+    }
+    if ($LaunchCompatibility -and -not $StartupProbe) {
+        throw 'Reviewed launch compatibility requires the separate exact-version startup opt-in.'
+    }
+}
+function Assert-DesktopCompatibilityPackage([bool]$LaunchCompatibility, [string]$DesktopVersion, [string]$PackageHash) {
+    if (-not $LaunchCompatibility) { return }
+    if ($DesktopVersion -cne '26.1103.3517.0' -or
+        $PackageHash -cne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
+        throw 'Reviewed launch compatibility package mismatch; the exact signed Desktop 26.1103.3517.0 package is required.'
+    }
+}
+function New-DesktopBridgeSettings(
+    $Backends, [bool]$StartupProbe, [bool]$LaunchCompatibility,
+    [string]$VersionText, [string]$BackendHash
+) {
+    if ($LaunchCompatibility -and -not $StartupProbe) {
+        throw 'Reviewed launch compatibility requires the separate exact-version startup opt-in.'
+    }
+    # Copy only the caller's fresh test configuration; no filesystem or environment access.
+    $copies = @()
+    foreach ($backendEntry in $Backends) {
+        $copy = [ordered]@{}
+        foreach ($key in $backendEntry.Keys) { $copy[$key] = $backendEntry[$key] }
+        $copies += $copy
+    }
+    $settings = [ordered]@{ backends = $copies }
+    if ($StartupProbe) {
+        $expectedVersion = 'codex-cli 0.167.0-alpha.3.2'
+        $expectedBackendHash = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+        if ($VersionText -cne $expectedVersion -or $BackendHash -cne $expectedBackendHash -or $copies.Count -ne 2) {
+            throw 'Reviewed startup inspection requires two exact verified official backends.'
+        }
+        foreach ($backendEntry in $copies) { $backendEntry.startup_probe_sha256 = $expectedBackendHash }
+        $settings.startup_probe = 'compare-unrestricted-v0.167.0-alpha.3.2'
+    }
+    if ($LaunchCompatibility) {
+        # Separate CI-only consent: enabling startup inspection alone never selects these modes.
+        $settings.desktop_plugin_override = 'codex-app-tools-v0.167.0-alpha.3.2'
+        $settings.attestation = 'unavailable-v0.167.0-alpha.3.2'
+        $settings.gateway_oauth = 'primary-read-only-v0.167.0-alpha.3.2'
+        $settings.gateway_oauth_provider_name = 'CI alpha launch-only'
+        $settings.config_requirements_read = 'compare-null-v0.167.0-alpha.3.2'
+    }
+    return $settings
+}
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or
-    $env:GITHUB_REPOSITORY -ne 'breakingtime126/magpie' -or
-    $env:GITHUB_REF -ne 'refs/heads/experiment/app-server-bridge-v0.1.3035') {
-    throw 'This probe is restricted to the authorized disposable GitHub hosted branch job.'
-}
-if (($EnableReviewedStartupProbe -or $InspectStaticLauncher) -and $Mode -ne 'observe') {
-    throw 'Reviewed startup inspection is limited to the explicitly instrumented CI mode.'
-}
+Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
+    -LaunchCompatibility $EnableReviewedLaunchCompatibility -StaticLauncher $InspectStaticLauncher `
+    -Actions $env:GITHUB_ACTIONS -RunnerEnvironment $env:RUNNER_ENVIRONMENT `
+    -Repository $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF
 $out = Join-Path $env:RUNNER_TEMP 'desktop-cold-start-report'
 $work = Join-Path $env:RUNNER_TEMP ('desktop-cold-start-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $out, $work | Out-Null
@@ -530,7 +586,7 @@ $report = [ordered]@{
     schema = 1; sourceCommit = $env:GITHUB_SHA; mode = $Mode
     status = 'blocked'; stage = 'preflight'; startedUtc = [DateTime]::UtcNow.ToString('o')
     limits = @('No account login or user credentials.', 'Latest official package, not pinned historical Desktop.',
-        'Bridge phase tests launch only; any startup opt-in is recorded separately, auth modes remain disabled.', 'Window visibility is not model or account acceptance.')
+        'Bridge phase tests launch only; explicit CI compatibility opt-ins are recorded separately, never evidence of account login.', 'Window visibility is not model or account acceptance.')
 }
 $activationPid = 0
 $eventSource = 'MagpieDesktopProcessStart'
@@ -696,6 +752,9 @@ namespace DesktopColdProbe {
     }
     if ($signatureExit -ne 0) { Block 'Official package trust verification failed; package will not be installed or run.' }
     if ($report.download.packageSha256 -ne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
+        if ($EnableReviewedLaunchCompatibility) {
+            Block 'Reviewed launch compatibility package hash mismatch; inspect the changed floating download before running.'
+        }
         Block 'Official floating download changed since reviewed baseline; inspect new package before running.'
     }
     $zip = [IO.Compression.ZipFile]::OpenRead($package)
@@ -721,6 +780,8 @@ namespace DesktopColdProbe {
     if ($report.manifest.name -ne 'OpenAI.Codex' -or $report.manifest.architecture -ne 'x64') {
         Block 'Unexpected official package identity or architecture; inspect evidence before proceeding.'
     }
+    Assert-DesktopCompatibilityPackage -LaunchCompatibility $EnableReviewedLaunchCompatibility `
+        -DesktopVersion $report.manifest.version -PackageHash $report.download.packageSha256
     # Exact Desktop executable observed in the verified 26.1103.3517.0 package.
     # The two other applications are native Chrome host and command runner, not Desktop.
     $desktopApps = @($apps | Where-Object {
@@ -1025,20 +1086,12 @@ requires_openai_auth = false
             }
         }
         $bridgeConfig = Join-Path $work 'launch-only-bridge.json'
-        $bridgeSettings = [ordered]@{ backends = $backends }
+        $actualBackendHash = ''
         if ($EnableReviewedStartupProbe) {
-            $expectedVersion = 'codex-cli 0.167.0-alpha.3.2'
-            $expectedBackendHash = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
             $actualBackendHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant()
-            if ($versionText -cne $expectedVersion -or $actualBackendHash -cne $expectedBackendHash) {
-                Block 'Reviewed startup inspection requires the exact verified official backend.'
-            }
-            foreach ($backendEntry in $backends) {
-                $backendEntry.startup_probe_sha256 = $expectedBackendHash
-            }
-            # Only the reviewed exact-version startup profile is enabled. No auth or JSONL policy modes.
-            $bridgeSettings.startup_probe = 'compare-unrestricted-v0.167.0-alpha.3.2'
         }
+        $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe $EnableReviewedStartupProbe `
+            -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash
         [IO.File]::WriteAllText($bridgeConfig, ($bridgeSettings | ConvertTo-Json -Depth 5),
             (New-Object Text.UTF8Encoding($false)))
         $report.bridge = [ordered]@{
@@ -1054,6 +1107,24 @@ requires_openai_auth = false
         if ($EnableReviewedStartupProbe) {
             $report.bridge.configuration = 'Two empty homes, loopback discard endpoints, exact-version SHA-pinned startup inspection only; no authentication or JSONL policy opt-in.'
             $report.bridge.startupInspectionLimits = 'Both official one-shot results must match completely and be genuinely unrestricted. Non-null requirements remain unsupported, never replaced by null. No login or inference; no zero-egress claim.'
+        }
+        $report.bridge.launchCompatibilityEnabled = [bool]$EnableReviewedLaunchCompatibility
+        if ($EnableReviewedLaunchCompatibility) {
+            $report.bridge.configuration = 'Two empty homes and loopback discard endpoints; exact-version SHA-pinned startup and separately selected launch compatibility modes.'
+            $report.bridge.compatibilityModes = [ordered]@{
+                desktop_plugin_override = $bridgeSettings.desktop_plugin_override
+                attestation = $bridgeSettings.attestation
+                gateway_oauth = $bridgeSettings.gateway_oauth
+                gateway_oauth_provider_name = $bridgeSettings.gateway_oauth_provider_name
+                config_requirements_read = $bridgeSettings.config_requirements_read
+            }
+            $report.bridge.launchCompatibilityLimits = @(
+                'Only the exact reviewed Desktop plugin override is forwarded. No plugin installation, copy, cache link or shared backend working directory is configured.',
+                'Gateway OAuth is a primary native read only. False or null is not logged in; no login, credential import, inference or extra diagnostic RPC is authorized.',
+                'Attestation remains unavailable. An attestation failure is not evidence of a Windows token failure.',
+                'Requirements succeed only after fresh native reads from both backends actually return requirements:null. Errors, missing or non-null results are never replaced with null.',
+                'Configured modes and observed responses are separate evidence. No successful initialization, plugin loadability, account, model or zero-egress claim.'
+            )
         }
         $check = New-Object Diagnostics.ProcessStartInfo
         $check.FileName = $BridgeExecutable; $check.Arguments = '--check'
@@ -1081,7 +1152,7 @@ requires_openai_auth = false
             $report.observer = [ordered]@{
                 fileName = $launchName
                 sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $ObserverExecutable).Hash.ToLowerInvariant()
-                scope = 'Instrumented launch only; argv and wire bytes are forwarded to the unchanged production bridge.'
+                scope = 'Instrumented launch only; argv and wire bytes are forwarded unchanged to the exact commit-built bridge with separately recorded opt-ins.'
             }
         }
     }
