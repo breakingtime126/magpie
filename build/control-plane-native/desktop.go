@@ -1,0 +1,349 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"time"
+)
+
+// Desktop owns the app-server conversation. This mode only serves synthetic
+// Responses and prepares isolated native configuration, never authentication.
+type desktopAudit struct {
+	Schema        int    `json:"schema"`
+	Scope         string `json:"scope"`
+	Status        string `json:"status"`
+	Failure       string `json:"failure"`
+	AlphaRequests int    `json:"alpha_requests"`
+	BetaRequests  int    `json:"beta_requests"`
+	FixtureErrors int    `json:"fixture_errors"`
+}
+
+func desktopFixturesMain(args []string) {
+	report := desktopAudit{Schema: 1, Scope: "desktop-loopback-fixtures-only", Status: "failed"}
+	err := runDesktopFixtures(args, os.Stdin, os.Stdout, &report)
+	if err != nil {
+		report.Failure = "internal_failure"
+		if code, ok := err.(failure); ok {
+			report.Failure = string(code)
+		}
+	} else {
+		report.Status = "stopped"
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(report)
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report *desktopAudit) (runErr error) {
+	var codex, catalogPath, scratch string
+	flags := flag.NewFlagSet("desktop-fixtures", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&codex, "codex", "", "")
+	flags.StringVar(&catalogPath, "catalog", "", "")
+	flags.StringVar(&scratch, "scratch-parent", "", "")
+	if flags.Parse(args) != nil || flags.NArg() != 0 {
+		return failure("input_invalid")
+	}
+	if runtime.GOOS != "windows" {
+		return failure("platform_rejected")
+	}
+	if err := checkEnvironment(os.Environ()); err != nil {
+		return err
+	}
+	for _, p := range []string{codex, catalogPath, scratch, os.Getenv("SystemRoot")} {
+		if !filepath.IsAbs(p) {
+			return failure("input_invalid")
+		}
+	}
+	if err := emptyDirectory(scratch); err != nil {
+		return err
+	}
+	if err := verifyBinary(codex); err != nil {
+		return err
+	}
+	data, err := readBounded(catalogPath, 10<<20)
+	if err != nil {
+		return err
+	}
+	catalog, err := selectedCatalog(data)
+	if err != nil {
+		return err
+	}
+	// The external owner must stop Desktop and its bridge tree before deleting
+	// scratch. We deliberately leave no cleanup claim in this helper's audit.
+	root := scratch
+	cwd, err := mkdir(root, "workspace")
+	if err != nil {
+		return err
+	}
+	control, err := mkdir(root, "control-home")
+	if err != nil {
+		return err
+	}
+	versionHome, err := mkdir(root, "version-home")
+	if err != nil {
+		return err
+	}
+	versionCodex, err := mkdir(root, "version-codex")
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	err = verifyVersion(ctx, codex, childEnvironment(versionHome, versionCodex), cwd)
+	cancel()
+	if err != nil {
+		return err
+	}
+	selected := filepath.Join(root, "models.json")
+	if err := writeNew(selected, catalog); err != nil {
+		return err
+	}
+	alpha, beta := newDesktopFixture("alpha"), newDesktopFixture("beta")
+	defer func() {
+		alpha.close()
+		beta.close()
+		a, ae := alpha.counts()
+		b, be := beta.counts()
+		report.AlphaRequests, report.BetaRequests, report.FixtureErrors = a, b, ae+be
+		if ae+be != 0 && runErr == nil {
+			runErr = failure("fixture_rejected_request")
+		}
+	}()
+	backends := []map[string]any{}
+	for _, f := range []*fixture{alpha, beta} {
+		home, err := mkdir(root, f.name+"-home")
+		if err != nil {
+			return err
+		}
+		ch, err := mkdir(root, f.name+"-codex")
+		if err != nil {
+			return err
+		}
+		config, err := nativeConfig(f.name+"_provider", f.server.URL, selected)
+		if err != nil {
+			return err
+		}
+		if err := writeNew(filepath.Join(ch, "config.toml"), config); err != nil {
+			return err
+		}
+		backends = append(backends, map[string]any{"id": f.name, "provider": f.name+"_provider", "command": codex, "home": home, "codex_home": ch, "startup_probe_sha256": nativeSHA})
+	}
+	config := map[string]any{"backends": backends, "working_directory": cwd, "control_plane": controlMode, "control_home": control}
+	if err := writeNew(filepath.Join(scratch, "bridge.json"), jsonBytes(config)); err != nil {
+		return err
+	}
+	// No paths, payloads, URLs, or IDs are emitted into public diagnostics.
+	if _, err := io.WriteString(out, "{\"schema\":1,\"scope\":\"desktop-loopback-fixtures-only\",\"status\":\"ready\",\"lifetime_seconds\":180,\"native_sha256\":\"40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39\",\"catalog_blob\":\"489ebe3f2483348641a16160ce8491dd077eabca\"}\n"); err != nil {
+		return failure("output_failed")
+	}
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		var b [1]byte
+		_, err := stop.Read(b[:])
+		done <- err
+	}()
+	defer func() {
+		_ = stop.Close()
+		<-finished
+	}()
+	timer := time.NewTimer(180 * time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != io.EOF {
+			return failure("stop_invalid")
+		}
+	case <-timer.C:
+		return failure("fixture_timeout")
+	}
+	_, ae := alpha.counts()
+	_, be := beta.counts()
+	if ae+be != 0 {
+		return failure("fixture_rejected_request")
+	}
+	return nil
+}
+
+func newDesktopFixture(name string) *fixture {
+	f := &fixture{name: name}
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serveDesktopFixture(f, w, r)
+	}))
+	s.Config.ReadHeaderTimeout = 5 * time.Second
+	s.Config.ReadTimeout = 10 * time.Second
+	s.Config.WriteTimeout = 10 * time.Second
+	s.Config.IdleTimeout = 10 * time.Second
+	s.Config.MaxHeaderBytes = 32 << 10
+	s.Config.ErrorLog = log.New(io.Discard, "", 0)
+	s.Start()
+	f.server = s
+	return f
+}
+
+var syntheticDesktopPrompt = regexp.MustCompile(`^synthetic-(alpha|beta)-[A-Za-z0-9 -]{1,80}$`)
+
+// Pinned protocol/src/models.rs at c40729ea5cf8e947481b130c59807273eda2f8e9
+// defines ResponseItem::Message, ResponseInputItem::Message and ContentItem.
+// This fixture intentionally supports only their reviewed plaintext subset.
+func desktopInputAllowed(raw json.RawMessage, name string) bool {
+	if _, err := decodeConfigJSON(raw); err != nil {
+		return false
+	}
+	var input []map[string]json.RawMessage
+	if json.Unmarshal(raw, &input) != nil || len(input) == 0 || len(input) > 128 {
+		return false
+	}
+	users := 0
+	for _, item := range input {
+		if item == nil {
+			return false
+		}
+		for key, value := range item {
+			switch key {
+			case "type":
+				if !desktopString(value, "message") {
+					return false
+				}
+			case "role", "content":
+			case "id", "status":
+				var text string
+				if string(value) != "null" && (json.Unmarshal(value, &text) != nil || len(text) > 256) {
+					return false
+				}
+			case "phase":
+				if string(value) != "null" && !desktopString(value, "commentary", "partial_answer", "final_answer") {
+					return false
+				}
+			case "encrypted_content", "internal_chat_message_metadata_passthrough":
+				// No opaque/encrypted content or nonempty metadata is needed by
+				// the fixture's plaintext response. Review before widening.
+				if string(value) != "null" {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+		role := stringField(item, "role")
+		if role != "user" && role != "assistant" && role != "system" && role != "developer" {
+			return false
+		}
+		var content []map[string]json.RawMessage
+		if json.Unmarshal(item["content"], &content) != nil || len(content) == 0 || len(content) > 128 {
+			return false
+		}
+		for _, c := range content {
+			kind := stringField(c, "type")
+			if (role == "assistant" && kind != "output_text") || (role != "assistant" && kind != "input_text") {
+				return false
+			}
+			for key, value := range c {
+				switch key {
+				case "type", "text":
+				case "annotations", "logprobs":
+					if kind != "output_text" {
+						return false
+					}
+					var entries []json.RawMessage
+					if json.Unmarshal(value, &entries) != nil || len(entries) != 0 {
+						return false
+					}
+				default:
+					return false
+				}
+			}
+			var text string
+			if len(c["text"]) == 0 || string(c["text"]) == "null" || json.Unmarshal(c["text"], &text) != nil {
+				return false
+			}
+			if role == "user" {
+				if !syntheticDesktopPrompt.MatchString(text) || !strings.HasPrefix(text, "synthetic-"+name+"-") {
+					return false
+				}
+				users++
+			}
+			if role == "assistant" && text != "fixture-answer-"+name {
+				return false
+			}
+		}
+	}
+	return users > 0
+}
+
+func desktopString(raw json.RawMessage, values ...string) bool {
+	var text string
+	if len(raw) == 0 || string(raw) == "null" || json.Unmarshal(raw, &text) != nil {
+		return false
+	}
+	for _, value := range values {
+		if text == value {
+			return true
+		}
+	}
+	return false
+}
+
+func serveDesktopFixture(f *fixture, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || r.URL.Path != "/v1/responses" || r.URL.RawQuery != "" || r.ContentLength > maxMessage || r.Header.Get("Upgrade") != "" || r.Header.Get("Content-Encoding") != "" {
+		f.fail(w)
+		return
+	}
+	for _, h := range []string{"Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Oai-Attestation"} {
+		if len(r.Header.Values(h)) != 0 {
+			f.fail(w)
+			return
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxMessage+1))
+	if err != nil || len(data) > maxMessage {
+		f.fail(w)
+		return
+	}
+	// Reject duplicate keys, then inspect the actual typed Responses envelope.
+	if _, err := decodeConfigJSON(data); err != nil {
+		f.fail(w)
+		return
+	}
+	var req map[string]json.RawMessage
+	if json.Unmarshal(data, &req) != nil || stringField(req, "model") != modelName || string(req["stream"]) != "true" || !desktopInputAllowed(req["input"], f.name) {
+		f.fail(w)
+		return
+	}
+	// Native tool declarations and system/developer text are inert here.
+	// User URL/nontext payloads and tool call/results are rejected; no input
+	// is logged, relayed, fetched or executed. Only fixture text is emitted.
+	f.mu.Lock()
+	if f.requests >= 16 {
+		f.failures++
+		f.mu.Unlock()
+		http.Error(w, "synthetic fixture rejected request", http.StatusBadRequest)
+		return
+	}
+	f.requests++
+	n := f.requests
+	f.mu.Unlock()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	for _, event := range responseEvents(f.name, n) {
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonBytes(event)); err != nil {
+			f.mu.Lock()
+			f.failures++
+			f.mu.Unlock()
+			return
+		}
+	}
+}

@@ -168,3 +168,81 @@ Source was prepared without an available executor. gofmt, unit/race/vet/build,
 the full suite, and exact native runtime acceptance were not run during
 authoring. Record the exact integrated head and real CI outcomes before
 claiming success.
+
+
+## Live Desktop fixture service (explicit opt-in)
+
+`control-plane-native.exe -desktop-fixtures -codex <absolute pinned exe>
+-catalog <absolute pinned catalog> -scratch-parent <fresh empty directory>`
+prepares `bridge.json` inside that directory and serves two loopback Responses
+fixtures for at most 180 seconds. Its stdout first emits a fixed `ready` JSON
+record, then a final count-only audit. Keep stdin open while Desktop runs;
+close it after stopping the owned Desktop/bridge tree. Any stdin byte, timeout,
+or rejected request fails the audit. Zero requests is valid idle observation,
+not conversation acceptance. `stopped` is never a Desktop pass verdict.
+
+Run with the same minimal environment as the independent harness. The helper
+verifies the exact executable hash/version and pinned public catalog, reuses
+`nativeConfig` and `responseEvents`, and writes only fresh owned homes. The
+caller owns process-tree supervision, bounds stdout/stderr, and deletes the
+scratch directory after all children stop. Do not publish scratch, native
+homes, bridge.json or raw protocol content as artifacts.
+
+The internal bridge.json contains only the native backend entries, shared empty
+workspace, separate control home and existing routing control-plane mode. The
+integrator adds its explicitly reviewed Desktop startup/auth/feature opt-ins.
+Use gateway_oauth_provider_name `Synthetic alpha_provider`, matching the actual
+primary config display name. The native approval `never` and sandbox `read-only`
+settings are retained. If the null-only startup profile rejects these settings,
+stop and report the real incompatibility; do not replace its policy snapshot,
+remove safeguards, fake authentication or bypass the UI.
+
+Desktop, not this helper, sends initialize/model/thread/turn RPCs through the
+production bridge. This helper does not drive onboarding, submit a turn, or
+assert native thread IDs/assistant completions. A separate Desktop/bridge audit
+must establish any claimed UI or conversation result. Unsupported RPCs remain
+honest errors.
+
+User messages must match `synthetic-alpha-[A-Za-z0-9 -]{1,80}` or the corresponding
+beta prefix at their own endpoint, with no predetermined order. Only gpt-5.5 is
+accepted, at most 16 requests per endpoint. History accepts only text messages;
+assistant history must match that route's fixture answer. Native system and
+developer text is permitted; tool declarations may be sent by native, but tool
+call/results and image/URL input types are rejected. User prompts cannot contain
+URLs. Native-generated system text is not an external URL fetch instruction to
+the helper, which never fetches URLs. It retains no request content and emits
+only the existing text-only SSE response. This is not OS-enforced zero egress.
+
+Strict native input validation can expose an additional native context message
+that is not yet reviewed; rejection is a blocker, not permission to broaden the
+allowlist. The original independent harness and its exact turn/count assertions
+remain unchanged. New source tests cover unsequenced synthetic prompts, route
+and input guards, auth headers and request bounds. Go formatting, compilation,
+race tests and live Desktop startup have not been run during source authoring.
+
+
+The live fixture's input-message allowlist is sourced from pinned
+[`protocol/src/models.rs`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/protocol/src/models.rs):
+`ResponseItem::Message`, `ResponseInputItem::Message`, `ContentItem` and
+`MessagePhase`. Unknown message/content keys fail closed. Optional `id`/`status`
+are bounded strings or null, and phase is absent/null or one of the three native
+variants. Encrypted content and internal passthrough metadata must be absent or
+null. Output-text annotations/logprobs must be absent/null/empty. Nonempty native
+metadata is deliberately unsupported pending review, not silently dropped.
+User/system/developer content is input_text; assistant history is output_text.
+The model fixture's own answers need no opaque metadata.
+
+Native system/developer text may include URLs or instructions. These strings
+are not verified synthetic and are never logged, relayed, fetched or executed
+by this helper. The prohibition is on URLs in synthetic user prompts and on
+nontext/tool input payloads, including unknown fields hidden alongside text.
+Native tool declarations remain inert. Counts do not prove a wholly synthetic
+native envelope or its origin.
+
+Paths are deterministic directly under ScratchParent: alpha-home, alpha-codex,
+beta-home, beta-codex, workspace, control-home, version-home, version-codex,
+models.json and bridge.json. Readiness also contains fixed native_sha256 and
+catalog_blob pins. No command/path authority is emitted in readiness. Stop the
+helper only after verified Desktop activation exit; that event alone does not
+prove all native descendants exited. The external process owner must supervise
+its complete tree and report locked-file cleanup failures rather than mask them.

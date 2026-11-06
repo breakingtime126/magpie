@@ -9,6 +9,7 @@ param(
     [string]$NativeControlCatalog = '',
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
+    [switch]$EnableReviewedLiveWelcome,
     [switch]$InspectStaticLauncher
 )
 
@@ -1477,6 +1478,10 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
     -LaunchCompatibility $EnableReviewedLaunchCompatibility -StaticLauncher $InspectStaticLauncher `
     -Actions $env:GITHUB_ACTIONS -RunnerEnvironment $env:RUNNER_ENVIRONMENT `
     -Repository $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF
+if ($EnableReviewedLiveWelcome) {
+    . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
+    Assert-LiveWelcomeOptions -Enabled $true -Mode $Mode -Startup $EnableReviewedStartupProbe -Compatibility $EnableReviewedLaunchCompatibility
+}
 $out = Join-Path $env:RUNNER_TEMP 'desktop-cold-start-report'
 $work = Join-Path $env:RUNNER_TEMP ('desktop-cold-start-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $out, $work | Out-Null
@@ -1495,6 +1500,10 @@ $observed = @{}
 $eventSource = 'MagpieDesktopProcessStart'
 $subscription = $null
 $exitCode = 1
+$liveFixture = $null
+$liveWelcome = $null
+$liveFixtureStopped = $false
+$liveAfterCaptured = $false
 $publicPluginCatalog = $null
 $publicPluginEnvironment = $null
 function Block([string]$reason) {
@@ -2028,8 +2037,43 @@ requires_openai_auth = false
             try { New-Item -ItemType Directory -Path $controlHome | Out-Null }
             catch { Block 'The separate bridge-owned home could not be created.' }
         }
+        if ($EnableReviewedLiveWelcome) {
+            $report.liveWelcome = [ordered]@{
+                scope = 'synthetic-welcome-only'; status = 'not-run'; reason = 'fixture_setup_pending'
+                privateScratchRetained = $true; wholeProcessFamilyExitProven = $false
+                limit = 'One welcome transition only. No full onboarding, composer, model use or conversation claim. Private scratch is never uploaded or deleted while descendants may remain.'
+            }
+            try {
+                Initialize-LiveSupervisor
+                $liveScratch = Join-Path $env:RUNNER_TEMP ('desktop-live-fixture-' + [guid]::NewGuid().ToString('N'))
+                New-Item -ItemType Directory -Path $liveScratch | Out-Null
+                $liveStart = New-LiveStart -Executable $NativeControlExecutable -Directory $liveScratch -Arguments @(
+                    '-desktop-fixtures','-codex',$officialBackend.FullName,'-catalog',$NativeControlCatalog,'-scratch-parent',$liveScratch)
+                $liveFixture = [DesktopLive.BoundedProcess]::new($liveStart,16384,30000)
+                $report.liveWelcome.readiness = Wait-LiveReady $liveFixture
+                # Bounded private input, then exact fields and reconstructed owned paths.
+                $liveConfigPath = Join-Path $liveScratch 'bridge.json'
+                Assert-PublicRegularPath $liveConfigPath
+                $liveInfo = Get-Item -LiteralPath $liveConfigPath
+                if ($liveInfo.Length -lt 1 -or $liveInfo.Length -gt 16384) { throw 'Invalid internal live configuration size.' }
+                $liveConfig = Read-LiveConfig $liveConfigPath
+                $liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName
+                foreach ($path in @($liveScratch,$liveOwned.Workspace,$liveOwned.ControlHome) + @($liveOwned.Backends | ForEach-Object { $_.home; $_.codex_home })) {
+                    $info = Get-Item -LiteralPath $path
+                    if (-not $info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid live owned directory.' }
+                }
+                foreach ($backend in $liveOwned.Backends) { Assert-PublicRegularPath (Join-Path $backend.codex_home 'config.toml') }
+                $backends = $liveOwned.Backends; $controlHome = $liveOwned.ControlHome
+                $liveWorkspace = $liveOwned.Workspace
+                $report.liveWelcome.status = 'ready'; $report.liveWelcome.reason = 'welcome_not_attempted'
+            } catch { Block 'The live fixture could not establish its bounded reviewed contract.' }
+        }
         $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe $EnableReviewedStartupProbe `
             -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome
+        if ($EnableReviewedLiveWelcome) {
+            $bridgeSettings.working_directory = $liveWorkspace
+            $bridgeSettings.gateway_oauth_provider_name = 'Synthetic alpha_provider'
+        }
         [IO.File]::WriteAllText($bridgeConfig, ($bridgeSettings | ConvertTo-Json -Depth 5),
             (New-Object Text.UTF8Encoding($false)))
         $report.bridge = [ordered]@{
@@ -2083,6 +2127,9 @@ requires_openai_auth = false
         if (-not $checker.WaitForExit(10000)) { $checker.Kill(); Block 'Bridge configuration validation timed out.' }
         if ($checker.ExitCode -ne 0) { Block 'Launch-only bridge configuration did not validate.' }
         $report.bridge.configurationValidated = $true
+        if ($EnableReviewedLiveWelcome) {
+            $report.bridge.configuration = 'Two owned native homes with real read-only approval-never configs and live loopback synthetic Responses fixtures; genuine startup policy checks retained.'
+        }
         $launchExecutable = $BridgeExecutable
         $launchName = $bridgeName
         if ($Mode -eq 'observe') {
@@ -2113,7 +2160,7 @@ requires_openai_auth = false
     } else {
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = $alias; $start.UseShellExecute = $false
-        $start.WorkingDirectory = $work
+        $start.WorkingDirectory = $(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work })
         # Explicit non-secret Windows environment only; no runner tokens or shell-wide override.
         $start.EnvironmentVariables.Clear()
         foreach ($name in @('SystemRoot', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
@@ -2131,7 +2178,7 @@ requires_openai_auth = false
             $start.EnvironmentVariables['MAGPIE_CI_REAL_BRIDGE'] = $BridgeExecutable
             $start.EnvironmentVariables['MAGPIE_CI_TRACE_FILE'] = $tracePrefix
             $start.EnvironmentVariables['MAGPIE_CI_READ_TARGET_ROOTS'] = New-DesktopReadTargetEnvironment `
-                -Backends $backends -Workspace $work -VerifiedPackage $app.InstallLocation -ControlHome $controlHome
+                -Backends $backends -Workspace $(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work }) -VerifiedPackage $app.InstallLocation -ControlHome $controlHome
             if ($null -ne $publicPluginEnvironment) {
                 $start.EnvironmentVariables['MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES'] = $publicPluginEnvironment
             }
@@ -2202,6 +2249,50 @@ requires_openai_auth = false
         Write-Output ('DESKTOP_SCREENSHOT_PNG=' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($capturePath)))
     }
     $report.capture = 'official-window.png; screen pixels may contain occlusion and require visual review'
+    if ($EnableReviewedLiveWelcome) {
+        # Exactly one attempt, never retry after missing output or uncertain UI action.
+        try {
+            if ($liveFixture.Exited -or $liveFixture.TimedOut -or $liveFixture.Overflow -or
+                $window.ProcessId -ne $activationPid -or $null -eq $ownedActivationProcess -or
+                $ownedActivationProcess.HasExited -or $ownedActivationProcess.SessionId -ne $processSession -or
+                [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName) { throw 'Owned welcome identity unavailable.' }
+            $ownerExecutable = $ownedActivationProcess.MainModule.FileName
+            $expectedDesktopExecutable = Join-Path $app.InstallLocation $desktopApp.GetAttribute('Executable')
+            if ($ownerExecutable -ine $expectedDesktopExecutable) { throw 'Owned executable mismatch.' }
+            $welcomeHost = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            Assert-PublicRegularPath $welcomeHost
+            $welcomeStart = New-LiveStart -Executable $welcomeHost -Directory $work -Welcome -Arguments @(
+                '-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'desktop-welcome-step.ps1'),
+                '-WindowHandle',[string]$window.Handle,'-OwnerProcessId',[string]$activationPid,
+                '-OwnerStartUtcTicks',[string]$ownedActivationProcess.StartTime.ToUniversalTime().Ticks,
+                '-OwnerExecutable',$ownerExecutable,'-PackageFullName',$app.PackageFullName,'-SessionId',[string]$processSession)
+            $liveWelcome = Invoke-LiveWelcome $welcomeStart
+            $report.liveWelcome.result = $liveWelcome
+            $report.liveWelcome.status = $liveWelcome.status; $report.liveWelcome.reason = $liveWelcome.reason
+        } catch {
+            $report.liveWelcome.status = 'stopped'; $report.liveWelcome.reason = 'welcome_supervision_or_identity_unavailable'
+            $report.liveWelcome.partialActionUncertain = $true
+        }
+        # Capture again even on a stopped result, but only the original owned HWND/PID.
+        try {
+            if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
+                $ownedActivationProcess.StartTime.ToUniversalTime().ToString('o') -cne $ownedActivationCreatedUtc -or
+                [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName) { throw 'After window identity unavailable.' }
+            $afterWindows = @([DesktopColdProbe.Native]::Windows() | Where-Object { $_.Handle -eq $window.Handle -and $_.ProcessId -eq $activationPid })
+            if ($afterWindows.Count -ne 1) { throw 'After window unavailable.' }
+            $afterWindow = $afterWindows[0]
+            $left=[Math]::Max(0,$afterWindow.Left); $top=[Math]::Max(0,$afterWindow.Top)
+            $right=[Math]::Min($report.session.screenWidth,$afterWindow.Left+$afterWindow.Width)
+            $bottom=[Math]::Min($report.session.screenHeight,$afterWindow.Top+$afterWindow.Height)
+            if ($right -le $left -or $bottom -le $top) { throw 'After window outside screen.' }
+            $bitmap=New-Object Drawing.Bitmap(($right-$left),($bottom-$top)); $graphics=[Drawing.Graphics]::FromImage($bitmap)
+            try { $graphics.CopyFromScreen($left,$top,0,0,$bitmap.Size)
+                $bitmap.Save((Join-Path $out 'official-window-after-welcome.png'),[Drawing.Imaging.ImageFormat]::Png)
+            } finally { $graphics.Dispose(); $bitmap.Dispose() }
+            $liveAfterCaptured=$true
+            $report.liveWelcome.afterCapture='official-window-after-welcome.png; screen pixels may contain occlusion and require review'
+        } catch { $report.liveWelcome.afterCapture='unavailable' }
+    }
     if ($Mode -ne 'baseline') {
         $bridgeStarts = @($report.processStarts | Where-Object {
             $_.name -eq $launchName -and $observed.ContainsKey([string]$_.parentProcessId)
@@ -2834,6 +2925,19 @@ requires_openai_auth = false
     if ($EnableReviewedLaunchCompatibility) {
         $report.desktopActivationExited = [bool]$activationExitConfirmed
     }
+    if ($EnableReviewedLiveWelcome -and $null -ne $liveFixture) {
+        try {
+            # Normally EOF follows exact activation exit. If cleanup failed, stop
+            # the held fixture anyway, report failure, and retain private scratch.
+            if (-not $activationExitConfirmed) { $liveFixture.Stop() }
+            $audit = Complete-LiveFixture $liveFixture
+            $report.liveWelcome.fixtureAudit = $audit
+            $liveFixtureStopped = $activationExitConfirmed -and $audit.status -ceq 'stopped'
+        } catch { $report.liveWelcome.fixtureAudit = [ordered]@{status='unavailable';reason='fixture_supervision_failed'} }
+        finally {
+            try { $liveFixture.Dispose() } catch { $liveFixtureStopped=$false; $report.liveWelcome.fixtureDisposal='unconfirmed' }
+        }
+    }
 }
 
 # Same Windows job, after safe Desktop capture and exact activation-process exit.
@@ -2894,6 +2998,11 @@ if ($EnableReviewedLaunchCompatibility) {
     $report.stage = $combinedOutcome.stage
     $report.reason = $combinedOutcome.reason
     $exitCode = $combinedOutcome.exitCode
+}
+if ($EnableReviewedLiveWelcome) {
+    $prior = [pscustomobject]@{status=$report.status;stage=$report.stage;reason=$report.reason;exitCode=$exitCode}
+    $liveOutcome = Get-LiveWelcomeOutcome $prior $liveFixtureStopped $liveWelcome $liveAfterCaptured
+    $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode
 }
 Save-Report
 exit $exitCode

@@ -64,6 +64,10 @@ type failure string
 func (e failure) Error() string { return string(e) }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "-desktop-fixtures" {
+		desktopFixturesMain(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "-supervise" {
 		supervise(os.Args[2:])
 		return
@@ -274,3 +278,4 @@ func writeNew(path string, data []byte) error {
 }
 
 func jsonBytes(value any) []byte { data, _ := json.Marshal(value); return data }
+
