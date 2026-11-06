@@ -59,6 +59,10 @@ jobs:
           go test -race -v -count=1 -timeout=15m -tags nogui ./internal/appserverbridge ./internal/proc ./cmd/magpie-codex-bridge
           test -z "$(git status --porcelain)"
 
+      - name: Test the pinned official runtime without external networking
+        shell: bash
+        run: bash build/test-official-runtime.sh
+
   windows-amd64:
     needs: bridge-race
     if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'

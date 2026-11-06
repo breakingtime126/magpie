@@ -769,6 +769,59 @@ authentication. Those Rust tests are not run by this repository's Go CI.
 Expanding that official harness would require a separately pinned Rust build
 and verified local-only runtime setup; source review is not an executed result.
 
+### Isolated official-runtime black-box test
+
+The experimental Linux CI also invokes
+[`build/test-official-runtime.sh`](../../build/test-official-runtime.sh).
+Preparation downloads the official full Codex `0.166.0-alpha.6` Linux musl
+release, verifies archive SHA-256
+`c9400b373a2c17c71f48a6af592e8c92b9b212295182a482bf0b351e137c8967`,
+and verifies the model catalog's Git blob against the pinned official source.
+The release tag is mutable, so the archive digest is required. The Python
+official container image is pinned by its linux/amd64 manifest digest from
+[Docker's image metadata](https://github.com/docker-library/repo-info/blob/master/repos/python/remote/3.13-slim-bookworm.md).
+No official executable is added to the Windows artifact.
+
+All Codex execution, including version inspection, runs inside an ephemeral
+non-root container with `--network none`, dropped capabilities,
+no-new-privileges, a read-only root and inputs, bounded resources, and a private
+temporary filesystem. The runner inspects these settings before starting it.
+Only the test inputs are mounted; no host account state, environment secrets
+or Docker socket is supplied. The test checks that only the loopback network
+interface exists. Preparation can download dependencies, but the test
+processes cannot reach external services. This does not claim that the
+official executable never attempts an external connection.
+
+The stdlib-only [Python harness](../../build/test-official-runtime.py) uses
+fresh synthetic authentication fixtures matching the official test helper,
+local HTTP/WebSocket Responses endpoints and an unmodified official catalog
+entry. These fixtures are not real login credentials, model responses or
+proofs. Direct official-process controls distinguish an actual JSON-RPC error
+from a clearly labelled arbitrary test string. They do not construct a Windows
+attestation wrapper, generate a device proof or test upstream acceptance.
+
+The bridge case uses two real official child processes with separate state
+and local providers. Its assertions cover real handshake traffic, model
+selection, the actual null-policy requirements envelope and no-OAuth gateway
+read response, unavailable-proof
+handling without a frontend proof request, and two synthetic-response turns
+per provider. Each endpoint must observe an actual WebSocket handshake;
+SSE-only success is insufficient. Managed/non-null policy and both individual
+policy reads are not independently observed by this black-box fixture.
+An unsupported or changed runtime result is a failing test,
+not a fabricated success or a silently skipped check. Directly launched
+processes must exit normally; the fixture does not independently prove normal
+exit of both official grandchildren. Container teardown bounds their lifetime,
+and the container's final exit status must also succeed.
+
+This black-box test is separate from the upstream Rust tests and the
+native-synthetic Windows fixtures. It does not establish Windows Desktop GUI
+acceptance, real GPT/AIHub inference, OAuth login, managed corporate policies,
+tool execution, or equivalence between Windows error tokens and RPC failure.
+The production defaults, real-proof forwarding prohibition and unsupported
+methods are unchanged. CI failures or unavailable execution remain explicit
+verification gaps, even when the source-based design looks feasible.
+
 `getAuthStatus` remains unsupported. The inspected local main connection
 defaults to `ensureAuth:false`; remote connections may enable it. It is therefore
 not a universal local handshake step. Even `includeToken:false,refreshToken:false`
