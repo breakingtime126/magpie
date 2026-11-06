@@ -86,6 +86,15 @@ Assert-WelcomeResult $welcome
 Pass ((Get-LiveWelcomeOutcome $prior $true $welcome $true).exitCode -eq 1) 'stopped partial action'
 $prior.exitCode=1; $prior.reason='original Desktop or native failure'
 Pass ((Get-LiveWelcomeOutcome $prior $false $null $false).reason -ceq $prior.reason) 'failure precedence'
+# Exact package-relative executable spelling supports manifest separators only.
+$packageRoot=Join-Path ([IO.Path]::GetTempPath()) 'synthetic-package'
+$expectedExecutable=[IO.Path]::GetFullPath((Join-Path (Join-Path $packageRoot 'app') 'ChatGPT.exe'))
+foreach ($relative in @('app/ChatGPT.exe','app\ChatGPT.exe')) {
+    Pass ((Get-LiveDesktopExecutable $packageRoot $relative) -ceq $expectedExecutable) 'manifest executable separator normalization'
+}
+foreach ($relative in @('app/Other.exe','../ChatGPT.exe','app/../ChatGPT.exe','app/ChatGPT.exe/other','C:\foreign\ChatGPT.exe')) {
+    Reject { Get-LiveDesktopExecutable $packageRoot $relative } 'unreviewed executable remains rejected'
+}
 # Test actual bounded process supervision using only a fresh local script. No UI.
 Initialize-LiveSupervisor
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('live-supervisor-fixture-'+[guid]::NewGuid().ToString('N'))
@@ -104,6 +113,44 @@ try {
     [IO.File]::WriteAllText($scriptPath,"[Console]::Out.Write(('x'*20000))")
     $child=[DesktopLive.BoundedProcess]::new($start,8192,10000)
     try { $null=$child.Wait(15000); Start-Sleep -Milliseconds 100; Pass ($child.Overflow -and [Text.Encoding]::UTF8.GetByteCount($child.Output) -le 8192) 'stdout memory bound' } finally { $child.Dispose() }
+    # Fixed supervisor diagnostics do not echo malformed output or stderr.
+    [IO.File]::WriteAllText($scriptPath,"[Console]::Out.Write('{""PRIVATE_CANARY"":true}')")
+    $diagnostic=[ordered]@{}
+    Reject { Invoke-LiveWelcome $start -Diagnostic $diagnostic } 'invalid child schema is rejected'
+    Pass ($diagnostic.stage -ceq 'helper_schema' -and $diagnostic.reason -ceq 'helper_schema_invalid' -and
+        ($diagnostic | ConvertTo-Json -Compress) -notmatch 'PRIVATE_CANARY') 'fixed schema failure diagnostic'
+    [IO.File]::WriteAllText($scriptPath,'exit 2')
+    $diagnostic=[ordered]@{}
+    Reject { Invoke-LiveWelcome $start -Diagnostic $diagnostic } 'nonzero helper exit is rejected'
+    Pass ($diagnostic.reason -ceq 'helper_exit_nonzero' -and $diagnostic.exitCode -eq 2 -and
+        $diagnostic.stdoutBytes -eq 0 -and -not $diagnostic.outputLimitExceeded) 'fixed exit diagnostic'
+    $start.FileName=Join-Path $temp 'missing-helper.exe'
+    $diagnostic=[ordered]@{}
+    Reject { Invoke-LiveWelcome $start -Diagnostic $diagnostic } 'missing helper executable is rejected'
+    Pass ($diagnostic.stage -ceq 'helper_start' -and $diagnostic.reason -ceq 'helper_start_failed') 'fixed launch failure diagnostic'
+    # Windows-only, real PS5.1 argv/environment/schema smoke. Zero context stops
+    # before Add-Type, Get-Process, UIA, foreground reads or any input action.
+    if ($IsWindows) {
+        $windowsHost=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Pass ([IO.File]::Exists($windowsHost)) 'installed Windows PowerShell host exists'
+        $launch=New-LiveStart -Executable $windowsHost -Directory $temp -Welcome -Arguments @(
+            '-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'desktop-welcome-step.ps1'),
+            '-WindowHandle','0','-OwnerProcessId','0','-OwnerStartUtcTicks','0',
+            '-OwnerExecutable',$windowsHost,'-PackageFullName','Synthetic.InvalidContext','-SessionId','0')
+        Pass ($launch.Environment['GITHUB_ACTIONS'] -ceq 'true' -and $launch.Environment['RUNNER_OS'] -ceq 'Windows' -and
+            -not $launch.Environment.ContainsKey('GITHUB_TOKEN')) 'minimal helper launch environment'
+        $diagnostic=[ordered]@{}
+        try { $smoke=Invoke-LiveWelcome $launch -Diagnostic $diagnostic } catch {
+            Write-Output ('WINDOWS_HELPER_LAUNCH_DIAGNOSTIC=' + ($diagnostic | ConvertTo-Json -Compress))
+            throw 'Windows helper launch smoke failed before a validated result.'
+        }
+        Write-Output ('WINDOWS_HELPER_LAUNCH_RESULT=' + ($smoke | ConvertTo-Json -Depth 5 -Compress))
+        Pass ($smoke.status -ceq 'stopped' -and $smoke.reason -ceq 'invalid_context' -and
+            $smoke.stage -ceq 'initialization' -and $smoke.actions -eq 0 -and -not $smoke.continueInvoked -and
+            $null -eq $smoke.targetObservations -and $diagnostic.reason -ceq 'helper_result_validated' -and
+            -not $diagnostic.partialActionUncertain) 'real PS5.1 helper rejects zero context before UI'
+        Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=invalid_context_verified'
+    } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_non_windows' }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
 Write-Output "LIVE_WELCOME_OFFLINE_CHECKS=$count"
 exit 0

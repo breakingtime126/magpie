@@ -2321,28 +2321,36 @@ requires_openai_auth = false
     $report.capture = 'official-window.png; screen pixels may contain occlusion and require visual review'
     if ($EnableReviewedLiveWelcome) {
         # Exactly one attempt, never retry after missing output or uncertain UI action.
+        $welcomeDiagnostic=[ordered]@{stage='fixture_liveness';reason='fixture_unavailable';partialActionUncertain=$false;exitCode=$null;stdoutBytes=0;outputLimitExceeded=$false}
         try {
-            if ($liveFixture.Exited -or $liveFixture.TimedOut -or $liveFixture.Overflow -or
-                $window.ProcessId -ne $activationPid -or $null -eq $ownedActivationProcess -or
+            if ($liveFixture.Exited -or $liveFixture.TimedOut -or $liveFixture.Overflow) { throw 'Live fixture unavailable.' }
+            $welcomeDiagnostic.stage='owner_identity'; $welcomeDiagnostic.reason='owner_identity_unavailable'
+            if ($window.ProcessId -ne $activationPid -or $null -eq $ownedActivationProcess -or
                 $ownedActivationProcess.HasExited -or $ownedActivationProcess.SessionId -ne $processSession -or
                 [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName) { throw 'Owned welcome identity unavailable.' }
+            $welcomeDiagnostic.stage='owner_executable'; $welcomeDiagnostic.reason='owner_executable_unavailable'
             $ownerExecutable = $ownedActivationProcess.MainModule.FileName
-            $expectedDesktopExecutable = Join-Path $app.InstallLocation $desktopApp.GetAttribute('Executable')
-            if ($ownerExecutable -ine $expectedDesktopExecutable) { throw 'Owned executable mismatch.' }
+            $welcomeDiagnostic.stage='executable_identity'; $welcomeDiagnostic.reason='executable_identity_mismatch'
+            $expectedDesktopExecutable = Get-LiveDesktopExecutable $app.InstallLocation $desktopApp.GetAttribute('Executable')
+            if ([IO.Path]::GetFullPath($ownerExecutable) -ine $expectedDesktopExecutable) { throw 'Owned executable mismatch.' }
+            $welcomeDiagnostic.stage='helper_host'; $welcomeDiagnostic.reason='helper_host_unavailable'
             $welcomeHost = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
             Assert-PublicRegularPath $welcomeHost
+            $welcomeDiagnostic.stage='helper_arguments'; $welcomeDiagnostic.reason='helper_arguments_invalid'
             $welcomeStart = New-LiveStart -Executable $welcomeHost -Directory $work -Welcome -Arguments @(
                 '-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'desktop-welcome-step.ps1'),
                 '-WindowHandle',[string]$window.Handle,'-OwnerProcessId',[string]$activationPid,
                 '-OwnerStartUtcTicks',[string]$ownedActivationProcess.StartTime.ToUniversalTime().Ticks,
                 '-OwnerExecutable',$ownerExecutable,'-PackageFullName',$app.PackageFullName,'-SessionId',[string]$processSession)
-            $liveWelcome = Invoke-LiveWelcome $welcomeStart
+            $liveWelcome = Invoke-LiveWelcome $welcomeStart -Diagnostic $welcomeDiagnostic
             $report.liveWelcome.result = $liveWelcome
             $report.liveWelcome.status = $liveWelcome.status; $report.liveWelcome.reason = $liveWelcome.reason
         } catch {
-            $report.liveWelcome.status = 'stopped'; $report.liveWelcome.reason = 'welcome_supervision_or_identity_unavailable'
-            $report.liveWelcome.partialActionUncertain = $true
+            $liveWelcome=$null
+            $report.liveWelcome.status = 'stopped'; $report.liveWelcome.reason = $welcomeDiagnostic.reason
         }
+        $report.liveWelcome.parentDiagnostic=$welcomeDiagnostic
+        $report.liveWelcome.partialActionUncertain=$welcomeDiagnostic.partialActionUncertain
         # Capture again even on a stopped result, but only the original owned HWND/PID.
         try {
             if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or

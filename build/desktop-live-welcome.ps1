@@ -224,14 +224,51 @@ function Complete-LiveFixture($Process) {
     $audit=ConvertFrom-LiveJSON $lines[1]; Assert-LiveAudit $audit $Process.ExitCode
     return $audit
 }
-function Invoke-LiveWelcome($Start) {
-    $child=[DesktopLive.BoundedProcess]::new($Start,8192,30000)
+function Get-LiveDesktopExecutable([string]$InstallLocation, [string]$ManifestExecutable) {
+    # Only separator normalization of the already reviewed exact executable.
+    if (-not [IO.Path]::IsPathRooted($InstallLocation) -or
+        $ManifestExecutable.Replace('\','/') -cne 'app/ChatGPT.exe') { throw 'Unreviewed Desktop executable.' }
+    return [IO.Path]::GetFullPath((Join-Path (Join-Path $InstallLocation 'app') 'ChatGPT.exe'))
+}
+function Invoke-LiveWelcome($Start, [System.Collections.IDictionary]$Diagnostic = @{}) {
+    $child=$null
+    $Diagnostic.stage='helper_start'; $Diagnostic.reason='helper_start_failed'
+    $Diagnostic.exitCode=$null; $Diagnostic.stdoutBytes=0; $Diagnostic.outputLimitExceeded=$false
+    # Constructor failure may follow process creation. Never retry on uncertainty.
+    $Diagnostic.partialActionUncertain=$true
     try {
-        if (-not $child.Wait(30000)) { $child.Stop(); $null=$child.Wait(5000); throw 'Welcome timed out; partial action uncertain.' }
+        $child=[DesktopLive.BoundedProcess]::new($Start,8192,30000)
+        $Diagnostic.stage='helper_wait'; $Diagnostic.reason='helper_wait_failed'
+        if (-not $child.Wait(30000)) {
+            $Diagnostic.reason='helper_timeout'
+            $child.Stop(); $null=$child.Wait(5000); throw 'Welcome supervisor stopped.'
+        }
+        $Diagnostic.stage='helper_output'; $Diagnostic.reason='helper_output_unavailable'
         $watch=[Diagnostics.Stopwatch]::StartNew()
         while (-not $child.Drained -and $watch.Elapsed.TotalSeconds -lt 2) { Start-Sleep -Milliseconds 20 }
-        if ($child.TimedOut -or $child.Overflow -or -not $child.Drained -or $child.ExitCode -ne 0) { throw 'Welcome result unavailable; partial action uncertain.' }
+        if ($child.TimedOut) { $Diagnostic.reason='helper_timeout'; throw 'Welcome supervisor stopped.' }
+        if ($child.Overflow) { $Diagnostic.reason='helper_output_limit'; throw 'Welcome supervisor stopped.' }
+        if (-not $child.Drained) { $Diagnostic.reason='helper_output_unclosed'; throw 'Welcome supervisor stopped.' }
+        if ($child.ExitCode -ne 0) { $Diagnostic.reason='helper_exit_nonzero'; throw 'Welcome supervisor stopped.' }
+        $Diagnostic.stage='helper_schema'; $Diagnostic.reason='helper_schema_invalid'
         $value=ConvertFrom-LiveJSON $child.Output; Assert-WelcomeResult $value
+        $Diagnostic.stage='complete'; $Diagnostic.reason='helper_result_validated'
+        $Diagnostic.partialActionUncertain=($value.status -ceq 'stopped' -and $value.actions -gt 0)
         return $value
-    } finally { $child.Dispose() }
+    } finally {
+        if ($null -ne $child) {
+            try {
+                if ($child.Exited) { $Diagnostic.exitCode=$child.ExitCode }
+                $Diagnostic.stdoutBytes=[Text.Encoding]::UTF8.GetByteCount($child.Output)
+                $Diagnostic.outputLimitExceeded=$child.Overflow
+            } catch { }
+            try { $child.Dispose() } catch {
+                if ($Diagnostic.stage -ceq 'complete') {
+                    $Diagnostic.stage='helper_cleanup'; $Diagnostic.reason='helper_cleanup_unconfirmed'
+                    $Diagnostic.partialActionUncertain=$true
+                }
+                throw 'Welcome supervisor cleanup failed.'
+            }
+        }
+    }
 }
