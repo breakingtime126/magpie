@@ -245,6 +245,7 @@ func passedSummary() summary {
 		NativeSHA256: nativeSHA, BinaryVerified: true, VersionVerified: true, ConfigReads: 9,
 		LayerReads: 6, StableLayerRereads: 3, LayerVersionChanges: 1, CatalogModels: 2,
 		Threads: 2, Turns: 4, AssistantMessages: 4, ThreadReads: 2, OwnershipRejections: 2,
+		ThreadListQueries: 2, ThreadListPages: 4, ThreadListItems: 4,
 		AlphaRequests: 2, BetaRequests: 2, AdapterCleanExit: true, CleanupComplete: true}
 }
 func TestSummaryNeverAcceptsWeakenedSuccess(t *testing.T) {
@@ -258,6 +259,8 @@ func TestSummaryNeverAcceptsWeakenedSuccess(t *testing.T) {
 		func(s *summary) { s.NativeSHA256 = "unverified" }, func(s *summary) { s.CleanupComplete = false },
 		func(s *summary) { s.UnexpectedServerRequests = 1 }, func(s *summary) { s.Stage = "PRIVATE_PATH" },
 		func(s *summary) { s.Failure = "PRIVATE_NATIVE_ERROR" },
+		func(s *summary) { s.ThreadListQueries = 1 }, func(s *summary) { s.ThreadListPages = 3 },
+		func(s *summary) { s.ThreadListItems = 0 },
 	} {
 		s := passedSummary()
 		change(&s)

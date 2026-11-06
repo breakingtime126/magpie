@@ -240,6 +240,10 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 			report.Turns++
 		}
 	}
+	report.Stage = "thread_list"
+	if err := readThreadLists(p, threads, report); err != nil {
+		return err
+	}
 	report.Stage = "ownership"
 	for i := range threads {
 		other := "alpha"

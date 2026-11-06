@@ -46,6 +46,9 @@ type summary struct {
 	Turns                    int    `json:"turns"`
 	AssistantMessages        int    `json:"assistant_messages"`
 	ThreadReads              int    `json:"thread_reads"`
+	ThreadListQueries        int    `json:"thread_list_queries"`
+	ThreadListPages          int    `json:"thread_list_pages"`
+	ThreadListItems          int    `json:"thread_list_items"`
 	OwnershipRejections      int    `json:"ownership_rejections"`
 	AlphaRequests            int    `json:"alpha_requests"`
 	BetaRequests             int    `json:"beta_requests"`

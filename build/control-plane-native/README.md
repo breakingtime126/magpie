@@ -59,6 +59,38 @@ answers. Extra, duplicate, unexplained or wrong-route completions fail even
 when no waiter would have consumed them. The assistant count is derived from
 that complete audit, not from successful waiter calls.
 
+After the four completed turns, two nonempty `thread/list` queries exercise
+the real adapter and both native backends. The first includes
+`parentThreadId:null`; the second includes all three reviewed lineage keys
+(`parentThreadId`, `ancestorThreadId`, `attachedToThreadId`) as null.
+Both use `sourceKinds:["vscode"]`, `modelProviders:["magpie_bridge"]`,
+`sortKey:"created_at"`, descending order and `limit:1`. Each must return
+exactly the two native IDs obtained from `thread/start`, once each across two
+one-row pages. The continuation request sends only the opaque frontend cursor,
+and the second page must have `nextCursor:null`. Empty, missing, duplicate,
+unknown or extra rows, wrong owner/model aliases, native providers and invalid
+pagination fail. A present non-null model must match its known owner alias;
+`model:null` is preserved as unavailable, as allowed by the pinned
+[Thread schema](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs).
+The [loaded-thread enrichment](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/thread_enrichment.rs)
+normally fills it from the live config, but this check does not require native
+metadata availability or claim per-turn execution telemetry.
+Each row must also retain source `vscode`, a nonempty
+preview and `ephemeral:false`. No list error is retried or treated as empty.
+
+The source selection is pinned, not inferred from the executable name:
+the official [CLI app-server launch](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/cli/src/main.rs)
+passes `SessionSource::VSCode`, and the [source filter](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/filters.rs)
+maps `vscode` to it. The `appServer` filter instead selects `Mcp`.
+The [native list processor](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/thread_processor.rs)
+treats the three null lineage filters as no relation filter; the
+[local store](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/thread-store/src/local/list_threads.rs)
+uses ordinary scan-and-repair listing when `useStateDbOnly` is omitted.
+Ordinary non-archived [state queries](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/state/src/runtime/threads.rs)
+exclude empty previews and attached threads. Consequently the harness lists
+only after real user turns and validates nonempty persisted-row eligibility;
+it never reads the DB or manufactures rollout records to make listing pass.
+
 The config checker owns an independent, fixed routing-view oracle. Its literal
 JSON is recursively sorted and compact before SHA-256, following the pinned
 [official fingerprint source](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/config/src/fingerprint.rs).
@@ -82,7 +114,11 @@ Every read still requires fresh paired native requirements replies.
 The strict success summary now requires `config_reads:9`, `layer_reads:6`,
 `stable_layer_rereads:3` and `layer_version_changes:1`. The existing two catalog
 models, two threads, four turns, four audited assistant completions, two thread
-reads and two ownership rejections remain required. No raw config, origin,
+reads and two ownership rejections remain required. Listing additionally requires
+`thread_list_queries:2`, `thread_list_pages:4` and `thread_list_items:4`:
+two distinct known threads in each of two queries, not four distinct threads.
+These add four frontend `thread/list` requests and no model requests.
+No raw config, origin,
 fingerprint, thread ID or response is written to the summary.
 
 Native HOME, CODEX_HOME, control_home, and cwd are freshly created and separate.
@@ -121,6 +157,10 @@ source, shape, primitive-origin and digest mutations, wrong fingerprints applied
 consistently to all metadata, a changed later read, omission versus null, and
 duplicate/trailing JSON. The hash oracle includes the native source's fixed
 test vector and fixed initial/resolved routing-view fingerprints.
+Thread-list tests independently check exact query/null filters, cursor-only
+continuations, known IDs, owner/model aliases, nonempty row eligibility,
+missing/duplicate/unknown rows, invalid cursors and immediate native-error
+propagation. Summary tests reject missing or weakened list counts.
 The real acceptance is never silently skipped by these tests; it is the
 separate explicit Windows CI invocation above.
 

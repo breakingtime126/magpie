@@ -183,7 +183,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 	if err != nil {
 		return []Delivery{fail(m["id"], -32602, "params must be an object")}, nil
 	}
-	if err := validateParams(method, p); err != nil {
+	if err := r.validateParams(method, p); err != nil {
 		return []Delivery{fail(m["id"], -32602, err.Error())}, nil
 	}
 	g := &request{size: len(line), id: m["id"], key: key, method: method, params: p, results: map[string][]json.RawMessage{}, seen: map[string]map[string]bool{}}

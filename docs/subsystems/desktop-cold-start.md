@@ -1239,10 +1239,14 @@ may forcibly stop remaining descendants through the kill-on-close job.
 `cleanup_complete` records completion of that cleanup, not graceful descendant
 shutdown. The main report accepts
 only its exact pinned success schema: `config_reads=9`, `layer_reads=6`,
-`stable_layer_rereads=3` and `layer_version_changes=1`, plus two catalog
+`stable_layer_rereads=3` and `layer_version_changes=1`, plus
+`thread_list_queries=2`, `thread_list_pages=4`, `thread_list_items=4`, two catalog
 models, two threads, four turns, four assistant messages, two thread reads, two
 ownership rejections, two fixture requests per backend, zero fixture errors,
 zero unexpected server requests and all verification/cleanup flags true.
+The two list queries use limit one and require both known native IDs exactly
+once per query, one item per page and a final null cursor. The native stage
+`thread_list` and failure `thread_list_invalid` are fixed sanitized labels.
 Failures never become empty or successful reports. Only fixed labels, exact
 public pin and counts/booleans are retained, not RPC bodies, IDs, prompts,
 answers, paths, credential data or raw errors.
@@ -1268,9 +1272,10 @@ must report those results before this change is called verified.
 
 ### Thread-list filter shapes and exact rejection classes
 
-The disposable observer adds four JSON-type labels on unambiguous client
+The disposable observer adds five JSON-type labels on unambiguous client
 `thread/list` requests: `threadListProjectIdShape`, `threadListParentIdShape`,
-`threadListAncestorIdShape`, and `threadListAttachedIdShape`. Each is exactly
+`threadListAncestorIdShape`, `threadListAttachedIdShape`, and
+`threadListSectionIdShape`. Each is exactly
 `absent`, `null`, `string`, or `invalid`; no string contents, identifiers,
 provider names, cursor, search term, path or arbitrary field name are retained.
 This is not whole-request validity or permission to route a filter. The
@@ -1279,14 +1284,31 @@ distinguishes omission of `projectId` (every project) from explicit null
 (unassigned threads), and a string selects a project. Null must not be silently
 discarded or described as a harmless default. The other three labels describe
 `parentThreadId`, `ancestorThreadId`, and `attachedToThreadId` only by JSON type,
-not valid identities or supported ownership semantics.
+not valid identities or supported ownership semantics. `sectionId` omission
+means every section, null means unsectioned, and a string selects a section.
+
+The sixth field, `threadListSortKey`, reports only `absent`, `null`, `created_at`,
+`updated_at`, `recency_at`, `section_position`, `other-string`, or `invalid`,
+from the [pinned ThreadSortKey enum](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1567-L1575).
+Known JSON-escaped enum spellings normalize to their fixed label. All other
+valid strings, including empty, prefixed, suffixed or differently cased values,
+share `other-string`; invalid Unicode and non-string/non-null values are
+`invalid`. No arbitrary sort text is retained. These independent observations
+do not enforce a relationship between sort and section, or enable sorting.
+The [native section sorter](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/thread-store/src/local/list_threads.rs#L122-L138)
+requires a non-null section filter and SQLite, and the
+[public Thread result](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs#L205-L259)
+does not expose the section position rank. This metadata does not establish
+that any previously observed sort failure used `section_position`, nor does
+it justify inventing or reconstructing that rank across backends.
 
 [`thread_list_metadata.go`](../../build/desktop-rpc-observer/thread_list_metadata.go)
 reuses the existing bounded reader, rejecting duplicate top-level envelope and
 parameter keys (including JSON-escaped aliases), and checks native JSON-string
-Unicode only for the four selected fields. An ambiguous envelope or invalid trace emits no new shapes, since its
-request identity is not trustworthy. A non-object, missing, top-level-duplicate-key or
-more-than-18-field parameter object emits four `invalid` labels. The bound is
+Unicode only for the five selected identifier fields and sortKey. An ambiguous
+envelope or invalid trace emits none of the six fields, since its request
+identity is not trustworthy. A non-object, missing, top-level-duplicate-key or
+more-than-18-field parameter object emits six `invalid` labels. The bound is
 the pinned 17 fields plus the bridge's legacy `currentAccountOnly`. Unrelated
 parameter values remain opaque; the labels do not validate the full schema.
 Malformed and oversized transport lines retain their existing fixed
@@ -1312,7 +1334,7 @@ These strings come from the existing bridge's
 ambiguous top-level error/envelope fields, a wrong code, unknown message, unmatched reply,
 wrong method or wrong direction cannot acquire a new rejection class. Neither
 raw errors nor error data enter the trace. The PowerShell sanitizer enforces
-exact string labels, all four shape fields together, request/error scope and
+exact string labels, all six metadata fields together, request/error scope and
 integer error code before publication, including records beyond the preview.
 
 The error buckets are diagnostic evidence only, collected before the existing
@@ -1334,3 +1356,18 @@ neighbor tests cover prefix/suffix/case canaries, malformed and duplicate JSON,
 unchanged wire bytes and oversized lines. The existing CI profile fixtures cover
 fixed counters, metadata types, scope and unknown-field rejection. These test
 definitions are not a claim that the local environment executed Go or PowerShell.
+
+
+The portable
+[`thread_list_sort_section_red_test.go`](../../build/desktop-rpc-observer/thread_list_sort_section_red_test.go)
+uses only APIs already present at `02600624b069bd5a00a339953eea5b8348e5a467`.
+Copying it alone to that baseline and running
+`TestThreadListSortSectionObserved` must fail behaviorally with
+`thread/list sort and section metadata missing or incorrect`. It covers the
+cross-product of the fixed sort observations and section shapes, escaped enum
+and field spellings, malformed Unicode/types, duplicate keys, bounded parsing,
+request scope and byte-identical request/response forwarding. PowerShell
+fixtures independently check exact enum/type/shape acceptance and rejection.
+The additional fields ride the already-needed combined CI capture; they add
+no diagnostic-only launch or account/filesystem access. Definitions and source
+review are not execution evidence.

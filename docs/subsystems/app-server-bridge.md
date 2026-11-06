@@ -130,7 +130,9 @@ There is no literal `environment/status/info` method in the checked protocol.
 
 Unknown request fields, config/history/path overrides, collaboration modes,
 provider fallbacks and delegated parent/root turn lineage fail locally with
-`-32602`. Section-position thread sorting is unsupported. `created_at`,
+`-32602`. The exact routing control mode has a separate
+[null-only thread-list lineage exception](#null-only-thread-list-lineage).
+Section-position thread sorting is unsupported. `created_at`,
 `updated_at` and `recency_at` are merged in the requested direction. Parent
 subagent IDs may be learned from verified same-backend relationships, but
 cross-provider subagent dispatch is not implemented or required.
@@ -1725,6 +1727,51 @@ cross-provider rejection still apply. Arbitrary nested user/tool content is not
 recursively scanned or rewritten. Existing native permission fields,
 approval routing, account ownership and attestation rules are preserved.
 
+#### Null-only thread-list lineage
+
+Only the default-off exact routing mode accepts explicitly null
+`parentThreadId`, `ancestorThreadId` and `attachedToThreadId` on `thread/list`.
+Each is an ordinary `Option<String>` in the pinned
+[native params](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1497-L1511):
+null and omission both deserialize to no lineage constraint. The native
+[processor](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/thread_processor.rs#L2799-L2835)
+checks mutual exclusion and selects lineage behavior only for non-null values.
+All null combinations are therefore accepted, without inventing parent
+ownership or enabling lookup of an unknown, known or foreign parent ID.
+
+Every non-null value, including empty strings, arrays, objects and the string
+`"null"`, fails locally before a backend send. Duplicate decoded parameter keys
+remain invalid, even when both spellings contain null. Mode-off behavior and
+the ordinary `validateParams` allowlist are unchanged. A validation-only copy
+recognizes the three reviewed null fields; the original params are retained
+and each explicit null is forwarded on **every page of both native lists**.
+An omitted field remains omitted. Provider-filter translation, owner-specific
+exclusions, collision checks, page/row/byte caps and snapshot pagination remain
+unchanged. Cursor-only continuation still consumes the already collected
+snapshot; this no-op filter extension creates no new sort or scope identity.
+
+This exception does **not** include `projectId`. The pinned
+[project and section filters](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1464-L1484)
+use double-option deserialization: omission is unrestricted, while null means
+unassigned or unsectioned. `projectId:null` remains unsupported and is never
+removed to make a request succeed. Existing `sectionId` behavior is not expanded
+by this slice, and native section identifiers are not claimed as one shared
+cross-backend namespace.
+
+`section_position` remains rejected before any backend send, including with a
+non-null `sectionId`. The pinned native implementation requires a non-null
+[section filter](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/thread-store/src/local/list_threads.rs#L122-L165)
+and SQLite. Its default direction is ascending, and it orders by the internal
+nullable signed-64-bit section rank followed by the thread ID in the same
+[direction](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/state/src/runtime/threads.rs#L1599-L1632).
+Ranks and their allocation belong to each store's section. The public
+[Thread record](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs#L205-L259)
+exposes `section` and `sectionEnteredAt`, **not the rank**. Native cursor
+positions do not supply missing row ranks or establish shared section identity.
+The bridge cannot truthfully merge this ordering and does not substitute
+timestamps, zeroes, page offsets or backend order. No section comparator,
+numeric-rank validation or section mutation support is claimed.
+
 #### Implementation and acceptance boundary
 
 Implementation lives in
@@ -1772,6 +1819,19 @@ copies alone to `66e39e44c2c26d23023278d1a0b8799d26f2b8bb` and must fail with
 fresh native policy replies, one coherent session layer and all 18 initial leaf
 origins with the correct content version. These are assertion-level oracles,
 not an execution record.
+
+[`control_plane_167_lineage_test.go`](../../internal/appserverbridge/control_plane_167_lineage_test.go)
+covers default-off behavior, all null/absent combinations, non-null and duplicate
+rejections before sends, exact preservation across both native pagination paths,
+provider/exclusion/parent ownership, collisions and cursor/page caps. It also
+keeps project filters and section-position sorting rejected. The independent
+[`control_plane_167_lineage_red_test.go`](../../internal/appserverbridge/control_plane_167_lineage_red_test.go)
+copies alone to `02600624b069bd5a00a339953eea5b8348e5a467` and must fail with
+`native null lineage thread/list filters must be accepted`. Its successful path
+checks both backends' native continuation requests and cursor-only frontend
+continuation. These are prepared behavioral oracles; gofmt, red/green, race,
+vet/build and the real native/Desktop listing checks were not run during this
+source-only authoring step and must be recorded at the integrated head.
 
 [`control_plane_167_concurrency_test.go`](../../internal/appserverbridge/control_plane_167_concurrency_test.go)
 covers mixed layered/unlayered overlaps, independent identical reads, out-of-order

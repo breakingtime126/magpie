@@ -66,6 +66,8 @@ type event struct {
 	ThreadListParentIDShape   string   `json:"threadListParentIdShape,omitempty"`
 	ThreadListAncestorIDShape string   `json:"threadListAncestorIdShape,omitempty"`
 	ThreadListAttachedIDShape string   `json:"threadListAttachedIdShape,omitempty"`
+	ThreadListSectionIDShape  string   `json:"threadListSectionIdShape,omitempty"`
+	ThreadListSortKey         string   `json:"threadListSortKey,omitempty"`
 	FSReadParamsShapeValid    *bool    `json:"fsReadParamsShapeValid,omitempty"`
 	FSReadPathForm            string   `json:"fsReadPathForm,omitempty"`
 	FSReadBasename            string   `json:"fsReadBasename,omitempty"`

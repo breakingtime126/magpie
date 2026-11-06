@@ -108,7 +108,7 @@ func validSummary(s summary) bool {
 		return false
 	}
 	stages := map[string]bool{}
-	for _, v := range []string{"inputs", "version", "initialize", "initial_config", "catalog", "resolved_config", "threads", "turns", "ownership", "final_config", "shutdown", "complete"} {
+	for _, v := range []string{"inputs", "version", "initialize", "initial_config", "catalog", "resolved_config", "threads", "turns", "thread_list", "ownership", "final_config", "shutdown", "complete"} {
 		stages[v] = true
 	}
 	if !stages[s.Stage] {
@@ -123,14 +123,14 @@ func validSummary(s summary) bool {
 		"protocol_write_failed", "deadline", "process_ended", "unexpected_item", "cleanup_failed",
 		"shutdown_failed", "logical_provider_mismatch", "project_not_empty", "ownership_changed",
 		"config_shape_mismatch", "turn_failed", "answer_crossed_route", "unexpected_auth_data",
-		"control_home_mismatch",
+		"control_home_mismatch", "thread_list_invalid",
 	} {
 		failures[v] = true
 	}
 	if !failures[s.Failure] {
 		return false
 	}
-	counts := []int{s.ConfigReads, s.LayerReads, s.StableLayerRereads, s.LayerVersionChanges, s.CatalogModels, s.Threads, s.Turns, s.AssistantMessages, s.ThreadReads, s.OwnershipRejections, s.AlphaRequests, s.BetaRequests, s.FixtureErrors, s.UnexpectedServerRequests}
+	counts := []int{s.ConfigReads, s.LayerReads, s.StableLayerRereads, s.LayerVersionChanges, s.CatalogModels, s.Threads, s.Turns, s.AssistantMessages, s.ThreadReads, s.ThreadListQueries, s.ThreadListPages, s.ThreadListItems, s.OwnershipRejections, s.AlphaRequests, s.BetaRequests, s.FixtureErrors, s.UnexpectedServerRequests}
 	for _, n := range counts {
 		if n < 0 || n > 2048 {
 			return false
@@ -139,7 +139,7 @@ func validSummary(s summary) bool {
 	if s.Status == "failed" {
 		return s.Failure != ""
 	}
-	want := []int{9, 6, 3, 1, 2, 2, 4, 4, 2, 2, 2, 2, 0, 0}
+	want := []int{9, 6, 3, 1, 2, 2, 4, 4, 2, 2, 4, 4, 2, 2, 2, 0, 0}
 	for i, n := range counts {
 		if n != want[i] {
 			return false

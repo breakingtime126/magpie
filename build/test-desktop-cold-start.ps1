@@ -182,7 +182,7 @@ function Assert-PublicAuthRequestEvent($record) {
 # request, identify a project/thread, or authorize routing any filter.
 function Get-PublicThreadListShapeFields {
     return @('threadListProjectIdShape', 'threadListParentIdShape',
-        'threadListAncestorIdShape', 'threadListAttachedIdShape')
+        'threadListAncestorIdShape', 'threadListAttachedIdShape', 'threadListSectionIdShape')
 }
 function Get-PublicThreadListErrorClasses {
     return @('thread_list_project_id', 'thread_list_parent_id', 'thread_list_ancestor_id',
@@ -190,7 +190,7 @@ function Get-PublicThreadListErrorClasses {
         'thread_list_provider_filter', 'thread_list_cursor')
 }
 function Assert-PublicThreadListEvent($record) {
-    $fields = @(Get-PublicThreadListShapeFields)
+    $fields = @(Get-PublicThreadListShapeFields) + @('threadListSortKey')
     $hasShape = $false
     foreach ($field in $fields) { if ($record.PSObject.Properties[$field]) { $hasShape = $true } }
     $hasRejection = $record.PSObject.Properties['class'] -and
@@ -214,7 +214,11 @@ function Assert-PublicThreadListEvent($record) {
             throw 'Thread-list shapes occurred outside a client request.'
         }
         foreach ($field in $fields) {
-            if ($record.$field -isnot [string] -or @('absent', 'null', 'string', 'invalid') -cnotcontains $record.$field) {
+            $labels = @('absent', 'null', 'string', 'invalid')
+            if ($field -ceq 'threadListSortKey') {
+                $labels = @('absent', 'null', 'created_at', 'updated_at', 'recency_at', 'section_position', 'other-string', 'invalid')
+            }
+            if ($record.$field -isnot [string] -or $labels -cnotcontains $record.$field) {
                 throw 'Invalid thread-list filter shape.'
             }
         }
@@ -1247,6 +1251,7 @@ function ConvertTo-DesktopNativeControlEvidence($value) {
     $counts = [ordered]@{
         config_reads = 9; layer_reads = 6; stable_layer_rereads = 3; layer_version_changes = 1
         catalog_models = 2; threads = 2; turns = 4
+        thread_list_queries = 2; thread_list_pages = 4; thread_list_items = 4
         assistant_messages = 4; thread_reads = 2; ownership_rejections = 2
         alpha_requests = 2; beta_requests = 2; fixture_errors = 0; unexpected_server_requests = 0
     }
@@ -2241,7 +2246,7 @@ requires_openai_auth = false
                 'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided',
                 'projectListParamsValid', 'projectListCursorProvided', 'projectListLimitProvided',
                 'projectListSortKey', 'projectListSortDirection', 'fsReadParamsShapeValid',
-                'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot') + @(Get-PublicThreadListShapeFields)
+                'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot', 'threadListSortKey') + @(Get-PublicThreadListShapeFields)
             $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
@@ -2678,6 +2683,8 @@ requires_openai_auth = false
                                 'threadListParentIdShape' { @('absent', 'null', 'string', 'invalid') }
                                 'threadListAncestorIdShape' { @('absent', 'null', 'string', 'invalid') }
                                 'threadListAttachedIdShape' { @('absent', 'null', 'string', 'invalid') }
+                                'threadListSectionIdShape' { @('absent', 'null', 'string', 'invalid') }
+                                'threadListSortKey' { @('absent', 'null', 'created_at', 'updated_at', 'recency_at', 'section_position', 'other-string', 'invalid') }
                             }
                             if ($allowed -cnotcontains $value) { Block 'Observer emitted an unreviewed metadata label.' }
                         }
@@ -2858,12 +2865,12 @@ if ($EnableReviewedLaunchCompatibility) {
             if ($null -ne $nativeEvidence -and $nativeEvidence.PSObject.Properties['stage'] -and
                 $nativeEvidence.stage -is [string] -and
                 @('inputs', 'version', 'initialize', 'initial_config', 'catalog', 'resolved_config',
-                    'threads', 'turns', 'ownership', 'final_config', 'shutdown', 'complete', 'supervisor') -ccontains $nativeEvidence.stage) {
+                    'threads', 'thread_list', 'turns', 'ownership', 'final_config', 'shutdown', 'complete', 'supervisor') -ccontains $nativeEvidence.stage) {
                 $nativeFailureStage = $nativeEvidence.stage
             }
             $report.nativeControlPlane = ConvertTo-DesktopNativeControlEvidence $nativeEvidence
             $nativeStatus = 'passed'
-            $report.nativeControlPlaneLimit = 'The same compiled adapter and verified official native executable completed two projectless native threads with two text turns each against isolated loopback synthetic Responses fixtures. This is separate from actual Desktop evidence and cannot clear a Desktop failure. It is not a real-service, account, tool, corporate-policy, GUI-usability or zero-egress claim.'
+            $report.nativeControlPlaneLimit = 'The same compiled adapter and verified official native executable completed two projectless native threads with two text turns each and two limit-one paginated list queries (four pages and four items) against isolated loopback synthetic Responses fixtures. This is separate from actual Desktop evidence and cannot clear a Desktop failure. It is not a real-service, account, tool, corporate-policy, GUI-usability or zero-egress claim.'
         } catch {
             $nativeStatus = 'failed'
             if ($nativeSummaryValidated -and $nativeEvidence.status -ceq 'failed') {

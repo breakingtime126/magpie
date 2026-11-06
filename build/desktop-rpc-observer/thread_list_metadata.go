@@ -7,7 +7,7 @@ import (
 	"github.com/yetone/magpie/internal/appserverbridge"
 )
 
-// These are only four JSON field shapes, not whole-request validity, identity
+// These are only JSON field shapes and a fixed sort enum, not request validity, identity
 // ownership or permission to forward a filter. In particular projectId:null
 // means unassigned threads, while omission means every project. Pinned source:
 // https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1428-L1511
@@ -22,6 +22,8 @@ func observedThreadList(raw []byte, e *event) {
 	e.ThreadListParentIDShape = "invalid"
 	e.ThreadListAncestorIDShape = "invalid"
 	e.ThreadListAttachedIDShape = "invalid"
+	e.ThreadListSectionIDShape = "invalid"
+	e.ThreadListSortKey = "invalid"
 	if !validObject {
 		return
 	}
@@ -29,6 +31,8 @@ func observedThreadList(raw []byte, e *event) {
 	e.ThreadListParentIDShape = observedThreadFilterShape(params["parentThreadId"])
 	e.ThreadListAncestorIDShape = observedThreadFilterShape(params["ancestorThreadId"])
 	e.ThreadListAttachedIDShape = observedThreadFilterShape(params["attachedToThreadId"])
+	e.ThreadListSectionIDShape = observedThreadFilterShape(params["sectionId"])
+	e.ThreadListSortKey = observedThreadSortKey(params["sortKey"])
 }
 
 func observedThreadFilterShape(raw json.RawMessage) string {
@@ -43,6 +47,32 @@ func observedThreadFilterShape(raw json.RawMessage) string {
 		return "string"
 	}
 	return "invalid"
+}
+
+// ThreadSortKey is source-declared, not inferred from a rejected request:
+// https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1567-L1575
+// Unknown strings share one fixed label. This does not make section_position
+// routable or validate its relationship to sectionId.
+func observedThreadSortKey(raw json.RawMessage) string {
+	shape := observedThreadFilterShape(raw)
+	if shape != "string" {
+		return shape
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return "invalid"
+	}
+	switch value {
+	case "created_at":
+		return "created_at"
+	case "updated_at":
+		return "updated_at"
+	case "recency_at":
+		return "recency_at"
+	case "section_position":
+		return "section_position"
+	}
+	return "other-string"
 }
 
 // Only correlated bridge-to-client thread/list failures call this helper.

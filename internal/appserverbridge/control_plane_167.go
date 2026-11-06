@@ -183,6 +183,28 @@ func validateControlPlaneParams167(method string, encoded json.RawMessage) bool 
 	return true
 }
 
+// The pinned ThreadListParams uses Option<String> for these lineage filters:
+// null and omission both mean None. This does not apply to projectId or
+// sectionId, whose double-option deserialization makes null a real filter.
+// Keep the ordinary allowlist unchanged and remove reviewed nulls only from
+// this validation copy. The original params, including every explicit null,
+// remain the source for both initial and continuation native requests.
+func (r *Router) validateParams(method string, p object) error {
+	if !r.controlPlaneRouting167 || method != "thread/list" {
+		return validateParams(method, p)
+	}
+	reviewed := clone(p)
+	for _, key := range []string{"parentThreadId", "ancestorThreadId", "attachedToThreadId"} {
+		if value, present := p[key]; present {
+			if !requirementsNull(value) {
+				return errors.New("unsupported thread/list field: " + key)
+			}
+			delete(reviewed, key)
+		}
+	}
+	return validateParams(method, reviewed)
+}
+
 func validateControlPlaneResult167(method string, encoded json.RawMessage) bool {
 	if !controlPlaneThreadResult167(method) && method != "thread/list" {
 		return true

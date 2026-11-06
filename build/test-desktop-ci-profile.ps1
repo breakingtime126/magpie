@@ -643,6 +643,7 @@ function New-ThreadListShapeEvent {
         seq = 1; pid = 1; kind = 'rpc'; direction = 'to_bridge'; method = 'thread/list'; correlation = 1; class = 'request'
         threadListProjectIdShape = 'absent'; threadListParentIdShape = 'absent'
         threadListAncestorIdShape = 'absent'; threadListAttachedIdShape = 'absent'
+        threadListSectionIdShape = 'absent'; threadListSortKey = 'absent'
     }
 }
 foreach ($field in @(Get-PublicThreadListShapeFields)) {
@@ -659,7 +660,7 @@ foreach ($field in @(Get-PublicThreadListShapeFields)) {
             Assert-PublicReadRequestEvent $event
         }
     }
-    Expect-Reject 'thread-list shapes require all four fields' {
+    Expect-Reject 'thread-list shapes require all five fields' {
         $event = New-ThreadListShapeEvent; $event.PSObject.Properties.Remove($field)
         Assert-PublicReadRequestEvent $event
     }
@@ -677,12 +678,41 @@ foreach ($row in @(@('method', 'project/list'), @('method', 'thread/List'), @('d
         Assert-PublicReadRequestEvent $event
     }
 }
-foreach ($field in @('projectId', 'message', 'params', 'modelProviders', 'tracePresent', 'code', 'configParamsValid')) {
+foreach ($field in @('projectId', 'sectionId', 'sortKey', 'message', 'params', 'modelProviders', 'tracePresent', 'code', 'configParamsValid')) {
     Expect-Reject 'thread-list shapes cannot carry raw values or mixed metadata families' {
         $event = New-ThreadListShapeEvent
         $event | Add-Member -NotePropertyName $field -NotePropertyValue 'PRIVATE_CANARY'
         Assert-PublicReadRequestEvent $event
     }
+}
+foreach ($label in @('absent', 'null', 'created_at', 'updated_at', 'recency_at', 'section_position', 'other-string', 'invalid')) {
+    foreach ($sectionShape in @('absent', 'null', 'string', 'invalid')) {
+        Expect-Pass 'thread-list sort labels and section shapes are observations, not acceptance rules' {
+            $event = New-ThreadListShapeEvent; $event.threadListSortKey = $label; $event.threadListSectionIdShape = $sectionShape
+            if (@(Assert-PublicReadRequestEvent $event).Count -ne 0) { throw 'Thread-list validator emitted output.' }
+        }
+    }
+}
+foreach ($value in @($null, $false, 0, @('created_at'), [pscustomobject]@{ value = 'created_at' },
+    'string', 'PRIVATE_CANARY', 'SECTION_POSITION', 'section_position_PRIVATE_CANARY', 'other_string', '')) {
+    Expect-Reject 'thread-list sort metadata rejects raw values, wrong types and aliases' {
+        $event = New-ThreadListShapeEvent; $event.threadListSortKey = $value
+        Assert-PublicReadRequestEvent $event
+    }
+}
+Expect-Reject 'thread-list sort metadata is required alongside all shape fields' {
+    $event = New-ThreadListShapeEvent; $event.PSObject.Properties.Remove('threadListSortKey')
+    Assert-PublicReadRequestEvent $event
+}
+Expect-Reject 'thread-list sort field name is case sensitive' {
+    $event = New-ThreadListShapeEvent; $event.PSObject.Properties.Remove('threadListSortKey')
+    $event | Add-Member -NotePropertyName ThreadListSortKey -NotePropertyValue 'created_at'
+    Assert-PublicReadRequestEvent $event
+}
+Expect-Reject 'thread-list sort label alone is not a complete metadata event' {
+    $event = New-ThreadListShapeEvent
+    foreach ($field in @(Get-PublicThreadListShapeFields)) { $event.PSObject.Properties.Remove($field) }
+    Assert-PublicReadRequestEvent $event
 }
 # Configuration fixtures contain only shape flags, never native config or result bodies.
 function New-ConfigReadRequest([int]$PidValue, [int]$Correlation, [bool]$IncludeLayers = $false) {
@@ -1289,6 +1319,7 @@ function New-NativeControlSuccess {
         binary_verified = $true; version_verified = $true; adapter_clean_exit = $true; cleanup_complete = $true
         config_reads = 9; layer_reads = 6; stable_layer_rereads = 3; layer_version_changes = 1
         catalog_models = 2; threads = 2; turns = 4; assistant_messages = 4
+        thread_list_queries = 2; thread_list_pages = 4; thread_list_items = 4
         thread_reads = 2; ownership_rejections = 2; alpha_requests = 2; beta_requests = 2
         fixture_errors = 0; unexpected_server_requests = 0
     }
@@ -1311,6 +1342,7 @@ foreach ($field in @('binary_verified', 'version_verified', 'adapter_clean_exit'
 }
 foreach ($field in @('config_reads', 'layer_reads', 'stable_layer_rereads', 'layer_version_changes',
     'catalog_models', 'threads', 'turns', 'assistant_messages', 'thread_reads',
+    'thread_list_queries', 'thread_list_pages', 'thread_list_items',
     'ownership_rejections', 'alpha_requests', 'beta_requests', 'fixture_errors', 'unexpected_server_requests')) {
     foreach ($bad in @(-1, 99, 1.5, 'PRIVATE_CANARY', $null)) {
         Expect-Reject ('native success requires exact fixture count: ' + $field) {
@@ -1386,12 +1418,34 @@ Expect-Pass 'native slice has one explicit guarded invocation after Desktop clea
 Expect-Pass 'native wrapper accepts the exact independent success projection' {
     Assert-ControlPlaneNativeSummary (New-NativeControlSuccess)
 }
+foreach ($field in @('thread_list_queries', 'thread_list_pages', 'thread_list_items')) {
+    Expect-Reject 'native wrapper requires each thread-list count' {
+        $value = New-NativeControlSuccess; $value.PSObject.Properties.Remove($field)
+        Assert-ControlPlaneNativeSummary $value
+    }
+    foreach ($bad in @($null, $false, '2', 0.5, @('PRIVATE_CANARY'))) {
+        Expect-Reject 'native wrapper requires numeric integer thread-list counts' {
+            $value = New-NativeControlSuccess; $value.$field = $bad
+            Assert-ControlPlaneNativeSummary $value
+        }
+    }
+    foreach ($delta in @(-1, 1)) {
+        Expect-Reject 'native wrapper requires exact successful thread-list counts' {
+            $value = New-NativeControlSuccess; $value.$field += $delta
+            Assert-ControlPlaneNativeSummary $value
+        }
+    }
+}
 foreach ($failure in @('native_error', 'config_shape_mismatch', 'ownership_changed', 'control_home_mismatch', 'supervision_failed')) {
     Expect-Pass ('native wrapper keeps a fixed failure without converting it to success: ' + $failure) {
         $value = New-NativeControlSuccess; $value.status = 'failed'; $value.stage = 'supervisor'; $value.failure = $failure
         $value.cleanup_complete = $false
         Assert-ControlPlaneNativeSummary $value
     }
+}
+Expect-Pass 'native wrapper preserves the bounded thread-list failure stage and label' {
+    $value = New-NativeControlSuccess; $value.status = 'failed'; $value.stage = 'thread_list'; $value.failure = 'thread_list_invalid'
+    Assert-ControlPlaneNativeSummary $value
 }
 foreach ($field in @('scope', 'status', 'stage', 'failure', 'native_sha256')) {
     Expect-Reject ('native failure report cannot publish arbitrary labels: ' + $field) {
@@ -1402,6 +1456,7 @@ foreach ($field in @('scope', 'status', 'stage', 'failure', 'native_sha256')) {
 }
 foreach ($field in @('config_reads', 'layer_reads', 'stable_layer_rereads', 'layer_version_changes',
     'catalog_models', 'threads', 'turns', 'assistant_messages', 'thread_reads',
+    'thread_list_queries', 'thread_list_pages', 'thread_list_items',
     'ownership_rejections', 'alpha_requests', 'beta_requests', 'fixture_errors', 'unexpected_server_requests')) {
     foreach ($bad in @(-1, 2049, 0.5, 'PRIVATE_CANARY')) {
         Expect-Reject ('native failed-report count remains bounded: ' + $field) {

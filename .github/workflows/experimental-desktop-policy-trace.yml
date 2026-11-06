@@ -492,6 +492,36 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestThreadListRejectionClassesObserved'
           printf '%s\n' "$output" | grep -F -- 'thread/list exact rejection class missing or unsafe'
           echo 'The old observer lacks these fixed labels; compilation failures do not qualify.'
+      - name: Check out exact pre-null-lineage behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 02600624b069bd5a00a339953eea5b8348e5a467
+          path: .ci-null-lineage-baseline
+          persist-credentials: false
+      - name: Prove native null lineage fails behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/control_plane_167_lineage_red_test.go .ci-null-lineage-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-null-lineage-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestControlPlane167NullLineageRedNativeList$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestControlPlane167NullLineageRedNativeList'
+          printf '%s\n' "$output" | grep -F -- 'native null lineage thread/list filters must be accepted'
+          echo 'The old bridge rejects native-equivalent null lineage; compile failures do not qualify.'
+      - name: Prove sort and section metadata is absent on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/thread_list_sort_section_red_test.go .ci-null-lineage-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-null-lineage-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestThreadListSortSectionObserved$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestThreadListSortSectionObserved'
+          printf '%s\n' "$output" | grep -F -- 'thread/list sort and section metadata missing or incorrect'
+          echo 'The old observer lacks these fixed labels; compile failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

@@ -3,7 +3,7 @@ function Assert-ControlPlaneNativeSummary($Report) {
     $names = @('schema', 'scope', 'status', 'stage', 'failure', 'native_sha256',
         'binary_verified', 'version_verified', 'config_reads', 'layer_reads',
         'stable_layer_rereads', 'layer_version_changes', 'catalog_models',
-        'threads', 'turns', 'assistant_messages', 'thread_reads', 'ownership_rejections',
+        'threads', 'turns', 'assistant_messages', 'thread_reads', 'thread_list_queries', 'thread_list_pages', 'thread_list_items', 'ownership_rejections',
         'alpha_requests', 'beta_requests', 'fixture_errors', 'unexpected_server_requests',
         'adapter_clean_exit', 'cleanup_complete')
     if ($null -eq $Report -or $Report -isnot [pscustomobject]) { throw 'Invalid native control-plane summary.' }
@@ -13,7 +13,7 @@ function Assert-ControlPlaneNativeSummary($Report) {
         if ($names -cnotcontains $name) { throw 'Invalid native control-plane summary.' }
     }
     $stages = @('inputs', 'version', 'initialize', 'initial_config', 'catalog', 'resolved_config',
-        'threads', 'turns', 'ownership', 'final_config', 'shutdown', 'complete', 'supervisor')
+        'threads', 'turns', 'thread_list', 'ownership', 'final_config', 'shutdown', 'complete', 'supervisor')
     $failures = @('', 'internal_failure', 'input_invalid', 'environment_rejected',
         'scratch_invalid', 'scratch_not_empty', 'native_hash_mismatch', 'catalog_hash_mismatch',
         'catalog_invalid', 'platform_rejected', 'process_start_failed', 'version_invalid',
@@ -22,7 +22,7 @@ function Assert-ControlPlaneNativeSummary($Report) {
         'process_ended', 'unexpected_item', 'cleanup_failed', 'shutdown_failed',
         'logical_provider_mismatch', 'project_not_empty', 'ownership_changed',
         'config_shape_mismatch', 'turn_failed', 'answer_crossed_route', 'unexpected_auth_data',
-        'control_home_mismatch', 'supervision_failed')
+        'control_home_mismatch', 'thread_list_invalid', 'supervision_failed')
     if (($Report.schema -isnot [int] -and $Report.schema -isnot [long]) -or $Report.schema -ne 1 -or
         $Report.scope -isnot [string] -or $Report.scope -cne 'synthetic-loopback-only' -or
         $Report.status -isnot [string] -or @('passed', 'failed') -cnotcontains $Report.status -or
@@ -37,14 +37,16 @@ function Assert-ControlPlaneNativeSummary($Report) {
     }
     $counts = @('config_reads', 'layer_reads', 'stable_layer_rereads', 'layer_version_changes',
         'catalog_models', 'threads', 'turns', 'assistant_messages',
-        'thread_reads', 'ownership_rejections', 'alpha_requests', 'beta_requests',
+        'thread_reads', 'thread_list_queries', 'thread_list_pages', 'thread_list_items',
+        'ownership_rejections', 'alpha_requests', 'beta_requests',
         'fixture_errors', 'unexpected_server_requests')
     foreach ($name in $counts) {
         if (($Report.$name -isnot [int] -and $Report.$name -isnot [long]) -or
             $Report.$name -lt 0 -or $Report.$name -gt 2048) { throw 'Invalid native control-plane summary.' }
     }
     if ($Report.status -ceq 'passed') {
-        $expected = @(9, 6, 3, 1, 2, 2, 4, 4, 2, 2, 2, 2, 0, 0)
+        $expected = @(9, 6, 3, 1, 2, 2, 4, 4, 2, 2, 4, 4, 2, 2, 2, 0, 0)
+        if ($counts.Count -ne $expected.Count) { throw 'Invalid native control-plane summary.' }
         for ($i = 0; $i -lt $counts.Count; $i++) {
             if ($Report.($counts[$i]) -ne $expected[$i]) { throw 'Invalid native control-plane summary.' }
         }
