@@ -23,8 +23,20 @@ foreach ($name in $functions) {
     . ([scriptblock]::Create($definitions[0].Extent.Text))
 }
 $script:passed = 0
-function Expect-Pass([string]$name, [scriptblock]$action) {
-    try { $null = & $action } catch { throw ('FAIL: ' + $name) }
+function Expect-Pass([string]$name, [scriptblock]$action, [switch]$ReportFixtureStage) {
+    try { $null = & $action }
+    catch {
+        # This opt-in reports only fixed synthetic-fixture stages, never exception text or source values.
+        if ($ReportFixtureStage) {
+            $allowed=@('fixture_setup', 'node_execution', 'json_decoding', 'canonical_json',
+                'public_report_shape', 'candidate_expectations', 'catalog_validation', 'candidate_relations',
+                'zip_creation', 'zip_entry_completeness', 'provenance')
+            $stage='unclassified'
+            if ($allowed -ccontains $script:nodeFixtureStage) { $stage=$script:nodeFixtureStage }
+            throw ('FAIL: ' + $name + '; fixed stage: ' + $stage)
+        }
+        throw ('FAIL: ' + $name)
+    }
     $script:passed++
 }
 function Expect-Reject([string]$name, [scriptblock]$action) {
@@ -36,6 +48,17 @@ function Expect-Reject([string]$name, [scriptblock]$action) {
     }
     if (-not $rejected) { throw ('FAIL: accepted ' + $name) }
     $script:passed++
+}
+Expect-Pass 'synthetic fixture failure details expose only fixed stages' {
+    foreach ($stage in @('zip_creation', 'PRIVATE_CANARY')) {
+        $script:nodeFixtureStage=$stage
+        $message=''
+        try { Expect-Pass 'synthetic fixture' { throw 'PRIVATE_CANARY' } -ReportFixtureStage }
+        catch { $message=$_.Exception.Message }
+        $expected='FAIL: synthetic fixture; fixed stage: unclassified'
+        if ($stage -ceq 'zip_creation') { $expected='FAIL: synthetic fixture; fixed stage: zip_creation' }
+        if ($message -cne $expected) { throw 'Synthetic failure stage was not safely classified.' }
+    }
 }
 function Fixture-Digest([byte[]]$bytes) {
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -738,6 +761,7 @@ function New-MCPPackageFixture([string]$derivation, [string]$variant = 'valid') 
 }
 try {
     Expect-Pass 'actual Node package report roundtrips through PowerShell' {
+        $script:nodeFixtureStage='fixture_setup'
         $modulePath = Join-Path $PSScriptRoot 'inspect-desktop-static-metadata.mjs'
         $fixtureRoot = Join-Path $temporary 'OpenAI.Codex_26.1103.3517.0_x64__abcdefghijklm'
         $generatorPath = Join-Path $temporary 'node-public-report-fixture.mjs'
@@ -775,16 +799,23 @@ writeJSON('.codex-plugin/mcp.json',{$schema:'https://agent-plugins.org/schemas/1
 process.stdout.write(JSON.stringify(inspectPackage(root)));
 '@
         [IO.File]::WriteAllText($generatorPath, $generator, (New-Object Text.UTF8Encoding($false)))
+        $script:nodeFixtureStage='node_execution'
         $nodeOutput = @(& node --max-old-space-size=512 $generatorPath $modulePath $fixtureRoot)
         if ($LASTEXITCODE -ne 0 -or $nodeOutput.Count -ne 1) { throw 'Node fixture failed.' }
         $json = [string]$nodeOutput[0]
+        $script:nodeFixtureStage='json_decoding'
         $nodeReport = $json | ConvertFrom-Json
+        $script:nodeFixtureStage='canonical_json'
         Assert-PublicCanonicalJSON $json $nodeReport
+        $script:nodeFixtureStage='public_report_shape'
         Assert-PublicShape $nodeReport @('schema', 'status', 'runtimeKeyProven', 'archiveEntries', 'entries', 'publicPlugins')
+        $script:nodeFixtureStage='candidate_expectations'
         if ($nodeReport.publicPlugins.candidates.Count -ne 8 -or $nodeReport.publicPlugins.status -cne 'complete') {
             throw 'Node fixture did not establish public candidates.'
         }
+        $script:nodeFixtureStage='catalog_validation'
         $handoff = ConvertTo-PublicPluginEnvironment $nodeReport.publicPlugins $packageHash
+        $script:nodeFixtureStage='candidate_relations'
         if (($handoff | ConvertFrom-Json).keys[0] -cne 'plugins.browser@openai-curated-remote.auto_provision') {
             throw 'Node fixture key order mismatch.'
         }
@@ -795,20 +826,37 @@ process.stdout.write(JSON.stringify(inspectPackage(root)));
         if ($agent.Count -ne 1 -or $agent[0].key -cne 'plugins.zagent@public-market.mcp_servers.AgentServer.enabled') {
             throw 'Node ambiguous agent root relation mismatch.'
         }
+        $script:nodeFixtureStage='zip_creation'
+        $expectedEntries=@(
+            'app/resources/app.asar',
+            'app/resources/plugins/public-market/.agents/plugins/marketplace.json',
+            'app/resources/plugins/public-market/fixture/.codex-plugin/plugin.json',
+            'app/resources/plugins/public-market/fixture/servers.json',
+            'app/resources/plugins/public-market/.codex-plugin/plugin.json',
+            'app/resources/plugins/public-market/.codex-plugin/mcp.json'
+        )
+        $includedEntries=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
         $zipPath=Join-Path $temporary 'node-original.zip'
         $zip=[IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
         try {
-            foreach ($file in @(Get-ChildItem -LiteralPath $fixtureRoot -File -Recurse)) {
+            foreach ($file in @(Get-ChildItem -LiteralPath $fixtureRoot -Force -File -Recurse)) {
                 $relative=$file.FullName.Substring($fixtureRoot.Length + 1).Replace('\', '/')
+                if (-not $includedEntries.Add($relative)) { throw 'Duplicate synthetic ZIP entry.' }
                 $entry=$zip.CreateEntry($relative)
                 $stream=$entry.Open()
                 $inputStream=[IO.File]::OpenRead($file.FullName)
                 try { $inputStream.CopyTo($stream) } finally { $inputStream.Dispose(); $stream.Dispose() }
             }
         } finally { $zip.Dispose() }
+        $script:nodeFixtureStage='zip_entry_completeness'
+        if ($includedEntries.Count -ne $expectedEntries.Count) { throw 'Synthetic ZIP entry count mismatch.' }
+        foreach ($expectedEntry in $expectedEntries) {
+            if (-not $includedEntries.Contains($expectedEntry)) { throw 'Synthetic ZIP is missing a required source.' }
+        }
+        $script:nodeFixtureStage='provenance'
         $hash=(Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
         Confirm-PublicCatalogProvenance $nodeReport.publicPlugins $zipPath $hash
-    }
+    } -ReportFixtureStage
     Expect-Pass 'all MCP relation source bytes bind to original ZIP without publishing values' {
         foreach ($derivation in @('legacy_mcp_inline', 'legacy_mcp_default', 'legacy_mcp_path', 'agent_mcp_default')) {
             $fixture=New-MCPPackageFixture $derivation
