@@ -113,7 +113,67 @@ ExpectLineage $facts 19 $false
 $facts = LineageFacts
 for ($i = 100; $i -lt 130; $i++) { $facts[$i] = Fact (1000 + $i) 10 }
 ExpectLineage $facts 20 $false
-Write-Output 'Desktop welcome policy and ownership fixtures passed.'
+foreach ($name in @('Test-WelcomeChromeOnly', 'Read-WelcomeReadySnapshot')) {
+    $definition = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true)
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
+$shell = @((Node 'ChatGPT' 'Window'), (Node '' 'Pane'), (Node '' 'Document'),
+    (Node 'Minimize' 'Button' $true), (Node 'Close' 'Button' $true))
+if (-not (Test-WelcomeChromeOnly $shell) -or (Test-WelcomeChromeOnly @()) -or
+    (Test-WelcomeChromeOnly ($shell + (Node '' 'Button' $true))) -or
+    (Test-WelcomeChromeOnly ($shell + (Node '' 'Edit' $true $false))) -or
+    (Test-WelcomeChromeOnly ($shell + (Node 'Engineering' 'Text'))) -or
+    (Test-WelcomeChromeOnly ($shell + (Node 'Private canary text' 'Text'))) -or
+    (Test-WelcomeChromeOnly ($shell + (Node 'ChatGPT' 'Window')))) {
+    throw 'Shell-only readiness condition differs.'
+}
+# A real full snapshot remains the only authority to proceed, after pending shell.
+$readiness = [pscustomobject]@{ Reads = 0; Pauses = 0 }
+$ready = Read-WelcomeReadySnapshot -ReadSnapshot {
+    $readiness.Reads++
+    if ($readiness.Reads -eq 1) { $shell } else { $welcome }
+} -ElapsedSeconds { 0.0 } -Pause { $readiness.Pauses++ }
+if ($ready.Decision -cne 'welcome' -or $readiness.Reads -ne 2 -or $readiness.Pauses -ne 1) {
+    throw 'Pending-to-welcome readiness differs.'
+}
+$readiness = [pscustomobject]@{ Reads = 0; Pauses = 0 }
+$ready = Read-WelcomeReadySnapshot -ReadSnapshot {
+    $readiness.Reads++; $shell
+} -ElapsedSeconds { 0.0 } -Pause { $readiness.Pauses++ }
+if ($ready.Decision -cne 'accessibility_not_ready' -or $readiness.Reads -ne 4 -or $readiness.Pauses -ne 3) {
+    throw 'Read-count readiness bound differs.'
+}
+$readiness = [pscustomobject]@{ Reads = 0; Pauses = 0 }
+$ready = Read-WelcomeReadySnapshot -ReadSnapshot {
+    $readiness.Reads++; $shell
+} -ElapsedSeconds { 3.0 } -Pause { $readiness.Pauses++ }
+if ($ready.Decision -cne 'accessibility_not_ready' -or $readiness.Reads -ne 1 -or $readiness.Pauses -ne 0) {
+    throw 'Time readiness bound differs.'
+}
+foreach ($unsafe in @((Node 'Sign in' 'Button' $true), (Node 'Unknown content' 'Text'),
+    (Node '' 'Button' $true), (Node 'Engineering' 'Text'))) {
+    $readiness = [pscustomobject]@{ Reads = 0; Pauses = 0 }
+    $ready = Read-WelcomeReadySnapshot -ReadSnapshot {
+        $readiness.Reads++; $shell; $unsafe
+    } -ElapsedSeconds { 0.0 } -Pause { $readiness.Pauses++ }
+    if ($ready.Decision -ceq 'accessibility_not_ready' -or $readiness.Reads -ne 1 -or $readiness.Pauses -ne 0) {
+        throw 'Unsafe content was retried.'
+    }
+}
+$readiness = [pscustomobject]@{ Reads = 0; Pauses = 0 }
+$ownershipFailed = $false
+try {
+    $null = Read-WelcomeReadySnapshot -ReadSnapshot {
+        $readiness.Reads++
+        if ($readiness.Reads -eq 2) { throw 'Synthetic ownership failure.' }
+        $shell
+    } -ElapsedSeconds { 0.0 } -Pause { $readiness.Pauses++ }
+} catch { $ownershipFailed = $true }
+if (-not $ownershipFailed -or $readiness.Reads -ne 2 -or $readiness.Pauses -ne 1) {
+    throw 'Ownership failure was retried or swallowed.'
+}
+Write-Output 'Desktop welcome policy, ownership and readiness fixtures passed.'
+
 
 if ($CheckNativeInterop) {
     try {

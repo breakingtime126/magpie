@@ -117,7 +117,7 @@ function Assert-WelcomeResult($Value) {
         if ($Value.$key -isnot [bool]) { throw 'Invalid welcome state.' }
     }
     if ($Value.scope -cne 'synthetic-welcome-only' -or @('stopped','observed') -cnotcontains $Value.status -or
-        @('uia_provider_error','unsupported_runtime','invalid_context','deadline_exceeded','identity_or_foreground_changed','uia_tree_limit','uia_owner_mismatch','target_unavailable','suggestions_not_off','selection_state_changed','protected_screen','unreviewed_screen','unreviewed_control','unreviewed_text','ambiguous_control','single_transition_attempted','owner_release_failed') -cnotcontains $Value.reason -or
+        @('uia_provider_error','unsupported_runtime','invalid_context','deadline_exceeded','identity_or_foreground_changed','uia_tree_limit','uia_owner_mismatch','target_unavailable','suggestions_not_off','selection_state_changed','protected_screen','unreviewed_screen','unreviewed_control','unreviewed_text','ambiguous_control','accessibility_not_ready','single_transition_attempted','owner_release_failed') -cnotcontains $Value.reason -or
         @('not_observed','protected_screen','welcome_still_visible','unreviewed_screen') -cnotcontains $Value.nextScreen) { throw 'Invalid welcome labels.' }
     if (@('initialization','ownership','welcome_read','suggestions_off','engineering_select','continue_invoke','next_screen_read','complete') -cnotcontains $Value.stage) { throw 'Invalid welcome stage.' }
     if ($Value.status -ceq 'observed' -and ($Value.stage -cne 'complete')) { throw 'Incomplete welcome observation.' }
@@ -125,6 +125,15 @@ function Assert-WelcomeResult($Value) {
         -not $Value.suggestionsDisabled -or -not $Value.engineeringSelected -or -not $Value.continueInvoked -or
         $Value.actions -lt 1 -or $Value.nextScreen -ceq 'not_observed')) { throw 'Invalid welcome observation.' }
     if ($Value.status -ceq 'stopped' -and ($Value.reason -ceq 'single_transition_attempted' -or ($Value.nextScreen -cne 'not_observed' -and $Value.reason -cne 'owner_release_failed'))) { throw 'Invalid stopped welcome.' }
+    if ($Value.reason -ceq 'accessibility_not_ready') {
+        if ($Value.status -cne 'stopped' -or $Value.stage -cne 'welcome_read' -or $Value.actions -ne 0 -or
+            $Value.suggestionsDisabled -or $Value.engineeringSelected -or $Value.continueInvoked -or
+            $Value.nextScreen -cne 'not_observed' -or $null -eq $Value.targetObservations) { throw 'Invalid accessibility readiness stop.' }
+        foreach ($key in @('engineering','suggestions','continue')) {
+            if ($Value.targetObservations.$key.interactiveCount -ne 0 -or
+                $Value.targetObservations.$key.controlType -cne 'absent') { throw 'Readiness stop cannot include welcome targets.' }
+        }
+    }
 }
 function Get-LiveWelcomeOutcome($Prior, [bool]$FixtureStopped, $Welcome, [bool]$AfterCaptured) {
     # Earlier Desktop or independent native failures always retain precedence.

@@ -62,3 +62,15 @@ definition and exercise one read-only bounded Toolhelp process snapshot, without
 Desktop activation or UI methods. Passing that check is not UI ownership or
 conversation acceptance. The separate zero-context real helper launch smoke
 continues to check argv, environment and fixed result parsing before any UI.
+
+Before its first action only, the helper may reread a strictly shell-only owned
+UIA snapshot: exactly one approved window, approved window-chrome buttons and
+empty noninteractive containers. There are at most four snapshots, with optional
+rereads scheduled within a 3-second scheduling window. This does not bound an
+in-flight snapshot; individual OS calls still rely on the unchanged 20-second
+internal and 30-second external limits. Unknown/protected content and ownership/provider errors stop immediately;
+no later-page read or action is retried. Exhaustion reports the fixed reason
+accessibility_not_ready at welcome_read, with zero actions, all targets absent
+and no completed action state. The eleven-field schema is unchanged. This is
+missing accessibility readiness, not proof that the visible welcome content is
+unknown or that onboarding succeeded. The parent keeps it a failed live slice.

@@ -39,6 +39,42 @@ function Get-WelcomeDecision($Nodes) {
     return 'welcome'
 }
 
+# This is a readiness condition, never action authority. It excludes all content,
+# even familiar welcome labels: only empty containers and exact window chrome.
+function Test-WelcomeChromeOnly($Nodes) {
+    if ($Nodes.Count -lt 1 -or $Nodes.Count -gt 500) { return $false }
+    $windows = 0
+    foreach ($node in $Nodes) {
+        if ($node.Type -ceq 'Window' -and -not $node.Interactive -and
+            @('', 'ChatGPT') -ccontains $node.Name) { $windows++; continue }
+        if ($node.Type -ceq 'Button' -and $node.Interactive -and
+            @('Minimize', 'Maximize', 'Restore', 'Close') -ccontains $node.Name) { continue }
+        if (-not $node.Interactive -and $node.Name -ceq '' -and
+            @('Pane', 'Document', 'Group', 'Text', 'Custom') -ccontains $node.Type) { continue }
+        return $false
+    }
+    return $windows -eq 1
+}
+
+# Initial read only. Each callback is a full owned/foreground-verified snapshot.
+# Provider/ownership exceptions escape immediately; no callback action is retried.
+function Read-WelcomeReadySnapshot([scriptblock]$ReadSnapshot, [scriptblock]$ElapsedSeconds, [scriptblock]$Pause) {
+    for ($read = 0; $read -lt 4; $read++) {
+        $nodes = @(& $ReadSnapshot)
+        $decision = Get-WelcomeDecision $nodes
+        if ($decision -cne 'unreviewed_screen' -or -not (Test-WelcomeChromeOnly $nodes)) {
+            return [pscustomobject]@{ Nodes = $nodes; Decision = $decision }
+        }
+        if ($read -eq 3 -or (& $ElapsedSeconds) -ge 3) {
+            return [pscustomobject]@{ Nodes = $nodes; Decision = 'accessibility_not_ready' }
+        }
+        & $Pause
+        if ((& $ElapsedSeconds) -ge 3) {
+            return [pscustomobject]@{ Nodes = $nodes; Decision = 'accessibility_not_ready' }
+        }
+    }
+}
+
 # Diagnostic facts from the existing snapshot only. They never authorize an action.
 function Get-WelcomeTargetObservations($Nodes) {
     $observations = [ordered]@{}
@@ -240,10 +276,18 @@ public static class WelcomeNative {
         Assert-OwnedForeground
         return $nodes.ToArray()
     }
-    function Get-ReviewedWelcome {
-        $nodes = @(Read-VisibleNodes)
+    function Get-ReviewedWelcome([switch]$InitialRead) {
+        if ($InitialRead) {
+            $readinessWatch = [Diagnostics.Stopwatch]::StartNew()
+            $snapshot = Read-WelcomeReadySnapshot -ReadSnapshot { Read-VisibleNodes } `
+                -ElapsedSeconds { $readinessWatch.Elapsed.TotalSeconds } -Pause { Start-Sleep -Milliseconds 300 }
+            $nodes = @($snapshot.Nodes)
+            $decision = $snapshot.Decision
+        } else {
+            $nodes = @(Read-VisibleNodes)
+            $decision = Get-WelcomeDecision $nodes
+        }
         $result.targetObservations = Get-WelcomeTargetObservations $nodes
-        $decision = Get-WelcomeDecision $nodes
         if ($decision -cne 'welcome') { Stop-Welcome $decision }
         return $nodes
     }
@@ -256,7 +300,7 @@ public static class WelcomeNative {
         return $target[0].Element
     }
     $result.stage = 'welcome_read'
-    $nodes = @(Get-ReviewedWelcome)
+    $nodes = @(Get-ReviewedWelcome -InitialRead)
     $result.stage = 'suggestions_off'
     $checkbox = Get-Target $nodes 'Suggest personalized tasks' 'CheckBox'
     $toggle = $checkbox.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)

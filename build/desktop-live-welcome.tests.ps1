@@ -86,6 +86,22 @@ Assert-WelcomeResult $welcome
 Pass ((Get-LiveWelcomeOutcome $prior $true $welcome $true).exitCode -eq 1) 'stopped partial action'
 $prior.exitCode=1; $prior.reason='original Desktop or native failure'
 Pass ((Get-LiveWelcomeOutcome $prior $false $null $false).reason -ceq $prior.reason) 'failure precedence'
+# Exhausted initial shell-only snapshots are a distinct zero-action stop.
+$notReady=ConvertFrom-LiveJSON '{"schema":1,"scope":"synthetic-welcome-only","status":"stopped","reason":"accessibility_not_ready","stage":"welcome_read","actions":0,"suggestionsDisabled":false,"engineeringSelected":false,"continueInvoked":false,"nextScreen":"not_observed","targetObservations":{"engineering":{"interactiveCount":0,"controlType":"absent"},"suggestions":{"interactiveCount":0,"controlType":"absent"},"continue":{"interactiveCount":0,"controlType":"absent"}}}'
+Assert-WelcomeResult $notReady
+$successfulPrior=[pscustomobject]@{status='observed';stage='native-complete';reason='original';exitCode=0}
+Pass ((Get-LiveWelcomeOutcome $successfulPrior $true $notReady $true).exitCode -eq 1) 'accessibility readiness stop is not success'
+foreach ($field in @('suggestionsDisabled','engineeringSelected','continueInvoked')) {
+    $notReady.$field=$true
+    Reject { Assert-WelcomeResult $notReady } 'readiness stop cannot claim completed action state'
+    $notReady.$field=$false
+}
+$notReady.actions=1; Reject { Assert-WelcomeResult $notReady } 'readiness stop cannot follow an attempted action'; $notReady.actions=0
+$notReady.stage='suggestions_off'; Reject { Assert-WelcomeResult $notReady } 'readiness stop is initial only'; $notReady.stage='welcome_read'
+$notReady.targetObservations.engineering.interactiveCount=1; $notReady.targetObservations.engineering.controlType='RadioButton'
+Reject { Assert-WelcomeResult $notReady } 'readiness stop must have absent targets'
+$notReady.targetObservations.engineering.interactiveCount=0; $notReady.targetObservations.engineering.controlType='absent'
+$notReady.reason='unknown_readiness_reason'; Reject { Assert-WelcomeResult $notReady } 'readiness reason vocabulary remains fixed'
 # Exact package-relative executable spelling supports manifest separators only.
 $packageRoot=Join-Path ([IO.Path]::GetTempPath()) 'synthetic-package'
 $expectedExecutable=[IO.Path]::GetFullPath((Join-Path (Join-Path $packageRoot 'app') 'ChatGPT.exe'))
