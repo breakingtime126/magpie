@@ -11,8 +11,8 @@ import (
 func TestSchemaMetadataRecognizesKnownSpelling(t *testing.T) {
 	for _, arg := range []string{
 		" model = SYNTHETIC_SECRET",
-		"\"model\"=SYNTHETIC_SECRET",
-		"'model' = SYNTHETIC_SECRET",
+		"\tmodel\r\n=SYNTHETIC_SECRET",
+		"\v\fmodel\v\f=SYNTHETIC_SECRET",
 	} {
 		var log bytes.Buffer
 		args := []string{"-c", arg}

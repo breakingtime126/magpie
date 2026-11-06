@@ -334,7 +334,8 @@ func TestNewSchemaPathsNeverInterpretValues(t *testing.T) {
 			continue
 		}
 		e := observedConfigArgument(key + "=SYNTHETIC_SECRET")
-		if e.ConfigKey != key || e.ConfigValue != "other" || e.Class != "" || e.ConfigShape != "" || e.ConfigFamily != "" {
+		if e.ConfigKey != key || e.ConfigValue != "other" || e.Class != "" || e.ConfigShape != "" || e.ConfigFamily != "" ||
+			e.ConfigLiteral != "" || e.ConfigLexicalRoot != "" || len(e.ConfigKeyClasses) != 0 {
 			t.Fatal("explicit schema path was not recognized opaquely")
 		}
 	}

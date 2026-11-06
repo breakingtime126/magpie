@@ -76,6 +76,25 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestForcedLoginMetadataNeverChangesArguments'
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestSchemaMetadataRecognizesKnownSpelling'
           echo 'The old observer lacks both exact recognitions; the current tests must pass next.'
+      - name: Check out exact pre-auth and pre-literal-key correction behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 31f269b0a6acb9bd5bb7e8d676ca89b797e96e03
+          path: .ci-auth-key-baseline
+          persist-credentials: false
+      - name: Prove exact auth opt-ins and literal-key correction are behavioral regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/auth_167_red_test.go .ci-auth-key-baseline/internal/appserverbridge/
+          cp build/desktop-rpc-observer/config_native_key_red_test.go .ci-auth-key-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-auth-key-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^(TestExactAuth167LiteralModesNegotiateNativeChildren|TestConfigMetadataPreservesNativeLiteralKeys)$' ./internal/appserverbridge ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestExactAuth167LiteralModesNegotiateNativeChildren'
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestConfigMetadataPreservesNativeLiteralKeys'
+          echo 'The old code fails both behavior assertions; compilation failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

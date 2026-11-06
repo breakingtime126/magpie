@@ -206,19 +206,43 @@ unknown override after adding the forced-login candidate. This neither confirms
 that candidate nor excludes whitespace/quoted key spellings. No production
 forced-login support was added from this hypothesis.
 
-The next observer revision freezes all 830 explicitly named property paths in
-the same pinned schema, following only explicit properties and local schema
-references/combinators. It never admits dynamic map entries or wildcard paths.
-The original 234 classifications retain their types; every additional name has
-an opaque value. A conservative metadata-only key reader recognizes simple
-quoted segments and whitespace but rejects escapes and quoted segments containing
-dots, so a literal dotted root cannot masquerade as a nested setting. Argument
-bytes are never rewritten. Unknown config events contain only one of five fixed
-shape labels and a fixed schema-root family or `other`, not their original key,
-suffix, value, length, or hash. Private/dynamic Desktop settings can still remain
-unknown. A recognized spelling remains evidence for investigation, not permission
-to apply the setting to either backend.
+The observer revision at `31f269b0a6acb9bd5bb7e8d676ca89b797e96e03`
+froze all 830 explicitly named property paths in the same pinned schema,
+following only explicit properties and local schema references/combinators.
+It never admits dynamic map entries or wildcard paths. The original 234 value
+classifications retain their types; every additional name has an opaque value.
+The actual additional override still appeared as `other_key`/`other` and the
+normal app-server invocation exited 2. That classification was not evidence that
+the official CLI would reject the argument.
 
-One schema property contains a dot inside its literal segment. The frozen list
-retains its quoted boundary, but the conservative reader deliberately does not
-recognize it. Thus 829 paths are recognizable; no flattened alias is invented.
+### Native literal-key diagnostic correction
+
+Reviewing the pinned official
+[CLI parser](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/utils/cli/src/config_override.rs)
+and [override application](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/config/src/overrides.rs)
+showed that the CLI splits at the first equals sign, trims the whole key, then
+splits its path at literal dots. It does not unquote key segments or trim each
+segment. The earlier observer's TOML-like normalization therefore could falsely
+label a quoted spelling as a known setting. No production argument acceptance
+was based on that diagnostic normalization.
+
+The corrected observer recognizes only whole-key ASCII whitespace trimming and
+fixed bare dotted names. Quoted keys, whitespace within a segment and other
+unreviewed syntax remain unknown. One schema property has a literal dot within
+its segment; its frozen quoted boundary remains unrecognized. No flattened
+alias is invented. Non-ASCII whitespace may be accepted by the native parser
+but remains conservatively unknown to this diagnostic.
+
+Unknown config events include only fixed shape/family labels plus three bounded
+classifications: an exact public root followed by a dot or `other`; a fixed,
+ordered set of character classes found only before the first equals sign; and
+whether the complete right-hand side is literally `true`, `false` or other.
+No original key, dynamic suffix, raw value, length, position, count or hash is
+published. The lexical root does not assert that the native parser accepts the
+setting or that its value has any particular semantics. PowerShell validates
+the fixed fields, labels, order and event relationship before publication.
+
+All argument bytes remain unchanged. The production adapter still rejects
+unsupported arguments, and authentication, permissions and organization policy
+are not altered by this diagnostic. A recognized root or candidate remains an
+investigation clue, not permission to apply a setting to either backend.

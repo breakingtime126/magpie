@@ -672,7 +672,8 @@ requires_openai_auth = false
             # Unknown fields or values fail closed without copying or printing the record.
             $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class',
                 'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
-                'flag', 'configKey', 'configValue', 'configShape', 'configFamily', 'child_pid', 'exit')
+                'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
+                'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit')
             $kinds = @('observer_start', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
@@ -1007,6 +1008,9 @@ requires_openai_auth = false
             $configValues = @('bool_true', 'bool_false', 'enum_file', 'enum_keyring', 'enum_auto',
                 'enum_ephemeral', 'enum_elevated', 'enum_unelevated', 'enum_mxc', 'enum_chatgpt', 'enum_api', 'other')
             $configShapes = @('no_equals', 'empty_key', 'quoted_key', 'plain_key', 'other_key')
+            $configKeyClasses = @('at_sign', 'slash', 'backslash', 'colon', 'ascii_space',
+                'ascii_control', 'non_ascii', 'other_ascii_punctuation')
+            $configLiterals = @('bool_true', 'bool_false', 'other')
             $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi')
             $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit')
             $allEvents = @()
@@ -1038,7 +1042,25 @@ requires_openai_auth = false
                             }
                         } elseif ($booleanKeys -ccontains $property.Name) {
                             if ($value -isnot [bool]) { Block 'Observer emitted invalid boolean metadata.' }
+                        } elseif ($property.Name -ceq 'configKeyClasses') {
+                            if ($value -isnot [System.Array] -or $value.Count -lt 1 -or $value.Count -gt 8) {
+                                Block 'Observer emitted invalid config key classes.'
+                            }
+                            if ($value.Count -eq 1 -and $value[0] -is [string] -and $value[0] -ceq 'none') {
+                                # The sole none label represents no listed class.
+                            } else {
+                                $previousClassIndex = -1
+                                foreach ($label in $value) {
+                                    if ($label -isnot [string]) { Block 'Observer emitted invalid config key class type.' }
+                                    $classIndex = [Array]::IndexOf($configKeyClasses, $label)
+                                    if ($classIndex -lt 0 -or $classIndex -le $previousClassIndex) {
+                                        Block 'Observer emitted an unknown, repeated or unordered config key class.'
+                                    }
+                                    $previousClassIndex = $classIndex
+                                }
+                            }
                         } else {
+                            if ($value -isnot [string]) { Block 'Observer emitted invalid label metadata.' }
                             $allowed = switch ($property.Name) {
                                 'kind' { $kinds }
                                 'class' { $classes }
@@ -1049,6 +1071,8 @@ requires_openai_auth = false
                                 'configValue' { $configValues }
                                 'configShape' { $configShapes }
                                 'configFamily' { $configFamilies }
+                                'configLexicalRoot' { $configFamilies }
+                                'configLiteral' { $configLiterals }
                             }
                             if ($allowed -cnotcontains $value) { Block 'Observer emitted an unreviewed metadata label.' }
                         }
@@ -1057,17 +1081,27 @@ requires_openai_auth = false
                     $hasFamily = [bool]$record.PSObject.Properties['configFamily']
                     $hasConfigKey = [bool]$record.PSObject.Properties['configKey']
                     $hasConfigValue = [bool]$record.PSObject.Properties['configValue']
+                    $hasLexicalRoot = [bool]$record.PSObject.Properties['configLexicalRoot']
+                    $hasKeyClasses = [bool]$record.PSObject.Properties['configKeyClasses']
+                    $hasLiteral = [bool]$record.PSObject.Properties['configLiteral']
                     if ($record.kind -eq 'argv_config') {
                         $unknownConfig = $record.PSObject.Properties['class'] -and $record.class -ceq 'unknown'
                         if ($unknownConfig) {
-                            if (-not $hasShape -or -not $hasFamily -or $hasConfigKey -or $hasConfigValue) {
+                            if (-not $hasShape -or -not $hasFamily -or -not $hasLexicalRoot -or
+                                -not $hasKeyClasses -or -not $hasLiteral -or $hasConfigKey -or $hasConfigValue) {
                                 Block 'Unknown config metadata contains raw or incomplete fields.'
                             }
+                            if ($record.configShape -ceq 'no_equals' -and
+                                ($record.configLexicalRoot -cne 'other' -or $record.configLiteral -cne 'other' -or
+                                 $record.configKeyClasses.Count -ne 1 -or $record.configKeyClasses[0] -cne 'none')) {
+                                Block 'An unassigned argument exposed config metadata.'
+                            }
                         } elseif (-not $hasConfigKey -or -not $hasConfigValue -or $hasShape -or $hasFamily -or
-                            $record.PSObject.Properties['class']) {
+                            $hasLexicalRoot -or $hasKeyClasses -or $hasLiteral -or $record.PSObject.Properties['class']) {
                             Block 'Known config metadata has an invalid shape.'
                         }
-                    } elseif ($hasShape -or $hasFamily -or $hasConfigKey -or $hasConfigValue) {
+                    } elseif ($hasShape -or $hasFamily -or $hasConfigKey -or $hasConfigValue -or
+                        $hasLexicalRoot -or $hasKeyClasses -or $hasLiteral) {
                         Block 'Config metadata occurred outside an argument event.'
                     }
                     if (-not $record.PSObject.Properties['seq'] -or -not $record.PSObject.Properties['pid'] -or

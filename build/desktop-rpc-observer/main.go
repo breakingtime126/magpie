@@ -30,27 +30,30 @@ const (
 )
 
 // event has no field capable of containing a raw RPC payload, ID, argv value,
-// path or stderr. String fields are assigned only fixed classifications.
+// path or stderr. String fields and classification arrays contain only fixed labels.
 type event struct {
-	Sequence              uint64 `json:"seq"`
-	PID                   int    `json:"pid"`
-	Kind                  string `json:"kind"`
-	Direction             string `json:"direction,omitempty"`
-	Method                string `json:"method,omitempty"`
-	Correlation           uint64 `json:"correlation,omitempty"`
-	Code                  *int64 `json:"code,omitempty"`
-	Class                 string `json:"class,omitempty"`
-	RequestAttestation    *bool  `json:"requestAttestation,omitempty"`
-	ExplicitGatewayOauth  *bool  `json:"explicitGatewayOauth,omitempty"`
-	RequiredHumanApproval *bool  `json:"requiredHumanApproval,omitempty"`
-	ExperimentalAPI       *bool  `json:"experimentalApi,omitempty"`
-	Flag                  string `json:"flag,omitempty"`
-	ConfigKey             string `json:"configKey,omitempty"`
-	ConfigValue           string `json:"configValue,omitempty"`
-	ConfigShape           string `json:"configShape,omitempty"`
-	ConfigFamily          string `json:"configFamily,omitempty"`
-	ChildPID              int    `json:"child_pid,omitempty"`
-	Exit                  *int   `json:"exit,omitempty"`
+	Sequence              uint64   `json:"seq"`
+	PID                   int      `json:"pid"`
+	Kind                  string   `json:"kind"`
+	Direction             string   `json:"direction,omitempty"`
+	Method                string   `json:"method,omitempty"`
+	Correlation           uint64   `json:"correlation,omitempty"`
+	Code                  *int64   `json:"code,omitempty"`
+	Class                 string   `json:"class,omitempty"`
+	RequestAttestation    *bool    `json:"requestAttestation,omitempty"`
+	ExplicitGatewayOauth  *bool    `json:"explicitGatewayOauth,omitempty"`
+	RequiredHumanApproval *bool    `json:"requiredHumanApproval,omitempty"`
+	ExperimentalAPI       *bool    `json:"experimentalApi,omitempty"`
+	Flag                  string   `json:"flag,omitempty"`
+	ConfigKey             string   `json:"configKey,omitempty"`
+	ConfigValue           string   `json:"configValue,omitempty"`
+	ConfigShape           string   `json:"configShape,omitempty"`
+	ConfigFamily          string   `json:"configFamily,omitempty"`
+	ConfigLiteral         string   `json:"configLiteral,omitempty"`
+	ConfigLexicalRoot     string   `json:"configLexicalRoot,omitempty"`
+	ConfigKeyClasses      []string `json:"configKeyClasses,omitempty"`
+	ChildPID              int      `json:"child_pid,omitempty"`
+	Exit                  *int     `json:"exit,omitempty"`
 }
 
 type pendingKey struct {

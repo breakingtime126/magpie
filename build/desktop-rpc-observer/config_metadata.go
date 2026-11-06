@@ -285,16 +285,19 @@ func observedConfigValue(kind, value string) string {
 	return "other"
 }
 
-// observedConfigArgument only recognizes fixed schema paths. Its output cannot
-// carry an unrecognized key or any raw value. Missing assignments are unknown
-// even when their text happens to equal a known key.
+// observedConfigArgument recognizes only a conservative subset of the native
+// CLI's literal dotted paths. Metadata never authorizes production forwarding.
+// Unknown assignments expose only fixed classifications, never raw keys or values.
 func observedConfigArgument(argument string) event {
 	key, value, hasEquals := strings.Cut(argument, "=")
 	if !hasEquals {
-		return event{Kind: "argv_config", Class: "unknown", ConfigShape: "no_equals", ConfigFamily: "other"}
+		return event{
+			Kind: "argv_config", Class: "unknown", ConfigShape: "no_equals", ConfigFamily: "other",
+			ConfigLiteral: "other", ConfigLexicalRoot: "other", ConfigKeyClasses: []string{"none"},
+		}
 	}
-	if strings.Trim(key, " \t") == "" {
-		return event{Kind: "argv_config", Class: "unknown", ConfigShape: "empty_key", ConfigFamily: "other"}
+	if strings.Trim(key, observedConfigASCIIWhitespace) == "" {
+		return observedUnknownConfigArgument(key, value, "empty_key", "other")
 	}
 	normalized, valid := observedConfigKey(key)
 	if valid {
@@ -315,59 +318,34 @@ func observedConfigArgument(argument string) event {
 			family = fixed
 		}
 	}
-	return event{Kind: "argv_config", Class: "unknown", ConfigShape: shape, ConfigFamily: family}
+	return observedUnknownConfigArgument(key, value, shape, family)
 }
 
-// observedConfigKey accepts a deliberately small TOML-key subset: ASCII bare
-// segments or simply quoted versions of those same segments, separated by dots,
-// with optional spaces/tabs. Escapes, dots inside quotes, empty segments,
-// control characters and Unicode are not decoded. In particular, the literal
-// root key "features.plugins" must never become the nested features.plugins.
-// This only produces a lookup candidate; callers must check the frozen map.
+// observedConfigKey accepts ASCII bare segments separated by dots, after only
+// whole-key ASCII whitespace trimming. The pinned native CLI trims the entire
+// key and then splits literal dots; it does not unquote keys or trim individual
+// segments. This intentionally rejects additional native-accepted spellings.
+// This is only a lookup candidate, not a complete native configuration parser.
 func observedConfigKey(key string) (string, bool) {
-	var parts []string
-	for i := 0; ; {
-		for i < len(key) && (key[i] == ' ' || key[i] == '\t') {
-			i++
-		}
-		if i == len(key) {
-			return "", false
-		}
-		var part string
-		if key[i] == '"' || key[i] == '\'' {
-			quote := key[i]
-			i++
-			start := i
-			for i < len(key) && observedConfigKeyByte(key[i]) {
-				i++
-			}
-			if i == start || i == len(key) || key[i] != quote {
-				return "", false
-			}
-			part = key[start:i]
-			i++
-		} else {
-			start := i
-			for i < len(key) && observedConfigKeyByte(key[i]) {
-				i++
-			}
+	key = strings.Trim(key, observedConfigASCIIWhitespace)
+	if key == "" {
+		return "", false
+	}
+	start := 0
+	for i := 0; i < len(key); i++ {
+		if key[i] == '.' {
 			if i == start {
 				return "", false
 			}
-			part = key[start:i]
-		}
-		parts = append(parts, part)
-		for i < len(key) && (key[i] == ' ' || key[i] == '\t') {
-			i++
-		}
-		if i == len(key) {
-			return strings.Join(parts, "."), true
-		}
-		if key[i] != '.' {
+			start = i + 1
+		} else if !observedConfigKeyByte(key[i]) {
 			return "", false
 		}
-		i++
 	}
+	if start == len(key) {
+		return "", false
+	}
+	return key, true
 }
 
 func observedConfigKeyByte(c byte) bool {

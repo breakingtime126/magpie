@@ -8,18 +8,18 @@ import (
 
 func TestConfigKeySpellingsRemainMetadataOnly(t *testing.T) {
 	for _, row := range [][3]string{
-		{" features . code_mode_host =true", "features.code_mode_host", "bool_true"},
-		{"\t\"features\" . 'code_mode_host'\t=true", "features.code_mode_host", "bool_true"},
-		{"'forced_login_method'='chatgpt'", "forced_login_method", "enum_chatgpt"},
-		{" \"cli_auth_credentials_store\" =\"keyring\"", "cli_auth_credentials_store", "enum_keyring"},
-		{"\"plugins\" . '_default' . \"enabled\"=false", "plugins._default.enabled", "bool_false"},
+		{" features.code_mode_host =true", "features.code_mode_host", "bool_true"},
+		{"\tfeatures.code_mode_host\t=true", "features.code_mode_host", "bool_true"},
+		{"\r\n\v\fforced_login_method \t\r\n\v\f='chatgpt'", "forced_login_method", "enum_chatgpt"},
+		{" cli_auth_credentials_store =\"keyring\"", "cli_auth_credentials_store", "enum_keyring"},
+		{"plugins._default.enabled=false", "plugins._default.enabled", "bool_false"},
 		{"features.code_mode_host= true", "features.code_mode_host", "other"},
 		{"features.code_mode_host=true ", "features.code_mode_host", "other"},
 		{"model=\"SYNTHETIC_SECRET\"", "model", "other"},
 		{" model =true", "model", "other"},
 		{"approval_policy.granular.rules=false", "approval_policy.granular.rules", "other"},
 		{"features.current_time_reminder.clock_source='model'", "features.current_time_reminder.clock_source", "other"},
-		{"otel . exporter . \"otlp-http\" . tls . 'client-private-key'=\"SYNTHETIC_SECRET\"", "otel.exporter.otlp-http.tls.client-private-key", "other"},
+		{"otel.exporter.otlp-http.tls.client-private-key=\"SYNTHETIC_SECRET\"", "otel.exporter.otlp-http.tls.client-private-key", "other"},
 		{"features.tool_registry.error_on_tool_collisions=true", "features.tool_registry.error_on_tool_collisions", "other"},
 		{"desktop={credential=\"SYNTHETIC_SECRET\"}", "desktop", "other"},
 	} {
@@ -33,7 +33,8 @@ func TestConfigKeySpellingsRemainMetadataOnly(t *testing.T) {
 			newObserver(&log).argv(args)
 			es := events(t, log.Bytes())
 			if len(es) != 2 || es[1].ConfigKey != row[1] || es[1].ConfigValue != row[2] ||
-				es[1].Class != "" || es[1].ConfigShape != "" || es[1].ConfigFamily != "" {
+				es[1].Class != "" || es[1].ConfigShape != "" || es[1].ConfigFamily != "" ||
+				es[1].ConfigLiteral != "" || es[1].ConfigLexicalRoot != "" || len(es[1].ConfigKeyClasses) != 0 {
 				t.Fatal("known key spelling was not classified safely")
 			}
 			if strings.Join(args, "\x00") != strings.Join(before, "\x00") {
@@ -56,7 +57,7 @@ func TestUnknownConfigShapesNeverExposeInput(t *testing.T) {
 		{" \t =SYNTHETIC_SECRET", "empty_key"},
 		{"SYNTHETIC_SECRET=true", "plain_key"},
 		{"features.SYNTHETIC_SECRET=false", "plain_key"},
-		{" desktop . SYNTHETIC_SECRET =true", "plain_key"},
+		{" desktop . SYNTHETIC_SECRET =true", "other_key"},
 		{"FEATURES.code_mode_host=true", "plain_key"},
 		{"notice.hide_gpt-5.1-codex-max_migration_prompt=true", "plain_key"},
 		{"\"features.code_mode_host\"=true", "quoted_key"},
@@ -100,7 +101,9 @@ func TestUnknownConfigShapesNeverExposeInput(t *testing.T) {
 	newObserver(&log).argv([]string{"--SYNTHETIC_SECRET"})
 	es := events(t, log.Bytes())
 	if len(es) != 1 || es[0].Kind != "argv" || es[0].Class != "unknown" || es[0].ConfigShape != "" ||
-		es[0].ConfigKey != "" || es[0].ConfigValue != "" || es[0].ConfigFamily != "" || strings.Contains(log.String(), "SYNTHETIC_SECRET") {
+		es[0].ConfigKey != "" || es[0].ConfigValue != "" || es[0].ConfigFamily != "" ||
+		es[0].ConfigLiteral != "" || es[0].ConfigLexicalRoot != "" || len(es[0].ConfigKeyClasses) != 0 ||
+		strings.Contains(log.String(), "SYNTHETIC_SECRET") {
 		t.Fatal("ordinary unknown argv acquired config metadata")
 	}
 }
@@ -123,8 +126,8 @@ func TestUnknownConfigFamiliesAreFixedAndDoNotGuessSegments(t *testing.T) {
 		{"plugins.SYNTHETIC_SECRET.enabled=true", "plugins"},
 		{"features.SYNTHETIC_SECRET=false", "features"},
 		{"model_providers.SYNTHETIC_SECRET.base_url=\"SYNTHETIC_SECRET\"", "model_providers"},
-		{" \"desktop\" . 'SYNTHETIC_SECRET' =true", "desktop"},
-		{"'plugins' . \"SYNTHETIC_SECRET\" . enabled=false", "plugins"},
+		{" \"desktop\" . 'SYNTHETIC_SECRET' =true", "other"},
+		{"'plugins' . \"SYNTHETIC_SECRET\" . enabled=false", "other"},
 		{"DESKTOP.SYNTHETIC_SECRET=true", "other"},
 		{"desktopSYNTHETIC_SECRET.private=true", "other"},
 		{"SYNTHETIC_SECRET.desktop=true", "other"},
