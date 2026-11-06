@@ -21,7 +21,9 @@ import (
 // cmd.CombinedOutput does; stdin is the null device. On macOS (built with
 // cgo) the command, and what it starts, answer for themselves to macOS's
 // privacy prompts rather than to magpie. Elsewhere it is
-// cmd.CombinedOutput.
+// cmd.CombinedOutput, except that after this call has started and waited
+// for a command, ctx.Err takes precedence over its exit status, as on macOS. For
+// cancellation, cmd must be made by CommandContext with the same ctx.
 func CombinedOutputOwn(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	if cmd.Err != nil {
 		return nil, cmd.Err

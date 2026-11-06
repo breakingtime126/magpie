@@ -36,6 +36,46 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Check out exact pre-fix cancellation behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 7631c8670354e90e19a73a624734c0fd15597009
+          path: .ci-proc-cancel-baseline
+          persist-credentials: false
+      - name: Prove cancellation and reuse regressions before the fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
+          isolated="$(mktemp -d "$RUNNER_TEMP/proc-cancel-red.XXXXXX")"
+          trap 'chmod -R u+w "$isolated"; rm -rf "$isolated" .ci-proc-cancel-baseline' EXIT
+          export HOME="$isolated/home" CODEX_HOME="$isolated/codex"
+          export XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache"
+          export XDG_DATA_HOME="$isolated/data" XDG_STATE_HOME="$isolated/state" TMPDIR="$isolated/tmp"
+          mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR"
+          cp internal/proc/disclaim_cancel_test.go .ci-proc-cancel-baseline/internal/proc/
+          status=0
+          (cd .ci-proc-cancel-baseline && go test -race -v -count=1 -timeout=2m -tags nogui -run '^TestCombinedOutputOwnContextAfterStart$' ./internal/proc) >"$isolated/old.log" 2>&1 || status=$?
+          cat "$isolated/old.log"
+          test "$status" -ne 0
+          grep -F -- '--- FAIL: TestCombinedOutputOwnContextAfterStart' "$isolated/old.log"
+          grep -F -- 'started command returned signal: killed, want context.Canceled' "$isolated/old.log"
+          cp internal/proc/disclaim.go internal/proc/disclaim_other.go .ci-proc-cancel-baseline/internal/proc/
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.ci-proc-cancel-baseline/internal/proc/disclaim_other.go')
+          s = p.read_text()
+          assert s.count('alreadyStarted := cmd.Process != nil') == 1
+          assert s.count('!alreadyStarted && ') == 1
+          p.write_text(s.replace('alreadyStarted := cmd.Process != nil', '_ = cmd.Process').replace('!alreadyStarted && ', ''))
+          PY
+          status=0
+          (cd .ci-proc-cancel-baseline && go test -race -v -count=1 -timeout=2m -tags nogui -run '^TestCombinedOutputOwnKeepsReuseErrors$' ./internal/proc) >"$isolated/reuse.log" 2>&1 || status=$?
+          cat "$isolated/reuse.log"
+          test "$status" -ne 0
+          grep -F -- '--- FAIL: TestCombinedOutputOwnKeepsReuseErrors' "$isolated/reuse.log"
+          grep -F -- 'reused command returned context canceled, want exec: already started' "$isolated/reuse.log"
+          grep -F -- 'reused command returned context canceled, want exec: Stdout already set' "$isolated/reuse.log"
       - name: Test synthetic bridge and probe concurrency
         shell: bash
         run: |
@@ -55,6 +95,7 @@ jobs:
           export TMPDIR="$isolated/tmp"
           mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR"
           export MAGPIE_BRIDGE_ADAPTER_TEST_EXE="$isolated/magpie-codex-bridge"
+          go test -race -v -count=20 -timeout=5m -tags nogui -run '^TestCombinedOutputOwn' ./internal/proc
           go build -race -tags nogui -o "$MAGPIE_BRIDGE_ADAPTER_TEST_EXE" ./cmd/magpie-codex-bridge
           go test -race -v -count=1 -timeout=15m -tags nogui ./internal/appserverbridge ./internal/proc ./cmd/magpie-codex-bridge
           go test -race -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^Test(DesktopPluginNativeChildrenReceiveExactOverride|BuiltAdapterDesktopPluginOverride)$'
@@ -115,4 +156,3 @@ jobs:
 
           Unsigned experimental CLI only. No release, installation, Desktop integration or live model acceptance.
           "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
-
