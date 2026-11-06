@@ -270,6 +270,48 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestGetAuthStatusRequestedFlagsObserved'
           printf '%s\n' "$output" | grep -F -- 'getAuthStatus requested flag metadata missing or incorrect'
           echo 'The old observer lacks bounded requested-flag metadata; compilation or setup failures do not qualify.'
+      - name: Check out exact pre-native-trace behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 3c3d18fb877e8d376836459c498b1f99f501632d
+          path: .ci-native-trace-baseline
+          persist-credentials: false
+      - name: Prove native trace requests fail behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/native_trace_167_red_test.go .ci-native-trace-baseline/internal/appserverbridge/native_trace_167_red_test.go
+          status=0
+          output="$(cd .ci-native-trace-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestNativeTrace167RequirementsAcceptedWithoutPropagation$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestNativeTrace167RequirementsAcceptedWithoutPropagation'
+          printf '%s\n' "$output" | grep -F -- 'bounded native trace must permit a fresh dual requirements read'
+          echo 'The old code fails the exact behavior assertion; compilation or setup failures do not qualify.'
+      - name: Prove native trace metadata fails behaviorally on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/native_trace_red_test.go .ci-native-trace-baseline/build/desktop-rpc-observer/native_trace_red_test.go
+          status=0
+          output="$(cd .ci-native-trace-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestNativeTraceMetadataRecognizesSchemaWithoutValues$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestNativeTraceMetadataRecognizesSchemaWithoutValues'
+          printf '%s\n' "$output" | grep -F -- 'native trace presence/validity metadata missing or incorrect'
+          echo 'The old code fails the exact behavior assertion; compilation or setup failures do not qualify.'
+      - name: Prove exact startup method labels fail behaviorally on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/native_methods_red_test.go .ci-native-trace-baseline/build/desktop-rpc-observer/native_methods_red_test.go
+          status=0
+          output="$(cd .ci-native-trace-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestNativeStartupMethodsAreExactMetadataOnly$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestNativeStartupMethodsAreExactMetadataOnly'
+          printf '%s\n' "$output" | grep -F -- 'reviewed native startup method lacks its exact metadata label'
+          echo 'The old code fails the exact behavior assertion; compilation or setup failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

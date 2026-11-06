@@ -22,14 +22,15 @@ func validateConfigRequirementsNull167(data []byte) error {
 }
 
 // Keep the existing explicit empty-object client adapter, but send only the
-// native no-argument params:null call. No selector, override or extra envelope
-// field may enter this version-scoped operation.
+// native no-argument params:null call. The only additional native envelope
+// field is bounded trace metadata; it is accepted but never sent to children.
+// No selector, override or unknown envelope field may enter this operation.
 func validateRequirementsRequest167(line []byte) error {
 	if validateRequirementsJSON(line) != nil {
 		return errConfigRequirements
 	}
 	m, err := parseObject(line)
-	if err != nil || len(m) < 2 || len(m) > 3 {
+	if err != nil || len(m) < 2 || len(m) > 4 {
 		return errConfigRequirements
 	}
 	if !requirementsEnum(m["method"], "configRequirements/read") {
@@ -39,9 +40,12 @@ func validateRequirementsRequest167(line []byte) error {
 		return errConfigRequirements
 	}
 	for key := range m {
-		if key != "id" && key != "method" && key != "params" {
+		if key != "id" && key != "method" && key != "params" && key != "trace" {
 			return errConfigRequirements
 		}
+	}
+	if trace, present := m["trace"]; present && !NativeTrace167Valid(trace) {
+		return errConfigRequirements
 	}
 	if params, present := m["params"]; present && !requirementsNull(params) {
 		if _, ok := requirementsObject(params); !ok {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"unicode/utf8"
+
+	"github.com/yetone/magpie/internal/appserverbridge"
 )
 
 // observedGetAuthStatus is only called for a correlated client request. It
@@ -15,29 +17,12 @@ import (
 // This is test-only request metadata, not authentication state or permission to
 // forward the RPC. Native false defaults do not promise that no refresh occurs.
 func observedGetAuthStatus(raw []byte) (valid, include, refresh *bool) {
-	envelope, ok := authMetadataObject(raw, 4)
+	envelope, ok := observedRequestEnvelope(raw, "getAuthStatus")
 	if !ok {
 		return nil, nil, nil
 	}
-	for key := range envelope {
-		switch key {
-		case "jsonrpc", "id", "method", "params":
-		default:
-			return nil, nil, nil
-		}
-	}
-	var method string
-	if json.Unmarshal(envelope["method"], &method) != nil || method != "getAuthStatus" {
+	if trace, present := envelope["trace"]; present && !appserverbridge.NativeTrace167Valid(trace) {
 		return nil, nil, nil
-	}
-	if _, ok := digestID(envelope["id"]); !ok {
-		return nil, nil, nil
-	}
-	if rawVersion, exists := envelope["jsonrpc"]; exists {
-		var version string
-		if json.Unmarshal(rawVersion, &version) != nil || version != "2.0" {
-			return nil, nil, nil
-		}
 	}
 
 	// Missing/null/non-object params, extra keys, duplicates and wrong types
@@ -112,4 +97,55 @@ func authRequestedFlag(raw json.RawMessage) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+// observedRequestEnvelope recognizes only an unambiguous request. The legacy
+// diagnostic's optional jsonrpc:"2.0" spelling remains supported for auth;
+// native requirements envelopes do not acquire that extra field.
+func observedRequestEnvelope(raw []byte, method string) (map[string]json.RawMessage, bool) {
+	envelope, ok := authMetadataObject(raw, 5)
+	if !ok {
+		return nil, false
+	}
+	for key := range envelope {
+		switch key {
+		case "id", "method", "params", "trace":
+		case "jsonrpc":
+			if method != "getAuthStatus" {
+				return nil, false
+			}
+		default:
+			return nil, false
+		}
+	}
+	var actual string
+	if json.Unmarshal(envelope["method"], &actual) != nil || actual != method ||
+		!appserverbridge.NativeRequestID167Valid(envelope["id"]) {
+		return nil, false
+	}
+	if rawVersion, present := envelope["jsonrpc"]; present {
+		var version string
+		if json.Unmarshal(rawVersion, &version) != nil || version != "2.0" {
+			return nil, false
+		}
+	}
+	return envelope, true
+}
+
+// A present trace has exactly two fixed boolean observations, even when its
+// value is invalid. Absence preserves the existing metadata shape. Invalid or
+// ambiguous outer envelopes remain opaque, and no carrier values are exposed.
+// Validity means the bounded schema shape, not a valid W3C parent or auth state.
+func observedRequestTrace(raw []byte, method string) (present, valid *bool) {
+	envelope, ok := observedRequestEnvelope(raw, method)
+	if !ok {
+		return nil, nil
+	}
+	trace, exists := envelope["trace"]
+	if !exists {
+		return nil, nil
+	}
+	hasTrace := true
+	traceValid := appserverbridge.NativeTrace167Valid(trace)
+	return &hasTrace, &traceValid
 }

@@ -11,7 +11,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
-    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'Get-PublicRPCMethods', 'Assert-PublicAuthRequestEvent', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
+    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
     'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
@@ -156,6 +156,109 @@ foreach ($json in @(
     }
 }
 
+
+function New-TraceRequestEvent([string]$Method = 'getAuthStatus', [bool]$Valid = $true) {
+    if ($Method -ceq 'getAuthStatus' -and $Valid) { $record = New-AuthRequestEvent }
+    else {
+        $record = [pscustomobject][ordered]@{
+            seq = 1; pid = 2; kind = 'rpc'; direction = 'to_bridge'; method = $Method
+            correlation = 3; class = 'request'
+        }
+    }
+    $record | Add-Member -NotePropertyName tracePresent -NotePropertyValue $true
+    $record | Add-Member -NotePropertyName traceValid -NotePropertyValue $Valid
+    return $record
+}
+Expect-Pass 'native trace metadata contains only fixed presence and validity' {
+    foreach ($method in @('getAuthStatus', 'configRequirements/read')) {
+        foreach ($valid in @($false, $true)) {
+            $record = New-TraceRequestEvent $method $valid
+            Assert-PublicCanonicalJSON ($record | ConvertTo-Json -Compress) $record
+            if (@(Assert-PublicAuthRequestEvent $record).Count -ne 0) {
+                throw 'Native trace validation published unexpected output.'
+            }
+        }
+    }
+    $record = New-TraceRequestEvent
+    $record.authParamsValid = $false
+    $record.PSObject.Properties.Remove('includeTokenRequested')
+    $record.PSObject.Properties.Remove('refreshTokenRequested')
+    Assert-PublicAuthRequestEvent $record
+}
+foreach ($field in @('tracePresent', 'traceValid')) {
+    foreach ($value in @($null, 0, 1, 'true', 'PRIVATE_CANARY', @($true), [pscustomobject]@{ secret='PRIVATE_CANARY' })) {
+        Expect-Reject ('native trace non-boolean: ' + $field) {
+            $record = New-TraceRequestEvent; $record.$field = $value
+            Assert-PublicAuthRequestEvent $record
+        }
+    }
+    Expect-Reject ('native trace missing companion: ' + $field) {
+        $record = New-TraceRequestEvent; $record.PSObject.Properties.Remove($field)
+        Assert-PublicAuthRequestEvent $record
+    }
+    Expect-Reject ('native trace wrong casing: ' + $field) {
+        $record = New-TraceRequestEvent
+        $value = $record.$field; $record.PSObject.Properties.Remove($field)
+        $record | Add-Member -NotePropertyName $field.ToUpperInvariant() -NotePropertyValue $value
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+Expect-Reject 'absent trace must not invent an observed carrier' {
+    $record = New-TraceRequestEvent; $record.tracePresent = $false
+    Assert-PublicAuthRequestEvent $record
+}
+Expect-Reject 'invalid native trace must not claim authentication flags' {
+    $record = New-TraceRequestEvent; $record.traceValid = $false
+    Assert-PublicAuthRequestEvent $record
+}
+Expect-Reject 'valid native trace must not hide auth parameter validity' {
+    $record = New-TraceRequestEvent; $record.PSObject.Properties.Remove('authParamsValid')
+    Assert-PublicAuthRequestEvent $record
+}
+foreach ($row in @(
+    @('kind', 'rpc_error'), @('direction', 'from_bridge'), @('direction', 'stderr'),
+    @('method', 'account/read'), @('method', 'GetAuthStatus'), @('method', 'getAuthStatus/PRIVATE_CANARY'),
+    @('class', 'response'), @('class', 'notification'), @('class', 'duplicate_id'),
+    @('class', 'correlation_limit'), @('class', 'unrecognized'))) {
+    Expect-Reject 'native trace metadata outside its exact request scope' {
+        $record = New-TraceRequestEvent; $record.($row[0]) = $row[1]
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+foreach ($field in @('trace', 'traceparent', 'tracestate', 'traceID', 'traceLength', 'traceHash',
+    'params', 'result', 'error', 'PRIVATE_CANARY')) {
+    Expect-Reject ('native trace private field: ' + $field) {
+        $record = New-TraceRequestEvent
+        $record | Add-Member -NotePropertyName $field -NotePropertyValue 'PRIVATE_CANARY'
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+foreach ($field in @('seq', 'pid', 'correlation')) {
+    foreach ($value in @(0, -1, 4294967297, 1.5, 'PRIVATE_CANARY')) {
+        Expect-Reject ('native trace invalid identity: ' + $field) {
+            $record = New-TraceRequestEvent 'configRequirements/read'
+            $record.$field = $value
+            Assert-PublicAuthRequestEvent $record
+        }
+    }
+}
+foreach ($field in @('authParamsValid', 'includeTokenRequested', 'refreshTokenRequested')) {
+    Expect-Reject ('requirements trace must not carry authentication flags: ' + $field) {
+        $record = New-TraceRequestEvent 'configRequirements/read'
+        $record | Add-Member -NotePropertyName $field -NotePropertyValue $false
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+foreach ($json in @(
+    '{"seq":1,"pid":2,"kind":"rpc","direction":"to_bridge","method":"configRequirements/read","correlation":3,"class":"request","tracePresent":true,"traceValid":false,"traceValid":true}',
+    '{"seq":1,"pid":2,"kind":"rpc","direction":"to_bridge","method":"configRequirements/read","correlation":3,"class":"request","tracePresent":true,"traceValid":true,"trace\u0056alid":false}')) {
+    Expect-Reject 'duplicate native trace metadata never reaches publication' {
+        $record = $json | ConvertFrom-Json
+        Assert-PublicCanonicalJSON $json $record
+        Assert-PublicAuthRequestEvent $record
+    }
+}
+
 function Fixture-Digest([byte[]]$bytes) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
@@ -226,11 +329,15 @@ foreach ($name in $invalidFailures.Keys) {
         Assert-PublicCatalogFailure $f @('invalid_utf8')
     }
 }
-Expect-Pass 'only the exact reviewed RPC method label is added' {
+Expect-Pass 'only the exact reviewed RPC method labels are available' {
     $expected=@('initialize', 'initialized', 'configRequirements/read', 'account/read',
         'account/rateLimits/read', 'account/gatewayOAuth/read', 'attestation/generate', 'model/list',
         'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
-        'thread/start', 'thread/read', 'turn/start', 'getAuthStatus', 'unknown')
+        'thread/start', 'thread/read', 'turn/start', 'getAuthStatus',
+        'modelProvider/capabilities/read', 'experimentalFeature/list', 'permissionProfile/list',
+        'windowsSandbox/readiness', 'mcpServerStatus/list', 'skills/list', 'hooks/list',
+        'plugin/list', 'plugin/installed', 'app/list', 'app/installed',
+        'externalAgentConfig/detect', 'account/workspaceMessages/read', 'account/usage/read', 'unknown')
     $actual=@(Get-PublicRPCMethods)
     if (($actual -join '|') -cne ($expected -join '|') -or $actual -ccontains 'GetAuthStatus' -or
         $actual -ccontains 'getAuthStatus/PRIVATE_CANARY') { throw 'RPC label set changed.' }

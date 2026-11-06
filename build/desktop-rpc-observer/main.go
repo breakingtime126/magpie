@@ -45,6 +45,8 @@ type event struct {
 	ExplicitGatewayOauth      *bool    `json:"explicitGatewayOauth,omitempty"`
 	RequiredHumanApproval     *bool    `json:"requiredHumanApproval,omitempty"`
 	ExperimentalAPI           *bool    `json:"experimentalApi,omitempty"`
+	TracePresent              *bool    `json:"tracePresent,omitempty"`
+	TraceValid                *bool    `json:"traceValid,omitempty"`
 	AuthParamsValid           *bool    `json:"authParamsValid,omitempty"`
 	IncludeTokenRequested     *bool    `json:"includeTokenRequested,omitempty"`
 	RefreshTokenRequested     *bool    `json:"refreshTokenRequested,omitempty"`
@@ -137,7 +139,11 @@ func allowedMethod(s string) string {
 		"account/read", "account/rateLimits/read", "account/gatewayOAuth/read",
 		"attestation/generate", "model/list", "config/read",
 		"environment/info", "environment/status", "thread/list",
-		"thread/loaded/list", "thread/start", "thread/read", "turn/start":
+		"thread/loaded/list", "thread/start", "thread/read", "turn/start",
+		"modelProvider/capabilities/read", "experimentalFeature/list", "permissionProfile/list",
+		"windowsSandbox/readiness", "mcpServerStatus/list", "skills/list", "hooks/list",
+		"plugin/list", "plugin/installed", "app/list", "app/installed",
+		"externalAgentConfig/detect", "account/workspaceMessages/read", "account/usage/read":
 		return s
 	}
 	return "unknown"
@@ -246,6 +252,10 @@ func (o *observer) line(direction string, b []byte) {
 				clear(o.quarantined)
 				e.Class = "correlation_limit"
 			}
+		}
+		if direction == "to_bridge" && e.Class == "request" &&
+			(method == "getAuthStatus" || method == "configRequirements/read") {
+			e.TracePresent, e.TraceValid = observedRequestTrace(b, method)
 		}
 		if direction == "to_bridge" && method == "getAuthStatus" && e.Class == "request" {
 			e.AuthParamsValid, e.IncludeTokenRequested, e.RefreshTokenRequested = observedGetAuthStatus(b)

@@ -1091,8 +1091,9 @@ The source oracle is official
 The [request declaration](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/common.rs#L1527-L1530)
 uses `Option<()>`, not an empty object. Absent, null and an explicitly empty
 client object are accepted by the bridge's existing no-argument adapter; each
-child always receives `params:null`. Selectors, overrides, extra envelope
-fields and duplicate keys fail locally. With this exact mode selected, duplicate
+child always receives `params:null`. The bounded optional native `trace` carrier
+is accepted without propagation, as described below. Selectors, overrides,
+unknown envelope fields and duplicate decoded keys fail locally. With this exact mode selected, duplicate
 top-level client routing keys are rejected before map decoding, even when the
 last duplicate method tries to hide an earlier requirements read. Ordinary
 valid thread/provider routing is unchanged.
@@ -1167,3 +1168,94 @@ No tests, Go formatting, vet, builds, race checks, full suite, or official-runti
 checks were run while preparing this connector-only source change.
 The Windows Desktop trace remains a separate, non-network-none diagnostic;
 this fix makes no zero-egress or completed Desktop acceptance claim.
+
+### Native 0.167 request trace envelope
+
+The exact 0.167 requirements-read adapter accepts the optional native `trace`
+field: null or an object containing only optional `traceparent` and
+`tracestate` values, each a string or null. Empty objects and empty strings
+remain valid shapes. A single JSON-escaped spelling of a known key retains
+ordinary JSON semantics; duplicate decoded keys, unknown/case/suffix aliases,
+wrong types, malformed UTF-8/surrogates and control characters are rejected.
+The bridge imposes its own bounds of 16 KiB per encoded carrier and 1,024
+UTF-8 bytes per decoded string, within the existing 64 KiB requirements request
+limit. These are conservative bridge limits, not limits claimed by the native
+schema. No W3C header pattern is inferred from a string's contents.
+
+The pinned source is
+[JSONRPCRequest.json](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/schema/json/JSONRPCRequest.json),
+[rpc.rs](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/rpc.rs),
+[W3cTraceContext](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/protocol/src/protocol.rs), and
+[app_server_tracing.rs](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/app_server_tracing.rs).
+Native request tracing attaches a telemetry span parent; invalid W3C contexts
+are ignored by that tracing path. This carrier is not an authentication
+credential, permission profile or policy requirement. Accepting its shape
+does not authorize login, refresh, attestation, tools or any new method.
+
+**Acceptance does not enable telemetry propagation.** `Router.send` remains
+unchanged: it reconstructs child requests with transport ID, method and params,
+without copying the unscoped trace to either provider. No trace value is stored
+as routing state or returned to the client. Each requirements read still sends
+two fresh `params:null` requests and returns only the genuine primary result
+after both complete exact native null-policy results pass all existing gates.
+The adapter does not remove, normalize, synthesize or weaken any policy field.
+Default-off modes, executable pins, initialization readiness, launch opt-ins
+and production `getAuthStatus` rejection (`-32601`) are unchanged.
+
+The test-only observer shares the pure
+[`NativeTrace167Valid`](../../internal/appserverbridge/native_trace_167.go)
+predicate. For an unambiguous, correlated client `getAuthStatus` or
+`configRequirements/read` request containing trace, it records only
+`tracePresent:true` and `traceValid:boolean`. Validity denotes the bounded
+schema shape, not a usable W3C context. No IDs, state, lengths, hashes or raw
+carrier values enter diagnostic records. Missing trace preserves the old
+metadata shape; ambiguous outer envelopes, notifications, other directions,
+duplicate IDs and exhausted correlations receive no trace metadata.
+Diagnostic envelope IDs use the existing bridge string-or-int64 validator,
+including its 256-byte string bound, without changing general correlation.
+
+Only a valid auth envelope and valid trace (if present) can expose the existing
+auth parameter flags. Params must still be an object with only the exact two
+optional native fields: missing or null field values mean the native false
+default, and only literal booleans are otherwise accepted. Missing/null params,
+unknown fields, duplicate decoded keys and wrong values remain invalid.
+This is request metadata, not observed authentication state or a guarantee
+that false flags cannot refresh credentials. The observer's prior optional
+`jsonrpc:"2.0"` auth spelling is retained only in diagnostics; it is not newly
+accepted by production requirements reads. Observer forwarding remains
+byte-for-byte identical, including rejected or oversized input.
+
+The signed Desktop 26.1103.3517.0 / backend 0.167.0-alpha.3.2
+[trace run 42221864689](https://github.com/breakingtime126/magpie/actions/runs/42221864689/job/127906694973)
+showed successful initialize and account reads, unsupported `getAuthStatus`,
+and rejected requirements reads. Its absent auth flag metadata proves only
+that strict recognition did not complete; it does not prove trace was present
+or caused either failure. A later actual run must establish that fact using
+the new fixed metadata. No private request bytes were inspected to assert it.
+
+[`native_trace_167_red_test.go`](../../internal/appserverbridge/native_trace_167_red_test.go)
+and [`native_trace_red_test.go`](../../build/desktop-rpc-observer/native_trace_red_test.go)
+use only APIs present at base `3c3d18fb877e8d376836459c498b1f99f501632d`
+for assertion-level old-base reds. Other fixtures cover local size boundaries,
+escaped keys, decoded duplicates, private canaries, dual-policy rejection,
+unchanged child requests, byte-exact observation and exact PowerShell
+publication schemas. Source preparation used connectors only: gofmt, Go tests,
+behavioral reds, race/vet/build checks and PowerShell fixtures were not run
+while authoring. Their result must come from exact-head CI. The Windows
+Desktop diagnostic is not network-none; the separate Linux official-runtime
+container's isolation does not establish Windows zero egress or Desktop GUI,
+real-account, inference or corporate-policy acceptance.
+
+The observer also names 14 exact public startup request methods from the pinned
+[ClientRequest.json](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/schema/json/ClientRequest.json):
+`modelProvider/capabilities/read`, `experimentalFeature/list`,
+`permissionProfile/list`, `windowsSandbox/readiness`,
+`mcpServerStatus/list`, `skills/list`, `hooks/list`, `plugin/list`,
+`plugin/installed`, `app/list`, `app/installed`,
+`externalAgentConfig/detect`, `account/workspaceMessages/read`, and
+`account/usage/read`. This is an exact diagnostic allowlist only, with no
+payload fields or RPC execution; all remain unsupported by production routing.
+It neither identifies the previously unknown observed RPC nor claims that
+Desktop actually sent any of these methods. The separate
+[`native_methods_red_test.go`](../../build/desktop-rpc-observer/native_methods_red_test.go)
+uses old-base APIs for an assertion-level label regression.

@@ -95,8 +95,8 @@ in the report; the observer itself does not grant or select them.
 It is not installed or included in the production package.
 
 Only fixed method/flag/config-key names, generated correlation numbers, error
-codes and fixed classifications, four initialization booleans, and process/EOF
-metadata can enter the trace. Raw IDs or their hashes, parameters, results,
+codes and fixed classifications, four initialization booleans, the bounded
+request booleans documented below, and process/EOF metadata can enter the trace. Raw IDs or their hashes, parameters, results,
 messages, argument values, paths, arbitrary stderr, credentials and proof tokens
 are never trace fields. Unknown values are classified without their text.
 PowerShell validates the fixed metadata schema and publishes a validated snapshot,
@@ -696,10 +696,12 @@ behavioral red tests use exact `e1c8fb52` APIs and require their named
 assertion failures before the current Linux/Windows suites run. The workflow
 watches the new MCP scanner tests explicitly and preserves all earlier reds.
 
-The RPC metadata allowlist recognizes the single exact method spelling
-`getAuthStatus`. Differently cased or suffixed spellings remain unknown.
-The bounded request diagnostic below does not add a production handler or
-change routing, sign-in or policy behavior.
+The RPC metadata allowlist recognizes the exact method spelling
+`getAuthStatus` and the reviewed public startup labels listed in the
+[native trace-envelope reference](app-server-bridge.md#native-0167-request-trace-envelope).
+Differently cased or suffixed spellings remain unknown. These are diagnostic
+labels, not proof that Desktop sent a candidate. The bounded request diagnostic
+below does not add a production handler or change routing, sign-in or policy behavior.
 
 ### Bounded getAuthStatus request flags
 
@@ -722,12 +724,22 @@ requested flags, with absent/null fields defaulting to false. Those defaults
 describe request syntax, not actual authentication state.
 
 Missing/null/non-object params, unknown fields, wrong types and duplicate
-parameter keys emit `authParamsValid:false` alone. They never emit partial
+parameter keys emit `authParamsValid:false` without requested flags. They never emit partial
 requested flags or convert an invalid value to false. Escaped key spellings
 are decoded before duplicate comparison. Nested data, arbitrary keys,
 credentials, IDs, paths, response bodies and raw errors are never published.
 
-Ambiguous/duplicate envelopes, extra envelope fields, invalid JSON-RPC version
+The optional bounded native `trace` carrier is recognized without telemetry
+propagation. A present carrier adds only `tracePresent:true` and
+`traceValid:boolean` on an unambiguous client auth or requirements request;
+invalid trace suppresses all auth flags. No trace IDs, state, lengths, hashes
+or raw values are recorded. Diagnostic request IDs use the existing bounded
+native string-or-int64 rule. See the
+[shared contract, bounds and evidence limits](app-server-bridge.md#native-0167-request-trace-envelope)
+rather than interpreting shape validity as authentication or W3C validity.
+Absent trace retains the previous metadata shape and all old wire-byte bounds.
+
+Ambiguous/duplicate envelopes, unknown envelope fields, invalid JSON-RPC version
 fields, invalid IDs, notifications, responses, other directions/methods and
 duplicate-ID or correlation-limit records carry none of these three fields.
 Malformed, oversized and unterminated lines retain their existing generic

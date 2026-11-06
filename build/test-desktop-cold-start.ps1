@@ -57,9 +57,40 @@ function Get-PublicRPCMethods {
     return @('initialize', 'initialized', 'configRequirements/read', 'account/read',
         'account/rateLimits/read', 'account/gatewayOAuth/read', 'attestation/generate', 'model/list',
         'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
-        'thread/start', 'thread/read', 'turn/start', 'getAuthStatus', 'unknown')
+        'thread/start', 'thread/read', 'turn/start', 'getAuthStatus',
+        'modelProvider/capabilities/read', 'experimentalFeature/list', 'permissionProfile/list',
+        'windowsSandbox/readiness', 'mcpServerStatus/list', 'skills/list', 'hooks/list',
+        'plugin/list', 'plugin/installed', 'app/list', 'app/installed',
+        'externalAgentConfig/detect', 'account/workspaceMessages/read', 'account/usage/read', 'unknown')
+}
+function Assert-PublicRequestTraceEvent($record) {
+    $hasPresent = [bool]$record.PSObject.Properties['tracePresent']
+    $hasValid = [bool]$record.PSObject.Properties['traceValid']
+    if (-not $hasPresent -and -not $hasValid) { return }
+    if (-not $hasPresent -or -not $hasValid -or
+        $record.tracePresent -isnot [bool] -or -not $record.tracePresent -or
+        $record.traceValid -isnot [bool]) { throw 'Invalid native trace shape metadata.' }
+    $names = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class', 'tracePresent', 'traceValid')
+    Assert-PublicInteger $record.seq 1 4294967296
+    Assert-PublicInteger $record.pid 1 4294967296
+    Assert-PublicInteger $record.correlation 1 4294967296
+    foreach ($name in @('kind', 'direction', 'method', 'class')) {
+        if ($record.$name -isnot [string]) { throw 'Invalid native trace metadata label.' }
+    }
+    if ($record.kind -cne 'rpc' -or $record.direction -cne 'to_bridge' -or
+        @('getAuthStatus', 'configRequirements/read') -cnotcontains $record.method -or
+        $record.class -cne 'request') { throw 'Native trace metadata occurred outside its request scope.' }
+    if ($record.method -ceq 'getAuthStatus' -and $record.traceValid) {
+        if (-not $record.PSObject.Properties['authParamsValid'] -or $record.authParamsValid -isnot [bool]) {
+            throw 'Valid traced authentication envelope needs parameter validity.'
+        }
+        $names += 'authParamsValid'
+        if ($record.authParamsValid) { $names += @('includeTokenRequested', 'refreshTokenRequested') }
+    }
+    Assert-PublicShape $record $names
 }
 function Assert-PublicAuthRequestEvent($record) {
+    Assert-PublicRequestTraceEvent $record
     $hasValid = [bool]$record.PSObject.Properties['authParamsValid']
     $hasInclude = [bool]$record.PSObject.Properties['includeTokenRequested']
     $hasRefresh = [bool]$record.PSObject.Properties['refreshTokenRequested']
@@ -69,6 +100,7 @@ function Assert-PublicAuthRequestEvent($record) {
     }
     $names = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class', 'authParamsValid')
     if ($record.authParamsValid) { $names += @('includeTokenRequested', 'refreshTokenRequested') }
+    if ($record.PSObject.Properties['tracePresent']) { $names += @('tracePresent', 'traceValid') }
     Assert-PublicShape $record $names
     Assert-PublicInteger $record.seq 1 4294967296
     Assert-PublicInteger $record.pid 1 4294967296
@@ -1314,7 +1346,7 @@ requires_openai_auth = false
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
                 'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
                 'publicPluginCatalogSHA256', 'publicPluginRef', 'configPluginShape',
-                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested')
+                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid')
             $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
@@ -1666,7 +1698,7 @@ requires_openai_auth = false
                 'ascii_control', 'non_ascii', 'other_ascii_punctuation')
             $configLiterals = @('bool_true', 'bool_false', 'other')
             $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
-                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested')
+                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid')
             $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit', 'publicPluginRef')
             $seenPublicCatalogs = @{}
             $allEvents = @()
