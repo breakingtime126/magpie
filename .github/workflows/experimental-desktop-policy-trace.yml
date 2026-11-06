@@ -406,6 +406,24 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestReadTargetEnvironmentMetadataRed'
           printf '%s\n' "$output" | grep -F -- 'observer-only read target roots reached child environment'
           echo 'The old code fails all four named behavior assertions; compilation or setup failures do not qualify.'
+      - name: Check out exact pre-defaulted-config-request behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: b047d781d1c26a2ee2b65a6c64cf2a9b94a5c9dc
+          path: .ci-control-defaults-baseline
+          persist-credentials: false
+      - name: Prove native defaulted config requests fail behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/control_plane_167_optional_red_test.go .ci-control-defaults-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-control-defaults-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestControlPlane167OptionalParamsBehavioralRed$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestControlPlane167OptionalParamsBehavioralRed'
+          printf '%s\n' "$output" | grep -F -- 'native defaulted config/read params must be accepted'
+          echo 'Native omitted defaults and null optional cwd fail the old shape assertion; compilation failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

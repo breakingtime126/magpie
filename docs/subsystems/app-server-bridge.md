@@ -1541,10 +1541,18 @@ returning fictional file bytes or expanding filesystem access.
 
 #### Strict routing config request and fresh policy precondition
 
-Only the observed `config/read` params object `{"includeLayers":false}` is accepted.
-The property is required and must be literal false. `cwd` is unsupported,
-including explicit null. Missing/null params, layer requests and unknown fields
-fail locally. Native string-or-int64 IDs and the existing bounded optional trace
+The `config/read` params must be an object containing only optional
+`includeLayers` and `cwd`. The four accepted forms are `{}`,
+`{"includeLayers":false}`, `{"cwd":null}` and
+`{"includeLayers":false,"cwd":null}`. In the pinned native
+[ConfigReadParams](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/config.rs#L390-L398),
+omitted `includeLayers` defaults to false and absent/null `cwd` means no working
+directory. These forms select the same unscoped, no-layer read; accepting null
+`cwd` does not enable directory-scoped configuration.
+
+Explicit null or true `includeLayers`, every string `cwd` (including empty),
+wrong field types, missing/null/non-object params and unknown fields fail
+locally. Native string-or-int64 IDs and the existing bounded optional trace
 shape apply. The 64 KiB strict policy JSON reader rejects decoded duplicate keys,
 invalid UTF-8/surrogate text, depth/container overflow and trailing content.
 Trace metadata is not propagated.
@@ -1661,6 +1669,14 @@ each, policy failure/recovery, process pins and EOF cleanup.
 [`control_plane_167_red_test.go`](../../internal/appserverbridge/control_plane_167_red_test.go)
 uses only base APIs and can be copied alone to exact base
 `70e603d8481c28b9f84cadf2f7183255044e11b4` for an assertion-level unknown-mode red.
+The independent
+[`control_plane_167_optional_red_test.go`](../../internal/appserverbridge/control_plane_167_optional_red_test.go)
+copies alone to `b047d781d1c26a2ee2b65a6c64cf2a9b94a5c9dc` and asserts acceptance
+of all four native-defaulted params forms. Its failure diagnostic is
+`native defaulted config/read params must be accepted`; it does not change the
+older unknown-mode red. The routing unit tests also verify that each form still
+requires fresh paired native requirements, yields the same owned result and
+rejects a new non-null policy after prior success.
 
 These source blobs were authored with connectors only. Formatting, compilation,
 unit/lifecycle tests, old-base red, race/vet/build/full-suite checks, official

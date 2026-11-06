@@ -38,8 +38,27 @@ func validateControlPlaneRead167(line []byte) bool {
 	if trace, present := m["trace"]; present && !NativeTrace167Valid(trace) {
 		return false
 	}
-	params, ok := requirementsObject(m["params"], "includeLayers")
-	return ok && bytes.Equal(bytes.TrimSpace(params["includeLayers"]), []byte("false"))
+	params, err := startupObject(m["params"])
+	if err != nil || len(params) > 2 {
+		return false
+	}
+	// Native omission defaults includeLayers to false and cwd to None.
+	// Accept those equivalent unscoped reads, never a layer or path request.
+	for key, value := range params {
+		switch key {
+		case "includeLayers":
+			if !bytes.Equal(bytes.TrimSpace(value), []byte("false")) {
+				return false
+			}
+		case "cwd":
+			if !requirementsNull(value) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Router) controlPlaneRead167(g *request, line []byte) []Delivery {

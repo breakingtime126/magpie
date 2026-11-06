@@ -158,9 +158,13 @@ func TestControlPlane167StrictRequests(t *testing.T) {
 		string([]byte{'{', '"', 0xff, '"', ':', '0', '}'}),
 	}
 	for _, params := range []string{
-		`{}`, `{"includeLayers":true}`, `{"includeLayers":null}`, `{"includeLayers":0}`, `{"includeLayers":"false"}`,
-		`{"includeLayers":false,"include\u004cayers":false}`, `{"includeLayers":false,"cwd":null}`,
-		`{"includeLayers":false,"cwd":"PRIVATE_PATH"}`, `{"includeLayers":false,"other":"PRIVATE_PARAM"}`,
+		`{"includeLayers":true}`, `{"includeLayers":null}`, `{"includeLayers":0}`, `{"includeLayers":"false"}`,
+		`{"includeLayers":[]}`, `{"includeLayers":{}}`, `{"includeLayers":null,"cwd":null}`,
+		`{"includeLayers":true,"cwd":null}`, `{"includeLayers":false,"include\u004cayers":false}`,
+		`{"cwd":null,"c\u0077d":null}`, `{"includeLayers":false,"cwd":null,"cwd":null}`,
+		`{"cwd":""}`, `{"cwd":"PRIVATE_PATH"}`, `{"cwd":false}`, `{"cwd":0}`, `{"cwd":[]}`, `{"cwd":{}}`,
+		`{"includeLayers":false,"cwd":""}`, `{"includeLayers":false,"cwd":"PRIVATE_PATH"}`,
+		`{"other":"PRIVATE_PARAM"}`, `{"includeLayers":false,"other":"PRIVATE_PARAM"}`,
 	} {
 		cases = append(cases, strings.Replace(base, `{"includeLayers":false}`, params, 1))
 	}
@@ -196,11 +200,66 @@ func TestControlPlane167StrictRequests(t *testing.T) {
 	}
 	for _, line := range []string{
 		base, `{"id":"","method":"config/read","params":{"include\u004cayers": false },"trace":null}`,
+		`{"id":"escaped","method":"config/read","params":{"c\u0077d": null, "include\u004cayers": false },"trace":null}`,
 		base + strings.Repeat(" ", requirementsJSONLimit-len(base)),
 	} {
 		if !validateControlPlaneRead167([]byte(line)) {
 			t.Fatal("valid bounded observed routing request rejected")
 		}
+	}
+}
+
+func TestControlPlane167DefaultedParamsUseFreshPolicy(t *testing.T) {
+	r := controlPlaneRouter(t)
+	var expected json.RawMessage
+	for _, params := range []string{
+		`{}`, `{"includeLayers":false}`, `{"cwd":null}`, `{"includeLayers":false,"cwd":null}`,
+	} {
+		t.Run(params, func(t *testing.T) {
+			line := `{"id":9007199254740993,"method":"config/read","params":` + params +
+				`,"trace":{"traceparent":"PRIVATE_TRACE","tracestate":null}}`
+			if !validateControlPlaneRead167([]byte(line)) {
+				t.Fatal("native defaulted config/read params must be accepted")
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				out := client(t, r, line)
+				if len(out) != 2 || out[0].Backend == out[1].Backend {
+					t.Fatal("defaulted config read did not request both fresh policy authorities")
+				}
+				for _, d := range out {
+					m, _ := parseObject(d.Message)
+					if d.Backend == "" || len(m) != 3 || text(m, "method") != "configRequirements/read" || string(m["params"]) != "null" {
+						t.Fatal("defaulted config read fetched native config or propagated params/trace")
+					}
+				}
+				if len(reply(t, r, out[0], controlPlaneNullRequirements)) != 0 {
+					t.Fatal("defaulted config read returned before both policy responses")
+				}
+				if attempt == 1 {
+					controlPlaneError(t, reply(t, r, out[1], `{"requirements":{},"supportsIndependentSpeedModes":true}`))
+				} else {
+					done := reply(t, r, out[1], controlPlaneNullRequirements)
+					if len(done) != 1 || done[0].Backend != "" {
+						t.Fatal("defaulted config read did not return one owned result")
+					}
+					m, _ := parseObject(done[0].Message)
+					result, _ := child(m, "result")
+					config, _ := child(result, "config")
+					if string(m["id"]) != "9007199254740993" || len(result) != 2 || string(result["origins"]) != "{}" ||
+						len(config) != 2 || text(config, "model_provider") != controlPlaneProvider167 {
+						t.Fatal("defaulted config read changed the owned routing result or request ID")
+					}
+					if expected == nil {
+						expected = m["result"]
+					} else if !sameJSON(expected, m["result"]) {
+						t.Fatal("equivalent native defaulted params changed the owned result")
+					}
+				}
+				if len(r.pending) != 0 || len(r.active) != 0 || r.activeBytes != 0 {
+					t.Fatal("defaulted config read retained request state")
+				}
+			}
+		})
 	}
 }
 
