@@ -99,6 +99,8 @@ Assert-NativeExit 'Repeated native startup probe and owned cleanup tests'
 Assert-NativeExit 'Repeated Windows cleanup and interruption tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./internal/proc -run '^TestStartTreeStrict'
 Assert-NativeExit 'Repeated strict Windows process startup tests'
+& go test -v -count=20 -timeout=5m -tags nogui ./internal/proc -run '^TestCombinedOutputOwnContextAfterStart$'
+Assert-NativeExit 'Repeated Windows started-command cancellation tests'
 & go test -v -count=1 -timeout=10m -tags nogui ./internal/cli -run '^TestAppServerBridgeHelpAndInvalidConfigDoNotStartMagpie$'
 Assert-NativeExit 'Native bridge CLI test'
 & go vet -tags nogui ./...

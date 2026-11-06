@@ -17,10 +17,17 @@ import (
 // the scheduler to expose exec's killed-process error. The timer is only
 // a watchdog; the child never exits on its own during a successful test.
 func TestCombinedOutputOwnContextAfterStart(t *testing.T) {
-	noShell(t)
+	exe, exeErr := os.Executable()
+	if exeErr != nil {
+		t.Fatal(exeErr)
+	}
 	ready := filepath.Join(t.TempDir(), "ready")
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := CommandContext(ctx, "/bin/sh", "-c", `echo ready; : > "$1"; exec sleep 300`, "sh", ready)
+	cmd := CommandContext(ctx, exe, "-test.run=^TestCombinedOutputOwnCancelChild$", "-test.timeout=6m")
+	// Keep testenv's sandbox marker and isolated homes, including TEMP/TMP
+	// on Windows, while selecting only this child mode in the test binary.
+	cmd.Env = append(os.Environ(), "MAGPIE_PROC_SLEEP=", "MAGPIE_PROC_RAN=",
+		"MAGPIE_PROC_OWN_CANCEL_CHILD=1", "MAGPIE_PROC_OWN_CANCEL_READY="+ready)
 	var out []byte
 	var err error
 	done := make(chan struct{})
@@ -65,6 +72,27 @@ func TestCombinedOutputOwnContextAfterStart(t *testing.T) {
 	if cmd.ProcessState == nil {
 		t.Fatal("canceled command was not waited for")
 	}
+}
+
+// This helper does nothing in an ordinary suite run. The explicitly
+// selected child writes its output before readiness and starts no children.
+func TestCombinedOutputOwnCancelChild(t *testing.T) {
+	if os.Getenv("MAGPIE_PROC_OWN_CANCEL_CHILD") != "1" || len(os.Args) != 3 ||
+		os.Args[1] != "-test.run=^TestCombinedOutputOwnCancelChild$" || os.Args[2] != "-test.timeout=6m" {
+		return
+	}
+	ready := os.Getenv("MAGPIE_PROC_OWN_CANCEL_READY")
+	if !filepath.IsAbs(ready) {
+		t.Fatal("child readiness path must be absolute")
+	}
+	if _, err := os.Stdout.WriteString("ready\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ready, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Minute)
+	t.Fatal("child was not canceled")
 }
 
 func TestCombinedOutputOwnKeepsCommandErrors(t *testing.T) {
