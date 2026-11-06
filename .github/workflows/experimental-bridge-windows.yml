@@ -40,8 +40,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          format_diff="$(gofmt -d internal/appserverbridge internal/proc cmd/magpie-codex-bridge)"
-          if [[ -n "$format_diff" ]]; then printf '%s\n' "$format_diff"; exit 1; fi
+          format_status=0
+          format_diff="$(gofmt -d internal/appserverbridge internal/proc cmd/magpie-codex-bridge 2>&1)" || format_status=$?
+          if [[ "$format_status" -ne 0 || -n "$format_diff" ]]; then
+            printf '%s\n' "$format_diff"
+            exit 1
+          fi
           export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
           isolated="$(mktemp -d "$RUNNER_TEMP/bridge-race.XXXXXX")"
           trap 'chmod -R u+w "$isolated"; rm -rf "$isolated"' EXIT
