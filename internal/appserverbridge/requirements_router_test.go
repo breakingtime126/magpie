@@ -418,7 +418,7 @@ func TestConfigRequirementsReadLateSiblingCannotAnswerReusedClientID(t *testing.
 			old := requirementsRequest(t, r, `{"id":"reused","method":"configRequirements/read"}`)
 			first, _ := parseObject(old[failed].Message)
 			errorResponse := raw(object{
-				"id":    first["id"],
+				"id": first["id"],
 				"error": raw(map[string]any{
 					"code": -32000, "message": "requirements-secret-canary",
 				}),
