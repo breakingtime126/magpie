@@ -287,8 +287,41 @@ namespace DesktopColdProbe {
         # Discover the intact installed backend, never copy credentials or execute an extracted EXE.
         $officialBackends = @(Get-ChildItem -LiteralPath $app.InstallLocation -Filter codex.exe -File -Recurse)
         $report.backendCandidates = @($officialBackends | ForEach-Object { $_.FullName.Substring($app.InstallLocation.Length).TrimStart('\') })
-        if ($officialBackends.Count -ne 1) { Block 'Installed official backend executable is not uniquely identified.' }
-        $officialBackend = $officialBackends[0]
+        # This pinned package also contains app\Codex.exe, a second packaged executable.
+        # Use the resource backend path and verify its CLI identity without opening an account.
+        $resourceBackend = Join-Path $app.InstallLocation 'app\resources\codex.exe'
+        $backendMatches = @($officialBackends | Where-Object { $_.FullName -eq $resourceBackend })
+        if ($backendMatches.Count -ne 1) { Block 'The reviewed resource backend is unavailable.' }
+        $officialBackend = $backendMatches[0]
+        $versionHome = Join-Path $work 'version-home'
+        $versionCodex = Join-Path $work 'version-codex'
+        New-Item -ItemType Directory -Path $versionHome, $versionCodex | Out-Null
+        $versionStart = New-Object Diagnostics.ProcessStartInfo
+        $versionStart.FileName = $officialBackend.FullName; $versionStart.Arguments = '--version'
+        $versionStart.WorkingDirectory = $versionHome
+        $versionStart.UseShellExecute = $false; $versionStart.CreateNoWindow = $true
+        $versionStart.RedirectStandardOutput = $true; $versionStart.RedirectStandardError = $true
+        $versionStart.EnvironmentVariables.Clear()
+        foreach ($name in @('SystemRoot', 'WINDIR', 'TEMP', 'TMP')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ($value) { $versionStart.EnvironmentVariables[$name] = $value }
+        }
+        foreach ($name in @('HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA')) {
+            $versionStart.EnvironmentVariables[$name] = $versionHome
+        }
+        $versionStart.EnvironmentVariables['CODEX_HOME'] = $versionCodex
+        $versionProcess = [Diagnostics.Process]::Start($versionStart)
+        $versionOut = $versionProcess.StandardOutput.ReadToEndAsync()
+        $versionErr = $versionProcess.StandardError.ReadToEndAsync()
+        if (-not $versionProcess.WaitForExit(10000)) { $versionProcess.Kill(); Block 'Official backend version check timed out.' }
+        if (-not $versionOut.Wait(2000) -or -not $versionErr.Wait(2000)) { Block 'Official version output did not close promptly.' }
+        $versionText = $versionOut.GetAwaiter().GetResult().Trim()
+        $versionError = $versionErr.GetAwaiter().GetResult()
+        if ($versionProcess.ExitCode -ne 0 -or $versionError.Length -ne 0 -or
+            $versionText -notmatch '^codex-cli [0-9][0-9A-Za-z.+-]{0,80}$') {
+            Block 'Resource executable did not identify itself as the official Codex CLI.'
+        }
+        $report.officialBackendVersion = $versionText
         $backends = @()
         foreach ($id in @('alpha', 'beta')) {
             $home = Join-Path $work ($id + '-home')

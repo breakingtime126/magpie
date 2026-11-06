@@ -36,13 +36,19 @@ in PowerShell does not prove that Desktop receives it. The second job uses anoth
 It launches only the newly registered `chatgpt-desktop.exe` alias declared under
 that manifest's Desktop application. An identically named alias existing before
 installation is a blocker. Directory-entry enumeration checks the documented
-root alias location as well as the family-qualified location; the latter did not
-exist in the first real runner test. The selected entry must have the documented
+root alias location as well as the family-qualified location; the initial `Test-Path` check failed to discover the latter, while subsequent
+directory enumeration found both. The selected entry must have the documented
 CreateProcess alias reparse tag `0x8000001B`. The probe never parses undocumented
 APPEXECLINK payload strings or fabricates an alias. Actual runtime package identity
 remains a separate mandatory check. Non-shell process
 creation supplies a minimal, non-secret, process-local environment containing
 the exact commit-built bridge path. It never writes user/system environment.
+
+The pinned package contains both `app\\Codex.exe` and
+`app\\resources\\codex.exe`. Only the latter resource backend is considered, and
+its `--version` must identify it as `codex-cli` in a separate empty home with no
+inherited authentication environment. This is an identity/version check, not a
+model or authentication request.
 
 The bridge configuration has two new empty homes and loopback discard endpoints,
 no API key, and no startup, requirements, attestation or OAuth opt-ins for this
