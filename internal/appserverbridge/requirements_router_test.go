@@ -191,6 +191,32 @@ func TestConfigRequirementsReadRawDuplicatesNeverBecomeSuccess(t *testing.T) {
 			case "nested policy key":
 				wire = strings.Replace(wire, `"allowRemoteControl":false`, `"allowRemoteControl":false,"allowRemoteControl":false`, 1)
 			}
+			if kind == "envelope id" || kind == "envelope result" {
+				// Ambiguous top-level envelopes are fatal before correlation.
+				// Nested duplicates below still use the method-level failure path.
+				pendingBefore := make(map[string]pending, len(r.pending))
+				for key, value := range r.pending {
+					pendingBefore[key] = value
+				}
+				activeBytesBefore := r.activeBytes
+				out, err := r.Server(requests[0].Backend, []byte(wire))
+				if err == nil || len(out) != 0 {
+					t.Fatal("ambiguous requirements envelope was not fatal before correlation")
+				}
+				if len(r.pending) != len(pendingBefore) || len(r.active) != 1 ||
+					!r.active["s:duplicates"] || r.activeBytes != activeBytesBefore ||
+					len(r.staleResponses) != 0 || len(r.staleResponseOrder) != 0 {
+					t.Fatal("fatal requirements envelope mutated correlation state")
+				}
+				for key, want := range pendingBefore {
+					got, present := r.pending[key]
+					if !present || got != want || got.group.failed || got.group.remaining != len(requests) ||
+						got.group.bytes != 0 || len(got.group.results) != 0 || len(got.group.seen) != 0 {
+						t.Fatal("fatal requirements envelope changed a pending request")
+					}
+				}
+				return
+			}
 			expectRequirementsError(t, server(t, r, requests[0].Backend, wire), raw("duplicates"))
 			if len(r.pending) != 0 || len(r.active) != 0 || r.activeBytes != 0 {
 				t.Fatal("malformed correlated response retained pending state")
