@@ -7,7 +7,7 @@ import (
 )
 
 func TestObservedConfigMetadataIsFiniteAndRedacted(t *testing.T) {
-	if len(observedConfigTypes) != 233 {
+	if len(observedConfigTypes) != 234 {
 		t.Fatal("unexpected frozen metadata set")
 	}
 	var log bytes.Buffer
@@ -49,7 +49,7 @@ func TestObservedConfigLiteralClassification(t *testing.T) {
 			}
 		}
 	}
-	for _, kind := range []string{"cli_store", "mcp_store", "sandbox"} {
+	for _, kind := range []string{"cli_store", "mcp_store", "sandbox", "login_method"} {
 		if observedConfigValue(kind, "true") != "other" {
 			t.Fatal("enum interpreted as a boolean")
 		}
@@ -75,9 +75,35 @@ func TestObservedConfigLiteralClassification(t *testing.T) {
 		{"mcp_store", "ephemeral", "other"},
 		{"sandbox", "\"mxc\"", "enum_mxc"},
 		{"sandbox", "keyring", "other"},
+		{"login_method", "\"chatgpt\"", "enum_chatgpt"},
+		{"login_method", "'api'", "enum_api"},
+		{"login_method", "api", "enum_api"},
+		{"login_method", "keyring", "other"},
+		{"cli_store", "chatgpt", "other"},
 	} {
 		if observedConfigValue(row.kind, row.value) != row.want {
 			t.Fatal("literal classification mismatch")
+		}
+	}
+}
+
+func TestForcedLoginMetadataNeverChangesArguments(t *testing.T) {
+	for _, value := range []string{"\"chatgpt\"", "'api'", "SYNTHETIC_SECRET", "{mode=\"SYNTHETIC_SECRET\"}"} {
+		args := []string{"-c", "forced_login_method=" + value}
+		before := append([]string(nil), args...)
+		var log bytes.Buffer
+		o := newObserver(&log)
+		o.argv(args)
+		es := events(t, log.Bytes())
+		if len(es) != 2 || es[1].ConfigKey != "forced_login_method" ||
+			es[1].ConfigValue != observedConfigValue("login_method", value) {
+			t.Fatal("forced login method metadata was not classified")
+		}
+		if strings.Join(args, "\x00") != strings.Join(before, "\x00") {
+			t.Fatal("observation changed the forwarded arguments")
+		}
+		if strings.Contains(log.String(), "SYNTHETIC_SECRET") {
+			t.Fatal("forced login raw value leaked")
 		}
 	}
 }

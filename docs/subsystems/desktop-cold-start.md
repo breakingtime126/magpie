@@ -188,3 +188,14 @@ entry's candidates. Computed or escaped keys, returned object forms and other
 unsupported definitions can remain unresolved. A candidate does not prove the
 actual runtime override and must never automatically expand production argument
 acceptance. The adapter and policy behavior remain unchanged.
+
+
+The static inspection at `49a6aed41c71f8ac74d450d2a98200604ad0017d`
+completed and found a direct `-c` candidate named `forced_login_method`.
+The pinned official schema permits only `chatgpt` or `api`. A subsequent
+observer-only change recognizes this one additional fixed key and those two enum
+labels to determine whether it is the real extra override. Arbitrary values stay
+redacted, and neither production acceptance nor login policy changes. Static
+source also contains unrelated command flags, so candidates are never treated as
+proven app-server launch parameters. Both Linux and Windows synthetic inspector
+suites passed 16/16 without skips at the observed commit.

@@ -5,11 +5,12 @@ package main
 // f5149c6efdf7ab9f1550aa0639dd5f2401205f25. No schema is fetched at runtime.
 // Recognition never authorizes forwarding or changes production CLI parsing.
 var observedConfigTypes = func() map[string]string {
-	keys := make(map[string]string, 233)
+	keys := make(map[string]string, 234)
 	keys["features.tool_registry"] = "object"
 	keys["cli_auth_credentials_store"] = "cli_store"
 	keys["mcp_oauth_credentials_store"] = "mcp_store"
 	keys["windows.sandbox"] = "sandbox"
+	keys["forced_login_method"] = "login_method"
 	for _, key := range []string{
 		"allow_login_shell",
 		"allow_symlinked_codex_home",
@@ -266,6 +267,8 @@ func observedConfigValue(kind, value string) string {
 		allowed = []string{"file", "keyring", "auto"}
 	case "sandbox":
 		allowed = []string{"elevated", "unelevated", "mxc"}
+	case "login_method":
+		allowed = []string{"chatgpt", "api"}
 	default:
 		return "other"
 	}

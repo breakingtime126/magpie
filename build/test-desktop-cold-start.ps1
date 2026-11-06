@@ -762,14 +762,14 @@ requires_openai_auth = false
                 'features.view_image', 'features.wake_on_agent_messages', 'features.web_search',
                 'features.web_search_cached', 'features.web_search_request', 'features.windows_sandbox_service',
                 'features.workspace_dependencies', 'features.workspace_owner_usage_nudge', 'features.worktrees',
-                'features.write_stdin_approval', 'feedback.enabled', 'hide_agent_reasoning',
+                'features.write_stdin_approval', 'feedback.enabled', 'forced_login_method', 'hide_agent_reasoning',
                 'include_apps_instructions', 'include_collaboration_mode_instructions', 'include_environment_context',
                 'include_environment_context_time', 'include_permissions_instructions', 'mcp_oauth_credentials_store',
                 'plugins._default.enabled', 'show_raw_agent_reasoning', 'suppress_unstable_features_warning',
                 'windows.allow_mxc', 'windows.sandbox'
             )
             $configValues = @('bool_true', 'bool_false', 'enum_file', 'enum_keyring', 'enum_auto',
-                'enum_ephemeral', 'enum_elevated', 'enum_unelevated', 'enum_mxc', 'other')
+                'enum_ephemeral', 'enum_elevated', 'enum_unelevated', 'enum_mxc', 'enum_chatgpt', 'enum_api', 'other')
             $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi')
             $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit')
             $allEvents = @()
