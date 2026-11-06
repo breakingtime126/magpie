@@ -9,6 +9,7 @@ on:
       - .github/workflows/experimental-desktop-policy-trace.yml
       - build/desktop-rpc-observer/**
       - build/test-desktop-cold-start.ps1
+      - build/inspect-desktop-static-metadata*.mjs
       - internal/appserverbridge/**
       - cmd/magpie-codex-bridge/**
 
@@ -71,6 +72,7 @@ jobs:
             done < <(gofmt -l build/desktop-rpc-observer internal/appserverbridge cmd/magpie-codex-bridge || true)
             exit 1
           fi
+          node --test build/inspect-desktop-static-metadata.test.mjs
           go test -race -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           go vet -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
 
@@ -109,6 +111,8 @@ jobs:
           if ($errors.Count -gt 0) { $errors | Format-List; throw 'Probe syntax validation failed.' }
       - name: Test startup profiles on Windows and build exact bridge
         run: |
+          node --test build/inspect-desktop-static-metadata.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Static metadata inspector tests failed.' }
           go test -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           if ($LASTEXITCODE -ne 0) { throw 'Windows observer tests failed.' }
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
@@ -121,7 +125,7 @@ jobs:
         run: |
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
-          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -EnableReviewedStartupProbe
+          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -EnableReviewedStartupProbe -InspectStaticLauncher
       - name: Upload only sanitized diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

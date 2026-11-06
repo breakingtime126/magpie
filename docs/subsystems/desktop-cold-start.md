@@ -165,3 +165,26 @@ credentials and other values remain redacted; unknown or dynamic keys remain
 unknown. Nothing is fetched from a schema during observation. This does not add
 production argument support or authorize any setting change. The exact actual
 override must be observed and its semantics reviewed before support is added.
+
+
+The 233-name observation still classified the actual normal-launch override as
+unknown at commit `05e3bd90a50bca2c2a3164148a748c17aa992cad`. It did not
+identify the key or prove JSONL initialization reached the adapter.
+
+The next instrumented CI pass reads only three fixed source entries in the
+already signature-, hash- and registration-verified official package's
+`app/resources/app.asar`. Entry names come from that exact package's recorded
+failure stack. The stdlib-only Node reader neither loads nor executes package
+code, extracts files, modifies the package, nor reads user data. The documented
+Electron ASAR layout, sizes, offsets, links and redirects are checked; bounded
+synthetic archive and lexer tests run on Linux and Windows first.
+
+The output consists solely of static candidate key names, fixed classifications,
+counts and explicit unsupported states. Raw source, values, command lines and
+dynamic key portions are not output. PowerShell independently validates the
+metadata schema before publication. The lexical reader is intentionally not a
+full JavaScript parser or control-flow proof. Ambiguous syntax discards that
+entry's candidates. Computed or escaped keys, returned object forms and other
+unsupported definitions can remain unresolved. A candidate does not prove the
+actual runtime override and must never automatically expand production argument
+acceptance. The adapter and policy behavior remain unchanged.

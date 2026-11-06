@@ -5,7 +5,8 @@ param(
     [ValidateSet('baseline', 'bridge', 'observe')][string]$Mode = 'baseline',
     [string]$BridgeExecutable = '',
     [string]$ObserverExecutable = '',
-    [switch]$EnableReviewedStartupProbe
+    [switch]$EnableReviewedStartupProbe,
+    [switch]$InspectStaticLauncher
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -15,7 +16,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
     $env:GITHUB_REF -ne 'refs/heads/experiment/app-server-bridge-v0.1.3035') {
     throw 'This probe is restricted to the authorized disposable GitHub hosted branch job.'
 }
-if ($EnableReviewedStartupProbe -and $Mode -ne 'observe') {
+if (($EnableReviewedStartupProbe -or $InspectStaticLauncher) -and $Mode -ne 'observe') {
     throw 'Reviewed startup inspection is limited to the explicitly instrumented CI mode.'
 }
 $out = Join-Path $env:RUNNER_TEMP 'desktop-cold-start-report'
@@ -257,6 +258,132 @@ namespace DesktopColdProbe {
     if ($app.Name -ne $report.manifest.name -or [string]$app.Version -ne $report.manifest.version -or
         $app.Publisher -ne $report.manifest.publisher -or [string]$app.Status -ne 'Ok') {
         Block 'Registered package does not match the verified download.'
+    }
+    if ($InspectStaticLauncher) {
+        $report.stage = 'read-only-static-launch-metadata'
+        $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
+        $inspector = Join-Path $env:GITHUB_WORKSPACE 'build/inspect-desktop-static-metadata.mjs'
+        if ($node.Contains('"') -or $inspector.Contains('"') -or $app.InstallLocation.Contains('"')) {
+            Block 'Invalid static-inspector executable or package path.'
+        }
+        $readStatic = New-Object Diagnostics.ProcessStartInfo
+        $readStatic.FileName = $node
+        $readStatic.Arguments = '"' + $inspector + '" --package-root "' + $app.InstallLocation + '"'
+        $readStatic.UseShellExecute = $false
+        $readStatic.CreateNoWindow = $true
+        $readStatic.RedirectStandardOutput = $true
+        $readStatic.RedirectStandardError = $true
+        $readStatic.WorkingDirectory = $work
+        $readStatic.EnvironmentVariables.Clear()
+        foreach ($name in @('SystemRoot', 'WINDIR', 'TEMP', 'TMP')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ($value) { $readStatic.EnvironmentVariables[$name] = $value }
+        }
+        $readStatic.EnvironmentVariables['HOME'] = $work
+        $readStatic.EnvironmentVariables['USERPROFILE'] = $work
+        $readStatic.EnvironmentVariables['GITHUB_ACTIONS'] = 'true'
+        $readStatic.EnvironmentVariables['RUNNER_OS'] = 'Windows'
+        $staticProcess = [Diagnostics.Process]::Start($readStatic)
+        $staticOut = $staticProcess.StandardOutput.ReadToEndAsync()
+        $staticErr = $staticProcess.StandardError.ReadToEndAsync()
+        if (-not $staticProcess.WaitForExit(30000)) {
+            $staticProcess.Kill()
+            [void]$staticProcess.WaitForExit(2000)
+            Block 'Read-only static inspection timed out.'
+        }
+        if (-not $staticOut.Wait(2000) -or -not $staticErr.Wait(2000)) {
+            Block 'Static inspector output did not close promptly.'
+        }
+        $staticText = $staticOut.GetAwaiter().GetResult().Trim()
+        $staticErrorText = $staticErr.GetAwaiter().GetResult()
+        if ($staticText.Length -gt 65600 -or $staticErrorText.Length -ne 0 -or
+            -not $staticText.StartsWith('DESKTOP_STATIC_METADATA=') -or $staticText.Contains("`n")) {
+            Block 'Unexpected static-inspector output.'
+        }
+        try { $staticReport = $staticText.Substring('DESKTOP_STATIC_METADATA='.Length) | ConvertFrom-Json }
+        catch { Block 'Invalid static-inspector metadata.' }
+        function Assert-StaticShape($value, [string[]]$names) {
+            if ($null -eq $value -or $value -isnot [pscustomobject]) { Block 'Invalid static metadata object.' }
+            $actual = @($value.PSObject.Properties | ForEach-Object { $_.Name })
+            if ($actual.Count -ne $names.Count) { Block 'Unexpected static metadata shape.' }
+            foreach ($name in $actual) {
+                if ($names -cnotcontains $name) { Block 'Unexpected static metadata field.' }
+            }
+        }
+        function Assert-StaticCount($value, [long]$maximum) {
+            if (($value -isnot [int] -and $value -isnot [long]) -or $value -lt 0 -or $value -gt $maximum) {
+                Block 'Invalid static metadata count.'
+            }
+        }
+        $staticCodes = @('invalid_utf8', 'truncated_archive', 'archive_too_large', 'unsupported_asar_prefix', 'invalid_header_size', 'header_too_large', 'truncated_header', 'invalid_header_pickle', 'invalid_json_size', 'invalid_header_padding', 'invalid_header_json', 'invalid_header_root', 'invalid_header_entry', 'invalid_unpacked_flag', 'invalid_link_entry', 'invalid_directory', 'header_too_deep', 'too_many_entries', 'invalid_entry_path', 'entry_path_too_long', 'invalid_file_size', 'invalid_file_offset', 'file_outside_archive', 'token_limit', 'unterminated_comment', 'unterminated_string', 'template_depth_limit', 'unterminated_template', 'ambiguous_slash', 'unterminated_regex', 'unsupported_lexical_syntax', 'anchor_limit', 'candidate_limit', 'unsupported_method_signature', 'method_limit_or_truncated', 'archive_not_regular', 'archive_changed', 'package_root_not_absolute', 'unexpected_package_directory', 'package_root_redirected', 'package_path_redirected', 'package_path_not_directory', 'disposable_windows_ci_required', 'invalid_arguments', 'report_limit', 'io_or_inspection_failed', 'archive_missing', 'package_path_missing')
+        if ($staticReport.PSObject.Properties['status'] -and $staticReport.status -ceq 'blocked') {
+            Assert-StaticShape $staticReport @('schema', 'status', 'reason')
+            if ($staticReport.schema -ne 1 -or $staticCodes -cnotcontains $staticReport.reason) {
+                Block 'Unreviewed static-inspector failure.'
+            }
+            $report.staticLauncher = [ordered]@{ schema = 1; status = 'blocked'; reason = $staticReport.reason }
+            Block ('Static inspection blocked: ' + $staticReport.reason)
+        }
+        Assert-StaticShape $staticReport @('schema', 'status', 'runtimeKeyProven', 'archiveEntries', 'entries')
+        if ($staticProcess.ExitCode -ne 0 -or $staticReport.schema -ne 1 -or
+            $staticReport.status -cne 'static_candidates_only' -or
+            $staticReport.runtimeKeyProven -isnot [bool] -or $staticReport.runtimeKeyProven -ne $false) {
+            Block 'Static inspection could not read the reviewed package safely.'
+        }
+        Assert-StaticCount $staticReport.archiveEntries 100000
+        $expectedEntries = @('.vite/build/early-bootstrap-339-fe39e0119f57b81e.js',
+            '.vite/build/early-bootstrap-824-d144f7c160c094ea.js',
+            '.vite/build/early-bootstrap-715-fa9cbf44c39465d5.js')
+        if (@($staticReport.entries).Count -ne 3) { Block 'Unexpected static-inspector entry count.' }
+        $seenStaticEntries = @{}
+        foreach ($entry in $staticReport.entries) {
+            if ($expectedEntries -cnotcontains $entry.entry -or $seenStaticEntries.ContainsKey($entry.entry)) {
+                Block 'Static metadata names an unreviewed source entry.'
+            }
+            $seenStaticEntries[$entry.entry] = $true
+            if ($entry.status -cne 'static_candidates_only') {
+                Assert-StaticShape $entry @('entry', 'status')
+                if ((@('missing_entry', 'link_not_read', 'unpacked_not_read', 'entry_too_large',
+                    'source_total_limit') + $staticCodes) -cnotcontains $entry.status) {
+                    Block 'Unreviewed static entry status.'
+                }
+                continue
+            }
+            Assert-StaticShape $entry @('entry', 'status', 'lexicalStatus', 'rawOccurrences',
+                'methods', 'candidatesLimited', 'candidates')
+            if ((@('complete') + $staticCodes) -cnotcontains $entry.lexicalStatus -or
+                $entry.candidatesLimited -isnot [bool]) { Block 'Invalid static lexical status.' }
+            Assert-StaticShape $entry.rawOccurrences @('getConfigOverrides', 'startupCommand', 'code_mode_host')
+            foreach ($property in $entry.rawOccurrences.PSObject.Properties) {
+                Assert-StaticCount $property.Value 16777216
+            }
+            Assert-StaticShape $entry.methods @('getConfigOverrides', 'startupCommand')
+            foreach ($property in $entry.methods.PSObject.Properties) {
+                Assert-StaticShape $property.Value @('lexicalOccurrences', 'completeDefinitions', 'unsupportedDefinitions')
+                foreach ($count in $property.Value.PSObject.Properties) { Assert-StaticCount $count.Value 128 }
+            }
+            if (@($entry.candidates).Count -gt 128) { Block 'Static candidate count exceeded its bound.' }
+            if ($entry.lexicalStatus -cne 'complete' -and @($entry.candidates).Count -ne 0) {
+                Block 'Incomplete static analysis emitted candidates.'
+            }
+            foreach ($candidate in $entry.candidates) {
+                Assert-StaticShape $candidate @('key', 'type', 'evidence', 'method', 'occurrences')
+                Assert-StaticCount $candidate.occurrences 128
+                if ($candidate.key -isnot [string] -or $candidate.key.Length -gt 128 -or
+                    $candidate.key -cnotmatch '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,8}$' -or
+                    @('static_other', 'dynamic_expression', 'boolean_literal', 'number_literal',
+                        'string_shaped_literal', 'empty_literal') -cnotcontains $candidate.type -or
+                    @('adjacent_c_literal', 'literal_assignment_in_method') -cnotcontains $candidate.evidence -or
+                    ($null -ne $candidate.method -and @('getConfigOverrides', 'startupCommand') -cnotcontains $candidate.method)) {
+                    Block 'Static inspection emitted unreviewed candidate metadata.'
+                }
+            }
+        }
+        # Inspector emits only bounded, fixed-shape static metadata. No source/value strings are fields.
+        $report.staticLauncher = $staticReport
+        $staticJSON = $staticReport | ConvertTo-Json -Depth 12
+        [IO.File]::WriteAllText((Join-Path $out 'static-launcher-metadata.json'), $staticJSON,
+            (New-Object Text.UTF8Encoding($false)))
     }
     $bridgeName = $null
     if ($Mode -ne 'baseline') {
