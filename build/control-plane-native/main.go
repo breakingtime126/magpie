@@ -39,7 +39,7 @@ type summary struct {
 	VersionVerified          bool   `json:"version_verified"`
 	ConfigReads              int    `json:"config_reads"`
 	LayerReads               int    `json:"layer_reads"`
-	StableLayerRereads        int    `json:"stable_layer_rereads"`
+	StableLayerRereads       int    `json:"stable_layer_rereads"`
 	LayerVersionChanges      int    `json:"layer_version_changes"`
 	CatalogModels            int    `json:"catalog_models"`
 	Threads                  int    `json:"threads"`

@@ -97,27 +97,41 @@ func TestConfigCheckerRejectsLayerOriginAndVersionMutations(t *testing.T) {
 		{"null-layers", func(v map[string]any) { v["layers"] = nil }},
 		{"empty-layers", func(v map[string]any) { v["layers"] = []any{} }},
 		{"extra-layer", func(v map[string]any) { v["layers"] = append(v["layers"].([]any), fixtureLayer(v)) }},
-		{"native-source", func(v map[string]any) { fixtureLayer(v)["name"] = map[string]any{"type": "user", "file": "/synthetic/private/config.toml", "profile": nil} }},
-		{"source-extra-field", func(v map[string]any) { fixtureLayer(v)["name"].(map[string]any)["file"] = "/synthetic/fictional/config.toml" }},
+		{"native-source", func(v map[string]any) {
+			fixtureLayer(v)["name"] = map[string]any{"type": "user", "file": "/synthetic/private/config.toml", "profile": nil}
+		}},
+		{"source-extra-field", func(v map[string]any) {
+			fixtureLayer(v)["name"].(map[string]any)["file"] = "/synthetic/fictional/config.toml"
+		}},
 		{"disabled-layer", func(v map[string]any) { fixtureLayer(v)["disabledReason"] = "synthetic" }},
 		{"null-disabled-layer", func(v map[string]any) { fixtureLayer(v)["disabledReason"] = nil }},
-		{"layer-config-differs", func(v map[string]any) { fixtureLayer(v)["config"].(map[string]any)["model_provider"] = "alpha_provider" }},
+		{"layer-config-differs", func(v map[string]any) {
+			fixtureLayer(v)["config"].(map[string]any)["model_provider"] = "alpha_provider"
+		}},
 		{"native-policy", func(v map[string]any) { v["config"].(map[string]any)["approval_policy"] = "never" }},
 		{"secret-field", func(v map[string]any) { fixtureLayer(v)["config"].(map[string]any)["token"] = "SYNTHETIC-SECRET" }},
 		{"missing-origins", func(v map[string]any) { delete(v, "origins") }},
 		{"empty-origins", func(v map[string]any) { v["origins"] = map[string]any{} }},
 		{"missing-leaf", func(v map[string]any) { delete(v["origins"].(map[string]any), "magpie_bridge.backends.1.provider") }},
-		{"container-origin", func(v map[string]any) { v["origins"].(map[string]any)["magpie_bridge"] = v["origins"].(map[string]any)["model_provider"] }},
+		{"container-origin", func(v map[string]any) {
+			v["origins"].(map[string]any)["magpie_bridge"] = v["origins"].(map[string]any)["model_provider"]
+		}},
 		{"wrong-array-origin", func(v map[string]any) {
 			o := v["origins"].(map[string]any)
 			o["magpie_bridge.backends[0].id"] = o["magpie_bridge.backends.0.id"]
 			delete(o, "magpie_bridge.backends.0.id")
 		}},
-		{"origin-source-differs", func(v map[string]any) { v["origins"].(map[string]any)["model"].(map[string]any)["name"] = map[string]any{"type": "system", "file": "/synthetic/private/config.toml"} }},
-		{"origin-version-differs", func(v map[string]any) { v["origins"].(map[string]any)["model"].(map[string]any)["version"] = "sha256:" + strings.Repeat("0", 64) }},
+		{"origin-source-differs", func(v map[string]any) {
+			v["origins"].(map[string]any)["model"].(map[string]any)["name"] = map[string]any{"type": "system", "file": "/synthetic/private/config.toml"}
+		}},
+		{"origin-version-differs", func(v map[string]any) {
+			v["origins"].(map[string]any)["model"].(map[string]any)["version"] = "sha256:" + strings.Repeat("0", 64)
+		}},
 		{"layer-version-differs", func(v map[string]any) { fixtureLayer(v)["version"] = "sha256:" + strings.Repeat("0", 64) }},
 		{"consistent-wrong-digest", func(v map[string]any) { replaceFixtureVersion(v, "sha256:"+strings.Repeat("0", 64)) }},
-		{"missing-hash-prefix", func(v map[string]any) { replaceFixtureVersion(v, strings.TrimPrefix(fixtureLayer(v)["version"].(string), "sha256:")) }},
+		{"missing-hash-prefix", func(v map[string]any) {
+			replaceFixtureVersion(v, strings.TrimPrefix(fixtureLayer(v)["version"].(string), "sha256:"))
+		}},
 		{"reordered-backends-with-new-digest", func(v map[string]any) {
 			c := v["config"].(map[string]any)
 			b := c["magpie_bridge"].(map[string]any)["backends"].([]any)
