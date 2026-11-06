@@ -63,17 +63,19 @@ jobs:
           ref: 49a6aed41c71f8ac74d450d2a98200604ad0017d
           path: .ci-metadata-baseline
           persist-credentials: false
-      - name: Prove forced-login recognition is red on the old observer
+      - name: Prove both metadata recognitions are red on the old observer
         shell: bash
         run: |
           set -euo pipefail
           cp build/desktop-rpc-observer/config_metadata_test.go .ci-metadata-baseline/build/desktop-rpc-observer/
+          cp build/desktop-rpc-observer/config_schema_red_test.go .ci-metadata-baseline/build/desktop-rpc-observer/
           status=0
-          output="$(cd .ci-metadata-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestForcedLoginMetadataNeverChangesArguments$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          output="$(cd .ci-metadata-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^(TestForcedLoginMetadataNeverChangesArguments|TestSchemaMetadataRecognizesKnownSpelling)$' ./build/desktop-rpc-observer 2>&1)" || status=$?
           printf '%s\n' "$output"
           test "$status" -ne 0
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestForcedLoginMetadataNeverChangesArguments'
-          echo 'The old observer lacks this exact recognition; the current tests must pass next.'
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestSchemaMetadataRecognizesKnownSpelling'
+          echo 'The old observer lacks both exact recognitions; the current tests must pass next.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

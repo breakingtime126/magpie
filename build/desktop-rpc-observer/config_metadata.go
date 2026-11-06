@@ -1,11 +1,16 @@
 package main
 
+import "strings"
+
 // Frozen metadata-only keys from openai/codex config.schema.json at
 // c40729ea5cf8e947481b130c59807273eda2f8e9, blob
 // f5149c6efdf7ab9f1550aa0639dd5f2401205f25. No schema is fetched at runtime.
 // Recognition never authorizes forwarding or changes production CLI parsing.
 var observedConfigTypes = func() map[string]string {
-	keys := make(map[string]string, 234)
+	keys := make(map[string]string, len(observedSchemaKeys))
+	for _, key := range observedSchemaKeys {
+		keys[key] = "opaque"
+	}
 	keys["features.tool_registry"] = "object"
 	keys["cli_auth_credentials_store"] = "cli_store"
 	keys["mcp_oauth_credentials_store"] = "mcp_store"
@@ -278,4 +283,94 @@ func observedConfigValue(kind, value string) string {
 		}
 	}
 	return "other"
+}
+
+// observedConfigArgument only recognizes fixed schema paths. Its output cannot
+// carry an unrecognized key or any raw value. Missing assignments are unknown
+// even when their text happens to equal a known key.
+func observedConfigArgument(argument string) event {
+	key, value, hasEquals := strings.Cut(argument, "=")
+	if !hasEquals {
+		return event{Kind: "argv_config", Class: "unknown", ConfigShape: "no_equals", ConfigFamily: "other"}
+	}
+	if strings.Trim(key, " \t") == "" {
+		return event{Kind: "argv_config", Class: "unknown", ConfigShape: "empty_key", ConfigFamily: "other"}
+	}
+	normalized, valid := observedConfigKey(key)
+	if valid {
+		if kind, known := observedConfigTypes[normalized]; known {
+			return event{Kind: "argv_config", ConfigKey: normalized, ConfigValue: observedConfigValue(kind, value)}
+		}
+	}
+	shape := "other_key"
+	if strings.ContainsAny(key, "\"'") {
+		shape = "quoted_key"
+	} else if valid {
+		shape = "plain_key"
+	}
+	family := "other"
+	if valid {
+		first, _, _ := strings.Cut(normalized, ".")
+		if fixed, known := observedConfigFamilies[first]; known {
+			family = fixed
+		}
+	}
+	return event{Kind: "argv_config", Class: "unknown", ConfigShape: shape, ConfigFamily: family}
+}
+
+// observedConfigKey accepts a deliberately small TOML-key subset: ASCII bare
+// segments or simply quoted versions of those same segments, separated by dots,
+// with optional spaces/tabs. Escapes, dots inside quotes, empty segments,
+// control characters and Unicode are not decoded. In particular, the literal
+// root key "features.plugins" must never become the nested features.plugins.
+// This only produces a lookup candidate; callers must check the frozen map.
+func observedConfigKey(key string) (string, bool) {
+	var parts []string
+	for i := 0; ; {
+		for i < len(key) && (key[i] == ' ' || key[i] == '\t') {
+			i++
+		}
+		if i == len(key) {
+			return "", false
+		}
+		var part string
+		if key[i] == '"' || key[i] == '\'' {
+			quote := key[i]
+			i++
+			start := i
+			for i < len(key) && observedConfigKeyByte(key[i]) {
+				i++
+			}
+			if i == start || i == len(key) || key[i] != quote {
+				return "", false
+			}
+			part = key[start:i]
+			i++
+		} else {
+			start := i
+			for i < len(key) && observedConfigKeyByte(key[i]) {
+				i++
+			}
+			if i == start {
+				return "", false
+			}
+			part = key[start:i]
+		}
+		parts = append(parts, part)
+		for i < len(key) && (key[i] == ' ' || key[i] == '\t') {
+			i++
+		}
+		if i == len(key) {
+			return strings.Join(parts, "."), true
+		}
+		if key[i] != '.' {
+			return "", false
+		}
+		i++
+	}
+}
+
+func observedConfigKeyByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+		c >= '0' && c <= '9' || c == '_' || c == '-'
 }

@@ -199,3 +199,26 @@ redacted, and neither production acceptance nor login policy changes. Static
 source also contains unrelated command flags, so candidates are never treated as
 proven app-server launch parameters. Both Linux and Windows synthetic inspector
 suites passed 16/16 without skips at the observed commit.
+
+
+The `9c69ae37750e25545657f5260e0e903fad7c7810` runtime still reported an
+unknown override after adding the forced-login candidate. This neither confirms
+that candidate nor excludes whitespace/quoted key spellings. No production
+forced-login support was added from this hypothesis.
+
+The next observer revision freezes all 830 explicitly named property paths in
+the same pinned schema, following only explicit properties and local schema
+references/combinators. It never admits dynamic map entries or wildcard paths.
+The original 234 classifications retain their types; every additional name has
+an opaque value. A conservative metadata-only key reader recognizes simple
+quoted segments and whitespace but rejects escapes and quoted segments containing
+dots, so a literal dotted root cannot masquerade as a nested setting. Argument
+bytes are never rewritten. Unknown config events contain only one of five fixed
+shape labels and a fixed schema-root family or `other`, not their original key,
+suffix, value, length, or hash. Private/dynamic Desktop settings can still remain
+unknown. A recognized spelling remains evidence for investigation, not permission
+to apply the setting to either backend.
+
+One schema property contains a dot inside its literal segment. The frozen list
+retains its quoted boundary, but the conservative reader deliberately does not
+recognize it. Thus 829 paths are recognizable; no flattened alias is invented.

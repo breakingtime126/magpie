@@ -47,6 +47,8 @@ type event struct {
 	Flag                  string `json:"flag,omitempty"`
 	ConfigKey             string `json:"configKey,omitempty"`
 	ConfigValue           string `json:"configValue,omitempty"`
+	ConfigShape           string `json:"configShape,omitempty"`
+	ConfigFamily          string `json:"configFamily,omitempty"`
 	ChildPID              int    `json:"child_pid,omitempty"`
 	Exit                  *int   `json:"exit,omitempty"`
 }
@@ -379,12 +381,7 @@ func (o *observer) argv(args []string) {
 			} else {
 				_, value, _ = strings.Cut(args[i], "=")
 			}
-			key, configValue, _ := strings.Cut(value, "=")
-			if kind, known := observedConfigTypes[key]; known {
-				o.emit(event{Kind: "argv_config", ConfigKey: key, ConfigValue: observedConfigValue(kind, configValue)})
-			} else {
-				o.emit(event{Kind: "argv_config", Class: "unknown"})
-			}
+			o.emit(observedConfigArgument(value))
 		default:
 			o.emit(event{Kind: "argv", Class: "unknown"})
 		}

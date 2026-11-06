@@ -7,7 +7,7 @@ import (
 )
 
 func TestObservedConfigMetadataIsFiniteAndRedacted(t *testing.T) {
-	if len(observedConfigTypes) != 234 {
+	if len(observedConfigTypes) != 830 {
 		t.Fatal("unexpected frozen metadata set")
 	}
 	var log bytes.Buffer
@@ -18,7 +18,14 @@ func TestObservedConfigMetadataIsFiniteAndRedacted(t *testing.T) {
 			o = newObserver(&log)
 			o.argv([]string{"-c", key + "=" + input})
 			es := events(t, log.Bytes())
-			if len(es) != 2 || es[1].ConfigKey != key || es[1].ConfigValue != observedConfigValue(kind, input) {
+			if len(es) != 2 {
+				t.Fatal("missing config metadata")
+			}
+			if key == "notice.\"hide_gpt-5.1-codex-max_migration_prompt\"" {
+				if es[1].Class != "unknown" || es[1].ConfigKey != "" || es[1].ConfigValue != "" {
+					t.Fatal("dotted quoted segment was interpreted")
+				}
+			} else if es[1].ConfigKey != key || es[1].ConfigValue != observedConfigValue(kind, input) {
 				t.Fatal("known key was not classified")
 			}
 			if strings.Contains(log.String(), "SECRET") {
@@ -42,7 +49,7 @@ func TestObservedConfigMetadataIsFiniteAndRedacted(t *testing.T) {
 }
 
 func TestObservedConfigLiteralClassification(t *testing.T) {
-	for _, kind := range []string{"object", "unknown"} {
+	for _, kind := range []string{"object", "opaque", "unknown"} {
 		for _, value := range []string{"true", "false", "file", "keyring", "{enabled=true}"} {
 			if observedConfigValue(kind, value) != "other" {
 				t.Fatal("opaque value was interpreted")
