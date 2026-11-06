@@ -53,9 +53,9 @@ its `--version` must identify it as `codex-cli` in a separate empty home with no
 inherited authentication environment. This is an identity/version check, not a
 model or authentication request.
 
-The bridge configuration has two new empty homes and loopback discard endpoints,
-no API key, and no startup, requirements, attestation or OAuth opt-ins for this
-newer unreviewed runtime. The exact production bridge is built unchanged with a
+The baseline/direct bridge configuration has two new empty homes and loopback discard endpoints,
+no API key, and no startup, requirements, attestation or OAuth opt-ins. The separate
+instrumented startup follow-up below selects only its explicitly reviewed profile. The exact production bridge is built unchanged with a
 unique commit-derived filename and validated using `--check` before monitoring.
 The probe requires a matching child process-start event under a package-verified
 Desktop parent, and records file hashes before/after. Short-lived events may not
@@ -100,7 +100,7 @@ not a recopy of a still-growing file.
 
 One fresh directory and prefix allow at most 16 exclusive 64 KiB trace files.
 Duplicate request IDs remain uncorrelatable, and exhausting correlation capacity
-disables further matching. Missing child exit, exhausted trace slots or truncated
+disables further matching. Missing child exit or output EOF, exhausted trace slots or truncated
 summaries mean incomplete evidence, not proof that no failure occurred.
 The helper forwards ordinary Windows exit codes and output EOF. Its blocked
 stdin reader is released by immediate process exit after the child ends; it is
@@ -112,3 +112,37 @@ while the native fixture exits, checking byte-exact output, EOF and exit status.
 No old 0.166 compatibility mode is enabled simply because the packaged backend
 reports 0.167.0-alpha.3.2. The first correlated failure must be established before
 considering a separately reviewed compatibility change.
+
+## Exact-version startup follow-up
+
+The instrumented run at `b4775be7ea17a2f34bee7aaef329748dd98610cf`
+identified the first blocker as the one-shot startup command, not a JSONL RPC.
+Desktop passed `--print-startup-config --startup-client-info`; the default-off
+bridge emitted `startup_probe_unavailable` and exited 1. No initialize or
+configRequirements/read request occurred in that complete invocation.
+[Metadata and screenshot](https://github.com/breakingtime126/magpie/actions/runs/42173927946).
+
+The follow-up explicitly enables only the new exact-version unrestricted startup
+profile for the verified bundled 0.167.0-alpha.3.2 binary. Its SHA-256 is
+`40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39`.
+This does not enable any old authentication or JSONL requirements profile.
+Both independently configured official commands must return the same complete,
+actually unrestricted success result. A non-null requirement, different version,
+unsupported field or mismatching backend result still stops startup. This is not
+support for arbitrary organization policies or proof that different underlying
+policies are equivalent.
+
+The official one-shot command may refresh policy/auth state or write caches.
+This CI uses newly created empty homes, no account credentials and no login or
+inference requests. It does not claim zero attempted network activity, and it
+does not change firewall, network security or machine policy to force a pass.
+Linux race tests and Windows focused tests gate the actual Desktop attempt.
+Later initialization, authentication and model-use gates remain unverified until
+separately observed. A green observation job must not be described as a usable
+Desktop integration.
+
+A genuine one-shot success object has neither a JSONL `result` nor `error` key.
+The transport observer deliberately classifies that shape as `unrecognized`
+without recording its body. That label alone is not a startup failure. Interpret
+it with the unchanged bytes, production validator, child exit code and complete
+output EOF, and examine a later JSONL invocation as separate evidence.

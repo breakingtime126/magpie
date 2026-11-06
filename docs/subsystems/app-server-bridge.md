@@ -456,11 +456,22 @@ and an optional string/null `title`, and no explicit `--stdio` or `--listen`.
 Unknown, duplicate or malformed arguments fail before configuration access.
 
 Inspection is **disabled by default**. After separately reviewing and authorizing
-the effects on **both** configured backends, an operator can explicitly set
-`startup_probe` to `compare-unrestricted-v0.166` and set each backend's
-`startup_probe_sha256` to the SHA-256 of its separately reviewed native executable.
-The shipped example does not enable this mode. Config validation checks pin
-syntax; the probe hashes **both** binaries before starting either one. A pin
+the effects on **both** configured backends, an operator can explicitly select
+one `startup_probe` profile:
+
+- `compare-unrestricted-v0.166` accepts only exact `0.166.0-alpha.6`.
+- `compare-unrestricted-v0.167.0-alpha.3.2` accepts only exact
+  `0.167.0-alpha.3.2`, the backend observed in Desktop `26.1103.3517.0`.
+
+Each backend's `startup_probe_sha256` must be the SHA-256 of its separately
+reviewed native executable. Neither profile is a range, automatic version
+detection, or permission to enable another compatibility mode. Unknown profile
+names fail configuration validation. The new 0.167 profile cannot be combined
+with any `config_requirements_read`, `attestation` or `gateway_oauth` mode:
+those modes remain reviewed only for 0.166.0-alpha.6. Such mixed configurations
+fail before either child starts, for one-shot and JSONL launches alike. Existing
+0.166 combinations remain unchanged. The shipped example enables neither profile.
+Config validation checks pin syntax; the probe hashes **both** binaries before starting either one. A pin
 is not a signature, proof of an official binary, or protection against replacement
 by another same-user process. Provision and review the executables independently.
 
@@ -473,11 +484,17 @@ cleanup calls still depend on the OS completing them. Every started process uses
 the bridge's strict owned-process-tree startup and cleanup. There is no retry,
 JSONL initialization, fallback to a single authority, or cached permission grant.
 
-Only this **complete** shape is supported, from both successful official exits:
+Only this **complete** shape is supported, from both successful official exits,
+with `appServerVersion` equal to the selected profile's exact version:
 
 ```json
 {"appServerVersion":"0.166.0-alpha.6","configRequirements":{"supportsIndependentSpeedModes":true,"requirements":null}}
 ```
+
+For the new profile the version is exactly `0.167.0-alpha.3.2`; all other fields
+and restrictions are the same. Both children must report that version, not one
+old and one new result. Client `name`, `title` and `version` values are forwarded
+as validated, never replaced with a profile-dependent identity.
 
 The result is validated before one normalized JSON object and newline are
 returned. Every displayed field came from both validated responses. Missing,
@@ -493,8 +510,25 @@ Official [startup configuration](https://github.com/openai/codex/blob/rust-v0.16
 is a one-shot JSON command that returns before normal app-server initialization.
 The [reviewed success construction](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/startup_config.rs#L154-L174)
 and [requirements mapping](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/request_processors/config_processor.rs#L445-L465)
-are the source of this exact version-scoped schema. Runtime/config failures emit
-a fixed bridge-specific JSON error and unsuccessful exit, with no backend
+are the source of the legacy exact version-scoped schema. The new profile is
+separately reviewed against official source
+[`c40729ea5cf8e947481b130c59807273eda2f8e9`](https://github.com/openai/codex/tree/c40729ea5cf8e947481b130c59807273eda2f8e9):
+its [Cargo version](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/Cargo.toml)
+is `0.167.0-alpha.3.2`, and its
+[startup implementation](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/startup_config.rs)
+is byte-identical to the legacy source at
+`4f093f2748667f3b0e6a07e3d4055121cbd3ce64` (Git blob
+`71dc648265e811e919854c3dd78f125ef7db5150`). The complete
+[public response](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/config.rs)
+still contains only `supportsIndependentSpeedModes` and `requirements` inside
+`configRequirements`. The new
+[mapper](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/config_processor.rs)
+prefers `permissions.network` over legacy `network`, and the requirements schema
+adds nested OTEL `log_sse_deltas`. Neither change widens this null-only profile:
+**every** non-null requirements value still fails, even if both backends agree.
+This is not a policy merge or a review of the newer JSONL requirements/auth paths.
+
+Runtime/config failures emit a fixed bridge-specific JSON error and unsuccessful exit, with no backend
 payload, token, `configLoad` classification or suggested login recovery. Argument
 failures use stderr and empty stdout. This does not promise that Desktop will
 accept the bridge's error handling or finish its bootstrap.
@@ -512,8 +546,13 @@ not authorization to run it against a user's real accounts.
 See [managed startup loading](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/config_manager.rs#L417-L430),
 [credential refresh](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/login/src/auth/manager.rs#L2495-L2512)
 and [cloud policy loading](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/cloud-config/src/chatgpt.rs#L33-L56).
-Current verification uses synthetic processes only, never the real one-shot
-command, account state, credential refresh or policy services.
+The Go profile tests use synthetic responses and native fixture processes.
+They cover exact-version selection, unknown profiles, both pins before either
+execution, complete strict envelopes, non-null restrictions, mixed-profile
+rejection, unchanged client identity, native cleanup and both compiled-adapter
+profiles. They do not themselves execute the real official one-shot command,
+read account state, refresh credentials or query policy services. A successful
+synthetic profile test is not Desktop GUI acceptance or official-runtime proof.
 
 ### Startup sign-out remains unsupported
 
@@ -599,9 +638,9 @@ pure/no-refresh RPC option. Both authorities must be authorized before enabling
 the mode. Failed or partial fanouts are not transactional and are not retried by
 the bridge. No real policy service, credentials or account is used in the tests.
 
-This JSONL mode does not widen the separate one-shot
-`compare-unrestricted-v0.166` startup probe. That probe still rejects non-null
-requirements. Supporting a managed Desktop's full startup therefore requires
+This JSONL mode does not widen either one-shot startup profile. Both still
+reject non-null requirements, and the 0.167 profile cannot be combined with this
+0.166 JSONL mode. Supporting a managed Desktop's full startup therefore requires
 additional reviewed work, not simply enabling this read option.
 
 ### Observed Desktop bootstrap and remaining boundaries
@@ -742,8 +781,10 @@ open a browser, but it is not a pure or side-effect-free read. Other official
 initialization/turn paths can still refresh credentials. Enabling these modes
 for real accounts needs the applicable authorization and policy review.
 
-All implementation and fixture assumptions are pinned to official source
-`4f093f2748667f3b0e6a07e3d4055121cbd3ce64`, Codex `0.166.0-alpha.6`.
+The JSONL requirements/auth implementation and fixture assumptions above are
+pinned to official source `4f093f2748667f3b0e6a07e3d4055121cbd3ce64`, Codex
+`0.166.0-alpha.6`. The separately reviewed 0.167 one-shot profile does not
+extend these JSONL modes.
 Tests use synthetic processes and synthetic statuses/errors only. They do not
 run a real Desktop proof generator or validate OAuth, proof headers, accounts,
 model inference or service acceptance.

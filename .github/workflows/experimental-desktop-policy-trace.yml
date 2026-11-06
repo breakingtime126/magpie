@@ -9,6 +9,8 @@ on:
       - .github/workflows/experimental-desktop-policy-trace.yml
       - build/desktop-rpc-observer/**
       - build/test-desktop-cold-start.ps1
+      - internal/appserverbridge/**
+      - cmd/magpie-codex-bridge/**
 
 permissions:
   contents: read
@@ -37,23 +39,40 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Test metadata redaction and unchanged transport
+      - name: Check out exact pre-extension behavior for red regression
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: b4775be7ea17a2f34bee7aaef329748dd98610cf
+          path: .ci-startup-baseline
+          persist-credentials: false
+      - name: Prove the new literal-mode test fails on the old behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/probe_167_test.go .ci-startup-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-startup-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestStartupProbe167ExactProfile$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestStartupProbe167ExactProfile'
+          echo 'The exact pre-extension code fails behaviorally; the current code must pass next.'
+      - name: Test startup profiles and metadata redaction
         shell: bash
         run: |
           set -euo pipefail
           format_status=0
-          diff="$(gofmt -d build/desktop-rpc-observer 2>&1)" || format_status=$?
+          diff="$(gofmt -d build/desktop-rpc-observer internal/appserverbridge cmd/magpie-codex-bridge 2>&1)" || format_status=$?
           if [[ "$format_status" -ne 0 || -n "$diff" ]]; then
             printf '%s\n' "$diff"
-            for file in main.go main_test.go; do
-              printf 'OBSERVER_FORMAT_%s=' "$file"
-              gofmt "build/desktop-rpc-observer/$file" | base64 -w0
+            while IFS= read -r file; do
+              printf 'PROBE_FORMAT_FILE=%s:' "$file"
+              gofmt "$file" | base64 -w0
               printf '\n'
-            done
+            done < <(gofmt -l build/desktop-rpc-observer internal/appserverbridge cmd/magpie-codex-bridge || true)
             exit 1
           fi
-          go test -race -count=1 -timeout=5m ./build/desktop-rpc-observer
-          go vet ./build/desktop-rpc-observer
+          go test -race -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
+          go vet -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
 
   observed-policy-read:
     needs: observer-unit
@@ -88,9 +107,9 @@ jobs:
           [void][System.Management.Automation.Language.Parser]::ParseFile(
             (Join-Path $env:GITHUB_WORKSPACE 'build/test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
           if ($errors.Count -gt 0) { $errors | Format-List; throw 'Probe syntax validation failed.' }
-      - name: Test observer on Windows and build unchanged bridge
+      - name: Test startup profiles on Windows and build exact bridge
         run: |
-          go test -count=1 -timeout=5m ./build/desktop-rpc-observer
+          go test -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           if ($LASTEXITCODE -ne 0) { throw 'Windows observer tests failed.' }
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
@@ -102,7 +121,7 @@ jobs:
         run: |
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
-          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer
+          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -EnableReviewedStartupProbe
       - name: Upload only sanitized diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -729,150 +729,164 @@ func TestBuiltAdapterStartupProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(binary))
-	for _, tt := range []struct {
-		name         string
-		enabled      bool
-		signOut      bool
-		badDigest    bool
-		secondResult string
-		wantChildren bool
-		wantCode     int
-		wantOutput   string
+	for _, profile := range []struct {
+		mode     string
+		response string
+		identity string
+		other    string
 	}{
-		{name: "enabled success", enabled: true, wantChildren: true, wantOutput: fixtureStartupSuccess + "\n"},
-		{name: "default disabled", wantCode: 1, wantOutput: startupProbeError + "\n"},
-		{name: "sign out before invalid config", enabled: true, signOut: true, wantCode: 2},
-		{name: "second digest mismatch starts neither", enabled: true, badDigest: true, wantCode: 1, wantOutput: startupProbeError + "\n"},
-		{name: "restricted second result fails closed", enabled: true, secondResult: `{"appServerVersion":"0.166.0-alpha.6","configRequirements":{"supportsIndependentSpeedModes":true,"requirements":{"secret":"fixture-secret-stdout-canary"}}}`, wantChildren: true, wantCode: 1, wantOutput: startupProbeError + "\n"},
-		{name: "unknown second field fails closed", enabled: true, secondResult: `{"appServerVersion":"0.166.0-alpha.6","configRequirements":{"supportsIndependentSpeedModes":true,"requirements":null},"secret":"fixture-secret-stdout-canary"}`, wantChildren: true, wantCode: 1, wantOutput: startupProbeError + "\n"},
+		{appserverbridge.StartupProbeCompareUnrestricted, fixtureStartupSuccess, desktopStartupClientInfo, fixtureStartupSuccess167},
+		{startupProbe167Mode, fixtureStartupSuccess167, desktopStartupClientInfo167, fixtureStartupSuccess},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
-			commandPath := filepath.Join(root, "native-probe-fixture.exe")
-			if err := os.WriteFile(commandPath, binary, 0700); err != nil {
-				t.Fatal(err)
-			}
-			cfg := appserverbridge.Config{}
-			if tt.enabled {
-				cfg.StartupProbe = appserverbridge.StartupProbeCompareUnrestricted
-			}
-			for _, id := range []string{"first", "second"} {
-				home := filepath.Join(root, id+"-home")
-				codex := filepath.Join(root, id+"-codex")
-				for _, path := range []string{home, codex} {
-					if err := os.Mkdir(path, 0700); err != nil {
+		t.Run(profile.mode, func(t *testing.T) {
+			for _, tt := range []struct {
+				name         string
+				enabled      bool
+				signOut      bool
+				badDigest    bool
+				secondResult string
+				wantChildren bool
+				wantCode     int
+				wantOutput   string
+			}{
+				{name: "enabled success", enabled: true, wantChildren: true, wantOutput: profile.response + "\n"},
+				{name: "default disabled", wantCode: 1, wantOutput: startupProbeError + "\n"},
+				{name: "sign out before invalid config", enabled: true, signOut: true, wantCode: 2},
+				{name: "second digest mismatch starts neither", enabled: true, badDigest: true, wantCode: 1, wantOutput: startupProbeError + "\n"},
+				{name: "restricted second result fails closed", enabled: true, secondResult: strings.Replace(profile.response, `"requirements":null`, `"requirements":{"secret":"fixture-secret-stdout-canary"}`, 1), wantChildren: true, wantCode: 1, wantOutput: startupProbeError + "\n"},
+				{name: "other profile result fails closed", enabled: true, secondResult: profile.other, wantChildren: true, wantCode: 1, wantOutput: startupProbeError + "\n"},
+				{name: "unknown second field fails closed", enabled: true, secondResult: strings.Replace(profile.response, "{", `{"secret":"fixture-secret-stdout-canary",`, 1), wantChildren: true, wantCode: 1, wantOutput: startupProbeError + "\n"},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					root := t.TempDir()
+					commandPath := filepath.Join(root, "native-probe-fixture.exe")
+					if err := os.WriteFile(commandPath, binary, 0700); err != nil {
 						t.Fatal(err)
 					}
-				}
-				policy, err := json.Marshal(fixtureCodeModePolicy{DisableInProcessFallback: true})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(home, "synthetic-code-mode-policy.json"), policy, 0600); err != nil {
-					t.Fatal(err)
-				}
-				response := fixtureStartupSuccess + "\n"
-				if id == "second" && tt.secondResult != "" {
-					response = tt.secondResult + "\n"
-				}
-				if err := os.WriteFile(filepath.Join(home, "synthetic-startup-response.json"), []byte(response), 0600); err != nil {
-					t.Fatal(err)
-				}
-				backend := appserverbridge.Backend{ID: id, Provider: "fixture-" + id, Command: commandPath, Home: home, CodexHome: codex}
-				if tt.enabled {
-					backend.StartupProbeSHA256 = digest
-				}
-				if id == "second" && tt.badDigest {
-					backend.StartupProbeSHA256 = strings.Repeat("0", 64)
-				}
-				cfg.Backends = append(cfg.Backends, backend)
-			}
-			data, err := json.Marshal(cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tt.signOut {
-				data = []byte("invalid-config-fixture-secret-canary")
-			}
-			configPath := filepath.Join(root, "bridge.json")
-			if err := os.WriteFile(configPath, data, 0600); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv(configEnv, configPath)
-			var before map[string]string
-			if !tt.wantChildren {
-				before = snapshot(t, root)
-			}
-			args := desktopStartupArgs()
-			if tt.signOut {
-				args = append(args, "--startup-sign-out")
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			command := proc.CommandContext(ctx, adapter, args...)
-			command.Env = os.Environ()
-			command.Dir = root
-			// A nil stdin is intentional: a one-shot operation has no initialize exchange.
-			var output, diagnostics bytes.Buffer
-			command.Stdout = &output
-			command.Stderr = &diagnostics
-			tree, err := proc.StartTreeStrict(command)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { <-tree.Stop(time.Second) }()
-			waitErr := tree.Wait()
-			if ctx.Err() != nil || command.ProcessState == nil {
-				t.Fatalf("one-shot adapter did not exit: %v", waitErr)
-			}
-			code := command.ProcessState.ExitCode()
-			if code != tt.wantCode || (waitErr == nil) != (code == 0) || output.String() != tt.wantOutput {
-				t.Fatalf("code=%d want=%d stdout=%q stderr=%q wait=%v", code, tt.wantCode, output.String(), diagnostics.String(), waitErr)
-			}
-			wantDiagnostics := ""
-			if tt.signOut {
-				wantDiagnostics = "magpie-codex-bridge: " + errUnsupportedStartupSignOut.Error() + "\n"
-			} else if tt.wantCode != 0 {
-				wantDiagnostics = "magpie-codex-bridge: magpie startup probe unavailable\n"
-			}
-			if diagnostics.String() != wantDiagnostics || strings.Contains(output.String()+diagnostics.String(), "canary") {
-				t.Fatalf("unsafe or unexpected output: stdout=%q stderr=%q", output.String(), diagnostics.String())
-			}
-			if !tt.wantChildren {
-				if !reflect.DeepEqual(before, snapshot(t, root)) {
-					t.Fatal("rejected startup probe started children or changed fixture state")
-				}
-				return
-			}
-			for _, backend := range cfg.Backends {
-				recorded, err := os.ReadFile(filepath.Join(backend.Home, "received-argv.json"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				var childArgs []string
-				if err := json.Unmarshal(recorded, &childArgs); err != nil {
-					t.Fatal(err)
-				}
-				wantArgs := []string{"-c", "features.code_mode_host.enabled=true", "app-server", "--analytics-default-enabled", "-c", fmt.Sprintf("model_provider=%q", backend.Provider), "--print-startup-config", "--startup-client-info", desktopStartupClientInfo}
-				if !reflect.DeepEqual(childArgs, wantArgs) {
-					t.Fatalf("backend %s arguments=%q want=%q", backend.ID, childArgs, wantArgs)
-				}
-				info, err := os.ReadFile(filepath.Join(backend.Home, "received-startup-client-info.json"))
-				if err != nil || string(info) != desktopStartupClientInfo {
-					t.Fatalf("backend %s client info=%q err=%v", backend.ID, info, err)
-				}
-				policyBytes, err := os.ReadFile(filepath.Join(backend.Home, "received-code-mode-policy.json"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				var policy fixtureCodeModePolicy
-				if err := json.Unmarshal(policyBytes, &policy); err != nil || policy != (fixtureCodeModePolicy{Enabled: true, DisableInProcessFallback: true}) {
-					t.Fatalf("backend %s structured policy changed: %s", backend.ID, policyBytes)
-				}
-				marker, err := os.ReadFile(filepath.Join(backend.Home, "clean-exit"))
-				if err != nil || string(marker) != "startup" {
-					t.Fatalf("backend %s did not finish the one-shot probe: %q, %v", backend.ID, marker, err)
-				}
+					cfg := appserverbridge.Config{}
+					if tt.enabled {
+						cfg.StartupProbe = profile.mode
+					}
+					for _, id := range []string{"first", "second"} {
+						home := filepath.Join(root, id+"-home")
+						codex := filepath.Join(root, id+"-codex")
+						for _, path := range []string{home, codex} {
+							if err := os.Mkdir(path, 0700); err != nil {
+								t.Fatal(err)
+							}
+						}
+						policy, err := json.Marshal(fixtureCodeModePolicy{DisableInProcessFallback: true})
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(filepath.Join(home, "synthetic-code-mode-policy.json"), policy, 0600); err != nil {
+							t.Fatal(err)
+						}
+						response := profile.response + "\n"
+						if id == "second" && tt.secondResult != "" {
+							response = tt.secondResult + "\n"
+						}
+						if err := os.WriteFile(filepath.Join(home, "synthetic-startup-response.json"), []byte(response), 0600); err != nil {
+							t.Fatal(err)
+						}
+						backend := appserverbridge.Backend{ID: id, Provider: "fixture-" + id, Command: commandPath, Home: home, CodexHome: codex}
+						if tt.enabled {
+							backend.StartupProbeSHA256 = digest
+						}
+						if id == "second" && tt.badDigest {
+							backend.StartupProbeSHA256 = strings.Repeat("0", 64)
+						}
+						cfg.Backends = append(cfg.Backends, backend)
+					}
+					data, err := json.Marshal(cfg)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if tt.signOut {
+						data = []byte("invalid-config-fixture-secret-canary")
+					}
+					configPath := filepath.Join(root, "bridge.json")
+					if err := os.WriteFile(configPath, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+					t.Setenv(configEnv, configPath)
+					var before map[string]string
+					if !tt.wantChildren {
+						before = snapshot(t, root)
+					}
+					args := desktopStartupArgs()
+					args[len(args)-1] = profile.identity
+					if tt.signOut {
+						args = append(args, "--startup-sign-out")
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					command := proc.CommandContext(ctx, adapter, args...)
+					command.Env = os.Environ()
+					command.Dir = root
+					// A nil stdin is intentional: a one-shot operation has no initialize exchange.
+					var output, diagnostics bytes.Buffer
+					command.Stdout = &output
+					command.Stderr = &diagnostics
+					tree, err := proc.StartTreeStrict(command)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() { <-tree.Stop(time.Second) }()
+					waitErr := tree.Wait()
+					if ctx.Err() != nil || command.ProcessState == nil {
+						t.Fatalf("one-shot adapter did not exit: %v", waitErr)
+					}
+					code := command.ProcessState.ExitCode()
+					if code != tt.wantCode || (waitErr == nil) != (code == 0) || output.String() != tt.wantOutput {
+						t.Fatalf("code=%d want=%d stdout=%q stderr=%q wait=%v", code, tt.wantCode, output.String(), diagnostics.String(), waitErr)
+					}
+					wantDiagnostics := ""
+					if tt.signOut {
+						wantDiagnostics = "magpie-codex-bridge: " + errUnsupportedStartupSignOut.Error() + "\n"
+					} else if tt.wantCode != 0 {
+						wantDiagnostics = "magpie-codex-bridge: magpie startup probe unavailable\n"
+					}
+					if diagnostics.String() != wantDiagnostics || strings.Contains(output.String()+diagnostics.String(), "canary") {
+						t.Fatalf("unsafe or unexpected output: stdout=%q stderr=%q", output.String(), diagnostics.String())
+					}
+					if !tt.wantChildren {
+						if !reflect.DeepEqual(before, snapshot(t, root)) {
+							t.Fatal("rejected startup probe started children or changed fixture state")
+						}
+						return
+					}
+					for _, backend := range cfg.Backends {
+						recorded, err := os.ReadFile(filepath.Join(backend.Home, "received-argv.json"))
+						if err != nil {
+							t.Fatal(err)
+						}
+						var childArgs []string
+						if err := json.Unmarshal(recorded, &childArgs); err != nil {
+							t.Fatal(err)
+						}
+						wantArgs := []string{"-c", "features.code_mode_host.enabled=true", "app-server", "--analytics-default-enabled", "-c", fmt.Sprintf("model_provider=%q", backend.Provider), "--print-startup-config", "--startup-client-info", profile.identity}
+						if !reflect.DeepEqual(childArgs, wantArgs) {
+							t.Fatalf("backend %s arguments=%q want=%q", backend.ID, childArgs, wantArgs)
+						}
+						info, err := os.ReadFile(filepath.Join(backend.Home, "received-startup-client-info.json"))
+						if err != nil || string(info) != profile.identity {
+							t.Fatalf("backend %s client info=%q err=%v", backend.ID, info, err)
+						}
+						policyBytes, err := os.ReadFile(filepath.Join(backend.Home, "received-code-mode-policy.json"))
+						if err != nil {
+							t.Fatal(err)
+						}
+						var policy fixtureCodeModePolicy
+						if err := json.Unmarshal(policyBytes, &policy); err != nil || policy != (fixtureCodeModePolicy{Enabled: true, DisableInProcessFallback: true}) {
+							t.Fatalf("backend %s structured policy changed: %s", backend.ID, policyBytes)
+						}
+						marker, err := os.ReadFile(filepath.Join(backend.Home, "clean-exit"))
+						if err != nil || string(marker) != "startup" {
+							t.Fatalf("backend %s did not finish the one-shot probe: %q, %v", backend.ID, marker, err)
+						}
+					}
+				})
 			}
 		})
 	}

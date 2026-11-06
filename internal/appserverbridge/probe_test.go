@@ -83,7 +83,7 @@ func TestParseStartupClientInfoStrict(t *testing.T) {
 }
 
 func TestStartupProbeSuccessSchemaIsCompleteAndExact(t *testing.T) {
-	want, err := validateStartupProbe([]byte(probeSuccessFixture))
+	want, err := validateStartupProbe([]byte(probeSuccessFixture), StartupProbeCompareUnrestricted)
 	if err != nil {
 		t.Fatal("reviewed startup success rejected")
 	}
@@ -93,7 +93,7 @@ func TestStartupProbeSuccessSchemaIsCompleteAndExact(t *testing.T) {
 		strings.Replace(probeSuccessFixture, "0.166", `0.\u003166`, 1),
 		probeSuccessFixture + strings.Repeat(" ", startupProbeLimit-len(probeSuccessFixture)),
 	} {
-		got, err := validateStartupProbe([]byte(input))
+		got, err := validateStartupProbe([]byte(input), StartupProbeCompareUnrestricted)
 		if err != nil || !bytes.Equal(got, want) || bytes.Contains(got, []byte("\n")) {
 			t.Fatal("equivalent complete startup success changed")
 		}
@@ -126,7 +126,7 @@ func TestStartupProbeSuccessSchemaIsCompleteAndExact(t *testing.T) {
 		bad = append(bad, strings.Replace(probeSuccessFixture, `"requirements":null`, `"requirements":`+value, 1))
 	}
 	for _, input := range bad {
-		if result, err := validateStartupProbe([]byte(input)); err != errStartupProbe || result != nil {
+		if result, err := validateStartupProbe([]byte(input), StartupProbeCompareUnrestricted); err != errStartupProbe || result != nil {
 			t.Fatal("unsupported schema was accepted or exposed raw backend output")
 		}
 	}
@@ -331,6 +331,8 @@ func probeFixtureServer() int {
 		}
 	}
 	switch string(mode) {
+	case "success-167":
+		fmt.Println(probe167SuccessFixture)
 	case "malformed":
 		fmt.Print("secret malformed stdout")
 	case "oversized":

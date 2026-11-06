@@ -100,8 +100,14 @@ func (cfg Config) Validate() error {
 	if cfg.RequirementsRead != "" && cfg.RequirementsRead != ConfigRequirementsCompareSafe {
 		return errors.New("unsupported config_requirements_read mode")
 	}
-	if cfg.StartupProbe != "" && cfg.StartupProbe != StartupProbeCompareUnrestricted {
+	if cfg.StartupProbe != "" && !StartupProbeSupported(cfg.StartupProbe) {
 		return errors.New("unsupported startup_probe mode")
+	}
+	// These options select contracts for the same executable pair. A newer
+	// one-shot profile cannot silently authorize the older JSONL contracts.
+	if cfg.StartupProbe == StartupProbeCompareUnrestricted167 &&
+		(cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "") {
+		return errors.New("startup_probe version is incompatible with the selected JSONL compatibility modes")
 	}
 	if len(cfg.Backends) != 2 {
 		return errors.New("bridge requires exactly two backends")

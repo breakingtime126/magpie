@@ -34,6 +34,10 @@ Set MAGPIE_APP_SERVER_BRIDGE_CONFIG to an absolute bridge JSON file path.
 It is emitted as features.code_mode_host.enabled=true to preserve existing structured policy.
 --analytics-default-enabled is accepted only after app-server. No other overrides are supported.
 Startup inspection requires explicit startup_probe configuration and matching supported backend results.
+Supported profiles: compare-unrestricted-v0.166 (exact 0.166.0-alpha.6) and
+compare-unrestricted-v0.167.0-alpha.3.2 (exact 0.167.0-alpha.3.2).
+Both profiles require two SHA-256 pins and reject every non-null requirements result.
+The 0.167 profile cannot be combined with the v0.166 JSONL requirements/auth modes.
 It may refresh authentication, fetch policy and update backend caches. Sign-out is unsupported.
 Startup inspection cannot be combined with --stdio or --listen.
 JSONL configRequirements/read is independently disabled unless config_requirements_read is enabled.
@@ -223,7 +227,7 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 		return 0
 	}
 	if op == startupProbe {
-		if ctx.Err() != nil || cfg.StartupProbe != appserverbridge.StartupProbeCompareUnrestricted {
+		if ctx.Err() != nil || !appserverbridge.StartupProbeSupported(cfg.StartupProbe) {
 			return failStartupProbe(output, diagnostics)
 		}
 		result, err := deps.probe(ctx, cfg, options, clientInfo)

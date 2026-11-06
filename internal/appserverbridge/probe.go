@@ -17,14 +17,35 @@ import (
 	"github.com/yetone/magpie/internal/proc"
 )
 
-// StartupProbeCompareUnrestricted is an explicit opt-in to official startup
-// inspection, which can refresh authentication and update managed-policy caches.
+// StartupProbeCompareUnrestricted opts into the reviewed 0.166.0-alpha.6
+// startup inspection, which can refresh authentication and update policy caches.
 const StartupProbeCompareUnrestricted = "compare-unrestricted-v0.166"
+
+// StartupProbeCompareUnrestricted167 opts into only the reviewed
+// 0.167.0-alpha.3.2 startup inspection. It does not enable any JSONL auth or
+// requirements compatibility mode, which remain scoped to 0.166.0-alpha.6.
+const StartupProbeCompareUnrestricted167 = "compare-unrestricted-v0.167.0-alpha.3.2"
+
+// StartupProbeSupported reports whether mode selects an explicitly reviewed
+// exact-version profile. An empty, partial or unknown mode is never enabled.
+func StartupProbeSupported(mode string) bool {
+	return startupProbeVersionForMode(mode) != ""
+}
+
+func startupProbeVersionForMode(mode string) string {
+	switch mode {
+	case StartupProbeCompareUnrestricted:
+		return "0.166.0-alpha.6"
+	case StartupProbeCompareUnrestricted167:
+		return "0.167.0-alpha.3.2"
+	default:
+		return ""
+	}
+}
 
 const startupProbeLimit = 64 << 10
 const startupClientInfoLimit = 4 << 10
 const startupProbeTimeout = 30 * time.Second
-const startupProbeVersion = "0.166.0-alpha.6"
 
 var errStartupProbe = errors.New("startup probe failed or returned unsupported configuration")
 var errStartupClientInfo = errors.New("invalid startup client info")
@@ -139,7 +160,7 @@ func ProbeStartup(parent context.Context, cfg Config, options LaunchOptions, inf
 }
 
 func probeStartup(parent context.Context, cfg Config, options LaunchOptions, info StartupClientInfo, timeout time.Duration, run startupProbeRunner) ([]byte, error) {
-	if cfg.StartupProbe != StartupProbeCompareUnrestricted {
+	if !StartupProbeSupported(cfg.StartupProbe) {
 		return nil, errors.New("startup probe is disabled")
 	}
 	if cfg.Validate() != nil {
@@ -180,7 +201,7 @@ func probeStartup(parent context.Context, cfg Config, options LaunchOptions, inf
 		if err != nil || ctx.Err() != nil {
 			return nil, errStartupProbe
 		}
-		result, err := validateStartupProbe(data)
+		result, err := validateStartupProbe(data, cfg.StartupProbe)
 		if err != nil || (accepted != nil && !bytes.Equal(accepted, result)) {
 			return nil, errStartupProbe
 		}
@@ -222,16 +243,21 @@ func startupProbeDigestMatches(ctx context.Context, b Backend) bool {
 	return bytes.Equal(hash.Sum(nil), want)
 }
 
-// These are the complete public success fields of the reviewed 0.166 build.
-// In particular, even an empty requirements object is unsupported. Never
-// redact it into null or return only one backend's policy as their shared state.
-func validateStartupProbe(data []byte) ([]byte, error) {
+// Both reviewed builds have these complete public success fields. Version is
+// exact for the selected profile, not inferred from an untrusted response.
+// Even an empty requirements object is unsupported. Never redact it into null
+// or return only one backend's policy as their shared state.
+func validateStartupProbe(data []byte, mode string) ([]byte, error) {
+	wantVersion := startupProbeVersionForMode(mode)
+	if wantVersion == "" {
+		return nil, errStartupProbe
+	}
 	root, err := startupObject(data)
 	if err != nil || len(root) != 2 {
 		return nil, errStartupProbe
 	}
 	var version string
-	if json.Unmarshal(root["appServerVersion"], &version) != nil || version != startupProbeVersion {
+	if json.Unmarshal(root["appServerVersion"], &version) != nil || version != wantVersion {
 		return nil, errStartupProbe
 	}
 	requirements, err := startupObject(root["configRequirements"])

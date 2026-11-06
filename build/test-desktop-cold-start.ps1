@@ -4,7 +4,8 @@
 param(
     [ValidateSet('baseline', 'bridge', 'observe')][string]$Mode = 'baseline',
     [string]$BridgeExecutable = '',
-    [string]$ObserverExecutable = ''
+    [string]$ObserverExecutable = '',
+    [switch]$EnableReviewedStartupProbe
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -14,6 +15,9 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
     $env:GITHUB_REF -ne 'refs/heads/experiment/app-server-bridge-v0.1.3035') {
     throw 'This probe is restricted to the authorized disposable GitHub hosted branch job.'
 }
+if ($EnableReviewedStartupProbe -and $Mode -ne 'observe') {
+    throw 'Reviewed startup inspection is limited to the explicitly instrumented CI mode.'
+}
 $out = Join-Path $env:RUNNER_TEMP 'desktop-cold-start-report'
 $work = Join-Path $env:RUNNER_TEMP ('desktop-cold-start-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $out, $work | Out-Null
@@ -21,7 +25,7 @@ $report = [ordered]@{
     schema = 1; sourceCommit = $env:GITHUB_SHA; mode = $Mode
     status = 'blocked'; stage = 'preflight'; startedUtc = [DateTime]::UtcNow.ToString('o')
     limits = @('No account login or user credentials.', 'Latest official package, not pinned historical Desktop.',
-        'Bridge phase tests launch only, with startup/auth compatibility modes disabled.', 'Window visibility is not model or account acceptance.')
+        'Bridge phase tests launch only; any startup opt-in is recorded separately, auth modes remain disabled.', 'Window visibility is not model or account acceptance.')
 }
 $activationPid = 0
 $eventSource = 'MagpieDesktopProcessStart'
@@ -356,8 +360,21 @@ requires_openai_auth = false
             }
         }
         $bridgeConfig = Join-Path $work 'launch-only-bridge.json'
-        # Modes remain absent: do not claim this newer Desktop/backend equals reviewed 0.166 semantics.
-        [IO.File]::WriteAllText($bridgeConfig, (@{ backends = $backends } | ConvertTo-Json -Depth 5),
+        $bridgeSettings = [ordered]@{ backends = $backends }
+        if ($EnableReviewedStartupProbe) {
+            $expectedVersion = 'codex-cli 0.167.0-alpha.3.2'
+            $expectedBackendHash = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+            $actualBackendHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant()
+            if ($versionText -cne $expectedVersion -or $actualBackendHash -cne $expectedBackendHash) {
+                Block 'Reviewed startup inspection requires the exact verified official backend.'
+            }
+            foreach ($backendEntry in $backends) {
+                $backendEntry.startup_probe_sha256 = $expectedBackendHash
+            }
+            # Only the reviewed exact-version startup profile is enabled. No auth or JSONL policy modes.
+            $bridgeSettings.startup_probe = 'compare-unrestricted-v0.167.0-alpha.3.2'
+        }
+        [IO.File]::WriteAllText($bridgeConfig, ($bridgeSettings | ConvertTo-Json -Depth 5),
             (New-Object Text.UTF8Encoding($false)))
         $report.bridge = [ordered]@{
             fileName = $bridgeName
@@ -367,6 +384,11 @@ requires_openai_auth = false
             aliasName = 'chatgpt-desktop.exe'; aliasPackageQualified = $aliasQualified
             configuration = 'Two empty homes, loopback discard endpoints, no auth or startup compatibility opt-in.'
             processObservationLimit = 'Start event identifies the uniquely named configured bridge and package parent; a short-lived image path may not be queryable.'
+        }
+        $report.bridge.startupInspectionEnabled = [bool]$EnableReviewedStartupProbe
+        if ($EnableReviewedStartupProbe) {
+            $report.bridge.configuration = 'Two empty homes, loopback discard endpoints, exact-version SHA-pinned startup inspection only; no authentication or JSONL policy opt-in.'
+            $report.bridge.startupInspectionLimits = 'Both official one-shot results must match completely and be genuinely unrestricted. Non-null requirements remain unsupported, never replaced by null. No login or inference; no zero-egress claim.'
         }
         $check = New-Object Diagnostics.ProcessStartInfo
         $check.FileName = $BridgeExecutable; $check.Arguments = '--check'

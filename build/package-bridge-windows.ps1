@@ -327,7 +327,7 @@ $manifest = [ordered]@{
     nativeAdapterBuildFlags = '-tags nogui -trimpath -buildvcs=true -ldflags=-s -w -X main.buildVersion=<version>'
     signing = 'unsigned'
     checks = @('Linux focused bridge, proc and adapter race tests', 'Native stdio adapter unit and lifecycle tests', 'Repeated compiled adapter initialize and EOF tests', 'Repeated compiled adapter observed Desktop argument tests', 'Granular code-mode policy mutation rejected by regression', 'Repeated compiled startup probes with pinned synthetic backends', 'Repeated native startup probe and owned cleanup tests', 'Non-null startup requirements mutation rejected by regression', 'Complete non-null public requirements validation and fanout tests', 'Repeated native and compiled requirements-only read tests', 'Requirements comparison, opaque-policy and mixed-envelope mutations rejected', 'Repeated native and compiled auth compatibility fixtures', 'Attestation origin-routing and gateway opaque-error mutations rejected', 'Unsolicited client token forwarding mutation rejected', 'Repeated synthetic observed-Desktop bootstrap and policy-gate composition', 'Configuration check states Windows token/RPC failure distinction', 'Desktop bootstrap auth/config local rejection tests', 'Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help', 'Built native adapter truthful help and version')
-    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration and exact launcher arguments', 'Full Desktop handshake and authentication control-plane support', 'Real official startup inspection and credential/policy side effects', 'Restricted or different-version startup configuration (unsupported)', 'Startup sign-out (explicitly unsupported)', 'Real official backend granular feature merge', 'Native adapter OS-signal handling', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
+    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Full official Codex tools and authenticated tasks', 'Complete Codex Desktop integration beyond separate cold-start reports', 'Full Desktop handshake and authentication control-plane support', 'Real official startup inspection and credential/policy side effects', 'Restricted startup configuration or versions outside the two exact reviewed profiles (unsupported)', 'Startup sign-out (explicitly unsupported)', 'Real official backend granular feature merge', 'Native adapter OS-signal handling', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
 }
 [IO.File]::WriteAllText((Join-Path $package 'BUILD.json'), ($manifest | ConvertTo-Json -Depth 5) + "`n", $utf8)
 $readme = @'
@@ -347,8 +347,9 @@ MAGPIE_APP_SERVER_BRIDGE_CONFIG process environment, and truthfully identifies
 itself as an experimental adapter. The reviewed Desktop base argv is accepted;
 its code-mode toggle is normalized to the granular enabled field to preserve
 existing policy. Startup inspection is disabled by default and supports only
-explicitly enabled, SHA256-pinned 0.166.0-alpha.6 backends returning the same
-complete unrestricted result. It can refresh credentials, contact policy
+explicitly enabled, SHA256-pinned 0.166.0-alpha.6 or exact 0.167.0-alpha.3.2
+startup profiles returning the same complete unrestricted result. The newer
+startup profile cannot be combined with the old JSONL requirements/auth modes. It can refresh credentials, contact policy
 services and write caches, even on failure. Sign-out, restricted startup results
 and unreviewed overrides remain unsupported. It does not establish working Desktop integration.
 Neither executable is a standalone official Codex installation. The package
@@ -376,7 +377,9 @@ a non-null startup requirements mutation, complete-policy comparison and secrecy
 mutations, native and compiled JSONL policy reads, repeated synthetic attestation
 failure and primary gateway readiness flows, the observed initialization subset
 composed with non-null policy checks, terminal token-reply rejection, auth isolation
-mutations, Linux focused race tests, and truthful help/version smoke tests. No real official startup command is executed by tests.
+mutations, Linux focused race tests, and truthful help/version smoke tests. Those package tests use synthetic startup fixtures. Separate Linux runtime-isolation
+and official Windows Desktop cold-start workflows exercise official binaries;
+consult their exact commit reports rather than treating this package as Desktop acceptance.
 It does not establish working Desktop integration, real tools/model inference,
 full-suite correctness or complete Windows process-tree containment.
 
