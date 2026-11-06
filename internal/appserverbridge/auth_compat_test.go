@@ -485,3 +485,37 @@ func TestAuthCompatServerEnvelopeKeysBoundedAndShallow(t *testing.T) {
 		t.Fatal("valid whitespace rejected")
 	}
 }
+
+func TestAuthCompatRejectsUnsolicitedClientTokens(t *testing.T) {
+	r := authCompatRouter(t)
+	// Both children deliberately reuse the same string and integer values.
+	// These sentinels are not attestation wrappers or real credentials.
+	ids := []string{`"7"`, "7", `"9007199254740993"`, "9007199254740993"}
+	for _, backend := range []string{"openai", "aihub"} {
+		for _, id := range ids {
+			out, err := r.Server(backend, []byte(`{"id":` + id + `,"method":"attestation/generate","params":{}}`))
+			if err != nil || len(out) != 1 || out[0].Backend != backend {
+				t.Fatalf("terminal error did not stay at %s/%s: %v", backend, id, err)
+			}
+			response, err := parseObject(out[0].Message)
+			if err != nil || string(response["id"]) != id || exists(response, "result") {
+				t.Fatal("attestation did not return the original ID and a genuine error")
+			}
+			failure, err := child(response, "error")
+			if err != nil || string(failure["code"]) != "-32601" || text(failure, "message") != "attestation/generate is unavailable through this bridge" {
+				t.Fatal("attestation terminal error changed")
+			}
+		}
+	}
+	for _, id := range append(ids, `"never-requested"`) {
+		for retry := 0; retry < 2; retry++ {
+			out, err := r.Client([]byte(`{"id":` + id + `,"result":{"token":"synthetic-unsolicited-token-sentinel"}}`))
+			if err == nil || len(out) != 0 || strings.Contains(err.Error(), "synthetic-unsolicited-token-sentinel") {
+				t.Fatalf("unsolicited token for %s routed to a child or client: %v", id, out)
+			}
+		}
+	}
+	if len(r.calls) != 0 || len(r.reverseCalls) != 0 || len(r.pending) != 0 || len(r.active) != 0 || len(r.staleCalls) != 0 || len(r.staleOrder) != 0 || len(r.threads) != 0 {
+		t.Fatal("terminal attestation errors or rejected tokens retained routing state")
+	}
+}

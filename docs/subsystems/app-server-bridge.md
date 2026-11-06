@@ -643,6 +643,31 @@ still reject or restrict failed attestation. This mode must not be used to
 evade an upstream denial, and synthetic success says nothing about upstream
 acceptance.
 
+**This mode is not Windows Desktop's normal failure behavior.** A later
+authorized static inspection of Desktop 26.1029.7803.0 found that Windows
+normally returns a successful JSON-RPC result containing an opaque token
+wrapper whose inner `error_code` is 1. The wrapper can also contain an
+application identifier and language, region, timezone, screen and application
+session signals. No real values or proof were read during that inspection.
+Unexpected asynchronous handler failures instead return a JSON-RPC error.
+
+The official app-server does not decode the inner wrapper. Any string token,
+including an empty string, becomes its outer status-0 envelope with that
+string. A JSON-RPC error becomes outer status 2 without a token. Inner Windows
+platform failure and outer RPC failure are therefore different protocol paths;
+neither their service treatment nor interchangeability has been established.
+The bridge does not emulate the Desktop wrapper, copy application/device
+signals, substitute an empty token, or present a synthetic token as official.
+Even an inner failure wrapper is not assumed safe to send to a second provider.
+
+The inspected Desktop handler ignores request params and replies to the
+requesting app-server connection without a provider/domain/account check.
+Only the macOS ARM64 branch calls the native generator, without arguments.
+Those call sites still do not establish the native token's cryptographic
+audience, account or replay restrictions. This reinforces the decision to keep
+real proof forwarding unsupported. The adapter's help and `--check` make the
+Windows/RPC distinction explicit without starting either backend.
+
 Only the reviewed JSONL envelope `id`, `method`, `params:{}` is accepted,
 without a `jsonrpc` field. Raw duplicate keys, null/missing IDs or params,
 extra payload, malformed Unicode, fractional/exponent IDs and mixed
@@ -722,6 +747,27 @@ All implementation and fixture assumptions are pinned to official source
 Tests use synthetic processes and synthetic statuses/errors only. They do not
 run a real Desktop proof generator or validate OAuth, proof headers, accounts,
 model inference or service acceptance.
+
+Additional boundary regressions submit a visibly synthetic token-shaped client
+reply after the bridge has terminally rejected attestation. With no outstanding
+server-call mapping, it must produce no delivery to either backend. This does
+not make claims about arbitrary data on an independently valid ordinary
+server-call response.
+
+A native synthetic composition fixture also enables all three explicit JSONL
+modes together: the observed Desktop initialize construction subset, a complete
+non-null requirements gate, model discovery, thread-start prewarming and primary
+gateway readiness. It checks capability preservation and process cleanup.
+This is based on static source construction, not a captured runtime exchange,
+a complete Desktop notification-filter table, a one-shot startup probe, or
+successful GUI acceptance. The ordinary startup probe's null-only policy scope
+is unchanged.
+
+The official pinned source includes opaque-token serialization and failure
+envelope unit tests, plus a localhost WebSocket integration test using fake
+authentication. Those Rust tests are not run by this repository's Go CI.
+Expanding that official harness would require a separately pinned Rust build
+and verified local-only runtime setup; source review is not an executed result.
 
 `getAuthStatus` remains unsupported. The inspected local main connection
 defaults to `ensureAuth:false`; remote connections may enable it. It is therefore

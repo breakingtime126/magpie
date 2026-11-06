@@ -86,6 +86,12 @@ func authCompatFixture() (bool, int) {
 				}
 			}
 			continue
+		case "configRequirements/read":
+			response, err := os.ReadFile(filepath.Join(home, "fixture-requirements"))
+			if err != nil {
+				return true, 44
+			}
+			result = json.RawMessage(response)
 		case "account/gatewayOAuth/read":
 			response, err := os.ReadFile(filepath.Join(home, "fixture-auth-response.json"))
 			if err != nil {
@@ -316,5 +322,144 @@ func TestRunAuthCompatRejectsUnsafePrimaryResponses(t *testing.T) {
 				t.Fatal("raw gateway error or URL leaked")
 			}
 		})
+	}
+}
+
+func TestRunAuthCompatRecordedBootstrapPolicyGate(t *testing.T) {
+	cfg := authCompatConfig(t)
+	cfg.RequirementsRead = ConfigRequirementsCompareSafe
+	if cfg.StartupProbe != "" || cfg.Backends[0].Provider == cfg.Backends[1].Provider {
+		t.Fatal("bootstrap fixture must use independent policy mode and distinct providers")
+	}
+	for _, backend := range cfg.Backends {
+		for _, name := range []string{"fixture-auth-requests", "fixture-auth-clean-exit"} {
+			if _, err := os.Stat(filepath.Join(backend.Home, name)); !os.IsNotExist(err) {
+				t.Fatal("bootstrap fixture inherited a process log or exit marker")
+			}
+		}
+	}
+	// Replay only the verified Desktop source-construction subset. The children and policy
+	// are synthetic; this does not assert GUI startup or runtime acceptance.
+	params := json.RawMessage(`{"clientInfo":{"name":"Codex Desktop","title":"Codex Desktop","version":"26.1029.7803.0"},"capabilities":{"requestAttestation":true,"explicitGatewayOauth":true,"experimentalApi":true,"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app","text/html+skybridge"]},"openai/elicitation":{"form":{}}},"mcpServerOpenaiFormElicitation":true,"optOutNotificationMethods":["turn/diff/updated"]}}`)
+	bridge := startFixtureBridge(t, cfg)
+	stream := readRequirementsStream(t, bridge)
+	init := stream.ask(t, bridge, string(raw(object{"id": raw("bootstrap"), "method": raw("initialize"), "params": params})))
+	if string(init["id"]) != `"bootstrap"` || exists(init, "error") || !exists(init, "result") {
+		t.Fatal("recorded capability subset did not initialize")
+	}
+	if _, err := fmt.Fprintln(bridge.input, `{"method":"initialized"}`); err != nil {
+		t.Fatal(err)
+	}
+	policy := stream.ask(t, bridge, `{"id":"policy","method":"configRequirements/read"}`)
+	if string(policy["id"]) != `"policy"` || exists(policy, "error") || !sameJSON(policy["result"], raw(safeRequirementsFixture())) {
+		t.Fatalf("bootstrap policy was replaced or projected: %s", raw(policy))
+	}
+	result, err := child(policy, "result")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements, err := child(result, "requirements")
+	if err != nil || len(requirements) != 34 || string(requirements["allowRemoteControl"]) != "false" {
+		t.Fatal("nonempty policy or explicit false restriction was lost")
+	}
+	models := stream.ask(t, bridge, `{"id":"models","method":"model/list"}`)
+	catalog, err := child(models, "result")
+	var cards []object
+	if string(models["id"]) != `"models"` || exists(models, "error") || err != nil || json.Unmarshal(catalog["data"], &cards) != nil || len(cards) != len(cfg.Backends) {
+		t.Fatal("bootstrap model discovery failed")
+	}
+	for i, backend := range cfg.Backends {
+		model := alias(backend.ID, backend.ID+"_model")
+		found := false
+		for _, card := range cards {
+			if text(card, "model") == model {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("bootstrap catalog omitted %s", backend.ID)
+		}
+		response := stream.ask(t, bridge, string(raw(object{"id": raw(10 + i), "method": raw("thread/start"), "params": raw(object{"model": raw(model)})})))
+		result, err := child(response, "result")
+		thread, threadErr := child(result, "thread")
+		if string(response["id"]) != string(raw(10+i)) || exists(response, "error") || exists(response, "method") || err != nil || threadErr != nil || text(thread, "id") != backend.Provider+"-thread" || text(result, "modelProvider") != backend.Provider {
+			t.Fatalf("prewarm or thread ownership failed: %s", raw(response))
+		}
+	}
+	wantGateway := writeAuthCompatResponse(t, cfg, true, "notReady")
+	gateway := stream.ask(t, bridge, `{"id":"gateway","method":"account/gatewayOAuth/read"}`)
+	if string(gateway["id"]) != `"gateway"` || exists(gateway, "error") || !sameJSON(gateway["result"], raw(wantGateway)) {
+		t.Fatal("primary gateway readiness changed")
+	}
+	if err := bridge.input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.wait(t); err != nil {
+		t.Fatal(err)
+	}
+	<-stream.done
+	transcript := string(stream.transcript)
+	if stream.err != nil || strings.Count(transcript, "\n") != 6 || strings.Contains(transcript, "attestation/generate") || strings.Contains(transcript, `"token"`) || strings.Contains(transcript, "secret") {
+		t.Fatalf("unexpected bootstrap client traffic: %q", transcript)
+	}
+	for i, backend := range cfg.Backends {
+		data, err := os.ReadFile(filepath.Join(backend.Home, "fixture-auth-requests"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		initializations, initialized, policies, starts, reads, failures := 0, 0, 0, 0, 0, 0
+		ids := map[string]bool{}
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			msg, err := parseObject([]byte(line))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch text(msg, "method") {
+			case "initialize":
+				initializations++
+				if !sameJSON(msg["params"], params) {
+					t.Fatal("recorded client info or full capabilities changed before child")
+				}
+			case "initialized":
+				initialized++
+			case "configRequirements/read":
+				policies++
+				if initialized != 1 || starts != 0 || string(msg["params"]) != "null" {
+					t.Fatal("policy read order or omitted-params adaptation changed")
+				}
+			case "thread/start":
+				starts++
+				p, err := child(msg, "params")
+				if err != nil || policies != 1 || text(p, "modelProvider") != backend.Provider || text(p, "model") != backend.ID+"_model" {
+					t.Fatal("bootstrap thread escaped its synthetic provider")
+				}
+			case "account/gatewayOAuth/read":
+				reads++
+				if string(msg["params"]) != "null" {
+					t.Fatal("gateway read params changed")
+				}
+			case "":
+				failures++
+				id := string(msg["id"])
+				failure, err := child(msg, "error")
+				if starts != 1 || ids[id] || (id != `"shared-attestation"` && id != "9007199254740993") || err != nil || string(failure["code"]) != "-32601" || text(failure, "message") != "attestation/generate is unavailable through this bridge" || exists(msg, "result") {
+					t.Fatal("prewarm response escaped origin or fabricated a token")
+				}
+				ids[id] = true
+			default:
+				t.Fatalf("unexpected bootstrap child method: %s", text(msg, "method"))
+			}
+		}
+		wantReads := 0
+		if i == 0 {
+			wantReads = 1
+		}
+		if initializations != 1 || initialized != 1 || policies != 1 || starts != 1 || reads != wantReads || failures != 2 || len(ids) != 2 {
+			t.Fatalf("backend %s bootstrap counts: init=%d ready=%d policy=%d start=%d gateway=%d failures=%d", backend.ID, initializations, initialized, policies, starts, reads, failures)
+		}
+		exit, err := os.ReadFile(filepath.Join(backend.Home, "fixture-auth-clean-exit"))
+		if err != nil || string(exit) != "EOF" {
+			t.Fatal("bootstrap child did not exit cleanly on EOF")
+		}
 	}
 }

@@ -41,6 +41,7 @@ That mode verifies both backend pins and returns only matching complete reviewed
 It may refresh policy/authentication state.
 Independent pinned auth modes can report attestation unavailable and read only the primary gateway status.
 They preserve true capability flags; no proof token, OAuth login or full Desktop compatibility is provided.
+Attestation RPC failure is not equivalent to Windows Desktop's opaque error-token response.
 --check validates configuration without starting children or changing state.
 This is not the official Codex CLI. Desktop launcher compatibility is unverified.
 `
@@ -216,6 +217,9 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 	}
 	if op == check {
 		fmt.Fprintln(diagnostics, "magpie-codex-bridge: configuration valid; no children started")
+		if cfg.Attestation == appserverbridge.AttestationUnavailable {
+			fmt.Fprintln(diagnostics, "magpie-codex-bridge: attestation mode returns RPC failure, not Windows Desktop error tokens")
+		}
 		return 0
 	}
 	if op == startupProbe {
