@@ -16,7 +16,7 @@ const CodexAppToolsMCPOverride = "plugins.codex-app-tools@openai-bundled.mcp_ser
 type LaunchOptions struct {
 	CodeModeHost            bool
 	AnalyticsDefaultEnabled bool
-	CodexAppToolsMCPEnabled  bool
+	CodexAppToolsMCPEnabled bool
 }
 
 func (options LaunchOptions) backendArgs(provider string) []string {
