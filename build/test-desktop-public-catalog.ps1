@@ -11,7 +11,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
-    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
+    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'ConvertFrom-PublicRPCMethodFacts', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Assert-PublicReadRequestEvent', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
     'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
@@ -259,6 +259,138 @@ foreach ($json in @(
     }
 }
 
+
+function New-ReadRequestEvent([string]$Method = 'config/read', [bool]$Valid = $true) {
+    $record = [pscustomobject][ordered]@{
+        seq = 1; pid = 2; kind = 'rpc'; direction = 'to_bridge'; method = $Method
+        correlation = 3; class = 'request'
+    }
+    if ($Method -ceq 'config/read') {
+        $record | Add-Member -NotePropertyName configParamsValid -NotePropertyValue $Valid
+        if ($Valid) {
+            $record | Add-Member -NotePropertyName configIncludeLayers -NotePropertyValue $false
+            $record | Add-Member -NotePropertyName configCwdProvided -NotePropertyValue $false
+        }
+    } else {
+        $record | Add-Member -NotePropertyName featureListParamsValid -NotePropertyValue $Valid
+        if ($Valid) {
+            foreach ($field in @('featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided')) {
+                $record | Add-Member -NotePropertyName $field -NotePropertyValue $false
+            }
+        }
+    }
+    return $record
+}
+foreach ($method in @('config/read', 'experimentalFeature/list')) {
+    foreach ($valid in @($false, $true)) {
+        foreach ($trace in @($false, $true)) {
+            Expect-Pass 'read-request exact booleans with optional valid native trace' {
+                $record = New-ReadRequestEvent $method $valid
+                if ($trace) {
+                    $record | Add-Member -NotePropertyName tracePresent -NotePropertyValue $true
+                    $record | Add-Member -NotePropertyName traceValid -NotePropertyValue $true
+                }
+                foreach ($value in @($false, $true)) {
+                    foreach ($property in @($record.PSObject.Properties)) {
+                        if ($property.Name -cmatch '(Provided|Layers)$') { $property.Value = $value }
+                    }
+                    Assert-PublicCanonicalJSON ($record | ConvertTo-Json -Compress) $record
+                    if (@(Assert-PublicReadRequestEvent $record).Count -ne 0) {
+                        throw 'Read-request validation published output.'
+                    }
+                }
+            }
+        }
+    }
+    Expect-Pass 'invalid read-request trace remains trace-only' {
+        $record = [pscustomobject][ordered]@{
+            seq = 1; pid = 2; kind = 'rpc'; direction = 'to_bridge'; method = $method
+            correlation = 3; class = 'request'; tracePresent = $true; traceValid = $false
+        }
+        Assert-PublicReadRequestEvent $record
+    }
+    $fields = @('configParamsValid', 'configIncludeLayers', 'configCwdProvided')
+    if ($method -ceq 'experimentalFeature/list') {
+        $fields = @('featureListParamsValid', 'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided')
+    }
+    foreach ($field in $fields) {
+        foreach ($value in @($null, 0, 1, 'false', 'PRIVATE_CANARY', @($false), [pscustomobject]@{ secret = 'PRIVATE_CANARY' })) {
+            Expect-Reject ('read-request non-boolean: ' + $field) {
+                $record = New-ReadRequestEvent $method; $record.$field = $value
+                Assert-PublicReadRequestEvent $record
+            }
+        }
+        Expect-Reject ('read-request missing field: ' + $field) {
+            $record = New-ReadRequestEvent $method; $record.PSObject.Properties.Remove($field)
+            Assert-PublicReadRequestEvent $record
+        }
+        Expect-Reject ('read-request wrong field casing: ' + $field) {
+            $record = New-ReadRequestEvent $method; $value = $record.$field
+            $record.PSObject.Properties.Remove($field)
+            $record | Add-Member -NotePropertyName $field.ToUpperInvariant() -NotePropertyValue $value
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+    foreach ($field in $fields[1..($fields.Count - 1)]) {
+        Expect-Reject ('invalid request must not emit partial flags: ' + $field) {
+            $record = New-ReadRequestEvent $method $false
+            $record | Add-Member -NotePropertyName $field -NotePropertyValue $false
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+    foreach ($row in @(@('kind', 'rpc_error'), @('direction', 'from_bridge'), @('direction', 'stderr'),
+        @('method', 'account/read'), @('method', 'Config/read'), @('class', 'response'),
+        @('class', 'notification'), @('class', 'duplicate_id'), @('class', 'correlation_limit'))) {
+        Expect-Reject 'read-request metadata outside its request scope' {
+            $record = New-ReadRequestEvent $method; $record.($row[0]) = $row[1]
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+    foreach ($field in @('params', 'cwd', 'cursor', 'limit', 'threadId', 'result', 'error',
+        'authParamsValid', 'configKey', 'PRIVATE_CANARY')) {
+        Expect-Reject ('read-request private or mixed field: ' + $field) {
+            $record = New-ReadRequestEvent $method
+            $record | Add-Member -NotePropertyName $field -NotePropertyValue 'PRIVATE_CANARY'
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+    Expect-Reject 'read-request metadata on invalid native trace' {
+        $record = New-ReadRequestEvent $method
+        $record | Add-Member -NotePropertyName tracePresent -NotePropertyValue $true
+        $record | Add-Member -NotePropertyName traceValid -NotePropertyValue $false
+        Assert-PublicReadRequestEvent $record
+    }
+    Expect-Reject 'valid native read trace needs parameter validity' {
+        $record = [pscustomobject]@{
+            seq = 1; pid = 2; kind = 'rpc'; direction = 'to_bridge'; method = $method
+            correlation = 3; class = 'request'; tracePresent = $true; traceValid = $true
+        }
+        Assert-PublicReadRequestEvent $record
+    }
+    foreach ($field in @('seq', 'pid', 'correlation')) {
+        foreach ($value in @(0, -1, 4294967297, 1.5, '1', 'PRIVATE_CANARY')) {
+            Expect-Reject 'read-request invalid sequence or correlation' {
+                $record = New-ReadRequestEvent $method; $record.$field = $value
+                Assert-PublicReadRequestEvent $record
+            }
+        }
+    }
+}
+Expect-Reject 'mixed config and feature-list parameter families' {
+    $record = New-ReadRequestEvent
+    $record | Add-Member -NotePropertyName featureListParamsValid -NotePropertyValue $false
+    Assert-PublicReadRequestEvent $record
+}
+foreach ($json in @(
+    '{"seq":1,"pid":2,"kind":"rpc","direction":"to_bridge","method":"config/read","correlation":3,"class":"request","configParamsValid":false,"configParamsValid":true,"configIncludeLayers":false,"configCwdProvided":false}',
+    '{"seq":1,"pid":2,"kind":"rpc","direction":"to_bridge","method":"experimentalFeature/list","correlation":3,"class":"request","featureListParamsValid":true,"featureListCursorProvided":true,"featureListCursor\u0050rovided":false,"featureListLimitProvided":false,"featureListThreadIdProvided":false}')) {
+    Expect-Reject 'duplicate read-request metadata cannot reach publication' {
+        $record = $json | ConvertFrom-Json
+        Assert-PublicCanonicalJSON $json $record
+        Assert-PublicReadRequestEvent $record
+    }
+}
+
 function Fixture-Digest([byte[]]$bytes) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
@@ -329,18 +461,41 @@ foreach ($name in $invalidFailures.Keys) {
         Assert-PublicCatalogFailure $f @('invalid_utf8')
     }
 }
-Expect-Pass 'only the exact reviewed RPC method labels are available' {
-    $expected=@('initialize', 'initialized', 'configRequirements/read', 'account/read',
-        'account/rateLimits/read', 'account/gatewayOAuth/read', 'attestation/generate', 'model/list',
-        'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
-        'thread/start', 'thread/read', 'turn/start', 'getAuthStatus',
-        'modelProvider/capabilities/read', 'experimentalFeature/list', 'permissionProfile/list',
-        'windowsSandbox/readiness', 'mcpServerStatus/list', 'skills/list', 'hooks/list',
-        'plugin/list', 'plugin/installed', 'app/list', 'app/installed',
-        'externalAgentConfig/detect', 'account/workspaceMessages/read', 'account/usage/read', 'unknown')
-    $actual=@(Get-PublicRPCMethods)
-    if (($actual -join '|') -cne ($expected -join '|') -or $actual -ccontains 'GetAuthStatus' -or
-        $actual -ccontains 'getAuthStatus/PRIVATE_CANARY') { throw 'RPC label set changed.' }
+Expect-Pass 'complete pinned RPC dictionary is shared by the sanitizer' {
+    $bytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'desktop-rpc-observer/rpc_method_facts.json'))
+    if ($bytes -contains [byte]10 -or $bytes -contains [byte]13) { throw 'RPC dictionary line endings changed.' }
+    $facts = ConvertFrom-PublicRPCMethodFacts $bytes
+    $expected = @($facts.methods) + @('initialized', 'attestation/generate', 'unknown')
+    $actual = @(Get-PublicRPCMethods -DictionaryPath (Join-Path $PSScriptRoot 'desktop-rpc-observer/rpc_method_facts.json'))
+    if ($facts.commit -cne 'c40729ea5cf8e947481b130c59807273eda2f8e9' -or
+        $facts.counts.client -ne 183 -or $facts.counts.stable -ne 106 -or
+        $facts.counts.experimental -ne 74 -or $facts.counts.deprecated -ne 3 -or
+        $actual.Count -ne 186 -or ($actual -join '|') -cne ($expected -join '|')) {
+        throw 'Complete RPC dictionary changed.'
+    }
+    foreach ($name in @('thread/resume', 'server/diagnostics', 'getAuthStatus',
+        'getConversationSummary', 'gitDiffToRemote', 'mock/experimentalMethod')) {
+        if ($actual -cnotcontains $name) { throw 'Source-declared method missing.' }
+    }
+    foreach ($name in @('GetAuthStatus', 'getAuthStatus/PRIVATE_CANARY', 'PRIVATE_CANARY')) {
+        if ($actual -ccontains $name) { throw 'Unreviewed method name accepted.' }
+    }
+}
+foreach ($variant in @('empty', 'canary', 'oversized', 'changed-name', 'extra-newline')) {
+    Expect-Reject ('changed RPC dictionary: ' + $variant) {
+        $bytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'desktop-rpc-observer/rpc_method_facts.json'))
+        switch ($variant) {
+            'empty' { $bytes = [byte[]]@() }
+            'canary' { $bytes = [Text.Encoding]::UTF8.GetBytes('PRIVATE_CANARY') }
+            'oversized' { $bytes = [Text.Encoding]::UTF8.GetBytes(('PRIVATE_CANARY' * 16384)) }
+            'changed-name' {
+                $text = [Text.Encoding]::UTF8.GetString($bytes).Replace('thread/resume', 'PRIVATE_CANARY')
+                $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+            }
+            'extra-newline' { $bytes = [byte[]]($bytes + [byte]10) }
+        }
+        ConvertFrom-PublicRPCMethodFacts $bytes
+    }
 }
 Expect-Pass 'SHA256 known vector' {
     if ((Get-PublicDigest ([Text.Encoding]::UTF8.GetBytes('abc'))) -cne

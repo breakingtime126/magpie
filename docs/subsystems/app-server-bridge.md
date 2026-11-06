@@ -93,7 +93,9 @@ only log client notifications; `initialized` does not advance native state.
 The earlier bridge incorrectly required that notification after two successful
 replies. This correction changes ordering only, not capability negotiation,
 authentication authority, account RPC support, or policy comparison.
-`getAuthStatus` remains unsupported (`-32601`) after readiness.
+`getAuthStatus` remains unsupported (`-32601`) by default after readiness.
+The separately selected [CI-only no-auth mode](#exact-0167-ci-only-no-auth-status)
+is the sole narrow exception; readiness alone never enables it.
 
 Supported requests are enumerated in `Router.Client` and `validateParams`:
 initialization, model listing, ordinary thread start/resume/fork/list/read,
@@ -991,7 +993,7 @@ The production defaults, real-proof forwarding prohibition and unsupported
 methods are unchanged. CI failures or unavailable execution remain explicit
 verification gaps, even when the source-based design looks feasible.
 
-`getAuthStatus` remains unsupported. Earlier static inspection found the local
+`getAuthStatus` remains unsupported by default. Earlier static inspection found the local
 main connection defaulting to `ensureAuth:false`; that did not establish the
 actual installed Desktop startup sequence. The signed Desktop 26.1103.3517.0 /
 backend 0.167.0-alpha.3.2 trace in
@@ -1008,8 +1010,9 @@ main initialization function. Returning only one backend's full configuration
 would misrepresent the other backend's provider and permission context.
 
 The new read-mode tests use synthetic peers with an ordinary fixture initialize;
-they do not establish real Desktop compatibility. The default-off auth modes
-are limited to unavailable-proof errors and primary readiness inspection.
+they do not establish real Desktop compatibility. The auth modes in this
+section are limited to unavailable-proof errors and primary readiness inspection.
+The separate CI-only no-auth status mode below adds no real-account support.
 Further acceptance needs reviewed attestation destination/binding evidence,
 complete OAuth account ownership and handoff design,
 any remaining sanitized request/notification dependency trace, and separately
@@ -1065,8 +1068,10 @@ Official 0.167 gateway storage adds `gateway_oauth.credentials_store`
 (`keyring` by default, or plaintext `CODEX_HOME/secrets/gateway_oauth.json`
 for `file`). The bridge never changes this choice or reads a keychain.
 The explicit gateway flag still prevents automatic browser authorization, not
-credential reuse or refresh. `getAuthStatus`, login, cancel and external-token
-refresh remain unsupported; they are not offline substitutes.
+credential reuse or refresh. Login, cancel and external-token refresh remain
+unsupported. `getAuthStatus` is rejected unless the separately selected
+[CI-only no-auth mode](#exact-0167-ci-only-no-auth-status) is enabled; none of
+these modes is an offline substitute.
 
 The exact-mode tests reuse native synthetic prewarm and primary-read assertions
 and add version combinations, both pin positions, capability preservation,
@@ -1143,8 +1148,10 @@ race checks, the full suite and official-runtime tests were not run for this
 change. The integrating commit/CI record must name actual checks and the exact
 tested head. No Desktop GUI startup, real account, proof, OAuth login, model
 inference, tool execution or corporate policy acceptance is established.
-`getAuthStatus`, `config/read`, login/cancel and external-token refresh remain
-unsupported. This mode never produces a proof or grants login authority.
+`config/read`, login/cancel and external-token refresh remain unsupported.
+Requirements inspection does not enable `getAuthStatus`; only its separate
+CI-only no-auth mode can do so. This mode never produces a proof or grants
+login authority.
 
 ### Native initialize readiness regression
 
@@ -1200,12 +1207,14 @@ two fresh `params:null` requests and returns only the genuine primary result
 after both complete exact native null-policy results pass all existing gates.
 The adapter does not remove, normalize, synthesize or weaken any policy field.
 Default-off modes, executable pins, initialization readiness, launch opt-ins
-and production `getAuthStatus` rejection (`-32601`) are unchanged.
+and default `getAuthStatus` rejection (`-32601`) are unchanged by trace
+acceptance. The separate CI-only no-auth mode below is independently enabled.
 
 The test-only observer shares the pure
 [`NativeTrace167Valid`](../../internal/appserverbridge/native_trace_167.go)
-predicate. For an unambiguous, correlated client `getAuthStatus` or
-`configRequirements/read` request containing trace, it records only
+predicate. For an unambiguous, correlated client `getAuthStatus`,
+`configRequirements/read`, `config/read`, or `experimentalFeature/list` request
+containing trace, it records only
 `tracePresent:true` and `traceValid:boolean`. Validity denotes the bounded
 schema shape, not a usable W3C context. No IDs, state, lengths, hashes or raw
 carrier values enter diagnostic records. Missing trace preserves the old
@@ -1246,16 +1255,117 @@ Desktop diagnostic is not network-none; the separate Linux official-runtime
 container's isolation does not establish Windows zero egress or Desktop GUI,
 real-account, inference or corporate-policy acceptance.
 
-The observer also names 14 exact public startup request methods from the pinned
-[ClientRequest.json](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/schema/json/ClientRequest.json):
-`modelProvider/capabilities/read`, `experimentalFeature/list`,
-`permissionProfile/list`, `windowsSandbox/readiness`,
-`mcpServerStatus/list`, `skills/list`, `hooks/list`, `plugin/list`,
-`plugin/installed`, `app/list`, `app/installed`,
-`externalAgentConfig/detect`, `account/workspaceMessages/read`, and
-`account/usage/read`. This is an exact diagnostic allowlist only, with no
-payload fields or RPC execution; all remain unsupported by production routing.
-It neither identifies the previously unknown observed RPC nor claims that
-Desktop actually sent any of these methods. The separate
+The observer initially added 14 exact public startup method labels from the
+pinned [ClientRequest.json](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/schema/json/ClientRequest.json);
+the current diagnostic extends that list to the complete 183-name public
+request vocabulary and adds boolean-only request-shape metadata for
+`config/read` and `experimentalFeature/list`. The owning
+[complete vocabulary and read-shape contract](desktop-cold-start.md#complete-pinned-rpc-vocabulary-and-read-request-shapes)
+defines those exact fields and publication limits. This is diagnostic
+classification, not generic routing, payload capture, request execution, or
+evidence that Desktop actually sent a particular candidate. Those two reads
+remain unsupported in production, and the existing trace and auth-flag
+recognition gates are not relaxed. The earlier
 [`native_methods_red_test.go`](../../build/desktop-rpc-observer/native_methods_red_test.go)
-uses old-base APIs for an assertion-level label regression.
+continues to cover its assertion-level public-label regression.
+
+### Exact 0.167 CI-only no-auth status
+
+The independent default-off configuration property
+`auth_status: "primary-no-auth-v0.167.0-alpha.3.2"` enables only the narrow
+`getAuthStatus` diagnostic described here. It is for the explicitly reviewed
+disposable CI launch profile, not real-account support. It is not enabled in
+defaults, examples, baseline profiles, or by requirements inspection, startup
+probing, attestation, gateway inspection, or trace acceptance.
+
+Both configured executable SHA-256 pins must pass before either child starts,
+even when this is the only selected mode. Exact 0.167 modes may coexist;
+legacy 0.166 mode combinations and partial/future mode names fail validation.
+A mode string plus operator-supplied digest is not independent version,
+provenance, signature, or credential-isolation verification. The operator must
+review those facts separately. Existing initialization readiness and
+`requiredHumanApproval`/other capability gates remain in force.
+
+The source oracle is the pinned
+[0.167 account processor](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/account_processor.rs#L1097-L1168)
+and its [v1 types](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v1.rs).
+The handler defaults absent/null flags to false, calls its requested-refresh
+helper, reloads configuration, then branches on the selected provider's
+`requires_openai_auth`. When false, it returns the genuine triple
+`{authMethod:null,authToken:null,requiresOpenaiAuth:false}` before
+`auth().await` or `get_token()` in the credentialed branch.
+
+**This is not a credential-isolation or offline guarantee.** The reviewed CI
+profile uses disposable empty homes, no inherited secrets,
+`requires_openai_auth=false`, and a loopback discard endpoint. That setup is
+not established merely by setting `auth_status`. Native AuthManager startup
+credential loads predate this RPC, and the configuration/refresh path still
+exists. If this mode is misused against a credentialed backend, preserving
+`includeToken:true` can cause the bridge to receive a token before it rejects
+the response. Result validation prevents onward relay; it cannot prevent that
+prior receipt or undo upstream side effects. Windows CI is not network-none,
+and the separately isolated Linux runtime does not establish Windows zero
+egress. No real credentials may be used in these fixtures.
+
+A request must be an unambiguous bounded native envelope with only `id`,
+`method`, `params`, and optional native `trace`. IDs use the existing bounded
+string-or-int64 native profile. Params must be an object containing only
+optional `includeToken` (absent, null, false, or true) and `refreshToken`
+(absent, null, or false). Explicit true refresh, unknown fields, wrong types,
+decoded duplicates, invalid IDs, and invalid trace are rejected locally.
+Single escaped spellings of exact known keys keep their normal JSON meaning.
+The existing 64 KiB/depth/container and native trace limits still apply.
+The entire original params object, including true/false/null/absence, reaches
+only the primary child with JSON whitespace compacted. No flag is rewritten,
+no request is fanned out, and no failure triggers retry or secondary fallback.
+The unscoped trace is accepted without propagation, as above; it is not
+permission or authentication data. Each accepted call is fresh, not cached.
+
+Success requires the actual primary response to contain exactly the complete
+three-field native no-auth result above. Non-null auth methods/tokens, a
+requires-auth flag other than false, missing/unknown/duplicate fields, malformed
+envelopes, and mismatching values reject the entire result. No removed field,
+synthetic null, fabricated success, or secondary result can satisfy this gate.
+The genuine validated primary result bytes are returned, compacted only by
+JSON encoding. An ordinary well-formed native error preserves its signed
+64-bit code but replaces all source message/data with the fixed text
+`primary no-auth status unavailable` and omits data. Invalid results/errors
+receive `-32000` with the same fixed text. Malformed routing/correlation
+envelopes may terminate the connection without a response. A bounded scoped
+error-envelope validator permits valid discarded control escapes and Unicode
+replacement characters, while rejecting malformed UTF-8/surrogate escapes,
+decoded duplicates, and size/depth/container overflow. It does not relax
+policy or trace validators and never emits arbitrary native text or data.
+
+All backend messages now receive a top-level decoded-duplicate check before
+correlation, including with this mode disabled. Otherwise a duplicate ID could
+select another pending method through last-key-wins decoding and bypass the
+appropriate result gate. This check does not add a global field allowlist,
+field-count limit, text profile, or recursive restrictions on arbitrary
+tool/user result data. Existing stricter method-specific validation remains.
+
+Implementation and synthetic regressions:
+- [`auth_status_167.go`](../../internal/appserverbridge/auth_status_167.go):
+  strict primary-only requests and genuine no-auth response validation.
+- [`auth_status_167_test.go`](../../internal/appserverbridge/auth_status_167_test.go):
+  optional flags, unchanged true params, native IDs/trace bounds, response
+  canaries, exact int64 error codes, opaque valid text, duplicates, wrong-backend
+  responses, ID aliases, version/pin gates, and unchanged capability guards.
+- [`auth_status_167_red_test.go`](../../internal/appserverbridge/auth_status_167_red_test.go):
+  old-API assertion reds for the new mode and global duplicate-ID rejection.
+  This file can be copied alone onto
+  `4e75e65d04f36618fd05dcd858dd19ceb3bc0a4c` without production changes.
+- [`auth_status_run_test.go`](../../internal/appserverbridge/auth_status_run_test.go)
+  and the [compiled adapter fixture](../../cmd/magpie-codex-bridge/auth_status_test.go):
+  full synthetic lifecycle, unchanged requests/results, rejected token/error
+  sentinels, fresh recovery, sole-mode pin checks, disabled rejection, no
+  secondary reads or startup probe, safe diagnostics, and both child EOF markers.
+  These use copied fixture executables, not actual accounts.
+
+Source preparation was connector-only. No gofmt, unit/integration test,
+behavioral red, race/vet/build, PowerShell, or real Desktop run was executed
+while authoring these blobs. Exact-head CI must establish the actual results,
+including a real correlated Desktop `includeToken:true` request receiving the
+validated native no-auth success. Synthetic protocol success alone is not
+Desktop GUI acceptance, real authentication, model inference, tool execution,
+or corporate policy acceptance.

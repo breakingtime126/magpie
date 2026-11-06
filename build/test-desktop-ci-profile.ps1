@@ -8,7 +8,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
-foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'New-DesktopBridgeSettings')) {
+foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'New-DesktopBridgeSettings', 'Get-DesktopNoAuthStatusEvidence')) {
     $definitions = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
@@ -140,6 +140,7 @@ Expect-Pass 'compatibility config contains only reviewed exact modes and both pi
         gateway_oauth = 'primary-read-only-v0.167.0-alpha.3.2'
         gateway_oauth_provider_name = 'CI alpha launch-only'
         config_requirements_read = 'compare-null-v0.167.0-alpha.3.2'
+        auth_status = 'primary-no-auth-v0.167.0-alpha.3.2'
     }
     Assert-Keys $json (@('backends') + @($expected.Keys))
     foreach ($key in $expected.Keys) {
@@ -180,4 +181,80 @@ foreach ($compatibility in @($false, $true)) {
         }
     }
 }
+
+# Synthetic metadata only. The actual result body never enters these fixtures.
+function New-NoAuthRequest([int]$PidValue, [int]$Correlation, [bool]$IncludeToken) {
+    return [pscustomobject]@{
+        kind = 'rpc'; pid = $PidValue; correlation = $Correlation; direction = 'to_bridge'
+        method = 'getAuthStatus'; class = 'request'; authParamsValid = $true
+        includeTokenRequested = $IncludeToken; refreshTokenRequested = $false
+    }
+}
+function New-NoAuthResponse([int]$PidValue, [int]$Correlation) {
+    return [pscustomobject]@{
+        kind = 'rpc'; pid = $PidValue; correlation = $Correlation; direction = 'from_bridge'
+        method = 'getAuthStatus'; class = 'response'
+    }
+}
+Expect-Pass 'native no-auth evidence includes unchanged token-request intent' {
+    $records = @(
+        (New-NoAuthRequest 1 1 $false), (New-NoAuthRequest 1 2 $true),
+        (New-NoAuthResponse 1 2), (New-NoAuthResponse 1 1),
+        (New-NoAuthRequest 2 1 $true), (New-NoAuthResponse 2 1)
+    )
+    $evidence = Get-DesktopNoAuthStatusEvidence $records
+    if ($evidence.requests -ne 3 -or $evidence.validatedResponses -ne 3 -or
+        $evidence.includeTokenRequests -ne 2 -or $evidence.includeTokenValidatedResponses -ne 2) {
+        throw 'Wrong no-auth evidence counts.'
+    }
+}
+Expect-Reject 'no observed native status requests' { Get-DesktopNoAuthStatusEvidence @() }
+Expect-Reject 'only false includeToken does not verify actual Desktop requirement' {
+    Get-DesktopNoAuthStatusEvidence @((New-NoAuthRequest 1 1 $false), (New-NoAuthResponse 1 1))
+}
+Expect-Reject 'outstanding native response' { Get-DesktopNoAuthStatusEvidence @((New-NoAuthRequest 1 1 $true)) }
+Expect-Reject 'unmatched native response' { Get-DesktopNoAuthStatusEvidence @((New-NoAuthResponse 1 1)) }
+Expect-Reject 'duplicate request correlation' {
+    Get-DesktopNoAuthStatusEvidence @((New-NoAuthRequest 1 1 $true), (New-NoAuthRequest 1 1 $true))
+}
+Expect-Reject 'reused completed correlation' {
+    Get-DesktopNoAuthStatusEvidence @((New-NoAuthRequest 1 1 $true), (New-NoAuthResponse 1 1),
+        (New-NoAuthRequest 1 1 $true), (New-NoAuthResponse 1 1))
+}
+Expect-Reject 'response from another process' {
+    Get-DesktopNoAuthStatusEvidence @((New-NoAuthRequest 1 1 $true), (New-NoAuthResponse 2 1))
+}
+foreach ($class in @('unsupported_method', 'unknown', 'duplicate_id', 'correlation_limit')) {
+    Expect-Reject ('no-auth failure class: ' + $class) {
+        $response = New-NoAuthResponse 1 1; $response.kind = 'rpc_error'; $response.class = $class
+        Get-DesktopNoAuthStatusEvidence @((New-NoAuthRequest 1 1 $true), $response)
+    }
+}
+foreach ($field in @('authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'kind', 'pid', 'correlation')) {
+    Expect-Reject ('no-auth missing field: ' + $field) {
+        $request = New-NoAuthRequest 1 1 $true; $request.PSObject.Properties.Remove($field)
+        Get-DesktopNoAuthStatusEvidence @($request, (New-NoAuthResponse 1 1))
+    }
+}
+foreach ($field in @('authParamsValid', 'includeTokenRequested', 'refreshTokenRequested')) {
+    Expect-Reject ('no-auth nonboolean field: ' + $field) {
+        $request = New-NoAuthRequest 1 1 $true; $request.$field = 'PRIVATE_CANARY'
+        Get-DesktopNoAuthStatusEvidence @($request, (New-NoAuthResponse 1 1))
+    }
+}
+Expect-Reject 'invalid params' {
+    $request = New-NoAuthRequest 1 1 $true; $request.authParamsValid = $false
+    Get-DesktopNoAuthStatusEvidence @($request, (New-NoAuthResponse 1 1))
+}
+Expect-Reject 'explicit refresh remains outside diagnostic scope' {
+    $request = New-NoAuthRequest 1 1 $true; $request.refreshTokenRequested = $true
+    Get-DesktopNoAuthStatusEvidence @($request, (New-NoAuthResponse 1 1))
+}
+Expect-Reject 'other-method correlation saturation precludes no-auth evidence' {
+    Get-DesktopNoAuthStatusEvidence @(
+        (New-NoAuthRequest 1 1 $true), (New-NoAuthResponse 1 1),
+        [pscustomobject]@{ class = 'correlation_limit'; method = 'model/list' }
+    )
+}
+
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)

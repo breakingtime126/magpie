@@ -50,6 +50,13 @@ type event struct {
 	AuthParamsValid           *bool    `json:"authParamsValid,omitempty"`
 	IncludeTokenRequested     *bool    `json:"includeTokenRequested,omitempty"`
 	RefreshTokenRequested     *bool    `json:"refreshTokenRequested,omitempty"`
+	ConfigParamsValid         *bool    `json:"configParamsValid,omitempty"`
+	ConfigIncludeLayers       *bool    `json:"configIncludeLayers,omitempty"`
+	ConfigCwdProvided         *bool    `json:"configCwdProvided,omitempty"`
+	FeatureListParamsValid    *bool    `json:"featureListParamsValid,omitempty"`
+	FeatureListCursorProvided *bool    `json:"featureListCursorProvided,omitempty"`
+	FeatureListLimitProvided  *bool    `json:"featureListLimitProvided,omitempty"`
+	FeatureListThreadProvided *bool    `json:"featureListThreadIdProvided,omitempty"`
 	Flag                      string   `json:"flag,omitempty"`
 	ConfigKey                 string   `json:"configKey,omitempty"`
 	ConfigValue               string   `json:"configValue,omitempty"`
@@ -134,17 +141,15 @@ func (o *observer) stop() {
 }
 
 func allowedMethod(s string) string {
+	// These are existing non-client labels, kept outside the client dictionary.
 	switch s {
-	case "initialize", "initialized", "getAuthStatus", "configRequirements/read",
-		"account/read", "account/rateLimits/read", "account/gatewayOAuth/read",
-		"attestation/generate", "model/list", "config/read",
-		"environment/info", "environment/status", "thread/list",
-		"thread/loaded/list", "thread/start", "thread/read", "turn/start",
-		"modelProvider/capabilities/read", "experimentalFeature/list", "permissionProfile/list",
-		"windowsSandbox/readiness", "mcpServerStatus/list", "skills/list", "hooks/list",
-		"plugin/list", "plugin/installed", "app/list", "app/installed",
-		"externalAgentConfig/detect", "account/workspaceMessages/read", "account/usage/read":
-		return s
+	case "initialized":
+		return "initialized"
+	case "attestation/generate":
+		return "attestation/generate"
+	}
+	if fixed, known := reviewedClientMethods[s]; known {
+		return fixed
 	}
 	return "unknown"
 }
@@ -254,11 +259,21 @@ func (o *observer) line(direction string, b []byte) {
 			}
 		}
 		if direction == "to_bridge" && e.Class == "request" &&
-			(method == "getAuthStatus" || method == "configRequirements/read") {
+			(method == "getAuthStatus" || method == "configRequirements/read" ||
+				method == "config/read" || method == "experimentalFeature/list") {
 			e.TracePresent, e.TraceValid = observedRequestTrace(b, method)
 		}
 		if direction == "to_bridge" && method == "getAuthStatus" && e.Class == "request" {
 			e.AuthParamsValid, e.IncludeTokenRequested, e.RefreshTokenRequested = observedGetAuthStatus(b)
+		}
+		if direction == "to_bridge" && e.Class == "request" {
+			switch method {
+			case "config/read":
+				e.ConfigParamsValid, e.ConfigIncludeLayers, e.ConfigCwdProvided = observedConfigRead(b)
+			case "experimentalFeature/list":
+				e.FeatureListParamsValid, e.FeatureListCursorProvided, e.FeatureListLimitProvided,
+					e.FeatureListThreadProvided = observedExperimentalFeatureList(b)
+			}
 		}
 		if method == "initialize" {
 			var p, c map[string]json.RawMessage
@@ -596,6 +611,10 @@ func main() {
 	// transparency. Pure metadata/pump tests remain portable.
 	if runtime.GOOS != "windows" {
 		fmt.Fprintln(os.Stderr, "desktop-rpc-observer: Windows CI only")
+		os.Exit(125)
+	}
+	if len(reviewedClientMethods) != 183 {
+		fmt.Fprintln(os.Stderr, "desktop-rpc-observer: invalid test-only setup")
 		os.Exit(125)
 	}
 	var catalog *publicPluginCatalog

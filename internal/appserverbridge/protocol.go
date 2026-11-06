@@ -246,3 +246,38 @@ func validateModel(m object) error {
 	}
 	return nil
 }
+
+// Validate only top-level envelope integrity before backend correlation.
+// Do not recursively constrain arbitrary tool/user payloads or impose a new
+// field allowlist, field-count limit, or policy string profile on old routes.
+func validateBackendEnvelopeKeys(line []byte) error {
+	if len(line) > MaxMessageBytes {
+		return errors.New("invalid backend envelope")
+	}
+	d := json.NewDecoder(bytes.NewReader(line))
+	token, err := d.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("invalid backend envelope")
+	}
+	seen := make(map[string]bool)
+	for d.More() {
+		token, err := d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return errors.New("invalid backend envelope")
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return errors.New("invalid backend envelope")
+		}
+	}
+	token, err = d.Token()
+	if err != nil || token != json.Delim('}') {
+		return errors.New("invalid backend envelope")
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return errors.New("invalid backend envelope")
+	}
+	return nil
+}

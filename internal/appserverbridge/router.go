@@ -130,9 +130,9 @@ func (r *Router) abandon(g *request) {
 // Client accepts one client JSONL message. Unsupported operations fail
 // locally, rather than guessing a backend or broadcasting user input.
 func (r *Router) Client(line []byte) ([]Delivery, error) {
-	// In the exact 0.167 requirements mode, ambiguous routing keys must be
-	// rejected before a map can hide a requirements method behind another.
-	if r.configRequirementsNull167 && validateServerEnvelopeKeys(line) != nil {
+	// Exact 0.167 requirements/auth diagnostics reject ambiguous routing
+	// keys before a map can hide the guarded method behind another.
+	if (r.configRequirementsNull167 || r.auth.authStatusNoAuth) && validateServerEnvelopeKeys(line) != nil {
 		return []Delivery{fail(nil, -32600, "invalid client envelope")}, nil
 	}
 	m, err := parseObject(line)
@@ -159,7 +159,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 	if err != nil {
 		return []Delivery{fail(m["id"], -32600, err.Error())}, nil
 	}
-	if r.active[key] {
+	if r.active[key] || (r.auth.authStatusNoAuth && r.authStatusIDInUse(m["id"], method)) {
 		return nil, errors.New("duplicate active client request id")
 	}
 	p, err := child(m, "params")
@@ -201,6 +201,16 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return []Delivery{fail(g.id, -32600, "successful initialization of both backends is required")}, nil
 	}
 	switch method {
+	case "getAuthStatus":
+		if !r.auth.authStatusNoAuth {
+			return []Delivery{fail(g.id, -32601, "method is not supported by this experimental bridge")}, nil
+		}
+		if !validateAuthStatusRequest167(line) {
+			return []Delivery{fail(g.id, -32602, "invalid no-auth status request")}, nil
+		}
+		r.active[key] = true
+		r.activeBytes += g.size
+		return []Delivery{r.sendAuthStatus167(g, m["params"])}, nil
 	case "account/gatewayOAuth/read":
 		if !r.auth.gatewayRead || !r.auth.gatewayNegotiated {
 			return []Delivery{fail(g.id, -32601, "primary gateway OAuth inspection is disabled")}, nil
@@ -420,6 +430,11 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	if r.byID[backend].ID == "" {
 		return nil, errors.New("unknown backend")
 	}
+	// A duplicate response ID must not select a different pending method and
+	// bypass method-specific result gates through last-key-wins map decoding.
+	if validateBackendEnvelopeKeys(line) != nil {
+		return nil, errAuthCompatibility
+	}
 	m, e := parseObject(line)
 	if e != nil {
 		return nil, e
@@ -467,6 +482,9 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	g := pending.group
 	if g.failed {
 		return nil, nil
+	}
+	if g.method == "getAuthStatus" {
+		return r.finishAuthStatus167(g, line), nil
 	}
 	if g.method == "account/gatewayOAuth/read" {
 		result, err := validateGatewayRead(line, r.backends[0], r.auth.gatewayProviderName)

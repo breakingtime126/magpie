@@ -20,6 +20,7 @@ type Config struct {
 
 	// Auth compatibility modes are independent, explicit and disabled by default.
 	// They never authorize generating proof tokens or starting an OAuth login.
+	AuthStatus               string `json:"auth_status,omitempty"`
 	Attestation              string `json:"attestation,omitempty"`
 	GatewayOAuth             string `json:"gateway_oauth,omitempty"`
 	GatewayOAuthProviderName string `json:"gateway_oauth_provider_name,omitempty"`
@@ -88,6 +89,9 @@ func LoadConfig(input io.Reader) (Config, error) {
 // Validate checks isolation before any subprocess starts. All paths must exist;
 // symlinks are resolved so aliases cannot silently share account state.
 func (cfg Config) Validate() error {
+	if cfg.AuthStatus != "" && cfg.AuthStatus != AuthStatusPrimaryNoAuth167 {
+		return errors.New("unsupported auth_status mode")
+	}
 	if cfg.Attestation != "" && cfg.Attestation != AttestationUnavailable && cfg.Attestation != AttestationUnavailable167 {
 		return errors.New("unsupported attestation mode")
 	}
@@ -135,7 +139,7 @@ func (cfg Config) Validate() error {
 	ids := map[string]bool{}
 	var homes []string
 	for i, b := range cfg.Backends {
-		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.DesktopPluginOverride != "" {
+		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" {
 			digest, err := hex.DecodeString(b.StartupProbeSHA256)
 			if err != nil || len(digest) != 32 {
 				return errors.New("reviewed compatibility requires a SHA256 pin for each backend")
@@ -275,11 +279,12 @@ func reservedEnv(key string) bool {
 
 // auth167 selects only the exact reviewed auth contract; it enables no probe.
 func (cfg Config) auth167() bool {
-	return cfg.Attestation == AttestationUnavailable167 || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167
+	return cfg.Attestation == AttestationUnavailable167 || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167 || cfg.AuthStatus == AuthStatusPrimaryNoAuth167
 }
 
 func (cfg Config) authCompatibility() authCompatibility {
 	return authCompatibility{
+		authStatusNoAuth:       cfg.AuthStatus == AuthStatusPrimaryNoAuth167,
 		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167 || cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167,
 		attestationUnavailable: cfg.Attestation == AttestationUnavailable || cfg.Attestation == AttestationUnavailable167,
 		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167,

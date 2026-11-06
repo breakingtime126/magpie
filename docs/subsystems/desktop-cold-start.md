@@ -759,8 +759,159 @@ Copied alone onto `bcc80e7c31fa65f01e181c3eee08759862affa8a`,
 `TestGetAuthStatusRequestedFlagsObserved` is the behavioral red target.
 This is a test definition, not a claimed executed red/green result.
 
-The production bridge still rejects `getAuthStatus`. Even when
+The default bridge still rejects `getAuthStatus`; the separately selected
+[disposable no-auth status CI mode](#disposable-no-auth-status-ci-gate) below is
+a narrow exception, not real-account support. Even when
 `refreshTokenRequested:false`, the official implementation can perform
 implicit credential refresh. These diagnostics do not establish a pure,
 offline or side-effect-free read and do not authorize authentication changes,
 login, token disclosure or a production compatibility mode.
+
+### Complete pinned RPC vocabulary and read-request shapes
+
+The observer and PowerShell sanitizer now share
+[`rpc_method_facts.json`](../../build/desktop-rpc-observer/rpc_method_facts.json),
+a finite, source-derived dictionary from official Codex
+`c40729ea5cf8e947481b130c59807273eda2f8e9`. It contains 183 unique client
+method names: 106 in the checked-in stable JSON schema, 74 experimental
+declarations and three deprecated v1 methods. The checked-in JSON schema alone
+is incomplete: the exporter removes experimental declarations and
+`getConversationSummary`, `gitDiffToRemote`, and `getAuthStatus`.
+The full [ClientRequest declaration](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/common.rs#L502-L1581)
+is authoritative for this diagnostic vocabulary.
+
+Generation independently recomputed every recorded upstream Git blob identity
+and SHA-256 and reconciled all three disjoint name sets. Only public facts and
+source identities are retained, not the upstream source bodies. Go embeds the
+same JSON that PowerShell reads from this repository. Both verify its fixed
+SHA-256 before using it. The JSON is one line without a trailing newline, so
+Windows checkout line-ending conversion does not change its identity. No
+normalization occurs before hashing. An invalid dictionary blocks diagnostic setup or
+publication; it never becomes an empty or partially trusted table. Offline
+tests verify the frozen artifact and provenance; they neither fetch upstream
+nor independently regenerate upstream schemas during a test.
+
+The existing `initialized` and `attestation/generate` labels remain separate
+from the client dictionary. Exact decoded JSON spellings map to the fixed
+dictionary value. Unknown names still yield only `unknown`, never a raw name,
+sample, length or digest. The declared `mock/experimentalMethod` is included
+as public test-method vocabulary, not supported behavior. This complete set
+covers only the pinned public source, not undisclosed proprietary Desktop
+extensions. Name recognition does not route a method or enable a capability.
+
+Two additional request-only diagnostics expose native boolean fields after
+the same bounded, unambiguous envelope, native ID, correlation and optional
+native trace checks. Both methods retain native envelopes without `jsonrpc`.
+Valid trace shapes retain `tracePresent:true,traceValid:true`; invalid trace
+shapes expose those two booleans with `traceValid:false` and suppress all
+parameter metadata. No trace value is recorded.
+
+- `config/read` emits `configParamsValid`. When true, it also emits
+  `configIncludeLayers` and `configCwdProvided`. Params must be an object
+  containing only `includeLayers` and `cwd`. Omitted `includeLayers`
+  defaults to false; explicit null is invalid. `cwd` is absent, null or a
+  well-formed string. Only a non-null string, including empty, means provided.
+- `experimentalFeature/list` emits `featureListParamsValid`. When true,
+  `featureListCursorProvided`, `featureListLimitProvided` and
+  `featureListThreadIdProvided` report only non-null field presence.
+  Params must be an object containing only `cursor`, `limit` and
+  `threadId`. Cursor/thread ID are optional nullable strings; limit is an
+  optional nullable native uint32, including zero. Negative values, fractions,
+  exponent tokens, overflow, booleans and numeric strings are invalid.
+
+The exact source shapes are
+[ConfigReadParams](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/config.rs#L390-L398)
+and [ExperimentalFeatureListParams](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/experimental_feature.rs#L10-L22).
+String validation rejects invalid UTF-8 and unpaired escaped surrogates rather
+than accepting Go's replacement decoding. Ordinary escapes, valid surrogate
+pairs and schema-valid empty strings retain their native shape semantics.
+No path is resolved or read, and no cursor, limit or thread value is logged.
+Shape validity does not establish a usable path, cursor, thread or effective
+configuration.
+
+Missing/null/non-object params, unknown keys, wrong types and duplicate decoded
+keys emit validity=false alone, without partial companion fields. Ambiguous
+envelopes, duplicate escaped aliases, wrong directions, responses, notifications,
+duplicate IDs and exhausted correlation produce no new parameter metadata.
+Existing generic malformed/oversized/unterminated classifications, stream
+bytes, trace caps and correlation quarantine remain unchanged.
+
+PowerShell checks exact per-method event fields, booleans, native-trace
+relationships and invalid-only shapes before publication. It rejects mixed
+metadata families, values, casing aliases and duplicate fields. The observer
+tests exercise the whole vocabulary and pinned facts, both parameter shapes,
+type boundaries, Unicode, nested canaries, both directions, trace validity,
+correlation, malformed input, and exact forwarding. The existing narrow startup
+method regression now expects only the explicitly added feature-list diagnostic
+on that exact request; all other payload and response guarantees remain intact.
+
+The self-contained
+[`read_request_metadata_red_test.go`](../../build/desktop-rpc-observer/read_request_metadata_red_test.go)
+can be copied alone onto `4e75e65d04f36618fd05dcd858dd19ceb3bc0a4c`.
+`TestCompleteRPCVocabularyMetadataRed` must fail with
+`source-declared client method missing from complete vocabulary`;
+`TestReadRequestShapesMetadataRed` must fail with
+`read-request shape boolean missing or incorrect`.
+These are test definitions, not an executed verification record. Formatting,
+tests, vet, race checks and real Windows observation need exact-head CI evidence.
+
+No production `config/read` or `experimentalFeature/list` route is introduced
+by this diagnostic. No auth/config result body, private identifier, credential,
+native trace carrier or raw error is logged. The vocabulary/shape diagnostic itself does not alter launch opt-ins or
+establish successful Desktop initialization, equivalent backend configuration,
+offline authentication or service acceptance. The separately reviewed CI mode
+below has its own explicit admission and result gates.
+
+### Disposable no-auth status CI gate
+
+The signed Desktop observation at
+[4e75e65d](https://github.com/breakingtime126/magpie/actions/runs/42226093994)
+established valid native trace envelopes, successful fresh dual
+`configRequirements/read` replies, and actual `getAuthStatus` requests with
+`includeToken:true` and `refreshToken:false`. It also showed unsupported
+`config/read` and `experimentalFeature/list`. A method-only observation is
+not a real-account or model-usage test.
+
+Only the already guarded `-EnableReviewedLaunchCompatibility` disposable
+GitHub profile selects
+`auth_status:"primary-no-auth-v0.167.0-alpha.3.2"`. Baseline, startup-only and
+default configurations do not select it. Existing repository/branch/hosted-VM,
+signed Desktop package/version/hash and both exact backend digest gates remain
+unchanged. Both homes are freshly created, no credential environment is
+inherited, and both native providers use `requires_openai_auth=false` with
+loopback discard endpoints. No user account or keyring is imported.
+
+The bridge forwards the actual permitted params to the primary only, including
+`includeToken:true`; it does not rewrite the request to false. Explicit
+refresh is rejected before dispatch. Success is accepted only when the actual
+native result is exactly `authMethod:null, authToken:null,
+requiresOpenaiAuth:false`. A token, any extra/malformed field or native error
+is a failure, never converted into this triple. See the
+[bridge contract](app-server-bridge.md#exact-0167-ci-only-no-auth-status) for admission, pinning and envelope
+checks.
+
+This matches the official handler's genuine no-auth-provider branch,
+[before token extraction](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/account_processor.rs#L1097-L1123).
+It means that this fixture's provider does not require OpenAI authentication;
+it does not mean that a user is logged in. The bridge cannot certify that an
+arbitrary backend is credential-free. A response validator prevents onward
+token relay, not earlier receipt if someone misuses the mode with credentials.
+Native initialization and config refresh can access auth/config sources before
+this call. This CI mode is not authorization or guidance to use real accounts,
+credential stores, external auth commands or production services.
+
+The runtime gate consumes the full already-sanitized metadata snapshots, never
+auth result bodies. It requires every observed status request to have a
+correlated validated response, including at least one actual
+`includeToken:true` request. Errors, outstanding replies, reused IDs or
+correlation saturation fail the diagnostic. The report contains counts only.
+The evidence depends on the production exact-result validator and describes
+only the observed window, not complete process lifetime or future requests.
+Offline fixtures cover the profile's default-off boundaries and these
+success/failure correlations. Exact-head CI must establish execution results.
+
+The remaining config read is deliberately unsupported: two fixed native
+providers do not produce one identical effective config, and native config
+serialization can contain provider secrets even without raw layers. No
+primary-only config, invented shared defaults or weakened policy is substituted
+to make the Desktop continue.

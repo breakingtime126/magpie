@@ -53,15 +53,42 @@ function Assert-PublicCatalogFailure($failure, [string[]]$legacyCodes) {
         throw 'Unreviewed public catalog failure.'
     }
 }
-function Get-PublicRPCMethods {
-    return @('initialize', 'initialized', 'configRequirements/read', 'account/read',
-        'account/rateLimits/read', 'account/gatewayOAuth/read', 'attestation/generate', 'model/list',
-        'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
-        'thread/start', 'thread/read', 'turn/start', 'getAuthStatus',
-        'modelProvider/capabilities/read', 'experimentalFeature/list', 'permissionProfile/list',
-        'windowsSandbox/readiness', 'mcpServerStatus/list', 'skills/list', 'hooks/list',
-        'plugin/list', 'plugin/installed', 'app/list', 'app/installed',
-        'externalAgentConfig/detect', 'account/workspaceMessages/read', 'account/usage/read', 'unknown')
+function ConvertFrom-PublicRPCMethodFacts([byte[]]$bytes) {
+    if ($null -eq $bytes -or $bytes.Length -lt 1 -or $bytes.Length -gt 16384 -or
+        (Get-PublicDigest $bytes) -cne '2b7407b2015839aa6de58d6a5b0cfc601c058ad3be0447870182da063362f2e7') {
+        throw 'Invalid pinned RPC method dictionary.'
+    }
+    # Hash verification precedes parsing: names can only come from the fixed
+    # source-derived artifact, never a runtime method or an external download.
+    $text = [Text.Encoding]::UTF8.GetString($bytes)
+    try { $facts = $text | ConvertFrom-Json } catch { throw 'Invalid pinned RPC method dictionary.' }
+    Assert-PublicCanonicalJSON $text $facts
+    Assert-PublicShape $facts @('schema', 'repository', 'commit', 'sources', 'counts', 'methods')
+    if ($facts.methods -isnot [System.Array] -or $facts.methods.Count -ne 183) {
+        throw 'Invalid pinned RPC method count.'
+    }
+    $previous = ''
+    foreach ($method in $facts.methods) {
+        if ($method -isnot [string] -or $method.Length -lt 1 -or $method.Length -gt 41 -or
+            [StringComparer]::Ordinal.Compare($previous, $method) -ge 0) {
+            throw 'Invalid pinned RPC method ordering.'
+        }
+        $previous = $method
+    }
+    return $facts
+}
+function Get-PublicRPCMethods([string]$DictionaryPath = '') {
+    try {
+        $path = $DictionaryPath
+        if ([string]::IsNullOrEmpty($path)) {
+            $path = Join-Path $PSScriptRoot 'desktop-rpc-observer/rpc_method_facts.json'
+        }
+        $info = Get-Item -LiteralPath $path
+        if ($info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            $info.Length -lt 1 -or $info.Length -gt 16384) { throw 'Invalid dictionary file.' }
+        $facts = ConvertFrom-PublicRPCMethodFacts ([IO.File]::ReadAllBytes($path))
+    } catch { throw 'Invalid pinned RPC method dictionary.' }
+    return @($facts.methods) + @('initialized', 'attestation/generate', 'unknown')
 }
 function Assert-PublicRequestTraceEvent($record) {
     $hasPresent = [bool]$record.PSObject.Properties['tracePresent']
@@ -78,7 +105,7 @@ function Assert-PublicRequestTraceEvent($record) {
         if ($record.$name -isnot [string]) { throw 'Invalid native trace metadata label.' }
     }
     if ($record.kind -cne 'rpc' -or $record.direction -cne 'to_bridge' -or
-        @('getAuthStatus', 'configRequirements/read') -cnotcontains $record.method -or
+        @('getAuthStatus', 'configRequirements/read', 'config/read', 'experimentalFeature/list') -cnotcontains $record.method -or
         $record.class -cne 'request') { throw 'Native trace metadata occurred outside its request scope.' }
     if ($record.method -ceq 'getAuthStatus' -and $record.traceValid) {
         if (-not $record.PSObject.Properties['authParamsValid'] -or $record.authParamsValid -isnot [bool]) {
@@ -86,6 +113,22 @@ function Assert-PublicRequestTraceEvent($record) {
         }
         $names += 'authParamsValid'
         if ($record.authParamsValid) { $names += @('includeTokenRequested', 'refreshTokenRequested') }
+    }
+    if ($record.traceValid -and $record.method -ceq 'config/read') {
+        if (-not $record.PSObject.Properties['configParamsValid'] -or $record.configParamsValid -isnot [bool]) {
+            throw 'Valid traced configuration envelope needs parameter validity.'
+        }
+        $names += 'configParamsValid'
+        if ($record.configParamsValid) { $names += @('configIncludeLayers', 'configCwdProvided') }
+    }
+    if ($record.traceValid -and $record.method -ceq 'experimentalFeature/list') {
+        if (-not $record.PSObject.Properties['featureListParamsValid'] -or $record.featureListParamsValid -isnot [bool]) {
+            throw 'Valid traced feature-list envelope needs parameter validity.'
+        }
+        $names += 'featureListParamsValid'
+        if ($record.featureListParamsValid) {
+            $names += @('featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided')
+        }
     }
     Assert-PublicShape $record $names
 }
@@ -115,6 +158,46 @@ function Assert-PublicAuthRequestEvent($record) {
     if ($record.authParamsValid -and
         ($record.includeTokenRequested -isnot [bool] -or $record.refreshTokenRequested -isnot [bool])) {
         throw 'Invalid authentication request flag type.'
+    }
+}
+function Assert-PublicReadRequestEvent($record) {
+    Assert-PublicRequestTraceEvent $record
+    $configFields = @('configParamsValid', 'configIncludeLayers', 'configCwdProvided')
+    $featureFields = @('featureListParamsValid', 'featureListCursorProvided',
+        'featureListLimitProvided', 'featureListThreadIdProvided')
+    $hasConfig = $false
+    $hasFeature = $false
+    foreach ($field in $configFields) {
+        if ($record.PSObject.Properties[$field]) { $hasConfig = $true }
+    }
+    foreach ($field in $featureFields) {
+        if ($record.PSObject.Properties[$field]) { $hasFeature = $true }
+    }
+    if (-not $hasConfig -and -not $hasFeature) { return }
+    if ($hasConfig -and $hasFeature) { throw 'Mixed request metadata families.' }
+    $fields = $featureFields
+    $method = 'experimentalFeature/list'
+    if ($hasConfig) { $fields = $configFields; $method = 'config/read' }
+    $validity = $fields[0]
+    if (-not $record.PSObject.Properties[$validity] -or $record.$validity -isnot [bool]) {
+        throw 'Invalid read-request parameter validity.'
+    }
+    $names = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class', $validity)
+    if ($record.$validity) { $names += $fields[1..($fields.Count - 1)] }
+    if ($record.PSObject.Properties['tracePresent']) { $names += @('tracePresent', 'traceValid') }
+    Assert-PublicShape $record $names
+    foreach ($field in @('seq', 'pid', 'correlation')) { Assert-PublicInteger $record.$field 1 4294967296 }
+    foreach ($field in @('kind', 'direction', 'method', 'class')) {
+        if ($record.$field -isnot [string]) { throw 'Invalid read-request metadata label.' }
+    }
+    if ($record.kind -cne 'rpc' -or $record.direction -cne 'to_bridge' -or
+        $record.method -cne $method -or $record.class -cne 'request') {
+        throw 'Read-request metadata occurred outside its exact request scope.'
+    }
+    if ($record.$validity) {
+        foreach ($field in $fields[1..($fields.Count - 1)]) {
+            if ($record.$field -isnot [bool]) { throw 'Invalid read-request boolean.' }
+        }
     }
 }
 function Get-PublicPluginShapes {
@@ -626,8 +709,67 @@ function New-DesktopBridgeSettings(
         $settings.gateway_oauth = 'primary-read-only-v0.167.0-alpha.3.2'
         $settings.gateway_oauth_provider_name = 'CI alpha launch-only'
         $settings.config_requirements_read = 'compare-null-v0.167.0-alpha.3.2'
+        $settings.auth_status = 'primary-no-auth-v0.167.0-alpha.3.2'
     }
     return $settings
+}
+
+# Read only already-sanitized request/response metadata, never authentication payloads.
+# A response here is meaningful solely with the exact no-auth bridge mode enabled:
+# that production validator accepts only a genuine native null/null/false result.
+function Get-DesktopNoAuthStatusEvidence([object[]]$Records) {
+    $pending = @{}
+    $seen = @{}
+    $requests = 0
+    $responses = 0
+    $tokenRequests = 0
+    $tokenResponses = 0
+    foreach ($event in $Records) {
+        if ($event.PSObject.Properties['class'] -and
+            $event.class -in @('duplicate_id', 'correlation_limit')) {
+            throw 'No-auth status evidence has ambiguous correlation.'
+        }
+        if (-not $event.PSObject.Properties['method'] -or $event.method -cne 'getAuthStatus') { continue }
+        if (-not $event.PSObject.Properties['kind'] -or $event.kind -cne 'rpc' -or
+            -not $event.PSObject.Properties['pid'] -or
+            -not $event.PSObject.Properties['correlation'] -or
+            -not $event.PSObject.Properties['direction'] -or
+            -not $event.PSObject.Properties['class']) {
+            throw 'No-auth status evidence lacks request correlation.'
+        }
+        if (($event.pid -isnot [int] -and $event.pid -isnot [long]) -or $event.pid -lt 1 -or
+            ($event.correlation -isnot [int] -and $event.correlation -isnot [long]) -or $event.correlation -lt 1) {
+            throw 'No-auth status evidence has invalid correlation.'
+        }
+        $key = [string]$event.pid + ':' + [string]$event.correlation
+        if ($event.direction -ceq 'to_bridge' -and $event.class -ceq 'request') {
+            if ($seen.ContainsKey($key) -or
+                -not $event.PSObject.Properties['authParamsValid'] -or $event.authParamsValid -isnot [bool] -or -not $event.authParamsValid -or
+                -not $event.PSObject.Properties['includeTokenRequested'] -or $event.includeTokenRequested -isnot [bool] -or
+                -not $event.PSObject.Properties['refreshTokenRequested'] -or $event.refreshTokenRequested -isnot [bool] -or $event.refreshTokenRequested) {
+                throw 'No-auth status evidence has an unsupported request.'
+            }
+            $seen[$key] = $true
+            $pending[$key] = [bool]$event.includeTokenRequested
+            $requests++
+            if ($event.includeTokenRequested) { $tokenRequests++ }
+        } elseif ($event.direction -ceq 'from_bridge' -and $event.class -ceq 'response') {
+            if (-not $pending.ContainsKey($key)) { throw 'No-auth status evidence has an unmatched result.' }
+            if ($pending[$key]) { $tokenResponses++ }
+            [void]$pending.Remove($key)
+            $responses++
+        } else {
+            throw 'No-auth status did not return a validated native success.'
+        }
+    }
+    if ($pending.Count -ne 0 -or $requests -eq 0 -or $requests -ne $responses -or
+        $tokenRequests -eq 0 -or $tokenRequests -ne $tokenResponses) {
+        throw 'No-auth status diagnostic lacks complete token-request evidence.'
+    }
+    return [ordered]@{
+        requests = $requests; validatedResponses = $responses
+        includeTokenRequests = $tokenRequests; includeTokenValidatedResponses = $tokenResponses
+    }
 }
 
 Set-StrictMode -Version Latest
@@ -1175,11 +1317,13 @@ requires_openai_auth = false
                 gateway_oauth = $bridgeSettings.gateway_oauth
                 gateway_oauth_provider_name = $bridgeSettings.gateway_oauth_provider_name
                 config_requirements_read = $bridgeSettings.config_requirements_read
+                auth_status = $bridgeSettings.auth_status
             }
             $report.bridge.launchCompatibilityLimits = @(
                 'Only the exact reviewed Desktop plugin override is forwarded. No plugin installation, copy, cache link or shared backend working directory is configured.',
                 'Gateway OAuth is a primary native read only. False or null is not logged in; no login, credential import, inference or extra diagnostic RPC is authorized.',
                 'Attestation remains unavailable. An attestation failure is not evidence of a Windows token failure.',
+                'Auth status preserves includeToken requests but accepts only a genuine primary no-auth null/null/false result in these empty disposable homes. It is not real-account support or a guarantee against receiving credentials if misused.',
                 'Requirements succeed only after fresh native reads from both backends actually return requirements:null. Errors, missing or non-null results are never replaced with null.',
                 'Configured modes and observed responses are separate evidence. No successful initialization, plugin loadability, account, model or zero-egress claim.'
             )
@@ -1346,7 +1490,9 @@ requires_openai_auth = false
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
                 'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
                 'publicPluginCatalogSHA256', 'publicPluginRef', 'configPluginShape',
-                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid')
+                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid',
+                'configParamsValid', 'configIncludeLayers', 'configCwdProvided', 'featureListParamsValid',
+                'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided')
             $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
@@ -1698,7 +1844,9 @@ requires_openai_auth = false
                 'ascii_control', 'non_ascii', 'other_ascii_punctuation')
             $configLiterals = @('bool_true', 'bool_false', 'other')
             $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
-                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid')
+                'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid',
+                'configParamsValid', 'configIncludeLayers', 'configCwdProvided', 'featureListParamsValid',
+                'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided')
             $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit', 'publicPluginRef')
             $seenPublicCatalogs = @{}
             $allEvents = @()
@@ -1722,6 +1870,7 @@ requires_openai_auth = false
                         Assert-PublicCanonicalJSON $line $record
                     } catch { Block 'Observer metadata is not canonical valid JSON.' }
                     Assert-PublicAuthRequestEvent $record
+                    Assert-PublicReadRequestEvent $record
                     Assert-PublicPluginShapeEvent $record
                     Assert-PublicPluginEvent $record $publicPluginCatalog $seenPublicCatalogs
                     foreach ($property in $record.PSObject.Properties) {
@@ -1855,6 +2004,11 @@ requires_openai_auth = false
             $report.observer.records = @($allEvents | Select-Object -First 256)
             $report.observer.recordsTruncatedInSummary = $allEvents.Count -gt 256
             $report.observer.limit = 'Missing child exit or output EOF, saturated slots or truncated summary preclude claims that no failure occurred. Read validated artifact records for remaining evidence.'
+            if ($EnableReviewedLaunchCompatibility) {
+                # Full validated snapshots, not the truncated summary. No result payload is inspected or logged.
+                $report.observer.noAuthStatusEvidence = Get-DesktopNoAuthStatusEvidence $allEvents
+                $report.observer.noAuthStatusEvidenceLimit = 'Correlated success relies on the exact bridge no-auth result validator. It proves only this credential-free fixture, not login, token support or full Desktop compatibility.'
+            }
         }
     }
     $report.status = 'observed'

@@ -312,6 +312,40 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestNativeStartupMethodsAreExactMetadataOnly'
           printf '%s\n' "$output" | grep -F -- 'reviewed native startup method lacks its exact metadata label'
           echo 'The old code fails the exact behavior assertion; compilation or setup failures do not qualify.'
+      - name: Check out exact pre-no-auth and pre-complete-vocabulary behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 4e75e65d04f36618fd05dcd858dd19ceb3bc0a4c
+          path: .ci-no-auth-baseline
+          persist-credentials: false
+      - name: Prove no-auth mode and duplicate-envelope rejection fail behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/auth_status_167_red_test.go .ci-no-auth-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-no-auth-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^(TestAuthStatusNoAuth167BehavioralRed|TestBackendDuplicateEnvelopeBehavioralRed)$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestAuthStatusNoAuth167BehavioralRed'
+          printf '%s\n' "$output" | grep -F -- 'exact default-off no-auth mode was not accepted:'
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestBackendDuplicateEnvelopeBehavioralRed'
+          printf '%s\n' "$output" | grep -F -- 'ambiguous backend response correlated or delivered a payload'
+          echo 'Both old behaviors fail their exact assertions; compilation or setup failures do not qualify.'
+      - name: Prove complete public vocabulary and read shapes fail behaviorally on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/read_request_metadata_red_test.go .ci-no-auth-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-no-auth-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^(TestCompleteRPCVocabularyMetadataRed|TestReadRequestShapesMetadataRed)$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestCompleteRPCVocabularyMetadataRed'
+          printf '%s\n' "$output" | grep -F -- 'source-declared client method missing from complete vocabulary'
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestReadRequestShapesMetadataRed'
+          printf '%s\n' "$output" | grep -F -- 'read-request shape boolean missing or incorrect'
+          echo 'Both old diagnostic behaviors fail their exact assertions; compilation or setup failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

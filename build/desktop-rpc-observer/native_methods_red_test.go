@@ -44,14 +44,26 @@ func TestNativeStartupMethodsAreExactMetadataOnly(t *testing.T) {
 				es[0].Correlation == 0 || es[0].Correlation != es[1].Correlation {
 				t.Fatal("startup method observation changed directional correlation")
 			}
-			for _, encoded := range bytes.Split(bytes.TrimSpace(log.Bytes()), []byte("\n")) {
+			for index, encoded := range bytes.Split(bytes.TrimSpace(log.Bytes()), []byte("\n")) {
 				var record map[string]json.RawMessage
-				if json.Unmarshal(encoded, &record) != nil || len(record) != 7 {
+				expected := 7
+				if method == "experimentalFeature/list" && direction == "to_bridge" && index == 0 {
+					expected = 10
+					if json.Unmarshal(encoded, &record) != nil || string(record["tracePresent"]) != "true" ||
+						string(record["traceValid"]) != "true" || string(record["featureListParamsValid"]) != "false" {
+						t.Fatal("feature-list observation did not retain invalid-only metadata")
+					}
+				}
+				if json.Unmarshal(encoded, &record) != nil || len(record) != expected {
 					t.Fatal("startup method metadata gained payload fields")
 				}
 				for field := range record {
 					switch field {
 					case "seq", "pid", "kind", "direction", "method", "correlation", "class":
+					case "tracePresent", "traceValid", "featureListParamsValid":
+						if expected != 10 {
+							t.Fatal("read-request metadata escaped its scope")
+						}
 					default:
 						t.Fatal("startup method metadata exposed values or auth/trace flags")
 					}

@@ -50,7 +50,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.DesktopPluginOverride != "" {
+	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" {
 		// Check both reviewed executables before either process can read or
 		// refresh account/policy state. This is not an OS security boundary.
 		for _, backend := range cfg.Backends {
