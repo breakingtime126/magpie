@@ -70,6 +70,7 @@ func TestPublicMCPCatalogGrammarAndExactMatches(t *testing.T) {
 		}
 	}
 }
+
 const publicMCPExecutableArg = " \tplugins.SYNTHETIC_PRIVATE_PLUGIN@PRIVATE_MARKET.mcp_servers.PRIVATE_SERVER.enabled=true"
 const publicMCPExecutableWire = "{\"id\":\"PRIVATE_ID\",\"method\":\"account/read\",\"params\":{\"private\":\"PRIVATE_VALUE\"}}\r\n\x00\xff"
 
