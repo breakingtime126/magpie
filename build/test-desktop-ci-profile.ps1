@@ -9,7 +9,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'New-DesktopBridgeSettings',
-    'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
+    'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
     'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
@@ -1880,6 +1880,94 @@ Expect-Pass 'native runtime decision consumes capture and cleanup flags, not Des
         $decisions[0].Extent.EndOffset -ge $nativeCalls[0].Extent.StartOffset -or
         $nativeCalls[0].Extent.EndOffset -ge $combines[0].Extent.StartOffset) {
         throw 'Combined status was not derived after the independent native result.'
+    }
+}
+
+function New-RegistrationFixture([string]$Status = 'Ok') {
+    return [pscustomobject]@{Name='OpenAI.Codex'; Version='26.1103.3517.0'; Publisher='CN=Synthetic';
+        PackageFullName='OpenAI.Codex_26.1103.3517.0_x64__synthetic';
+        PackageFamilyName='OpenAI.Codex_synthetic'; InstallLocation='C:\fixture\package'; Status=$Status}
+}
+function Invoke-RegistrationFixture($Snapshots, [switch]$ReadFails, [switch]$DelayFails, [switch]$LateRead) {
+    $state=@{ snapshots=$Snapshots; index=0; elapsed=0L; delays=0 }
+    $result=Wait-DesktopRegistration 'OpenAI.Codex' '26.1103.3517.0' 'CN=Synthetic' -ReadPackages {
+        if ($ReadFails) { throw 'PRIVATE_CANARY' }
+        $index=[Math]::Min($state.index,$state.snapshots.Count-1); $state.index++
+        if ($LateRead) { $state.elapsed=60000L }
+        $snapshot=$state.snapshots[$index]
+        if ($null -ne $snapshot) { $snapshot }
+    } -ReadElapsedMilliseconds { $state.elapsed } -Delay {
+        param($Milliseconds)
+        if ($DelayFails) { throw 'PRIVATE_CANARY' }
+        if ($Milliseconds -lt 1 -or $Milliseconds -gt 2000) { throw 'invalid delay' }
+        $state.elapsed+=$Milliseconds; $state.delays++
+    }
+    return [pscustomobject]@{ result=$result; delays=$state.delays; elapsed=$state.elapsed }
+}
+Expect-Pass 'registration accepts strict Ok without a wait' {
+    $f=Invoke-RegistrationFixture @((New-RegistrationFixture))
+    if ($f.result.status -cne 'ready' -or $f.result.attempts -ne 1 -or $f.delays -ne 0 -or
+        $f.result.package.Status -cne 'Ok') { throw 'Immediate readiness changed.' }
+}
+foreach ($pending in @('DeploymentInProgress','Servicing','DeploymentInProgress, Servicing')) {
+    Expect-Pass 'only reviewed pending registration can reach strict Ok' {
+        $f=Invoke-RegistrationFixture @((New-RegistrationFixture $pending),(New-RegistrationFixture))
+        if ($f.result.status -cne 'ready' -or $f.result.attempts -ne 2 -or $f.delays -ne 1 -or
+            $f.elapsed -ne 2000 -or $f.result.package.Status -cne 'Ok') { throw 'Pending readiness transition failed.' }
+    }
+}
+Expect-Pass 'persistent pending registration stops at bounded deadline without a package' {
+    $f=Invoke-RegistrationFixture @((New-RegistrationFixture 'Servicing'))
+    if ($f.result.reason -cne 'registration_readiness_timeout' -or $f.result.status -cne 'blocked' -or
+        $null -ne $f.result.package -or $f.elapsed -ne 60000 -or $f.result.attempts -ne 30) { throw 'Unbounded registration wait.' }
+}
+foreach ($field in @('Name','Version','Publisher','PackageFullName','PackageFamilyName','InstallLocation')) {
+    Expect-Pass 'registration rejects identity changes during pending wait' {
+        $changed=New-RegistrationFixture; $changed.$field='changed'
+        $f=Invoke-RegistrationFixture @((New-RegistrationFixture 'Servicing'),$changed)
+        if ($f.result.reason -cne 'registration_identity_mismatch' -or $f.result.status -cne 'blocked' -or
+            $null -ne $f.result.package -or $f.result.attempts -ne 2 -or $f.delays -ne 1) { throw 'Identity change was accepted.' }
+    }
+}
+foreach ($invalid in @('','Unknown','Ok, Servicing','Servicing, DeploymentInProgress','Disabled','LicenseIssue','ok')) {
+    Expect-Pass 'unreviewed registration status fails without waiting' {
+        $f=Invoke-RegistrationFixture @((New-RegistrationFixture $invalid))
+        if ($f.result.reason -cne 'registration_status_unreviewed' -or $f.result.status -cne 'blocked' -or
+            $null -ne $f.result.package -or $f.delays -ne 0) { throw 'Unknown status was treated as pending.' }
+    }
+}
+Expect-Pass 'missing registration fails without waiting' {
+    $f=Invoke-RegistrationFixture @($null)
+    if ($f.result.reason -cne 'registration_missing' -or $f.delays -ne 0) { throw 'Missing registration was retried.' }
+}
+Expect-Pass 'ambiguous registration fails without waiting' {
+    $f=Invoke-RegistrationFixture (,@((New-RegistrationFixture),(New-RegistrationFixture)))
+    if ($f.result.reason -cne 'registration_ambiguous' -or $f.delays -ne 0) { throw 'Ambiguous registration was accepted.' }
+}
+Expect-Pass 'registration read exceptions are fixed failures rather than empty results' {
+    $f=Invoke-RegistrationFixture @((New-RegistrationFixture)) -ReadFails
+    if ($f.result.reason -cne 'registration_read_failed' -or $f.result.status -cne 'blocked' -or
+        $null -ne $f.result.package -or ($f | ConvertTo-Json -Depth 5) -match 'PRIVATE_CANARY') { throw 'Read failure changed or leaked.' }
+}
+Expect-Pass 'registration delay exceptions stop rather than retry' {
+    $f=Invoke-RegistrationFixture @((New-RegistrationFixture 'Servicing')) -DelayFails
+    if ($f.result.reason -cne 'registration_wait_failed' -or $f.result.attempts -ne 1) { throw 'Wait failure was ignored.' }
+}
+Expect-Pass 'Ok returned after deadline does not bypass readiness bound' {
+    $f=Invoke-RegistrationFixture @((New-RegistrationFixture)) -LateRead
+    if ($f.result.reason -cne 'registration_readiness_timeout' -or $null -ne $f.result.package) { throw 'Late read bypassed deadline.' }
+}
+Expect-Pass 'runtime registration has one read-only readiness seam after provisioning' {
+    $waits=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Wait-DesktopRegistration'},$true))
+    $installs=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Add-AppxProvisionedPackage'},$true))
+    if ($waits.Count -ne 1 -or $installs.Count -ne 1 -or $installs[0].Extent.EndOffset -ge $waits[0].Extent.StartOffset) { throw 'Provisioning was repeated or readiness misplaced.' }
+    $elements=$waits[0].CommandElements
+    $expected=@('Wait-DesktopRegistration','-ExpectedName','$report.manifest.name','-ExpectedVersion','$report.manifest.version',
+        '-ExpectedPublisher','$report.manifest.publisher','-ReadPackages',"{ Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop }",
+        '-ReadElapsedMilliseconds','{ $registrationWatch.ElapsedMilliseconds }','-Delay','{ param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds }')
+    if ($elements.Count -ne $expected.Count) { throw 'Readiness lost explicit authority.' }
+    for ($index=0;$index -lt $expected.Count;$index++) {
+        if ($elements[$index].Extent.Text -cne $expected[$index]) { throw 'Readiness callback authority changed.' }
     }
 }
 

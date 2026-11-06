@@ -798,6 +798,66 @@ function Assert-DesktopCompatibilityPackage([bool]$LaunchCompatibility, [string]
         throw 'Reviewed launch compatibility package mismatch; the exact signed Desktop 26.1103.3517.0 package is required.'
     }
 }
+# Read-only registration readiness. Callbacks make the deadline and transient
+# sequence deterministic in offline fixtures; only the runtime seam sleeps.
+function Wait-DesktopRegistration(
+    [string]$ExpectedName, [string]$ExpectedVersion, [string]$ExpectedPublisher,
+    [scriptblock]$ReadPackages, [scriptblock]$ReadElapsedMilliseconds, [scriptblock]$Delay
+) {
+    $attempts = 0; $previousElapsed = -1L
+    $fullName = ''; $familyName = ''; $installLocation = ''
+    $lastStatus = 'not_read'
+    $reason = 'registration_read_failed'
+    try {
+        for ($slot = 0; $slot -lt 31; $slot++) {
+            $reason = 'registration_clock_failed'
+            $elapsed = & $ReadElapsedMilliseconds
+            if (($elapsed -isnot [long] -and $elapsed -isnot [int]) -or
+                $elapsed -lt 0 -or $elapsed -lt $previousElapsed) { throw 'clock' }
+            $previousElapsed = $elapsed
+            if ($elapsed -ge 60000) { $reason = 'registration_readiness_timeout'; break }
+            $reason = 'registration_read_failed'
+            $packages = @(& $ReadPackages); $attempts++
+            if ($packages.Count -eq 0) { $reason = 'registration_missing'; break }
+            if ($packages.Count -ne 1) { $reason = 'registration_ambiguous'; break }
+            $candidate = $packages[0]
+            $reason = 'registration_identity_mismatch'
+            if ($null -eq $candidate -or $candidate.Name -isnot [string] -or
+                ($candidate.Version -isnot [string] -and $candidate.Version -isnot [version]) -or
+                $candidate.Publisher -isnot [string] -or $candidate.Name -cne $ExpectedName -or
+                [string]$candidate.Version -cne $ExpectedVersion -or $candidate.Publisher -cne $ExpectedPublisher) { break }
+            foreach ($field in @('PackageFullName','PackageFamilyName','InstallLocation')) {
+                if ($candidate.$field -isnot [string] -or [string]::IsNullOrWhiteSpace($candidate.$field) -or
+                    $candidate.$field.Length -gt 4096) { throw 'identity' }
+            }
+            if ($attempts -eq 1) {
+                $fullName=$candidate.PackageFullName; $familyName=$candidate.PackageFamilyName
+                $installLocation=$candidate.InstallLocation
+            } elseif ($candidate.PackageFullName -cne $fullName -or $candidate.PackageFamilyName -cne $familyName -or
+                $candidate.InstallLocation -cne $installLocation) { break }
+            $reason = 'registration_status_unreviewed'
+            if ($null -eq $candidate.Status -or ($candidate.Status -isnot [string] -and
+                -not $candidate.Status.GetType().IsEnum)) { break }
+            $status = [string]$candidate.Status
+            if (@('Ok','DeploymentInProgress','Servicing','DeploymentInProgress, Servicing') -cnotcontains $status) { break }
+            $lastStatus = $status
+            $reason = 'registration_clock_failed'
+            $elapsed = & $ReadElapsedMilliseconds
+            if (($elapsed -isnot [long] -and $elapsed -isnot [int]) -or $elapsed -lt $previousElapsed) { throw 'clock' }
+            $previousElapsed = $elapsed
+            if ($elapsed -ge 60000) { $reason = 'registration_readiness_timeout'; break }
+            if ($status -ceq 'Ok') {
+                return [pscustomobject]@{ status='ready'; reason='registration_ready'; attempts=$attempts;
+                    lastStatus=$lastStatus; package=$candidate }
+            }
+            $reason = 'registration_wait_failed'
+            $null = & $Delay ([int][Math]::Min(2000,60000-$elapsed))
+            $reason = 'registration_readiness_timeout'
+        }
+    } catch { }
+    return [pscustomobject]@{ status='blocked'; reason=$reason; attempts=$attempts; lastStatus=$lastStatus; package=$null }
+}
+
 function New-DesktopBridgeSettings(
     $Backends, [bool]$StartupProbe, [bool]$LaunchCompatibility,
     [string]$VersionText, [string]$BackendHash, [string]$ControlHome = ''
@@ -1744,21 +1804,31 @@ namespace DesktopColdProbe {
     $provisioned = Add-AppxProvisionedPackage -Online -PackagePath $package -LicensePath $license -Regions all
     $report.provisioning = [ordered]@{ restartNeeded = [bool]$provisioned.RestartNeeded }
     if ($provisioned.RestartNeeded) { Block 'Official provisioning requires restart; no session workaround attempted.' }
-    $registered = @(Get-AppxPackage -Name 'OpenAI.Codex')
-    if ($registered.Count -eq 0) {
-        Block 'Official provisioning did not register the app for this runner session; sign-out/relogin is unavailable and was not fabricated.'
+    $report.stage = 'registration-readiness'
+    $registrationWatch = [Diagnostics.Stopwatch]::StartNew()
+    $registrationReady = Wait-DesktopRegistration -ExpectedName $report.manifest.name `
+        -ExpectedVersion $report.manifest.version -ExpectedPublisher $report.manifest.publisher `
+        -ReadPackages { Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop } `
+        -ReadElapsedMilliseconds { $registrationWatch.ElapsedMilliseconds } `
+        -Delay { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
+    $report.registrationReadiness = [ordered]@{
+        status=$registrationReady.status; reason=$registrationReady.reason
+        attempts=$registrationReady.attempts; lastStatus=$registrationReady.lastStatus
+        timeoutMilliseconds=60000
     }
-    if ($registered.Count -ne 1) { Block 'Ambiguous registration after official provisioning.' }
-    $app = $registered[0]
+    if ($registrationReady.status -cne 'ready') {
+        Block ('Official registration readiness stopped: ' + $registrationReady.reason + '. No reinstall, restart or relogin attempted.')
+    }
+    $app = $registrationReady.package
     $report.registration = [ordered]@{
         name = $app.Name; publisher = $app.Publisher; version = [string]$app.Version
         packageFullName = $app.PackageFullName; packageFamilyName = $app.PackageFamilyName
         status = [string]$app.Status
     }
-    if ($app.Name -ne $report.manifest.name -or [string]$app.Version -ne $report.manifest.version -or
-        $app.Publisher -ne $report.manifest.publisher -or [string]$app.Status -ne 'Ok') {
-        Block 'Registered package does not match the verified download.'
-    }
+    # Final strict guard remains mandatory after the bounded read-only wait.
+    if ($app.Name -cne $report.manifest.name -or [string]$app.Version -cne $report.manifest.version -or
+        $app.Publisher -cne $report.manifest.publisher) { Block 'Registered package does not match the verified download.' }
+    if ([string]$app.Status -cne 'Ok') { Block 'Registered package is not ready after the read-only wait.' }
     if ($InspectStaticLauncher) {
         $report.stage = 'read-only-static-launch-metadata'
         $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
