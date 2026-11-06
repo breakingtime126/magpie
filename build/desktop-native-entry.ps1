@@ -252,3 +252,37 @@ namespace DesktopEntryImages {
 }
 '@
 }
+
+# Visibility metadata is diagnostic only: neither a PID match nor a missing row
+# authorizes ignoring a process. The complete fresh-package guard still runs.
+function Read-EntryProbeVisibility([int]$ProcessId) {
+    try {
+        if ($ProcessId -le 0) { throw 'Invalid owned probe PID.' }
+        # CIM operation timeout, not a claimed absolute wall-clock deadline.
+        $rows = @(Get-CimInstance Win32_Process -Filter ("ProcessId=" + $ProcessId) -OperationTimeoutSec 5 -ErrorAction Stop)
+        if ($rows.Count -gt 1) { throw 'Ambiguous probe enumeration.' }
+        return [ordered]@{ status='read'; matches=$rows.Count }
+    } catch { return [ordered]@{ status='unavailable'; matches=$null } }
+}
+function Get-EntryFreshnessEvidence([object[]]$Processes, [string]$ExpectedPackage, [string]$BridgeName,
+    [int]$VersionProbeId, [int]$ConfigurationProbeId, [scriptblock]$ReadPackage) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedPackage) -or [string]::IsNullOrWhiteSpace($BridgeName) -or
+        $Processes.Count -gt 65536 -or $null -eq $ReadPackage) { throw 'Invalid freshness guard inputs.' }
+    $facts=[ordered]@{ matches=0; package=0; desktopName=0; nativeName=0; bridgeName=0;
+        versionProbePid=0; configurationProbePid=0; other=0 }
+    foreach ($item in $Processes) {
+        $packageMatch=(& $ReadPackage ([int]$item.ProcessId)) -eq $ExpectedPackage
+        $desktopMatch=$item.Name -ieq 'ChatGPT.exe'; $nativeMatch=$item.Name -ieq 'Codex.exe'
+        $bridgeMatch=$item.Name -ieq $BridgeName
+        if (-not ($packageMatch -or $desktopMatch -or $nativeMatch -or $bridgeMatch)) { continue }
+        $facts.matches++
+        if ($packageMatch) { $facts.package++ }
+        if ($desktopMatch) { $facts.desktopName++ }
+        if ($nativeMatch) { $facts.nativeName++ }
+        if ($bridgeMatch) { $facts.bridgeName++ }
+        if ($item.ProcessId -eq $VersionProbeId) { $facts.versionProbePid++ }
+        elseif ($item.ProcessId -eq $ConfigurationProbeId) { $facts.configurationProbePid++ }
+        else { $facts.other++ }
+    }
+    return $facts
+}

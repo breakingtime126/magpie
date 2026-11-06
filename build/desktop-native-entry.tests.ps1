@@ -60,6 +60,48 @@ foreach ($backend in $settings.backends) { Pass ($backend.startup_probe_sha256 -
 $defaults=New-DesktopBridgeSettings $backends $false $false '' ''
 Pass ($defaults.Count -eq 1 -and -not $defaults.backends[0].Contains('startup_probe_sha256')) 'existing default configuration unchanged'
 Reject { New-DesktopBridgeSettings $backends $true $false 'other-version' '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39' } 'entry rejects mismatching native version'
+# Closing the harness-owned --version/--check processes releases their Windows
+# process objects. This helper never touches a PID discovered by the guard.
+$probeFunction=@($ast.FindAll({param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Complete-DesktopProbeProcess'
+},$true))
+Pass ($probeFunction.Count -eq 1) 'owned probe cleanup seam remains unique'
+. ([scriptblock]::Create($probeFunction[0].Extent.Text))
+function New-ProbeMock([bool]$Exited, [bool]$WaitResult=$true, [bool]$FailKill=$false) {
+    $mock=[pscustomobject]@{Handle=[IntPtr]42;HasExited=$Exited;WaitResult=$WaitResult;FailKill=$FailKill;
+        KillCalls=0;WaitCalls=0;Disposed=$false}
+    $mock | Add-Member ScriptMethod Kill {
+        $this.KillCalls++; if ($this.FailKill) { throw 'synthetic kill failure' }
+        if ($this.WaitResult) { $this.HasExited=$true }
+    }
+    $mock | Add-Member ScriptMethod WaitForExit { param($Milliseconds)
+        $this.WaitCalls++; if ($Milliseconds -ne 5000) { throw 'unexpected wait bound' }; return $this.WaitResult
+    }
+    $mock | Add-Member ScriptMethod Dispose { $this.Disposed=$true }
+    return $mock
+}
+$probe=New-ProbeMock $true
+Pass ((Complete-DesktopProbeProcess $probe) -and $probe.Disposed -and $probe.KillCalls -eq 0) 'exited owned probe closes without termination'
+$probe=New-ProbeMock $false
+Pass ((Complete-DesktopProbeProcess $probe) -and $probe.Disposed -and $probe.KillCalls -eq 1) 'active owned probe is reaped only through its held object'
+foreach ($failKill in @($false,$true)) {
+    $probe=New-ProbeMock $false $false $failKill
+    Reject { Complete-DesktopProbeProcess $probe } 'unknown probe exit cannot pass'
+    Pass $probe.Disposed 'owned probe object releases even on early cleanup failure'
+}
+$rows=@([pscustomobject]@{ProcessId=11;Name='Codex.exe'},
+    [pscustomobject]@{ProcessId=12;Name='fixture-bridge.exe'},
+    [pscustomobject]@{ProcessId=13;Name='ChatGPT.exe'},
+    [pscustomobject]@{ProcessId=14;Name='private-unreported-name'},
+    [pscustomobject]@{ProcessId=15;Name='unrelated-unreported-name'})
+$facts=Get-EntryFreshnessEvidence $rows 'fixture.package' 'fixture-bridge.exe' 11 12 { param($ProcessId)
+    if ($ProcessId -eq 14) { 'fixture.package' } else { $null }
+}
+Pass ($facts.matches -eq 4 -and $facts.versionProbePid -eq 1 -and $facts.configurationProbePid -eq 1 -and
+    $facts.other -eq 2 -and $facts.package -eq 1) 'guard retains every matched process, including known probe PID candidates'
+Pass (($facts | ConvertTo-Json -Compress) -notmatch 'private-unreported|unrelated-unreported|fixture.package|fixture-bridge') 'freshness diagnostics reveal only fixed counters'
+Reject { Get-EntryFreshnessEvidence $rows '' 'fixture-bridge.exe' 11 12 { $null } } 'empty expected package never matches unknown identities'
+Reject { Get-EntryFreshnessEvidence $rows 'fixture.package' 'fixture-bridge.exe' 11 12 { throw 'synthetic read failure' } } 'freshness read errors fail closed'
 $workflow='breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry.yml@refs/heads/experiment/app-server-bridge-v0.1.3035'
 foreach ($case in @('baseline','treatment','restore-before-activation','alias-control')) {
     $mode='bridge'; if ($case -ceq 'baseline') { $mode='baseline' }
@@ -211,6 +253,51 @@ if ($PSVersionTable.PSEdition -ceq 'Desktop') {
                     Pass ($fixtureProcess.WaitForExit(5000)) 'owned observer fixture cleanup confirmed'
                 } finally { $fixtureProcess.Dispose() }
             }
+        }
+    }
+}
+# Actual Windows lifetime oracle: keep an exited process handle, then close it.
+# A separate live fixture remains a blocker, and is never passed to that cleanup.
+$exitedFixture=$null; $liveFixture=$null
+try {
+    $lifetimeStart=New-Object Diagnostics.ProcessStartInfo
+    $lifetimeStart.FileName=$hostPath; $lifetimeStart.UseShellExecute=$false; $lifetimeStart.CreateNoWindow=$true
+    $lifetimeStart.RedirectStandardInput=$true
+    $lifetimeStart.EnvironmentVariables.Clear()
+    foreach ($name in @('SystemRoot','WINDIR','TEMP','TMP')) {
+        $value=[Environment]::GetEnvironmentVariable($name)
+        if ($value) { $lifetimeStart.EnvironmentVariables[$name]=$value }
+    }
+    $hold='[Console]::In.ReadToEnd() | Out-Null'
+    $lifetimeStart.Arguments='-NoProfile -NonInteractive -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hold))
+    $liveFixture=[Diagnostics.Process]::Start($lifetimeStart); $null=$liveFixture.Handle
+    $lifetimeStart.Arguments='-NoProfile -NonInteractive -Command "exit 0"'
+    $exitedFixture=[Diagnostics.Process]::Start($lifetimeStart); $null=$exitedFixture.Handle
+    $exitedFixtureId=$exitedFixture.Id
+    Pass ($exitedFixture.WaitForExit(10000) -and $exitedFixture.HasExited) 'short fixture is exited before retaining-handle observation'
+    $beforeClose=Read-EntryProbeVisibility $exitedFixtureId
+    Pass ($beforeClose.status -ceq 'read') 'held-exit process visibility is readable'
+    Pass (Complete-DesktopProbeProcess $exitedFixture) 'held exited fixture is closed'
+    $exitedFixture=$null
+    $watch=[Diagnostics.Stopwatch]::StartNew(); $afterClose=$null
+    do {
+        $afterClose=Read-EntryProbeVisibility $exitedFixtureId
+        if ($afterClose.status -cne 'read' -or $afterClose.matches -eq 0) { break }
+        Start-Sleep -Milliseconds 50
+    } while ($watch.Elapsed.TotalSeconds -lt 10)
+    Pass ($afterClose.status -ceq 'read' -and $afterClose.matches -eq 0) 'closed exited fixture leaves process enumeration'
+    Pass (-not $liveFixture.HasExited) 'closing exited fixture never targets the live neighbor'
+    $liveRows=@(Get-CimInstance Win32_Process -Filter ("ProcessId="+$liveFixture.Id) -ErrorAction Stop)
+    $liveFacts=Get-EntryFreshnessEvidence $liveRows 'fixture.package' ([IO.Path]::GetFileName($hostPath)) $exitedFixtureId 0 { $null }
+    Pass ($liveFacts.matches -eq 1 -and $liveFacts.other -eq 1) 'live unrelated fixture remains a strict freshness blocker'
+    Write-Output ('ENTRY_OWNED_PROBE_LIFETIME='+([ordered]@{heldExitedVisibleBeforeClose=($beforeClose.matches -eq 1);
+        exitedVisibleAfterClose=($afterClose.matches -eq 1);liveNeighborStillBlocks=($liveFacts.matches -eq 1)} | ConvertTo-Json -Compress))
+} finally {
+    try { if ($null -ne $exitedFixture) { $null=Complete-DesktopProbeProcess $exitedFixture } }
+    finally {
+        if ($null -ne $liveFixture) {
+            try { $liveFixture.StandardInput.Close(); $null=$liveFixture.WaitForExit(5000) }
+            finally { $null=Complete-DesktopProbeProcess $liveFixture }
         }
     }
 }

@@ -129,6 +129,37 @@ Readback must show both exact original absences. Values, raw environment,
 arguments, credential files and runner tokens are not published. Scratch remains
 private until VM disposal because whole-family exit is not established.
 
+The harness's direct `--version` and `--check` children now use
+`Complete-DesktopProbeProcess` in `finally` for every caller. A successful wait
+is followed by confirmed exit and disposal of that same held process object;
+an early error reaps only the process the harness itself started, confirms exit,
+and disposes it. No freshness-scan match is a termination target. Releasing these
+handles matters because an exited Windows process object can remain enumerable
+until its last handle closes. Entry reports record only fixed before/after
+visibility counts for those owned probe PIDs and exit/close booleans. Diagnostic
+reads have a five-second CIM operation timeout (not an absolute wall-clock
+guarantee), and their own enclosing `finally` cannot bypass owned cleanup. A PID
+counter is diagnostic, never permission to ignore a process.
+
+The final freshness guard still rejects every original package/name match,
+including a remaining owned-probe PID candidate, an active unrelated match or
+an unclassified package process. Its new metadata contains only bounded counters
+for package, Desktop/native/bridge names, the two known probe PID candidates and
+other matches. No arbitrary name, path, command line or process environment is
+published. Failed enumeration remains an error, not an empty result.
+
+The [first run at `46248d03`](https://github.com/breakingtime126/magpie/actions/runs/42310342651)
+passed the offline safety gate in both hosts, but all four package cases stopped
+at the freshness guard before environment writes or activation. Both owned
+version/config checks had passed; their process objects were not disposed before
+the scan. The report did not identify matching rows, so it does **not** prove that
+retained exited probes caused that failure. The new Windows lifetime fixture
+observes an exited child while holding its handle, closes it and waits for its
+PID to disappear from CIM, while a separate stdin-held live child must remain
+a guard blocker. Its fixed booleans can support or refute the lifetime hypothesis
+on the actual runner without installing a package or changing environment.
+The lifecycle fix and that new fixture still require exact-head Windows execution.
+
 The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
 allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving
 window, so the parent applies a separate ten-second helper deadline and verifies

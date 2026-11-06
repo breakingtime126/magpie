@@ -1251,6 +1251,24 @@ function Complete-DesktopActivationProcess(
     }
 }
 
+# These are direct children started by this harness for --version and --check.
+# WaitForExit alone does not release their retained Windows process objects.
+# Never reopen a PID here, or target any process discovered by the freshness scan.
+function Complete-DesktopProbeProcess($Process) {
+    try {
+        if ($null -eq $Process -or $Process.Handle -eq [IntPtr]::Zero) { throw 'Missing held probe process.' }
+        if (-not $Process.HasExited) {
+            try { $Process.Kill() } catch { if (-not $Process.HasExited) { throw } }
+        }
+        if (-not $Process.WaitForExit(5000) -or -not $Process.HasExited) {
+            throw 'Owned probe process exit is unconfirmed.'
+        }
+    } finally {
+        if ($null -ne $Process) { $Process.Dispose() }
+    }
+    return $true
+}
+
 # Eligibility is capture safety, not successful Desktop compatibility. A valid
 # bounded snapshot is not a claim of complete observer/process lifecycle.
 function Get-DesktopNativeRunDecision(
@@ -2097,16 +2115,34 @@ namespace DesktopColdProbe {
             $versionStart.EnvironmentVariables[$name] = $versionHome
         }
         $versionStart.EnvironmentVariables['CODEX_HOME'] = $versionCodex
+        $versionProbeId = 0
         $versionProcess = [Diagnostics.Process]::Start($versionStart)
-        $versionOut = $versionProcess.StandardOutput.ReadToEndAsync()
-        $versionErr = $versionProcess.StandardError.ReadToEndAsync()
-        if (-not $versionProcess.WaitForExit(10000)) { $versionProcess.Kill(); Block 'Official backend version check timed out.' }
-        if (-not $versionOut.Wait(2000) -or -not $versionErr.Wait(2000)) { Block 'Official version output did not close promptly.' }
-        $versionText = $versionOut.GetAwaiter().GetResult().Trim()
-        $versionError = $versionErr.GetAwaiter().GetResult()
-        if ($versionProcess.ExitCode -ne 0 -or $versionError.Length -ne 0 -or
-            $versionText -notmatch '^codex-cli [0-9][0-9A-Za-z.+-]{0,80}$') {
-            Block 'Resource executable did not identify itself as the official Codex CLI.'
+        try {
+            $versionProbeId = $versionProcess.Id
+            $versionOut = $versionProcess.StandardOutput.ReadToEndAsync()
+            $versionErr = $versionProcess.StandardError.ReadToEndAsync()
+            if (-not $versionProcess.WaitForExit(10000)) { Block 'Official backend version check timed out.' }
+            if (-not $versionOut.Wait(2000) -or -not $versionErr.Wait(2000)) { Block 'Official version output did not close promptly.' }
+            $versionText = $versionOut.GetAwaiter().GetResult().Trim()
+            $versionError = $versionErr.GetAwaiter().GetResult()
+            if ($versionProcess.ExitCode -ne 0 -or $versionError.Length -ne 0 -or
+                $versionText -notmatch '^codex-cli [0-9][0-9A-Za-z.+-]{0,80}$') {
+                Block 'Resource executable did not identify itself as the official Codex CLI.'
+            }
+        } finally {
+            try {
+                if ($NativeEntryCase) {
+                    $report.nativeEntry.versionProbeExitAndCloseConfirmed = $false
+                    $report.nativeEntry.versionProbeBeforeClose = Read-EntryProbeVisibility $versionProbeId
+                }
+            } finally {
+                try {
+                    $versionClosed = Complete-DesktopProbeProcess $versionProcess
+                    if ($NativeEntryCase) { $report.nativeEntry.versionProbeExitAndCloseConfirmed = $versionClosed }
+                } finally {
+                    if ($NativeEntryCase) { $report.nativeEntry.versionProbeAfterClose = Read-EntryProbeVisibility $versionProbeId }
+                }
+            }
         }
         $report.officialBackendVersion = $versionText
         if ($NativeEntryCase -and ($versionText -cne 'codex-cli 0.167.0-alpha.3.2' -or
@@ -2234,9 +2270,27 @@ requires_openai_auth = false
             if ($value) { $check.EnvironmentVariables[$name] = $value }
         }
         $check.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $bridgeConfig
+        $configurationProbeId = 0
         $checker = [Diagnostics.Process]::Start($check)
-        if (-not $checker.WaitForExit(10000)) { $checker.Kill(); Block 'Bridge configuration validation timed out.' }
-        if ($checker.ExitCode -ne 0) { Block 'Launch-only bridge configuration did not validate.' }
+        try {
+            $configurationProbeId = $checker.Id
+            if (-not $checker.WaitForExit(10000)) { Block 'Bridge configuration validation timed out.' }
+            if ($checker.ExitCode -ne 0) { Block 'Launch-only bridge configuration did not validate.' }
+        } finally {
+            try {
+                if ($NativeEntryCase) {
+                    $report.nativeEntry.configurationProbeExitAndCloseConfirmed = $false
+                    $report.nativeEntry.configurationProbeBeforeClose = Read-EntryProbeVisibility $configurationProbeId
+                }
+            } finally {
+                try {
+                    $configurationClosed = Complete-DesktopProbeProcess $checker
+                    if ($NativeEntryCase) { $report.nativeEntry.configurationProbeExitAndCloseConfirmed = $configurationClosed }
+                } finally {
+                    if ($NativeEntryCase) { $report.nativeEntry.configurationProbeAfterClose = Read-EntryProbeVisibility $configurationProbeId }
+                }
+            }
+        }
         $report.bridge.configurationValidated = $true
         if ($EnableReviewedLiveWelcome) {
             $report.bridge.configuration = 'Two owned native homes with real read-only approval-never configs and live loopback synthetic Responses fixtures; genuine startup policy checks retained.'
@@ -2265,11 +2319,12 @@ requires_openai_auth = false
     [uint32]$launched = 0
     if ($NativeEntryCase) {
         # Registration and configuration must not have launched Desktop. No second activation is attempted.
-        $existingFamily = @(Get-CimInstance Win32_Process | Where-Object {
-            [DesktopColdProbe.Native]::PackageFor([uint32]$_.ProcessId) -eq $app.PackageFullName -or
-            $_.Name -in @('ChatGPT.exe','Codex.exe',$bridgeName)
-        })
-        if ($existingFamily.Count -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }
+        $freshness = Get-EntryFreshnessEvidence -Processes @(Get-CimInstance Win32_Process) `
+            -ExpectedPackage $app.PackageFullName -BridgeName $bridgeName `
+            -VersionProbeId $versionProbeId -ConfigurationProbeId $configurationProbeId `
+            -ReadPackage { param($ProcessId) [DesktopColdProbe.Native]::PackageFor([uint32]$ProcessId) }
+        $report.nativeEntry.freshnessGuard = $freshness
+        if ($freshness.matches -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }
         if ($NativeEntryCase -cin @('treatment','restore-before-activation')) {
             Set-EntryOverrides $entryState @{
                 CODEX_CLI_PATH=$BridgeExecutable; MAGPIE_APP_SERVER_BRIDGE_CONFIG=$bridgeConfig
