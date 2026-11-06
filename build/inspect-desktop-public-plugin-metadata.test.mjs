@@ -116,7 +116,6 @@ test('manifest identity combines only native name fields and ignores referenced 
   const file = manifest(root, 'public-package', {
     name: 'public-market', plugins: [
       { name: 'browser', source: '../../SYNTHETIC_PRIVATE_PATH', token: 'SYNTHETIC_PRIVATE_VALUE' },
-      { name: 'browser', source: './plugins/browser' },
     ],
   });
   const report = inspectPublicPluginPackage(root);

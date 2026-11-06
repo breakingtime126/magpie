@@ -10,6 +10,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { analyzePublicPluginAST, PublicPluginASTLimit, PLUGIN_METHODS, AST_BLOCK_CODES, AST_SKIP_CODES } from './inspect-desktop-public-plugin-ast.mjs';
 
+import { MCP_PATH_LIMIT, MCP_MANIFEST_SUFFIXES, publicPluginRoot, publicMCPPlan,
+  publicMCPNames, publicMCPKey, parsePublicJSON } from './inspect-desktop-mcp-catalog.mjs';
+
 export const TARGETS = Object.freeze([
   '.vite/build/early-bootstrap-339-fe39e0119f57b81e.js',
   '.vite/build/early-bootstrap-824-d144f7c160c094ea.js',
@@ -372,7 +375,7 @@ export function analyzeSource(source) {
 
 export const PUBLIC_PLUGIN_LIMITS = Object.freeze({
   jsFiles: 2048, entry: 16 * 1024 ** 2, total: 128 * 1024 ** 2,
-  manifestFiles: 16, manifest: 256 * 1024, marketplaceDirectories: 64,
+  manifestFiles: 16, jsonFiles: 64, manifest: 256 * 1024, marketplaceDirectories: 64,
   sources: 64, candidates: 128, key: 128,
 });
 export const PUBLIC_PLUGIN_BLOCK_CODES = Object.freeze([
@@ -444,7 +447,7 @@ function packageNode(root, relative, leafKind, optional = false) {
   }
   return current;
 }
-export function readPublicManifest(file, remainingSourceBytes) {
+function readPublicJSONFile(file, remainingSourceBytes) {
   if (!Number.isSafeInteger(remainingSourceBytes) || remainingSourceBytes < 0) fail('public_source_limit');
   const before = fs.lstatSync(file);
   if (!before.isFile() || before.isSymbolicLink()) fail('public_source_path');
@@ -458,32 +461,39 @@ export function readPublicManifest(file, remainingSourceBytes) {
     if (!unchanged(opened, fs.fstatSync(fd)) || !unchanged(opened, fs.lstatSync(file))) {
       fail('public_archive_changed');
     }
-    let manifest;
-    try { manifest = JSON.parse(decode(bytes)); }
+    let value;
+    try { value = parsePublicJSON(decode(bytes)); }
     catch (error) {
       if (error instanceof InspectionError) throw error;
-      fail('public_manifest_invalid');
+      fail(error.message === 'public_manifest_limit' ? 'public_manifest_limit' : 'public_manifest_invalid');
     }
-    if (!record(manifest) || !PUBLIC_SEGMENT.test(manifest.name ?? '') ||
-        typeof manifest.name !== 'string' || !Array.isArray(manifest.plugins)) {
-      fail('public_manifest_invalid');
-    }
-    if (manifest.plugins.length > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
-    const keys = [];
-    for (const plugin of manifest.plugins) {
-      if (!record(plugin) || typeof plugin.name !== 'string' || !PUBLIC_SEGMENT.test(plugin.name)) {
-        fail('public_manifest_invalid');
-      }
-      keys.push(...publicKeysForIdentity(plugin.name + '@' + manifest.name));
-    }
-    return { size: bytes.length, hash: sha256(bytes), keys };
+    return { size: bytes.length, hash: sha256(bytes), value };
   } finally { fs.closeSync(fd); }
+}
+
+function marketplaceData(result) {
+  const manifest = result.value;
+  if (!record(manifest) || typeof manifest.name !== 'string' || !PUBLIC_SEGMENT.test(manifest.name) ||
+      !Array.isArray(manifest.plugins)) fail('public_manifest_invalid');
+  if (manifest.plugins.length > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
+  const keys = [], names = new Set();
+  for (const plugin of manifest.plugins) {
+    if (!record(plugin) || typeof plugin.name !== 'string' || !PUBLIC_SEGMENT.test(plugin.name) ||
+        names.has(plugin.name)) fail('public_manifest_invalid');
+    names.add(plugin.name);
+    keys.push(...publicKeysForIdentity(plugin.name + '@' + manifest.name));
+  }
+  return { ...result, keys, name: manifest.name, plugins: manifest.plugins };
+}
+export function readPublicManifest(file, remainingSourceBytes) {
+  return marketplaceData(readPublicJSONFile(file, remainingSourceBytes));
 }
 
 // The caller separately verifies each external manifest and app.asar against
 // the exact original signed MSIX entry before publishing or using this report.
-// This function only reads fixed package-relative locations and never loads
-// code, follows links, reads user state, or opens manifest-referenced resources.
+// This function reads only bounded native-recognized public declarations and
+// validated local JSON references. It never loads code, follows links or reads
+// user state. Declarations do not establish native selection or loadability.
 export function inspectPublicPluginPackage(packageRoot) {
   try {
     if (typeof packageRoot !== 'string' || !path.isAbsolute(packageRoot) ||
@@ -496,7 +506,9 @@ export function inspectPublicPluginPackage(packageRoot) {
     }
     const archive = packageNode(root, 'app/resources/app.asar', 'file');
     const before = fs.lstatSync(archive), fd = fs.openSync(archive, 'r');
-    const sources = [], candidates = new Map();
+    const sources = [], candidates = new Map(), sourceIndices = new Map();
+    const jsonCache = new Map(), jsonCasePaths = new Map();
+    const manifestAnalysis = { pluginEntries: 0, pluginManifests: 0, mcpFiles: 0, skippedEntries: 0 };
     const analysis = {
       parser: 'acorn_8_15_0',
       methods: PLUGIN_METHODS.map(name => ({ name, definitions: 0, unresolved: 0 })),
@@ -508,16 +520,92 @@ export function inspectPublicPluginPackage(packageRoot) {
       coverage.jsSkipped++;
       skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
     }
+    function ensureSource(kind, sourcePath, hash) {
+      if (sourceIndices.has(sourcePath)) {
+        const index = sourceIndices.get(sourcePath), old = sources[index];
+        if (old.kind !== kind || old.sha256 !== hash) fail('public_archive_changed');
+        return index;
+      }
+      if (sources.length >= PUBLIC_PLUGIN_LIMITS.sources) fail('public_catalog_limit');
+      const index = sources.length;
+      sources.push({ kind, path: sourcePath, sha256: hash });
+      sourceIndices.set(sourcePath, index);
+      return index;
+    }
     function addSource(kind, sourcePath, hash, found, constructions = []) {
       const fresh = found.filter(item => !candidates.has(item.key));
       if (fresh.length === 0 && constructions.length === 0) return;
-      if (sources.length >= PUBLIC_PLUGIN_LIMITS.sources ||
-          candidates.size + fresh.length > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
-      const sourceIndex = sources.length;
-      sources.push({ kind, path: sourcePath, sha256: hash });
+      if (candidates.size + fresh.length > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
+      const sourceIndex = ensureSource(kind, sourcePath, hash);
       for (const item of fresh) candidates.set(item.key, { ...item, source: sourceIndex });
       if (analysis.constructions.length + constructions.length > 128) fail('public_catalog_limit');
       for (const item of constructions) analysis.constructions.push({ source: sourceIndex, ...item });
+    }
+    function readJSON(relative, kind) {
+      if (relative.length > MCP_PATH_LIMIT) fail('public_source_path');
+      const folded = relative.toLowerCase();
+      if (jsonCasePaths.has(folded) && jsonCasePaths.get(folded) !== relative) fail('public_source_path');
+      jsonCasePaths.set(folded, relative);
+      if (jsonCache.has(relative)) {
+        const cached = jsonCache.get(relative);
+        if (cached && cached.kind !== kind) fail('public_source_path');
+        return cached;
+      }
+      const file = packageNode(root, relative, 'file', true);
+      if (!file) { jsonCache.set(relative, null); return null; }
+      const count = coverage.manifestFiles + manifestAnalysis.pluginManifests + manifestAnalysis.mcpFiles;
+      if (count >= PUBLIC_PLUGIN_LIMITS.jsonFiles) fail('public_manifest_limit');
+      if (kind === 'marketplace_manifest') {
+        if (++coverage.manifestFiles > PUBLIC_PLUGIN_LIMITS.manifestFiles) fail('public_manifest_limit');
+      } else if (kind === 'plugin_manifest') manifestAnalysis.pluginManifests++;
+      else manifestAnalysis.mcpFiles++;
+      const result = { ...readPublicJSONFile(file, PUBLIC_PLUGIN_LIMITS.total - coverage.sourceBytes), kind };
+      coverage.sourceBytes += result.size;
+      jsonCache.set(relative, result);
+      return result;
+    }
+    function addMCPDeclarations(marketRelative, marketplacePath, market) {
+      for (const plugin of market.plugins) {
+        if (++manifestAnalysis.pluginEntries > 2048) fail('public_manifest_limit');
+        let omitted = false, manifestFound = false;
+        const pluginRoot = publicPluginRoot(marketRelative, plugin.source,
+          marketplacePath.endsWith('/.cursor-plugin/marketplace.json'));
+        if (!pluginRoot || !packageNode(root, pluginRoot, 'directory', true)) {
+          manifestAnalysis.skippedEntries++; continue;
+        }
+        for (const suffix of MCP_MANIFEST_SUFFIXES) {
+          const pluginPath = pluginRoot + '/' + suffix;
+          if (pluginPath.length > MCP_PATH_LIMIT) { omitted = true; continue; }
+          const manifest = readJSON(pluginPath, 'plugin_manifest');
+          if (!manifest) continue;
+          manifestFound = true;
+          const plan = publicMCPPlan(suffix, manifest.value);
+          if (!plan) { omitted = true; continue; }
+          const mcpPath = plan.inline ? pluginPath : pluginRoot + '/' + plan.reference;
+          if (mcpPath.length > MCP_PATH_LIMIT) { omitted = true; continue; }
+          const mcp = plan.inline ? manifest : readJSON(mcpPath, 'mcp_manifest');
+          if (!mcp) { omitted = true; continue; }
+          let declaration;
+          try { declaration = publicMCPNames(plan.inline ?? mcp.value, plan.agent); }
+          catch (error) {
+            if (error.message === 'public_catalog_limit') fail('public_catalog_limit');
+            throw error;
+          }
+          if (!declaration) { omitted = true; continue; }
+          if (declaration.skipped) omitted = true;
+          for (const server of declaration.names) {
+            const key = publicMCPKey(plugin.name + '@' + market.name, server);
+            if (!key) { omitted = true; continue; }
+            if (candidates.has(key)) continue;
+            if (candidates.size >= PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
+            const marketplaceSource = ensureSource('marketplace_manifest', marketplacePath, market.hash);
+            const pluginSource = ensureSource('plugin_manifest', pluginPath, manifest.hash);
+            const source = plan.inline ? pluginSource : ensureSource('mcp_manifest', mcpPath, mcp.hash);
+            candidates.set(key, { key, derivation: plan.derivation, source, marketplaceSource, pluginSource });
+          }
+        }
+        if (!manifestFound || omitted) manifestAnalysis.skippedEntries++;
+      }
     }
     let archiveSha256;
     try {
@@ -576,14 +664,12 @@ export function inspectPublicPluginPackage(packageRoot) {
         if (!marketRoot) fail('public_source_path');
         for (const suffix of MARKETPLACE_SUFFIXES) {
           const relative = marketRelative + '/' + suffix;
-          const file = packageNode(root, relative, 'file', true);
-          if (!file) continue;
-          if (++coverage.manifestFiles > PUBLIC_PLUGIN_LIMITS.manifestFiles) fail('public_manifest_limit');
-          const manifest = readPublicManifest(file, PUBLIC_PLUGIN_LIMITS.total - coverage.sourceBytes);
-          coverage.sourceBytes += manifest.size;
-          if (coverage.sourceBytes > PUBLIC_PLUGIN_LIMITS.total) fail('public_source_limit');
+          const raw = readJSON(relative, 'marketplace_manifest');
+          if (!raw) continue;
+          const manifest = marketplaceData(raw);
           addSource('marketplace_manifest', relative, manifest.hash,
-            [...new Set(manifest.keys)].map(key => ({ key, derivation: 'manifest_identity' })));
+            manifest.keys.map(key => ({ key, derivation: 'manifest_identity' })));
+          addMCPDeclarations(marketRelative, relative, manifest);
         }
       }
     }
@@ -594,7 +680,7 @@ export function inspectPublicPluginPackage(packageRoot) {
     return {
       schema: 1, status: coverage.jsSkipped ? 'partial' : 'complete',
       archiveSha256, keysSha256: publicPluginKeysDigest(ordered.map(item => item.key)),
-      coverage, sources, candidates: ordered, analysis,
+      coverage, sources, candidates: ordered, analysis, manifestAnalysis,
     };
   } catch (error) {
     return { schema: 1, status: 'blocked', reason: codeOf(error) };

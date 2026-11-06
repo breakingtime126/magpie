@@ -11,7 +11,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
-    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
+    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'Get-PublicRPCMethods', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
     'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
@@ -58,6 +58,7 @@ function New-Catalog {
             constructions = @()
             skipped = @()
         }
+        manifestAnalysis = [pscustomobject]@{ pluginEntries=0; pluginManifests=0; mcpFiles=0; skippedEntries=0 }
         candidates = @($keys | ForEach-Object { [pscustomobject]@{ key = $_; source = 0; derivation = 'id_literal' } })
     }
 }
@@ -105,6 +106,15 @@ foreach ($name in $invalidFailures.Keys) {
         & $mutation $f
         Assert-PublicCatalogFailure $f @('invalid_utf8')
     }
+}
+Expect-Pass 'only the exact reviewed RPC method label is added' {
+    $expected=@('initialize', 'initialized', 'configRequirements/read', 'account/read',
+        'account/rateLimits/read', 'account/gatewayOAuth/read', 'attestation/generate', 'model/list',
+        'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
+        'thread/start', 'thread/read', 'turn/start', 'getAuthStatus', 'unknown')
+    $actual=@(Get-PublicRPCMethods)
+    if (($actual -join '|') -cne ($expected -join '|') -or $actual -ccontains 'GetAuthStatus' -or
+        $actual -ccontains 'getAuthStatus/PRIVATE_CANARY') { throw 'RPC label set changed.' }
 }
 Expect-Pass 'SHA256 known vector' {
     if ((Get-PublicDigest ([Text.Encoding]::UTF8.GetBytes('abc'))) -cne
@@ -178,6 +188,174 @@ $invalidCatalogs = [ordered]@{
 foreach ($name in $invalidCatalogs.Keys) {
     $mutation = $invalidCatalogs[$name]
     Expect-Reject $name { $c = New-Catalog; & $mutation $c; ConvertTo-PublicPluginEnvironment $c $packageHash }
+}
+function New-MCPCatalog([string]$derivation = 'legacy_mcp_default') {
+    $c = New-Catalog
+    $c.coverage.jsFiles=0; $c.coverage.jsComplete=0; $c.coverage.manifestFiles=1
+    $c.manifestAnalysis.pluginEntries=1; $c.manifestAnalysis.pluginManifests=1
+    $root = 'app/resources/plugins/public-market/fixture'
+    $pluginPath = $root + '/.codex-plugin/plugin.json'
+    $mcpPath = $root + '/.mcp.json'
+    if ($derivation -ceq 'agent_mcp_default') { $pluginPath=$root + '/plugin.json'; $mcpPath=$root + '/mcp.json' }
+    if ($derivation -ceq 'legacy_mcp_path') { $mcpPath=$root + '/config/servers.json' }
+    $c.sources = @(
+        [pscustomobject]@{ kind='marketplace_manifest'; path='app/resources/plugins/public-market/.agents/plugins/marketplace.json'; sha256=('a'*64) },
+        [pscustomobject]@{ kind='plugin_manifest'; path=$pluginPath; sha256=('b'*64) }
+    )
+    $sourceIndex=1
+    if ($derivation -cne 'legacy_mcp_inline') {
+        $c.sources += [pscustomobject]@{ kind='mcp_manifest'; path=$mcpPath; sha256=('c'*64) }
+        $sourceIndex=2; $c.manifestAnalysis.mcpFiles=1
+    }
+    $c.candidates = @([pscustomobject]@{
+        key='plugins.fixture@public-market.mcp_servers.PublicServer.enabled'
+        derivation=$derivation; source=$sourceIndex; marketplaceSource=0; pluginSource=1
+    })
+    $c.keysSha256 = Fixture-Digest ([Text.Encoding]::UTF8.GetBytes($c.candidates[0].key))
+    return $c
+}
+Expect-Pass 'all reviewed MCP derivations retain bound source chains' {
+    foreach ($derivation in @('legacy_mcp_inline', 'legacy_mcp_default', 'legacy_mcp_path', 'agent_mcp_default')) {
+        $c = New-MCPCatalog $derivation
+        $handoff = ConvertTo-PublicPluginEnvironment $c $packageHash
+        if (($handoff | ConvertFrom-Json).keys[0] -cne $c.candidates[0].key) { throw 'Nested handoff changed key.' }
+    }
+}
+Expect-Pass 'all native legacy manifest locations use the same plugin root' {
+    foreach ($directory in @('.codex-plugin', '.claude-plugin', '.cursor-plugin')) {
+        $c = New-MCPCatalog
+        $c.sources[1].path='app/resources/plugins/public-market/fixture/' + $directory + '/plugin.json'
+        ConvertTo-PublicPluginEnvironment $c $packageHash
+    }
+}
+Expect-Pass 'agent roots named like legacy manifest directories remain unambiguous' {
+    foreach ($directory in @('.codex-plugin', '.claude-plugin', '.cursor-plugin')) {
+        $c=New-MCPCatalog 'agent_mcp_default'
+        $root='app/resources/plugins/public-market/' + $directory
+        $c.sources[1].path=$root + '/plugin.json'; $c.sources[2].path=$root + '/mcp.json'
+        ConvertTo-PublicPluginEnvironment $c $packageHash
+    }
+}
+Expect-Pass 'manifest incompleteness is separate from complete JavaScript coverage' {
+    $c = New-MCPCatalog
+    $c.manifestAnalysis.skippedEntries=1
+    ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+Expect-Pass 'manifest entry and total JSON bounds are inclusive' {
+    $c=New-MCPCatalog
+    $c.manifestAnalysis.pluginEntries=2048; $c.manifestAnalysis.skippedEntries=2048
+    $c.manifestAnalysis.pluginManifests=31; $c.manifestAnalysis.mcpFiles=32
+    ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+Expect-Pass 'marketplace root plugin and eight-component MCP path are bounded' {
+    $c = New-MCPCatalog 'legacy_mcp_path'
+    $c.sources[1].path='app/resources/plugins/public-market/.codex-plugin/plugin.json'
+    $c.sources[2].path='app/resources/plugins/public-market/a/b/c/d/e/f/g/servers.json'
+    ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+Expect-Pass 'eight-component local plugin source is bounded' {
+    $c = New-MCPCatalog
+    $root='app/resources/plugins/public-market/a/b/c/d/e/f/g/h'
+    $c.sources[1].path=$root + '/.codex-plugin/plugin.json'; $c.sources[2].path=$root + '/.mcp.json'
+    ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+Expect-Pass 'nested key at exact 128-byte boundary' {
+    $c = New-MCPCatalog
+    $c.candidates[0].key='plugins.' + ('p'*30) + '@' + ('m'*30) + '.mcp_servers.' + ('s'*38) + '.enabled'
+    if ($c.candidates[0].key.Length -ne 128) { throw 'Bad key boundary fixture.' }
+    $c.keysSha256=Fixture-Digest ([Text.Encoding]::UTF8.GetBytes($c.candidates[0].key))
+    ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+$invalidMCP = [ordered]@{
+    'missing manifest analysis' = { param($c) $c.PSObject.Properties.Remove('manifestAnalysis') }
+    'extra manifest analysis field' = { param($c) $c.manifestAnalysis | Add-Member -NotePropertyName values -NotePropertyValue PRIVATE_CANARY }
+    'string manifest count' = { param($c) $c.manifestAnalysis.pluginEntries='1' }
+    'fractional manifest count' = { param($c) $c.manifestAnalysis.mcpFiles=1.0 }
+    'manifest entry cap' = { param($c) $c.manifestAnalysis.pluginEntries=2049 }
+    'manifest source cap' = { param($c) $c.manifestAnalysis.pluginManifests=65 }
+    'MCP file cap' = { param($c) $c.manifestAnalysis.mcpFiles=65 }
+    'skipped entries exceed entries' = { param($c) $c.manifestAnalysis.skippedEntries=2 }
+    'negative skipped entries' = { param($c) $c.manifestAnalysis.skippedEntries=-1 }
+    'global JSON count' = { param($c) $c.manifestAnalysis.pluginManifests=32; $c.manifestAnalysis.mcpFiles=32 }
+    'incomplete plugin source count' = { param($c) $c.manifestAnalysis.pluginManifests=0 }
+    'incomplete MCP source count' = { param($c) $c.manifestAnalysis.mcpFiles=0 }
+    'nested candidate without entry coverage' = { param($c) $c.manifestAnalysis.pluginEntries=0 }
+    'orphan plugin source' = {
+        param($c)
+        $c.sources += [pscustomobject]@{ kind='plugin_manifest'; path='app/resources/plugins/public-market/unused/.codex-plugin/plugin.json'; sha256=('d'*64) }
+        $c.manifestAnalysis.pluginManifests=2
+    }
+    'orphan MCP source' = {
+        param($c)
+        $c.sources += [pscustomobject]@{ kind='mcp_manifest'; path='app/resources/plugins/public-market/unused/servers.json'; sha256=('d'*64) }
+        $c.manifestAnalysis.mcpFiles=2
+    }
+    'nested missing marketplace link' = { param($c) $c.candidates[0].PSObject.Properties.Remove('marketplaceSource') }
+    'nested missing plugin link' = { param($c) $c.candidates[0].PSObject.Properties.Remove('pluginSource') }
+    'nested extra raw field' = { param($c) $c.candidates[0] | Add-Member -NotePropertyName command -NotePropertyValue PRIVATE_CANARY }
+    'string marketplace link' = { param($c) $c.candidates[0].marketplaceSource='0' }
+    'fractional plugin link' = { param($c) $c.candidates[0].pluginSource=1.0 }
+    'out of range marketplace link' = { param($c) $c.candidates[0].marketplaceSource=3 }
+    'wrong marketplace kind' = { param($c) $c.candidates[0].marketplaceSource=1 }
+    'wrong plugin kind' = { param($c) $c.candidates[0].pluginSource=0 }
+    'wrong MCP kind' = { param($c) $c.candidates[0].source=1 }
+    'unknown nested derivation' = { param($c) $c.candidates[0].derivation='PRIVATE_CANARY' }
+    'case nested derivation' = { param($c) $c.candidates[0].derivation='LEGACY_MCP_DEFAULT' }
+    'nested derived from literal' = { param($c) $c.candidates[0].derivation='key_literal' }
+    'inline not from plugin source' = { param($c) $c.candidates[0].derivation='legacy_mcp_inline' }
+    'agent derivation with mismatched root and default file' = { param($c) $c.candidates[0].derivation='agent_mcp_default' }
+    'legacy derivation with agent manifest' = { param($c) $c.sources[1].path='app/resources/plugins/public-market/fixture/plugin.json' }
+    'different marketplace source' = { param($c) $c.sources[0].path='app/resources/plugins/other-market/.agents/plugins/marketplace.json' }
+    'case changed relation root' = { param($c) $c.sources[1].path='app/resources/plugins/Public-market/fixture/.codex-plugin/plugin.json' }
+    'MCP outside plugin root' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/other/.mcp.json' }
+    'MCP prefix sibling not child' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture-other/.mcp.json' }
+    'wrong legacy default file' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture/mcp.json' }
+    'manifest traversal' = { param($c) $c.sources[1].path='app/resources/plugins/public-market/../fixture/.codex-plugin/plugin.json' }
+    'manifest current component' = { param($c) $c.sources[1].path='app/resources/plugins/public-market/./fixture/.codex-plugin/plugin.json' }
+    'manifest backslash' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture\servers.json' }
+    'manifest variable' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture/$HOME.json' }
+    'manifest percent escape' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture/%2e.json' }
+    'manifest nonASCII component' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture/' + [char]233 + '.json' }
+    'manifest URI' = { param($c) $c.sources[2].path='https://PRIVATE_CANARY/servers.json' }
+    'manifest component bound' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture/' + ('a'*65) + '.json' }
+    'manifest path bound' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture/' + ((@(('a'*60)) * 8) -join '/') + '/servers.json' }
+    'manifest unsafe trailing dot' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture/a./servers.json' }
+    'MCP wrong extension' = { param($c) $c.sources[2].path='app/resources/plugins/public-market/fixture/servers.txt' }
+    'plugin wrong manifest filename' = { param($c) $c.sources[1].path='app/resources/plugins/public-market/fixture/.codex-plugin/other.json' }
+    'nine-component local plugin source' = {
+        param($c)
+        $root='app/resources/plugins/public-market/a/b/c/d/e/f/g/h/i'
+        $c.sources[1].path=$root + '/.codex-plugin/plugin.json'; $c.sources[2].path=$root + '/.mcp.json'
+    }
+    'nine-component MCP reference' = {
+        param($c)
+        $c.candidates[0].derivation='legacy_mcp_path'
+        $c.sources[2].path='app/resources/plugins/public-market/fixture/a/b/c/d/e/f/g/h/servers.json'
+    }
+    'nested key over 128 bytes' = { param($c) $c.candidates[0].key='plugins.' + ('p'*30) + '@' + ('m'*30) + '.mcp_servers.' + ('s'*39) + '.enabled' }
+    'nested unsafe server segment' = { param($c) $c.candidates[0].key='plugins.fixture@public-market.mcp_servers._private.enabled' }
+    'nested dot in server segment' = { param($c) $c.candidates[0].key='plugins.fixture@public-market.mcp_servers.server.name.enabled' }
+    'nested auto provision not reviewed' = { param($c) $c.candidates[0].key='plugins.fixture@public-market.mcp_servers.PublicServer.auto_provision' }
+    'nested app field not reviewed' = { param($c) $c.candidates[0].key='plugins.fixture@public-market.apps.PublicServer.enabled' }
+    'direct candidate with relation fields' = { param($c) $c.candidates[0].key='plugins.fixture@public-market.enabled' }
+}
+foreach ($name in $invalidMCP.Keys) {
+    $mutation=$invalidMCP[$name]
+    Expect-Reject $name {
+        $c=New-MCPCatalog; & $mutation $c
+        $c.keysSha256=Fixture-Digest ([Text.Encoding]::UTF8.GetBytes(($c.candidates.key -join [char]10)))
+        ConvertTo-PublicPluginEnvironment $c $packageHash
+    }
+}
+Expect-Reject 'direct key cannot derive from MCP source' {
+    $c=New-MCPCatalog
+    $c.candidates=@([pscustomobject]@{ key='plugins.fixture@public-market.enabled'; derivation='manifest_identity'; source=2 })
+    $c.keysSha256=Fixture-Digest ([Text.Encoding]::UTF8.GetBytes($c.candidates[0].key))
+    ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+Expect-Reject 'agent default uses exact mcp filename' {
+    $c=New-MCPCatalog 'agent_mcp_default'; $c.sources[2].path='app/resources/plugins/public-market/fixture/.mcp.json'
+    ConvertTo-PublicPluginEnvironment $c $packageHash
 }
 function New-Construction {
     return [pscustomobject]@{
@@ -513,6 +691,51 @@ function New-PackageFixture([string]$variant) {
     if ($variant -eq 'package-hash') { $hash = '0' * 64 }
     return [pscustomobject]@{ catalog=$c; path=$zipPath; sha256=$hash }
 }
+function New-MCPPackageFixture([string]$derivation, [string]$variant = 'valid') {
+    $c=New-MCPCatalog $derivation
+    $archiveBytes=[Text.Encoding]::UTF8.GetBytes('synthetic archive fixture only')
+    $c.archiveSha256=Fixture-Digest $archiveBytes
+    $contents=New-Object 'System.Collections.Generic.Dictionary[string,byte[]]' ([StringComparer]::Ordinal)
+    $contents['app/resources/app.asar']=$archiveBytes
+    for ($i=0; $i -lt $c.sources.Count; $i++) {
+        $source=$c.sources[$i]
+        $body='{"mcpServers":{"PublicServer":{"command":"PRIVATE_CANARY","env":{"secret":"PRIVATE_CANARY"}}}}'
+        if ($source.kind -ceq 'marketplace_manifest') { $body='{"name":"public-market","plugins":[{"name":"fixture","source":"./fixture"}]}' }
+        if ($source.kind -ceq 'plugin_manifest' -and $derivation -ceq 'legacy_mcp_default') { $body='{"name":"not-the-identity"}' }
+        if ($source.kind -ceq 'plugin_manifest' -and $derivation -ceq 'legacy_mcp_path') { $body='{"name":"not-the-identity","mcpServers":"./config/servers.json"}' }
+        if ($source.kind -ceq 'plugin_manifest' -and $derivation -ceq 'agent_mcp_default') {
+            $body='{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"namespace-only"}'
+        }
+        if ($source.kind -ceq 'mcp_manifest' -and $derivation -ceq 'agent_mcp_default') {
+            $body='{"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json","mcpServers":{"PublicServer":{"type":"stdio","command":"PRIVATE_CANARY"}}}'
+        }
+        $bytes=[Text.Encoding]::UTF8.GetBytes($body)
+        $source.sha256=Fixture-Digest $bytes
+        $contents[$source.path]=$bytes
+    }
+    if ($variant -ceq 'missing-marketplace') { [void]$contents.Remove($c.sources[0].path) }
+    if ($variant -ceq 'missing-plugin') { [void]$contents.Remove($c.sources[1].path) }
+    if ($variant -ceq 'missing-mcp') { [void]$contents.Remove($c.sources[2].path) }
+    if ($variant -ceq 'marketplace-hash') { $c.sources[0].sha256='0'*64 }
+    if ($variant -ceq 'plugin-hash') { $c.sources[1].sha256='0'*64 }
+    if ($variant -ceq 'mcp-hash') { $c.sources[2].sha256='0'*64 }
+    if ($variant -ceq 'plugin-case-alias') { $contents[$c.sources[1].path.Replace('plugin.json', 'PLUGIN.JSON')]=[byte[]]@(1) }
+    if ($variant -ceq 'mcp-case-alias') { $contents[$c.sources[2].path.Replace('.mcp.json', '.MCP.JSON')]=[byte[]]@(1) }
+    $zipPath=Join-Path $temporary ([guid]::NewGuid().ToString('N') + '.zip')
+    $zip=[IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($entryPath in $contents.Keys) {
+            $entry=$zip.CreateEntry($entryPath)
+            if (($variant -ceq 'plugin-link' -and $entryPath -ceq $c.sources[1].path) -or
+                ($variant -ceq 'mcp-link' -and $entryPath -ceq $c.sources[2].path)) { $entry.ExternalAttributes=-1610612736 }
+            $bytes=$contents[$entryPath]
+            $stream=$entry.Open()
+            try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+        }
+    } finally { $zip.Dispose() }
+    $hash=(Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    return [pscustomobject]@{ catalog=$c; path=$zipPath; sha256=$hash }
+}
 try {
     Expect-Pass 'actual Node package report roundtrips through PowerShell' {
         $modulePath = Join-Path $PSScriptRoot 'inspect-desktop-static-metadata.mjs'
@@ -538,6 +761,17 @@ header.copy(archive, 16);
 body.copy(archive, 16 + padded);
 fs.mkdirSync(path.join(root, 'app', 'resources'), {recursive:true});
 fs.writeFileSync(path.join(root, 'app', 'resources', 'app.asar'), archive);
+const marketRoot=path.join(root,'app','resources','plugins','public-market');
+const writeJSON=(relative,value)=>{
+  const file=path.join(marketRoot,relative);
+  fs.mkdirSync(path.dirname(file),{recursive:true});
+  fs.writeFileSync(file,JSON.stringify(value));
+};
+writeJSON('.agents/plugins/marketplace.json',{name:'public-market',plugins:[{name:'fixture',source:'./fixture'},{name:'zagent',source:'./.codex-plugin'}]});
+writeJSON('fixture/.codex-plugin/plugin.json',{name:'not-the-identity',mcpServers:'./servers.json'});
+writeJSON('fixture/servers.json',{mcpServers:{PublicServer:{command:'PRIVATE_CANARY',env:{secret:'PRIVATE_CANARY'}}}});
+writeJSON('.codex-plugin/plugin.json',{$schema:'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',name:'namespace-only'});
+writeJSON('.codex-plugin/mcp.json',{$schema:'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',mcpServers:{AgentServer:{type:'stdio',command:'PRIVATE_CANARY'}}});
 process.stdout.write(JSON.stringify(inspectPackage(root)));
 '@
         [IO.File]::WriteAllText($generatorPath, $generator, (New-Object Text.UTF8Encoding($false)))
@@ -547,12 +781,48 @@ process.stdout.write(JSON.stringify(inspectPackage(root)));
         $nodeReport = $json | ConvertFrom-Json
         Assert-PublicCanonicalJSON $json $nodeReport
         Assert-PublicShape $nodeReport @('schema', 'status', 'runtimeKeyProven', 'archiveEntries', 'entries', 'publicPlugins')
-        if ($nodeReport.publicPlugins.candidates.Count -ne 2 -or $nodeReport.publicPlugins.status -cne 'complete') {
+        if ($nodeReport.publicPlugins.candidates.Count -ne 8 -or $nodeReport.publicPlugins.status -cne 'complete') {
             throw 'Node fixture did not establish public candidates.'
         }
         $handoff = ConvertTo-PublicPluginEnvironment $nodeReport.publicPlugins $packageHash
         if (($handoff | ConvertFrom-Json).keys[0] -cne 'plugins.browser@openai-curated-remote.auto_provision') {
             throw 'Node fixture key order mismatch.'
+        }
+        $nested=@($nodeReport.publicPlugins.candidates | Where-Object { $_.derivation -ceq 'legacy_mcp_path' })
+        if ($nested.Count -ne 1 -or $nested[0].key -cne 'plugins.fixture@public-market.mcp_servers.PublicServer.enabled' -or
+            $json.Contains('PRIVATE_CANARY')) { throw 'Node fixture relation or privacy mismatch.' }
+        $agent=@($nodeReport.publicPlugins.candidates | Where-Object { $_.derivation -ceq 'agent_mcp_default' })
+        if ($agent.Count -ne 1 -or $agent[0].key -cne 'plugins.zagent@public-market.mcp_servers.AgentServer.enabled') {
+            throw 'Node ambiguous agent root relation mismatch.'
+        }
+        $zipPath=Join-Path $temporary 'node-original.zip'
+        $zip=[IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($file in @(Get-ChildItem -LiteralPath $fixtureRoot -File -Recurse)) {
+                $relative=$file.FullName.Substring($fixtureRoot.Length + 1).Replace('\', '/')
+                $entry=$zip.CreateEntry($relative)
+                $stream=$entry.Open()
+                $inputStream=[IO.File]::OpenRead($file.FullName)
+                try { $inputStream.CopyTo($stream) } finally { $inputStream.Dispose(); $stream.Dispose() }
+            }
+        } finally { $zip.Dispose() }
+        $hash=(Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        Confirm-PublicCatalogProvenance $nodeReport.publicPlugins $zipPath $hash
+    }
+    Expect-Pass 'all MCP relation source bytes bind to original ZIP without publishing values' {
+        foreach ($derivation in @('legacy_mcp_inline', 'legacy_mcp_default', 'legacy_mcp_path', 'agent_mcp_default')) {
+            $fixture=New-MCPPackageFixture $derivation
+            $null=ConvertTo-PublicPluginEnvironment $fixture.catalog $fixture.sha256
+            $output=@(Confirm-PublicCatalogProvenance $fixture.catalog $fixture.path $fixture.sha256)
+            if ($output.Count -ne 0) { throw 'Provenance validation published data.' }
+        }
+    }
+    foreach ($variant in @('missing-marketplace', 'missing-plugin', 'missing-mcp', 'marketplace-hash', 'plugin-hash',
+        'mcp-hash', 'plugin-case-alias', 'mcp-case-alias', 'plugin-link', 'mcp-link')) {
+        Expect-Reject ('MCP ZIP ' + $variant) {
+            $fixture=New-MCPPackageFixture 'legacy_mcp_default' $variant
+            $null=ConvertTo-PublicPluginEnvironment $fixture.catalog $fixture.sha256
+            Confirm-PublicCatalogProvenance $fixture.catalog $fixture.path $fixture.sha256
         }
     }
     Expect-Pass 'original ZIP archive and manifest digests' {

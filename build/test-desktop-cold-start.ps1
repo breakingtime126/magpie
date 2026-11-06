@@ -52,6 +52,12 @@ function Assert-PublicCatalogFailure($failure, [string[]]$legacyCodes) {
         throw 'Unreviewed public catalog failure.'
     }
 }
+function Get-PublicRPCMethods {
+    return @('initialize', 'initialized', 'configRequirements/read', 'account/read',
+        'account/rateLimits/read', 'account/gatewayOAuth/read', 'attestation/generate', 'model/list',
+        'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
+        'thread/start', 'thread/read', 'turn/start', 'getAuthStatus', 'unknown')
+}
 function Get-PublicPluginShapes {
     return @('direct_enabled', 'direct_auto_provision', 'mcp_server_enabled', 'app_enabled',
         'app_destructive_enabled', 'app_open_world_enabled', 'app_default_tools_enabled', 'app_tool_enabled')
@@ -164,8 +170,70 @@ function Assert-PublicAnalysis($analysis, $sources, $skippedFiles) {
         if (-not $seenConstructions.Add($identity)) { throw 'Duplicate public construction diagnostic.' }
     }
 }
+function Get-PublicMarketplaceRoot([string]$path) {
+    if ($path -cnotmatch '^(app/resources/plugins/[A-Za-z0-9][A-Za-z0-9_-]{0,63})/(\.agents/plugins/(api_)?marketplace\.json|\.(claude|cursor)-plugin/marketplace\.json)\z') {
+        throw 'Unreviewed public marketplace source path.'
+    }
+    return $Matches[1]
+}
+function Assert-PublicManifestPath([string]$path) {
+    if ($path.Length -gt 512 -or $path -cnotmatch '^app/resources/plugins/[A-Za-z0-9][A-Za-z0-9_-]{0,63}/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\z') {
+        throw 'Unreviewed public declaration source path.'
+    }
+    foreach ($part in $path.Split('/')) {
+        if ($part.Length -gt 64 -or $part -ceq '.' -or $part -ceq '..' -or $part.EndsWith('.')) {
+            throw 'Unsafe public declaration path component.'
+        }
+    }
+}
+function Get-PublicPluginManifestRoot([string]$path, [string]$derivation = '') {
+    Assert-PublicManifestPath $path
+    $suffixes=@('/.codex-plugin/plugin.json', '/.claude-plugin/plugin.json', '/.cursor-plugin/plugin.json')
+    if ($derivation -ceq 'agent_mcp_default') { $suffixes=@('/plugin.json') }
+    elseif ($derivation -ceq '') { $suffixes += '/plugin.json' }
+    elseif (@('legacy_mcp_inline', 'legacy_mcp_default', 'legacy_mcp_path') -cnotcontains $derivation) {
+        throw 'Unreviewed public MCP derivation.'
+    }
+    foreach ($suffix in $suffixes) {
+        if ($path.EndsWith($suffix, [StringComparison]::Ordinal)) {
+            return $path.Substring(0, $path.Length - $suffix.Length)
+        }
+    }
+    throw 'Unreviewed public plugin manifest path.'
+}
+function Assert-PublicMCPRelation($candidate, $sources) {
+    Assert-PublicInteger $candidate.marketplaceSource 0 ($sources.Count - 1)
+    Assert-PublicInteger $candidate.pluginSource 0 ($sources.Count - 1)
+    $marketplace = $sources[$candidate.marketplaceSource]
+    $plugin = $sources[$candidate.pluginSource]
+    $declaration = $sources[$candidate.source]
+    if ($marketplace.kind -cne 'marketplace_manifest' -or $plugin.kind -cne 'plugin_manifest') {
+        throw 'Invalid public MCP relation source kinds.'
+    }
+    $marketplaceRoot = Get-PublicMarketplaceRoot $marketplace.path
+    $pluginRoot = Get-PublicPluginManifestRoot $plugin.path $candidate.derivation
+    if ($pluginRoot -cne $marketplaceRoot) {
+        if (-not $pluginRoot.StartsWith(($marketplaceRoot + '/'), [StringComparison]::Ordinal) -or
+            $pluginRoot.Substring($marketplaceRoot.Length + 1).Split('/').Count -gt 8) {
+            throw 'Public plugin source is outside its marketplace root.'
+        }
+    }
+    if ($candidate.derivation -ceq 'legacy_mcp_inline') {
+        if ($candidate.source -ne $candidate.pluginSource) { throw 'Inline MCP declaration must use its plugin manifest source.' }
+    } else {
+        if ($declaration.kind -cne 'mcp_manifest' -or
+            -not $declaration.path.StartsWith(($pluginRoot + '/'), [StringComparison]::Ordinal) -or
+            $declaration.path.Substring($pluginRoot.Length + 1).Split('/').Count -gt 8) {
+            throw 'Public MCP declaration is outside its plugin root.'
+        }
+        if (($candidate.derivation -ceq 'legacy_mcp_default' -and $declaration.path -cne ($pluginRoot + '/.mcp.json')) -or
+            ($candidate.derivation -ceq 'agent_mcp_default' -and $declaration.path -cne ($pluginRoot + '/mcp.json'))) {
+            throw 'Public MCP default declaration path mismatch.'
+        }
+    }
+}
 function ConvertTo-PublicPluginEnvironment($catalog, [string]$packageSha256) {
-    Assert-PublicShape $catalog @('schema', 'status', 'archiveSha256', 'keysSha256', 'coverage', 'sources', 'candidates', 'analysis')
+    Assert-PublicShape $catalog @('schema', 'status', 'archiveSha256', 'keysSha256', 'coverage', 'sources', 'candidates', 'analysis', 'manifestAnalysis')
     Assert-PublicInteger $catalog.schema 1 1
     Assert-PublicHash $packageSha256
     Assert-PublicHash $catalog.archiveSha256
@@ -180,6 +248,14 @@ function ConvertTo-PublicPluginEnvironment($catalog, [string]$packageSha256) {
         ($catalog.status -ceq 'partial' -and $catalog.coverage.jsSkipped -eq 0)) {
         throw 'Inconsistent public catalog coverage.'
     }
+    Assert-PublicShape $catalog.manifestAnalysis @('pluginEntries', 'pluginManifests', 'mcpFiles', 'skippedEntries')
+    Assert-PublicInteger $catalog.manifestAnalysis.pluginEntries 0 2048
+    Assert-PublicInteger $catalog.manifestAnalysis.pluginManifests 0 64
+    Assert-PublicInteger $catalog.manifestAnalysis.mcpFiles 0 64
+    Assert-PublicInteger $catalog.manifestAnalysis.skippedEntries 0 $catalog.manifestAnalysis.pluginEntries
+    if ($catalog.coverage.manifestFiles + $catalog.manifestAnalysis.pluginManifests + $catalog.manifestAnalysis.mcpFiles -gt 64) {
+        throw 'Public JSON source count exceeds its bound.'
+    }
     if ($catalog.sources -isnot [System.Array] -or $catalog.sources.Count -lt 1 -or $catalog.sources.Count -gt 64 -or
         $catalog.candidates -isnot [System.Array] -or $catalog.candidates.Count -lt 1 -or $catalog.candidates.Count -gt 128) {
         throw 'Public catalog is empty or exceeds its bound.'
@@ -187,10 +263,12 @@ function ConvertTo-PublicPluginEnvironment($catalog, [string]$packageSha256) {
     $seenSources = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $jsSources = 0
     $manifestSources = 0
+    $pluginSources = 0
+    $mcpSources = 0
     foreach ($source in $catalog.sources) {
         Assert-PublicShape $source @('kind', 'path', 'sha256')
         Assert-PublicHash $source.sha256
-        if ($source.path -isnot [string] -or $source.path.Length -gt 256 -or $seenSources.Contains($source.path)) {
+        if ($source.path -isnot [string] -or $source.path.Length -gt 512 -or $seenSources.Contains($source.path)) {
             throw 'Invalid or duplicate public source path.'
         }
         [void]$seenSources.Add($source.path)
@@ -201,34 +279,56 @@ function ConvertTo-PublicPluginEnvironment($catalog, [string]$packageSha256) {
             }
             $jsSources++
         } elseif ($source.kind -ceq 'marketplace_manifest') {
-            if ($source.path -cnotmatch '^app/resources/plugins/[A-Za-z0-9][A-Za-z0-9_-]{0,63}/(\.agents/plugins/(api_)?marketplace\.json|\.(claude|cursor)-plugin/marketplace\.json)\z') {
-                throw 'Unreviewed public manifest source path.'
-            }
+            $null = Get-PublicMarketplaceRoot $source.path
             $manifestSources++
+        } elseif ($source.kind -ceq 'plugin_manifest') {
+            $null = Get-PublicPluginManifestRoot $source.path
+            $pluginSources++
+        } elseif ($source.kind -ceq 'mcp_manifest') {
+            Assert-PublicManifestPath $source.path
+            if (-not $source.path.EndsWith('.json', [StringComparison]::Ordinal)) { throw 'Unreviewed public MCP manifest extension.' }
+            $mcpSources++
         } else { throw 'Unreviewed public source kind.' }
     }
-    if ($jsSources -gt $catalog.coverage.jsComplete -or $manifestSources -gt $catalog.coverage.manifestFiles) {
+    if ($jsSources -gt $catalog.coverage.jsComplete -or $manifestSources -gt $catalog.coverage.manifestFiles -or
+        $pluginSources -gt $catalog.manifestAnalysis.pluginManifests -or $mcpSources -gt $catalog.manifestAnalysis.mcpFiles) {
         throw 'Public source provenance is incomplete.'
     }
     Assert-PublicAnalysis $catalog.analysis $catalog.sources $catalog.coverage.jsSkipped
     $keys = @()
+    $relatedSources = New-Object 'System.Collections.Generic.HashSet[int]'
     $previous = $null
     foreach ($candidate in $catalog.candidates) {
-        Assert-PublicShape $candidate @('key', 'source', 'derivation')
-        if ($candidate.key -isnot [string] -or $candidate.key.Length -gt 128 -or
-            $candidate.key -cnotmatch '^plugins\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.(enabled|auto_provision)\z' -or
+        if ($null -eq $candidate -or $candidate -isnot [pscustomobject] -or
+            $null -eq $candidate.PSObject.Properties['key'] -or $candidate.key -isnot [string]) {
+            throw 'Invalid public plugin candidate.'
+        }
+        $nested = $candidate.key -cmatch '^plugins\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.mcp_servers\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.enabled\z'
+        $direct = $candidate.key -cmatch '^plugins\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.(enabled|auto_provision)\z'
+        if ($candidate.key.Length -gt 128 -or (-not $nested -and -not $direct) -or
             ($null -ne $previous -and [StringComparer]::Ordinal.Compare($previous, $candidate.key) -ge 0)) {
             throw 'Invalid, duplicate or unordered public plugin key.'
         }
+        if ($nested) { Assert-PublicShape $candidate @('key', 'source', 'derivation', 'marketplaceSource', 'pluginSource') }
+        else { Assert-PublicShape $candidate @('key', 'source', 'derivation') }
         Assert-PublicInteger $candidate.source 0 ($catalog.sources.Count - 1)
         if ($candidate.derivation -isnot [string]) { throw 'Invalid public derivation type.' }
         $sourceKind = $catalog.sources[$candidate.source].kind
-        if (($sourceKind -ceq 'asar_js' -and @('id_literal', 'key_literal') -cnotcontains $candidate.derivation) -or
-            ($sourceKind -ceq 'marketplace_manifest' -and $candidate.derivation -cne 'manifest_identity')) {
+        if ($nested) {
+            if ($catalog.manifestAnalysis.pluginEntries -eq 0) { throw 'Public MCP candidate has no marketplace entry coverage.' }
+            Assert-PublicMCPRelation $candidate $catalog.sources
+            [void]$relatedSources.Add([int]$candidate.pluginSource)
+            [void]$relatedSources.Add([int]$candidate.source)
+        } elseif (-not (($sourceKind -ceq 'asar_js' -and @('id_literal', 'key_literal') -ccontains $candidate.derivation) -or
+            ($sourceKind -ceq 'marketplace_manifest' -and $candidate.derivation -ceq 'manifest_identity'))) {
             throw 'Invalid public candidate provenance.'
         }
         $keys += $candidate.key
         $previous = $candidate.key
+    }
+    for ($index=0; $index -lt $catalog.sources.Count; $index++) {
+        if (@('plugin_manifest', 'mcp_manifest') -ccontains $catalog.sources[$index].kind -and
+            -not $relatedSources.Contains($index)) { throw 'Public MCP source lacks a validated candidate relation.' }
     }
     $digest = Get-PublicDigest ([Text.Encoding]::UTF8.GetBytes(($keys -join "`n")))
     if ($digest -cne $catalog.keysSha256) { throw 'Public catalog key digest mismatch.' }
@@ -344,7 +444,7 @@ function Confirm-PublicCatalogProvenance($catalog, [string]$packagePath, [string
         $actualArchive = Get-PublicZipEntryDigest $zip 'app/resources/app.asar' 2147483648 $watch
         if ($actualArchive -cne $catalog.archiveSha256) { throw 'Installed archive does not match the original package.' }
         foreach ($source in $catalog.sources) {
-            if ($source.kind -ceq 'marketplace_manifest') {
+            if (@('marketplace_manifest', 'plugin_manifest', 'mcp_manifest') -ccontains $source.kind) {
                 $actualManifest = Get-PublicZipEntryDigest $zip $source.path 262144 $watch
                 if ($actualManifest -cne $source.sha256) { throw 'Installed manifest does not match the original package.' }
             }
@@ -807,9 +907,15 @@ namespace DesktopColdProbe {
         $report.publicPluginCatalog = [ordered]@{
             status = $publicPluginCatalog.status; keysSha256 = $publicPluginCatalog.keysSha256
             candidateCount = $publicPluginCatalog.candidates.Count
+            manifestAnalysis = [ordered]@{
+                pluginEntries = $publicPluginCatalog.manifestAnalysis.pluginEntries
+                pluginManifests = $publicPluginCatalog.manifestAnalysis.pluginManifests
+                mcpFiles = $publicPluginCatalog.manifestAnalysis.mcpFiles
+                skippedEntries = $publicPluginCatalog.manifestAnalysis.skippedEntries
+            }
             provenance = 'original-signed-msix-entry-sha256'
             runtimeMatchesObserved = $false
-            limit = 'Static public source identity only. A match is not plugin authentication or authorization; a miss is not proof of absence.'
+            limit = 'Status describes selected JavaScript coverage only; manifest gaps are counted separately. Public declarations do not establish native selection, loadability, authentication or authorization. A miss is not proof of absence.'
         }
         # Only bounded, validated public source paths, hashes and keys are now eligible for publication.
         $report.staticLauncher = $staticReport
@@ -1119,10 +1225,7 @@ requires_openai_auth = false
                 'config_requirements_disabled', 'config_requirements_failed', 'gateway_oauth_disabled',
                 'unsupported_method', 'invalid_capabilities', 'invalid_initialization', 'already_initialized',
                 'startup_probe_unavailable', 'unknown', 'eof', 'read_error', 'copy_error')
-            $methods = @('initialize', 'initialized', 'configRequirements/read', 'account/read',
-                'account/rateLimits/read', 'account/gatewayOAuth/read', 'attestation/generate', 'model/list',
-                'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
-                'thread/start', 'thread/read', 'turn/start', 'unknown')
+            $methods = @(Get-PublicRPCMethods)
             $flags = @('app-server', '--check', '--help', '-h', '--version', '-V',
                 '--analytics-default-enabled', '--stdio', '--print-startup-config', '--startup-sign-out',
                 '--listen', '--startup-client-info', '-c', '--config')

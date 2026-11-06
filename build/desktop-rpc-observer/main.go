@@ -130,7 +130,7 @@ func (o *observer) stop() {
 
 func allowedMethod(s string) string {
 	switch s {
-	case "initialize", "initialized", "configRequirements/read",
+	case "initialize", "initialized", "getAuthStatus", "configRequirements/read",
 		"account/read", "account/rateLimits/read", "account/gatewayOAuth/read",
 		"attestation/generate", "model/list", "config/read",
 		"environment/info", "environment/status", "thread/list",

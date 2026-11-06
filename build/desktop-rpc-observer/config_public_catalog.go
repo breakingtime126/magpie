@@ -32,13 +32,24 @@ func publicPluginKey(key string) bool {
 		return false
 	}
 	parts := strings.Split(key, ".")
-	if len(parts) != 3 || parts[0] != "plugins" ||
-		(parts[2] != "enabled" && parts[2] != "auto_provision") {
+	if (len(parts) != 3 && len(parts) != 5) || parts[0] != "plugins" {
+		return false
+	}
+	if len(parts) == 3 {
+		if parts[2] != "enabled" && parts[2] != "auto_provision" {
+			return false
+		}
+	} else if parts[2] != "mcp_servers" || parts[4] != "enabled" {
 		return false
 	}
 	identity := strings.Split(parts[1], "@")
 	if len(identity) != 2 {
 		return false
+	}
+	// The nested entry is an exact source-bound catalog key, not a wildcard
+	// or permission to forward a production configuration override.
+	if len(parts) == 5 {
+		identity = append(identity, parts[3])
 	}
 	for _, segment := range identity {
 		if len(segment) == 0 || len(segment) > 64 {

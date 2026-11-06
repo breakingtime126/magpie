@@ -307,7 +307,8 @@ The existing three-entry launcher inspection and its validation remain in place.
 The added `publicPlugins` report is either a fixed blocked reason or a public
 table with exact ASCII keys, source paths, SHA-256 values, derivation labels,
 and explicit scan coverage. It scans at most 2,048 JavaScript files, at most
-16 MiB each, and 16 manifests of at most 256 KiB each, with a combined source
+16 MiB each, and at most 64 unique JSON files (including at most 16 marketplace manifests)
+of at most 256 KiB each, with a combined source
 limit of 128 MiB. At most 64 supporting sources and 128 distinct keys fit in
 the existing 64 KiB report bound. The Node inspection has a fixed two-minute
 process deadline. Lexically unsupported JavaScript contributes
@@ -332,8 +333,9 @@ The handoff is the process-local `MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES` variable,
 canonical compact JSON with ordered fields `schema`, `packageSha256`,
 `archiveSha256`, `keysSha256`, and `keys`. The digest covers the ASCII-sorted
 keys joined by exactly LF, without a trailing LF. Each key is at most 128
-ASCII bytes and has only the direct `plugins.<identity>@<marketplace>.enabled`
-or `.auto_provision` form. The payload is at most 16 KiB UTF-8; the complete
+ASCII bytes and has the direct `plugins.<identity>@<marketplace>.enabled`
+or `.auto_provision` form, or the source-linked MCP declaration form described
+below. The payload is at most 16 KiB UTF-8; the complete
 minimal Windows child environment is at most 30,000 characters including
 entry separators and terminators. Existing presence checks reject an inherited
 handoff. An empty, unsupported or invalid catalog stops before Desktop launch,
@@ -439,9 +441,9 @@ The eight shared shape labels are `direct_enabled`, `direct_auto_provision`,
 `app_open_world_enabled`, `app_default_tools_enabled` and `app_tool_enabled`.
 They name only reviewed path forms. No plugin, marketplace, MCP server, app or
 tool identity, source expression, arbitrary property name or constructed value
-is emitted by a shape diagnostic. The catalog continues to accept only its
-original two direct public-key forms; nested shapes do not become candidates
-or extend production argument support.
+is emitted by a shape diagnostic. Shapes alone never become catalog candidates or extend production argument
+support. The separately authenticated MCP declaration chain described below is
+the only additional nested key form admitted to the diagnostic catalog.
 
 For comparison, the observer can attach the optional `configPluginShape`
 label to an existing unknown config argument. It remains unknown. Fixed known
@@ -525,3 +527,100 @@ of independent complete evidence must fail with their intended assertions on
 the old implementation. The current Linux and Windows suites run that same file;
 the policy workflow explicitly watches its path and preserves every earlier
 behavioral red check.
+
+
+### Source-linked MCP declaration identification
+
+At `e1c8fb52c61406baba1a6d712c0fcea83aacaf0d`, the
+[Windows policy trace](https://github.com/breakingtime126/magpie/actions/runs/42207254261)
+completed with 28 JavaScript sources fully analyzed and one whole-file
+`public_ast_node_limit` skip. Its 22 direct catalog keys did not match the
+normal-startup argument. The unknown argument had the fixed
+`mcp_server_enabled` shape and literal true classification. No runtime
+plugin, marketplace or server name was logged. Normal startup still exited 2;
+one-shot startup exited zero. This shape is evidence for a narrower diagnostic,
+not successful initialization or permission to enable a server.
+
+The additional catalog form is only
+`plugins.<identity>@<marketplace>.mcp_servers.<server>.enabled`.
+All three variable segments retain the same ASCII alphanumeric/underscore/hyphen
+grammar, first character alphanumeric, at most 64 bytes each; the complete key
+still cannot exceed 128 bytes. App/tool paths, arbitrary nested fields and MCP
+`auto_provision` are not admitted. The production adapter remains unchanged.
+
+Candidates are derived from a connected declaration chain in the public package,
+not a cross-product of unrelated names. The marketplace entry's name and the
+marketplace document's name define the plugin identity, following the pinned
+[native marketplace resolver](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/core-plugins/src/marketplace.rs#L530-L588).
+Neither the directory name nor `plugin.json.name` substitutes for that identity.
+Only bounded local sources are followed within that marketplace root. Native
+recognized plugin manifest locations and MCP declarations are inspected
+independently, conservatively recording public declarations rather than
+asserting which source wins native precedence.
+
+A nested candidate adds zero-based `marketplaceSource` and `pluginSource`
+indices to its existing `source`, key and derivation. The fixed derivations
+are `legacy_mcp_inline`, `legacy_mcp_default`, `legacy_mcp_path` and
+`agent_mcp_default`. Inline declarations use the plugin manifest itself as
+their source. Otherwise the source is the linked MCP JSON file; the default is
+`.mcp.json` for a legacy manifest or `mcp.json` for a supported
+Agent Plugins 1.0 root manifest. Explicit local MCP file references are bounded
+to the same plugin root. An unsupported root schema is not reinterpreted as a
+legacy manifest. The server-map key supplies the MCP policy segment before
+native namespacing or app routing. No transport command, URL, environment value,
+header, arbitrary JSON value or private metadata is published.
+
+The new source kinds are `plugin_manifest` and `mcp_manifest`. All remain
+inside `app/resources/plugins/<marketdir>/`, with safe ASCII components no
+longer than 64 bytes and full source paths no longer than 512 bytes. Local
+plugin-source paths and local MCP references have at most eight components,
+including the MCP filename. Absolute paths, dot traversal, aliases, links,
+variables and URI references are not followed. Every new source counts toward
+the same 64-source and combined 128 MiB budgets. Each JSON file is at most
+256 KiB; at most 64 distinct JSON files are read, including no more than 16
+marketplace manifests. The 128-key, 16 KiB environment, 64 KiB report, parser and
+process limits do not change.
+
+The separate `manifestAnalysis` object contains only integer
+`pluginEntries` (at most 2,048), `pluginManifests`, `mcpFiles`
+(each at most 64), and `skippedEntries` (at most the entry count).
+An entry with an unsupported or missing local source, manifest, schema, MCP
+reference, file or server identity contributes once to the skipped count.
+Valid sibling declarations can remain. The existing complete/partial status
+still describes JavaScript coverage; manifest incompleteness is separately
+visible and never means that other server keys are absent. Malformed or
+duplicate JSON, read/provenance failures and global bounds still block the
+whole catalog rather than yielding an empty result.
+
+Before publication, PowerShell validates exact candidate shapes, derivation and
+source-kind relationships, indices, shared marketplace/plugin roots, exact
+default filenames and local path bounds. Every supporting marketplace, plugin
+and MCP manifest must independently hash to its unique original signed-MSIX ZIP
+entry on the same read-only verification stream. A terminal MCP file alone
+cannot establish provenance. The trusted bounded extractor establishes JSON
+relationships; PowerShell binds all supporting bytes and validates the emitted
+relation, without executing or reparsing plugin configuration. The existing
+whole-ASAR binding, ZIP ambiguity rejection, no-account/GUI-session gates,
+per-PID digest ordering and reference-only runtime events are preserved.
+
+This catalog identifies package-declared positive candidates only. It does not
+authenticate a plugin, select native precedence, validate a transport, prove
+that a server is installed or loadable, establish policy approval, or authorize
+forwarding. A match is still just a public spelling match. Enabling an MCP
+server can activate a connection or process; no enablement, provisioning,
+credential, permission or production argument change is made here.
+
+Offline tests cover every derivation, linked source kind/index/root, exact key
+and path bounds, all-source ZIP hashes, aliases and links, and rejection of
+unreviewed nested forms and raw values. An actual Node report from synthetic
+marketplace/plugin/MCP files passes through PowerShell and original-ZIP binding,
+with command/environment canaries absent from output. New scanner and observer
+behavioral red tests use exact `e1c8fb52` APIs and require their named
+assertion failures before the current Linux/Windows suites run. The workflow
+watches the new MCP scanner tests explicitly and preserves all earlier reds.
+
+The RPC metadata allowlist also recognizes the single exact method spelling
+`getAuthStatus`. Differently cased or suffixed spellings remain unknown. Only
+the method label is exposed: request parameters, result bodies and authentication
+values remain opaque, and this does not add a production handler or change
+routing, sign-in or policy behavior.

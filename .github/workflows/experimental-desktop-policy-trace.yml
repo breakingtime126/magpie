@@ -13,6 +13,7 @@ on:
       - build/inspect-desktop-static-metadata*.mjs
       - build/inspect-desktop-public-plugin-*.mjs
       - build/inspect-desktop-ast-limits*.mjs
+      - build/inspect-desktop-mcp-catalog*.mjs
       - build/vendor/acorn-8.15.0/**
       - internal/appserverbridge/**
       - cmd/magpie-codex-bridge/**
@@ -166,6 +167,48 @@ jobs:
           printf '%s\n' "$output" | grep -F -- 'not ok 2 - limited source preserves independent public evidence'
           printf '%s\n' "$output" | grep -F -- 'a file-local AST limit must preserve only complete independent public evidence'
           echo 'Both old AST-limit behaviors fail explicitly; import, setup or compilation failures do not qualify.'
+      - name: Check out exact pre-MCP catalog behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: e1c8fb52c61406baba1a6d712c0fcea83aacaf0d
+          path: .ci-mcp-catalog-baseline
+          persist-credentials: false
+      - name: Prove source-bound MCP declarations fail on the old scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/inspect-desktop-mcp-catalog-red.test.mjs .ci-mcp-catalog-baseline/build/
+          status=0
+          output="$(cd .ci-mcp-catalog-baseline && node --max-old-space-size=512 --test --test-reporter=tap build/inspect-desktop-mcp-catalog-red.test.mjs 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- 'not ok 1 - public MCP declarations produce source-bound nested candidates'
+          printf '%s\n' "$output" | grep -F -- 'source-bound nested MCP declaration key missing'
+          echo 'The old scanner lacks the source-bound declaration; missing APIs or setup failures do not qualify.'
+      - name: Prove nested MCP references fail on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/config_public_mcp_catalog_red_test.go .ci-mcp-catalog-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-mcp-catalog-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestPublicMCPManifestCatalogRecognizedWithoutMutation$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestPublicMCPManifestCatalogRecognizedWithoutMutation'
+          printf '%s\n' "$output" | grep -F -- 'source-bound nested MCP catalog key was rejected'
+          echo 'The old observer rejects the reviewed nested catalog grammar; compilation failures do not qualify.'
+      - name: Prove exact authentication method metadata fails on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/auth_metadata_test.go .ci-mcp-catalog-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-mcp-catalog-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestGetAuthStatusMetadataKeepsAuthenticationOpaque$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestGetAuthStatusMetadataKeepsAuthenticationOpaque'
+          printf '%s\n' "$output" | grep -F -- 'exact authentication method metadata was not correlated'
+          echo 'The old observer lacks this exact metadata label; raw auth data must remain opaque in current tests.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |
@@ -182,7 +225,7 @@ jobs:
             exit 1
           fi
           pwsh -NoProfile -File build/test-desktop-public-catalog.ps1
-          node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs
+          node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs build/inspect-desktop-mcp-catalog.test.mjs build/inspect-desktop-mcp-catalog-red.test.mjs
           go test -race -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           go vet -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
 
@@ -250,7 +293,7 @@ jobs:
         run: |
           powershell -NoProfile -File build/test-desktop-public-catalog.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Public catalog validation tests failed.' }
-          node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs
+          node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs build/inspect-desktop-mcp-catalog.test.mjs build/inspect-desktop-mcp-catalog-red.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Static metadata inspector tests failed.' }
           go test -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           if ($LASTEXITCODE -ne 0) { throw 'Windows observer tests failed.' }
