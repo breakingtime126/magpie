@@ -1,6 +1,7 @@
 package appserverbridge
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,11 @@ import (
 // Loading it never creates directories, copies credentials or changes settings.
 type Config struct {
 	Backends []Backend `json:"backends"`
+
+	// StartupProbe is disabled unless explicitly enabled after review of both
+	// authorities and the official probe's credential/network/cache effects.
+	StartupProbe string `json:"startup_probe,omitempty"`
+
 	// WorkingDirectory explicitly selects one shared startup context. Empty
 	// preserves each child's private home as its process working directory.
 	WorkingDirectory string `json:"working_directory,omitempty"`
@@ -32,6 +38,9 @@ type Backend struct {
 	CodexHome  string            `json:"codex_home"`
 	Models     []json.RawMessage `json:"models,omitempty"`
 	InheritEnv []string          `json:"inherit_env,omitempty"`
+
+	// StartupProbeSHA256 pins a separately reviewed official executable.
+	StartupProbeSHA256 string `json:"startup_probe_sha256,omitempty"`
 }
 
 var backendName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -64,6 +73,9 @@ func LoadConfig(input io.Reader) (Config, error) {
 // Validate checks isolation before any subprocess starts. All paths must exist;
 // symlinks are resolved so aliases cannot silently share account state.
 func (cfg Config) Validate() error {
+	if cfg.StartupProbe != "" && cfg.StartupProbe != StartupProbeCompareUnrestricted {
+		return errors.New("unsupported startup_probe mode")
+	}
 	if len(cfg.Backends) != 2 {
 		return errors.New("bridge requires exactly two backends")
 	}
@@ -78,6 +90,12 @@ func (cfg Config) Validate() error {
 	ids := map[string]bool{}
 	var homes []string
 	for i, b := range cfg.Backends {
+		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" {
+			digest, err := hex.DecodeString(b.StartupProbeSHA256)
+			if err != nil || len(digest) != 32 {
+				return errors.New("startup probe requires a SHA256 pin for each backend")
+			}
+		}
 		if !backendName.MatchString(b.ID) || ids[b.ID] {
 			return fmt.Errorf("backend %d needs a unique alphanumeric id", i+1)
 		}

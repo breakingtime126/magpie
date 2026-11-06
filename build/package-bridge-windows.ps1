@@ -85,10 +85,12 @@ $env:MAGPIE_BRIDGE_ADAPTER_TEST_EXE = $adapter
 # These synthetic tests do not start official Codex or contact model services.
 & go test -v -count=1 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge
 Assert-NativeExit 'Native stdio adapter unit and lifecycle tests'
-& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapter(Stdio|DesktopArguments)$'
-Assert-NativeExit 'Repeated compiled adapter stdio, Desktop arguments and EOF tests'
+& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapter(Stdio|DesktopArguments|StartupProbe)$'
+Assert-NativeExit 'Repeated compiled adapter stdio, Desktop arguments, startup probe and EOF tests'
 & go test -v -count=1 -timeout=10m -tags nogui ./internal/appserverbridge
 Assert-NativeExit 'Native bridge tests'
+& go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestStartupProbeNative'
+Assert-NativeExit 'Repeated native startup probe and owned cleanup tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestRun(WindowsReapsStartedBackendFamilies|InterruptPreservesOtherBackendAndAllowsFollowup)$'
 Assert-NativeExit 'Repeated Windows cleanup and interruption tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./internal/proc -run '^TestStartTreeStrict'
@@ -148,6 +150,23 @@ try {
     if ($argumentMutationExit -eq 0 -or ($argumentMutationLog -join "`n") -notmatch '--- FAIL: TestNativeAdapterDesktopArguments') {
         throw 'Scalar code-mode mutation did not produce the expected argument-policy regression failure.'
     }
+
+
+    # Restore launch controls before checking a distinct requirements guard.
+    [IO.File]::WriteAllText($launchFile, $launchSource)
+    $probeFile = Join-Path $mutationRoot 'internal/appserverbridge/probe.go'
+    $probeSource = [IO.File]::ReadAllText($probeFile)
+    $nullGuard = '!bytes.Equal(bytes.TrimSpace(requirements["requirements"]), []byte("null"))'
+    if ([regex]::Matches($probeSource, [regex]::Escape($nullGuard)).Count -ne 1) {
+        throw 'Startup requirements mutation target is not unique.'
+    }
+    [IO.File]::WriteAllText($probeFile, $probeSource.Replace($nullGuard, 'false'))
+    $probeMutationLog = & go test -v -count=1 -timeout=2m -tags nogui ./internal/appserverbridge -run '^TestStartupProbeSuccessSchemaIsCompleteAndExact$' 2>&1
+    $probeMutationExit = $LASTEXITCODE
+    $probeMutationLog | Write-Output
+    if ($probeMutationExit -eq 0 -or ($probeMutationLog -join "`n") -notmatch '--- FAIL: TestStartupProbeSuccessSchemaIsCompleteAndExact') {
+        throw 'Non-null requirements mutation did not produce the expected behavioral failure.'
+    }
 } finally {
     Set-Location -LiteralPath $env:GITHUB_WORKSPACE
     Remove-Item -LiteralPath $mutationRoot -Recurse -Force
@@ -155,6 +174,7 @@ try {
 }
 Write-Output 'Strict startup regression failed with CREATE_SUSPENDED removed, as required.'
 Write-Output 'Desktop argument-policy regression failed with granular code-mode toggle replaced, as required.'
+Write-Output 'Startup probe regression rejected allowing non-null requirements, as required.'
 
 $binary = Join-Path $package 'magpie-app-server-bridge-windows-amd64.exe'
 & go build -tags nogui -trimpath -buildvcs=true -ldflags "-s -w -X main.version=$version" -o $binary .
@@ -201,8 +221,8 @@ $manifest = [ordered]@{
     nativeAdapterSHA256 = (Get-FileHash -LiteralPath $adapter -Algorithm SHA256).Hash.ToLowerInvariant()
     nativeAdapterBuildFlags = '-tags nogui -trimpath -buildvcs=true -ldflags=-s -w -X main.buildVersion=<version>'
     signing = 'unsigned'
-    checks = @('Native stdio adapter unit and lifecycle tests', 'Repeated compiled adapter initialize and EOF tests', 'Repeated compiled adapter observed Desktop argument tests', 'Granular code-mode policy mutation rejected by regression', 'Desktop bootstrap auth/config local rejection tests', 'Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help', 'Built native adapter truthful help and version')
-    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration and exact launcher arguments', 'Desktop-required auth/config bootstrap support', 'Startup inspection and sign-out (explicitly unsupported)', 'Real official backend granular feature merge', 'Native adapter OS-signal handling', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
+    checks = @('Linux focused bridge, proc and adapter race tests', 'Native stdio adapter unit and lifecycle tests', 'Repeated compiled adapter initialize and EOF tests', 'Repeated compiled adapter observed Desktop argument tests', 'Granular code-mode policy mutation rejected by regression', 'Repeated compiled startup probes with pinned synthetic backends', 'Repeated native startup probe and owned cleanup tests', 'Non-null startup requirements mutation rejected by regression', 'Desktop bootstrap auth/config local rejection tests', 'Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help', 'Built native adapter truthful help and version')
+    notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration and exact launcher arguments', 'Desktop-required auth/config bootstrap support', 'Real official startup inspection and credential/policy side effects', 'Restricted or different-version startup configuration (unsupported)', 'Startup sign-out (explicitly unsupported)', 'Real official backend granular feature merge', 'Native adapter OS-signal handling', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
 }
 [IO.File]::WriteAllText((Join-Path $package 'BUILD.json'), ($manifest | ConvertTo-Json -Depth 5) + "`n", $utf8)
 $readme = @'
@@ -221,16 +241,21 @@ adapter. It accepts only reviewed app-server stdio forms, needs the explicit
 MAGPIE_APP_SERVER_BRIDGE_CONFIG process environment, and truthfully identifies
 itself as an experimental adapter. The reviewed Desktop base argv is accepted;
 its code-mode toggle is normalized to the granular enabled field to preserve
-existing policy. Startup inspection, sign-out and unreviewed overrides are
-explicitly unsupported. It does not establish working Desktop integration.
+existing policy. Startup inspection is disabled by default and supports only
+explicitly enabled, SHA256-pinned 0.166.0-alpha.6 backends returning the same
+complete unrestricted result. It can refresh credentials, contact policy
+services and write caches, even on failure. Sign-out, restricted startup results
+and unreviewed overrides remain unsupported. It does not establish working Desktop integration.
 Neither executable is a standalone official Codex installation. The package
 bundles no official Codex backend, credentials, AIHub account or integration.
 The example configuration contains placeholders, not usable authentication.
 See DESIGN.md for arguments, unsupported auth/config RPCs and remaining limits.
 
 CI runs synthetic bridge/CLI/process tests, static checks, a startup mutation,
-compiled adapter initialize/EOF and observed Desktop-argument tests, a granular
-code-mode policy mutation check, and truthful help/version smoke tests.
+compiled adapter initialize/EOF and observed Desktop-argument tests, pinned
+synthetic startup probes and cleanup checks, a granular code-mode policy mutation,
+a non-null startup requirements mutation, Linux focused race tests, and truthful
+help/version smoke tests. No real official startup command is executed by tests.
 It does not establish working Desktop integration, real tools/model inference,
 full-suite correctness or complete Windows process-tree containment.
 

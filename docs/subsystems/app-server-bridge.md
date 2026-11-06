@@ -444,35 +444,84 @@ stdio, environment and working-directory inputs. This confirms construction
 logic, not that a separate Desktop instance or bridge was launched successfully.
 No `CODEX_CLI_PATH` setting is made by this project.
 
-### Startup inspection and sign-out are separate, unsupported operations
+### Explicit, narrowly supported startup inspection
 
 Desktop's startup inspection appends `--print-startup-config` and
-`--startup-client-info` with a JSON client identity. A separate recovery/sign-out
-call also appends `--startup-sign-out`. The adapter recognizes these before any
-configuration read or child startup, emits a fixed rejection to stderr and
-exits unsuccessfully with empty stdout. Sign-out takes precedence in rejection
-diagnostics regardless of argument order. It never treats these calls as an
-ordinary JSONL connection or fabricates a successful startup configuration.
+`--startup-client-info` with a JSON client identity. The adapter now handles this
+as a separate one-shot operation, never as a JSONL connection. It requires both
+flags, a bounded client object with unique `name` and `version` string fields
+and an optional string/null `title`, and no explicit `--stdio` or `--listen`.
+Unknown, duplicate or malformed arguments fail before configuration access.
+
+Inspection is **disabled by default**. After separately reviewing and authorizing
+the effects on **both** configured backends, an operator can explicitly set
+`startup_probe` to `compare-unrestricted-v0.166` and set each backend's
+`startup_probe_sha256` to the SHA-256 of its separately reviewed native executable.
+The shipped example does not enable this mode. Config validation checks pin
+syntax; the probe hashes **both** binaries before starting either one. A pin
+is not a signature, proof of an official binary, or protection against replacement
+by another same-user process. Provision and review the executables independently.
+
+The adapter invokes each configured official command sequentially, using the
+same reviewed environment, working directory, normalized launch controls and
+provider pin as the normal bridge. It adds only the two inspection arguments,
+closes stdin, discards stderr and bounds stdout to 64 KiB. One 30-second context
+budget covers both probes and digest checks; native filesystem and process
+cleanup calls still depend on the OS completing them. Every started process uses
+the bridge's strict owned-process-tree startup and cleanup. There is no retry,
+JSONL initialization, fallback to a single authority, or cached permission grant.
+
+Only this **complete** shape is supported, from both successful official exits:
+
+```json
+{"appServerVersion":"0.166.0-alpha.6","configRequirements":{"supportsIndependentSpeedModes":true,"requirements":null}}
+```
+
+The result is validated before one normalized JSON object and newline are
+returned. Every displayed field came from both validated responses. Missing,
+unknown, case-variant or duplicate fields, another version, non-null requirements
+(including an empty object), malformed UTF-8, extra JSON, excessive output,
+nonzero exits and timeouts fail closed. The adapter does not redact a requirement
+into null or merge unlike policies. A null result is an official startup snapshot,
+not proof that no managed configuration exists, and cannot override either
+backend's later permission checks. Managed/restricted configurations are
+explicitly unsupported in this mode even when the two responses match.
 
 Official [startup configuration](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/startup_config.rs#L28-L76)
 is a one-shot JSON command that returns before normal app-server initialization.
-Its success envelope contains `appServerVersion` and `configRequirements`; its
-error envelope contains `error` and accompanies a failed process exit. It does
-not use the bridge's JSONL initialize exchange. A fixed `requirements:null`
-response would conceal real managed restrictions and is not a valid workaround.
+The [reviewed success construction](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/startup_config.rs#L154-L174)
+and [requirements mapping](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/request_processors/config_processor.rs#L445-L465)
+are the source of this exact version-scoped schema. Runtime/config failures emit
+a fixed bridge-specific JSON error and unsuccessful exit, with no backend
+payload, token, `configLoad` classification or suggested login recovery. Argument
+failures use stderr and empty stdout. This does not promise that Desktop will
+accept the bridge's error handling or finish its bootstrap.
 
-Even ordinary inspection can load stored authentication, refresh credentials,
-fetch account or enterprise policy and update caches. The official CLI preamble
-also prepares its own helper directories. Startup sign-out can revoke tokens,
-delete configured authentication, clear account policy caches and update certain
-provider settings before a later error occurs. A failure is not proof that
-nothing changed. The bridge neither performs nor retries those actions.
+**Inspection has side effects.** It can load stored authentication (including
+configured keyring/workload sources), refresh and persist credentials, fetch
+account/enterprise policy and update caches. The official CLI preamble can load
+its `.env` and prepare helper directories. Separate HOME/CODEX_HOME directories
+are not an OS security boundary; system/project policy and supported credential
+sources still apply. The bridge does not substitute an empty directory or alter
+policy to manufacture an unrestricted result. Even a rejected, timed-out or
+partial two-backend probe may already have changed authentication/cache state;
+there is no transactional rollback or automatic retry. Enabling this code is
+not authorization to run it against a user's real accounts.
 See [managed startup loading](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/config_manager.rs#L417-L430),
 [credential refresh](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/login/src/auth/manager.rs#L2495-L2512)
-and [startup sign-out](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/startup_config.rs#L86-L150).
+and [cloud policy loading](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/cloud-config/src/chatgpt.rs#L33-L56).
+Current verification uses synthetic processes only, never the real one-shot
+command, account state, credential refresh or policy services.
 
-These startup commands are a known Desktop integration blocker. Supporting the
-normal base argv alone does not establish working Desktop startup.
+### Startup sign-out remains unsupported
+
+A separate Desktop recovery call appends `--startup-sign-out`. The adapter
+rejects this flag before environment/configuration access, regardless of other
+argument order, and starts no child. It never forwards sign-out or attempts to
+repair an account. Official [startup sign-out](https://github.com/openai/codex/blob/rust-v0.166.0-alpha.6/codex-rs/app-server/src/startup_config.rs#L86-L150)
+can revoke tokens, delete configured authentication, clear policy caches and
+update some provider settings before a later error occurs. Failure is not proof
+that nothing changed. Supporting inspection does not authorize those actions.
 
 ### Remaining JSONL bootstrap boundaries
 
@@ -497,8 +546,9 @@ preserve request IDs, send nothing to either backend and leave supported calls
 usable afterward. If the exact Desktop bootstrap needs them, this remains an
 explicit integration blocker rather than an invented successful response.
 
-Next acceptance requires a reviewed startup-inspection authority and permission
-model, any additional effective non-sensitive argument shapes, and a sanitized
+Next acceptance requires explicit permission for any real startup inspection,
+review of unsupported managed-policy cases, additional effective non-sensitive
+argument shapes, and a sanitized
 RPC method/field-shape trace from the exact Desktop version. Such evidence must
 omit token values, auth files, request content and private environment values.
 Review additional interface support first, then test in an authorized isolated
@@ -513,6 +563,8 @@ adapter itself against two native synthetic backend processes, verifies clean
 JSONL initialization and EOF shutdown, and checks both backend exit markers.
 The observed Desktop base argv is also exercised through the compiled adapter;
 both synthetic children assert normalized controls and their own provider pins.
-These checks do not test Desktop's launch hook, official model traffic, or native
+Synthetic one-shot tests additionally exercise the compiled adapter, both digest
+pins, complete result validation, disabled mode and pre-config sign-out rejection.
+These checks do not test Desktop's launch hook, official startup effects, model traffic, or native
 OS-signal delivery to the adapter. Unsupported authentication and configuration
 bootstrap methods are covered by local-rejection regressions, not mocked success.

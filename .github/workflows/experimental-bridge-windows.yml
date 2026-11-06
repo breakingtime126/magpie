@@ -14,7 +14,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  bridge-race:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: '1'
+      GOOS: linux
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
+    steps:
+      - name: Check out the triggering commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up the pinned Go version
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test synthetic bridge and probe concurrency
+        shell: bash
+        run: |
+          set -euo pipefail
+          format_diff="$(gofmt -d internal/appserverbridge internal/proc cmd/magpie-codex-bridge)"
+          if [[ -n "$format_diff" ]]; then printf '%s\n' "$format_diff"; exit 1; fi
+          export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
+          isolated="$(mktemp -d "$RUNNER_TEMP/bridge-race.XXXXXX")"
+          trap 'chmod -R u+w "$isolated"; rm -rf "$isolated"' EXIT
+          export HOME="$isolated/home" CODEX_HOME="$isolated/codex"
+          export XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache"
+          export XDG_DATA_HOME="$isolated/data" XDG_STATE_HOME="$isolated/state"
+          export TMPDIR="$isolated/tmp"
+          mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR"
+          export MAGPIE_BRIDGE_ADAPTER_TEST_EXE="$isolated/magpie-codex-bridge"
+          go build -race -tags nogui -o "$MAGPIE_BRIDGE_ADAPTER_TEST_EXE" ./cmd/magpie-codex-bridge
+          go test -race -v -count=1 -timeout=15m -tags nogui ./internal/appserverbridge ./internal/proc ./cmd/magpie-codex-bridge
+          test -z "$(git status --porcelain)"
+
   windows-amd64:
+    needs: bridge-race
     if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
     runs-on: windows-2022
     timeout-minutes: 45
@@ -64,3 +106,4 @@ jobs:
 
           Unsigned experimental CLI only. No release, installation, Desktop integration or live model acceptance.
           "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+

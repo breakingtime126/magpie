@@ -22,6 +22,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if startupProbeFixture() {
+		os.Exit(0)
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "bridge-fixture-descendant" {
 		fmt.Println("ready")
 		for {
