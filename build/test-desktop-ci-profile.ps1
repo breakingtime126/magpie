@@ -1018,9 +1018,9 @@ Expect-Pass 'uninformative optional caller scan is not executed again' {
 Expect-Reject 'control-plane profile needs an explicit real bridge home' {
     New-DesktopBridgeSettings (New-Backends) $true $true $version $hash
 }
-foreach ($home in @('fixture-alpha-home', 'fixture-alpha-codex', 'fixture-beta-home', 'fixture-beta-codex')) {
+foreach ($backendHome in @('fixture-alpha-home', 'fixture-alpha-codex', 'fixture-beta-home', 'fixture-beta-codex')) {
     Expect-Reject 'bridge home must not alias a native home' {
-        New-DesktopBridgeSettings (New-Backends) $true $true $version $hash $home
+        New-DesktopBridgeSettings (New-Backends) $true $true $version $hash $backendHome
     }
 }
 Expect-Pass 'observer receives a separate explicit control root only when supplied' {
