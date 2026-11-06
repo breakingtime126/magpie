@@ -1,7 +1,8 @@
 # Dot-source this file only. No execution occurs until the explicit invocation.
 function Assert-ControlPlaneNativeSummary($Report) {
     $names = @('schema', 'scope', 'status', 'stage', 'failure', 'native_sha256',
-        'binary_verified', 'version_verified', 'config_reads', 'catalog_models',
+        'binary_verified', 'version_verified', 'config_reads', 'layer_reads',
+        'stable_layer_rereads', 'layer_version_changes', 'catalog_models',
         'threads', 'turns', 'assistant_messages', 'thread_reads', 'ownership_rejections',
         'alpha_requests', 'beta_requests', 'fixture_errors', 'unexpected_server_requests',
         'adapter_clean_exit', 'cleanup_complete')
@@ -34,7 +35,8 @@ function Assert-ControlPlaneNativeSummary($Report) {
     foreach ($name in @('binary_verified', 'version_verified', 'adapter_clean_exit', 'cleanup_complete')) {
         if ($Report.$name -isnot [bool]) { throw 'Invalid native control-plane summary.' }
     }
-    $counts = @('config_reads', 'catalog_models', 'threads', 'turns', 'assistant_messages',
+    $counts = @('config_reads', 'layer_reads', 'stable_layer_rereads', 'layer_version_changes',
+        'catalog_models', 'threads', 'turns', 'assistant_messages',
         'thread_reads', 'ownership_rejections', 'alpha_requests', 'beta_requests',
         'fixture_errors', 'unexpected_server_requests')
     foreach ($name in $counts) {
@@ -42,7 +44,7 @@ function Assert-ControlPlaneNativeSummary($Report) {
             $Report.$name -lt 0 -or $Report.$name -gt 2048) { throw 'Invalid native control-plane summary.' }
     }
     if ($Report.status -ceq 'passed') {
-        $expected = @(3, 2, 2, 4, 4, 2, 2, 2, 2, 0, 0)
+        $expected = @(9, 6, 3, 1, 2, 2, 4, 4, 2, 2, 2, 2, 0, 0)
         for ($i = 0; $i -lt $counts.Count; $i++) {
             if ($Report.($counts[$i]) -ne $expected[$i]) { throw 'Invalid native control-plane summary.' }
         }

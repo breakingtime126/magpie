@@ -1558,15 +1558,18 @@ returning fictional file bytes or expanding filesystem access.
 #### Strict routing config request and fresh policy precondition
 
 The `config/read` params must be an object containing only optional
-`includeLayers` and `cwd`. The four accepted forms are `{}`,
-`{"includeLayers":false}`, `{"cwd":null}` and
-`{"includeLayers":false,"cwd":null}`. In the pinned native
+`includeLayers` and `cwd`. The six accepted forms are `{}`,
+`{"includeLayers":false}`, `{"cwd":null}`,
+`{"includeLayers":false,"cwd":null}`, `{"includeLayers":true}` and
+`{"includeLayers":true,"cwd":null}`. In the pinned native
 [ConfigReadParams](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/config.rs#L390-L398),
 omitted `includeLayers` defaults to false and absent/null `cwd` means no working
-directory. These forms select the same unscoped, no-layer read; accepting null
-`cwd` does not enable directory-scoped configuration.
+directory. All six forms select the same unscoped session settings and origins.
+Only explicit true includes the one genuine bridge-owned session layer; false or
+omission omits `layers`. Accepting null `cwd` does not enable directory-scoped
+configuration.
 
-Explicit null or true `includeLayers`, every string `cwd` (including empty),
+Explicit null `includeLayers`, every string `cwd` (including empty),
 wrong field types, missing/null/non-object params and unknown fields fail
 locally. Native string-or-int64 IDs and the existing bounded optional trace
 shape apply. The 64 KiB strict policy JSON reader rejects decoded duplicate keys,
@@ -1593,7 +1596,9 @@ from the bridge's actual routing state rather than filtered native config.
 
 #### Exact owned result and provenance
 
-The result contains only `config` and `origins:{}`; `layers` is omitted.
+The result contains `config` and `origins`. With `includeLayers:true` it also
+contains exactly one `layers` entry; otherwise `layers` is omitted, not null or
+an empty array. The same published session snapshot supplies all three fields.
 `config` contains:
 
 - `model_provider: "magpie_bridge"`, the reserved frontend routing authority.
@@ -1604,7 +1609,7 @@ The result contains only `config` and `origins:{}`; `layers` is omitted.
 - `magpie_bridge`, an explicit extension with `version:1`,
   `view:"routing-defaults"`, `provider_routing:"fixed-per-thread"`,
   `execution_policy:"backend-owned-per-thread"` and `model_catalog:"model/list"`.
-  Its `supports` object has exactly `config_writes:false`, `layer_reads:false` and
+  Its `supports` object has exactly `config_writes:false`, `layer_reads:true` and
   `cwd_reads:false`. Its `provenance` object names
   `model_provider:"bridge-routing"` and, only when model is present,
   `model:"bridge-catalog-default"`.
@@ -1619,9 +1624,59 @@ The result contains only `config` and `origins:{}`; `layers` is omitted.
 No approval, sandbox, permission, login, instruction, feature or native
 `model_providers` fields are advertised. No path, endpoint, header, credential,
 environment table or native storage location enters the owned config view.
-`origins` is intentionally partial: the native closed source union has no
-bridge-routing variant, and the extension supplies honest provenance instead.
-No synthetic user/system/session origin or native version hash is invented.
+The bridge materializes one real, in-memory, service-owned session layer when
+the control-plane mode is enabled. It publishes a replacement only when a whole
+successful model catalog commits. Routes, default and session layer are committed
+together; incomplete or failed refreshes retain the previous complete snapshot.
+An omitted-model `thread/start` consumes that published snapshot's model, not
+a separately reconstructed config default. Explicit model selection and fixed
+per-thread ownership remain unchanged.
+
+The layer has exactly `name:{"type":"sessionFlags"}`, `version` and `config`.
+Its config equals the returned effective owned config. It has no file path,
+`profile`, `disabledReason`, writable-user claim or empty policy layer.
+`origins` contains one entry for every primitive leaf, using dotted paths and
+array indexes such as `magpie_bridge.backends.0.id`. Containers and empty arrays
+have no origins. Each entry is exactly the same layer `name` and `version`.
+
+This source uses the pinned native implementation's service-owned session
+semantics, not merely the wire enum's older `-c/--config` comment.
+[`SessionThreadConfig`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/config/src/thread_config.rs)
+is documented as values owned by the service that starts or manages the session,
+and converts them to `SessionFlags`. The native
+[`ConfigLayerStack::with_session_plugins`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/config/src/state.rs)
+also replaces such layers at runtime. The bridge applies this provenance to
+its own actual routing authority only. It does not claim that either native
+backend loaded this layer or that the layer supplies native execution settings.
+
+The version follows native
+[`version_for_toml` and `record_origins`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/config/src/fingerprint.rs):
+`sha256:` followed by the lowercase SHA-256 of recursively key-sorted compact
+UTF-8 JSON for the layer config. The owned schema uses strings, booleans,
+integers, objects and arrays. Its serializer deliberately preserves literal
+Unicode, HTML characters and U+2028/U+2029 as native serde_json does, while
+escaping quotes, backslashes and control characters. Literal backslash-u text
+is not confused with Unicode escapes. No filesystem timestamp or native
+configuration version participates.
+
+The mode caps the complete wire-serialized layered result at 64 KiB, including
+both config copies, origins and JSON escaping. A config that already exceeds
+this budget is rejected before fingerprinting; a final layered-result check
+also catches duplication and HTML/Unicode escape expansion. An oversized
+catalog-derived default fails the catalog refresh with the sanitized routing
+error before publishing any new routes, default or session snapshot. The prior
+complete state remains usable. Nothing is truncated, and the disabled mode is
+unchanged. This conservative control-plane budget prevents a later output-frame
+failure from terminating an otherwise usable bridge connection.
+
+A config read selects the complete current snapshot after its second fresh
+policy response. A catalog refresh completed while the policy pair is pending
+is therefore reflected consistently in config, origins and layers. Reads do not
+republish the session. Equal config content has the same version; default
+addition, change or removal changes the version, while a catalog change that
+does not alter owned routing settings need not. This in-memory read-only layer
+needs no persistent file or write/CAS API. It does not change the control-home
+filesystem boundary.
 
 The source oracle is
 [protocol/v2/config.rs](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/config.rs)
@@ -1666,7 +1721,9 @@ approval routing, account ownership and attestation rules are preserved.
 #### Implementation and acceptance boundary
 
 Implementation lives in
-[`control_plane_167.go`](../../internal/appserverbridge/control_plane_167.go),
+[`control_plane_167.go`](../../internal/appserverbridge/control_plane_167.go)
+and the actual session layer, version and origins in
+[`control_plane_session_167.go`](../../internal/appserverbridge/control_plane_session_167.go),
 with mode/path validation in [`config.go`](../../internal/appserverbridge/config.go),
 launch wiring in [`run.go`](../../internal/appserverbridge/run.go), exact native-ID
 collision handling in [`native_trace_167.go`](../../internal/appserverbridge/native_trace_167.go),
@@ -1693,6 +1750,21 @@ of all four native-defaulted params forms. Its failure diagnostic is
 older unknown-mode red. The routing unit tests also verify that each form still
 requires fresh paired native requirements, yields the same owned result and
 rejects a new non-null policy after prior success.
+
+[`control_plane_167_layers_test.go`](../../internal/appserverbridge/control_plane_167_layers_test.go)
+adds six-form shape equivalence, fresh policy checks for true and false, exact
+source/hash/leaf origins, stable rereads, atomic catalog publication and failed
+refresh retention, read/refresh overlap, actual omitted-model routing, default
+removal, duplicate IDs/keys, byte bounds, no native/private fields, and Unicode,
+HTML/control-character/literal-backslash version oracles, detached snapshot
+bytes, exact layered wire budgets, escape amplification and oversized-catalog
+rollback. The standalone
+[`control_plane_167_layers_red_test.go`](../../internal/appserverbridge/control_plane_167_layers_red_test.go)
+copies alone to `66e39e44c2c26d23023278d1a0b8799d26f2b8bb` and must fail with
+`native includeLayers:true config/read must be accepted`. It also requires two
+fresh native policy replies, one coherent session layer and all 18 initial leaf
+origins with the correct content version. These are assertion-level oracles,
+not an execution record.
 
 These source blobs were authored with connectors only. Formatting, compilation,
 unit/lifecycle tests, old-base red, race/vet/build/full-suite checks, official

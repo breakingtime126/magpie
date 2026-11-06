@@ -10,7 +10,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile(
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'New-DesktopBridgeSettings',
     'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
-    'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopConfigReadEvidence',
+    'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
     'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
     $definitions = @($ast.FindAll({
         param($node)
@@ -510,13 +510,88 @@ Expect-Pass 'runtime feature evidence consumes the full sanitized snapshot once'
     }
 }
 
+# Error totals are a counts-only account of the full capture, not successful API coverage.
+function New-RPCErrorEvent {
+    return [pscustomobject]@{
+        seq = 1; pid = 1; kind = 'rpc_error'; direction = 'from_bridge'
+        method = 'project/list'; correlation = 1; code = -32601; class = 'unsupported_method'
+    }
+}
+$fixturePublicMethods = @('project/list', 'fs/readFile', 'config/read', 'unknown')
+Expect-Pass 'full-snapshot RPC errors retain unsupported and other errors after preview cutoff' {
+    $events = @()
+    for ($index = 1; $index -le 300; $index++) {
+        $events += [pscustomobject]@{ seq = $index; pid = 1; kind = 'stream_end'; direction = 'stderr'; class = 'eof' }
+    }
+    $unsupported = New-RPCErrorEvent; $unsupported.seq = 301
+    $unmatched = New-RPCErrorEvent; $unmatched.seq = 302; $unmatched.class = 'unknown'
+    foreach ($field in @('method', 'correlation', 'code')) { $unmatched.PSObject.Properties.Remove($field) }
+    $evidence = Get-DesktopRPCErrorEvidence ($events + @($unsupported, $unmatched)) $fixturePublicMethods
+    Assert-Keys ([pscustomobject]$evidence) @('rpcErrors', 'unsupportedMethodErrors', 'otherRpcErrors')
+    if ($evidence.rpcErrors -ne 2 -or $evidence.unsupportedMethodErrors -ne 1 -or $evidence.otherRpcErrors -ne 1) {
+        throw 'RPC error counts were truncated or changed.'
+    }
+}
+foreach ($field in @('class', 'direction', 'method')) {
+    foreach ($bad in @('PRIVATE_CANARY', 0, $null)) {
+        Expect-Reject ('RPC-error summary refuses unknown labels and wrong types: ' + $field) {
+            $event = New-RPCErrorEvent; $event.$field = $bad
+            Get-DesktopRPCErrorEvidence @($event) $fixturePublicMethods
+        }
+    }
+}
+foreach ($field in @('seq', 'pid', 'correlation', 'code')) {
+    foreach ($bad in @('PRIVATE_CANARY', 1.5, 4294967297L, $null)) {
+        Expect-Reject ('RPC-error summary requires bounded native integers: ' + $field) {
+            $event = New-RPCErrorEvent; $event.$field = $bad
+            Get-DesktopRPCErrorEvidence @($event) $fixturePublicMethods
+        }
+    }
+}
+foreach ($field in @('method', 'correlation')) {
+    Expect-Reject ('RPC-error summary cannot keep half a correlation: ' + $field) {
+        $event = New-RPCErrorEvent; $event.PSObject.Properties.Remove($field)
+        Get-DesktopRPCErrorEvidence @($event) $fixturePublicMethods
+    }
+}
+foreach ($field in @('result', 'message', 'config', 'path')) {
+    Expect-Reject ('RPC-error summary refuses payloads: ' + $field) {
+        $event = New-RPCErrorEvent
+        $event | Add-Member -NotePropertyName $field -NotePropertyValue 'PRIVATE_CANARY'
+        Get-DesktopRPCErrorEvidence @($event) $fixturePublicMethods
+    }
+}
+Expect-Pass 'runtime error summary precedes strict profile validators and consumes full snapshot' {
+    $calls = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -ceq 'Get-DesktopRPCErrorEvidence'
+    }, $true))
+    if ($calls.Count -ne 1 -or $calls[0].CommandElements.Count -ne 3 -or
+        $calls[0].CommandElements[1] -isnot [Management.Automation.Language.VariableExpressionAst] -or
+        $calls[0].CommandElements[1].VariablePath.UserPath -cne 'allEvents' -or
+        $calls[0].CommandElements[2] -isnot [Management.Automation.Language.VariableExpressionAst] -or
+        $calls[0].CommandElements[2].VariablePath.UserPath -cne 'methods') {
+        throw 'RPC-error summary must consume the full snapshot and pinned public method vocabulary.'
+    }
+    foreach ($name in @('Get-DesktopNoAuthStatusEvidence', 'Get-DesktopFeatureListEvidence', 'Get-DesktopConfigReadEvidence')) {
+        $validators = @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq $name
+        }, $true))
+        if ($validators.Count -ne 1 -or $calls[0].Extent.EndOffset -ge $validators[0].Extent.StartOffset) {
+            throw 'A strict compatibility failure can hide the full RPC-error summary.'
+        }
+    }
+}
+
 # Configuration fixtures contain only shape flags, never native config or result bodies.
-function New-ConfigReadRequest([int]$PidValue, [int]$Correlation) {
+function New-ConfigReadRequest([int]$PidValue, [int]$Correlation, [bool]$IncludeLayers = $false) {
     return [pscustomobject]@{
         seq = 1; pid = $PidValue; kind = 'rpc'; direction = 'to_bridge'
         method = 'config/read'; correlation = $Correlation; class = 'request'
         tracePresent = $true; traceValid = $true; configParamsValid = $true
-        configIncludeLayers = $false; configCwdProvided = $false
+        configIncludeLayers = $IncludeLayers; configCwdProvided = $false
     }
 }
 function New-ConfigReadResponse([int]$PidValue, [int]$Correlation) {
@@ -531,8 +606,13 @@ Expect-Pass 'bridge-owned config read counts interleaved replies across processe
         (New-ConfigReadResponse 1 2), (New-ConfigReadResponse 1 1),
         (New-ConfigReadRequest 2 1), (New-ConfigReadResponse 2 1)
     )
-    Assert-Keys ([pscustomobject]$evidence) @('requests', 'validatedResponses')
-    if ($evidence.requests -ne 3 -or $evidence.validatedResponses -ne 3) { throw 'Wrong config-read counts.' }
+    Assert-Keys ([pscustomobject]$evidence) @('requests', 'validatedResponses', 'layerRequests',
+        'layerValidatedResponses', 'withoutLayerRequests', 'withoutLayerValidatedResponses')
+    if ($evidence.requests -ne 3 -or $evidence.validatedResponses -ne 3 -or
+        $evidence.layerRequests -ne 0 -or $evidence.layerValidatedResponses -ne 0 -or
+        $evidence.withoutLayerRequests -ne 3 -or $evidence.withoutLayerValidatedResponses -ne 3) {
+        throw 'Wrong config-read counts.'
+    }
 }
 Expect-Pass 'valid config read without optional trace metadata' {
     $request = New-ConfigReadRequest 1 1
@@ -547,6 +627,33 @@ Expect-Pass 'ordinary unrelated sanitized events do not count as config-read evi
         (New-ConfigReadRequest 1 3), (New-ConfigReadResponse 1 3)
     )
     if ($evidence.requests -ne 1 -or $evidence.validatedResponses -ne 1) { throw 'Counted unrelated events.' }
+}
+Expect-Pass 'layer requests and replies stay paired across interleaved processes' {
+    $evidence = Get-DesktopConfigReadEvidence @(
+        (New-ConfigReadRequest 1 1 $true), (New-ConfigReadRequest 1 2),
+        (New-ConfigReadResponse 1 2), (New-ConfigReadResponse 1 1),
+        (New-ConfigReadRequest 2 1 $true), (New-ConfigReadResponse 2 1)
+    ) -RequireLayers
+    Assert-Keys ([pscustomobject]$evidence) @('requests', 'validatedResponses', 'layerRequests',
+        'layerValidatedResponses', 'withoutLayerRequests', 'withoutLayerValidatedResponses')
+    if ($evidence.requests -ne 3 -or $evidence.validatedResponses -ne 3 -or
+        $evidence.layerRequests -ne 2 -or $evidence.layerValidatedResponses -ne 2 -or
+        $evidence.withoutLayerRequests -ne 1 -or $evidence.withoutLayerValidatedResponses -ne 1) {
+        throw 'Config-read layer counts were not correlated.'
+    }
+}
+Expect-Pass 'global layer request succeeds without optional trace metadata' {
+    $request = New-ConfigReadRequest 1 1 $true
+    $request.PSObject.Properties.Remove('tracePresent'); $request.PSObject.Properties.Remove('traceValid')
+    $evidence = Get-DesktopConfigReadEvidence @($request, (New-ConfigReadResponse 1 1)) -RequireLayers
+    if ($evidence.requests -ne 1 -or $evidence.validatedResponses -ne 1 -or
+        $evidence.layerRequests -ne 1 -or $evidence.layerValidatedResponses -ne 1 -or
+        $evidence.withoutLayerRequests -ne 0 -or $evidence.withoutLayerValidatedResponses -ne 0) {
+        throw 'Wrong layer-only config-read counts.'
+    }
+}
+Expect-Reject 'reviewed profile cannot claim layers from only layers-disabled requests' {
+    Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1), (New-ConfigReadResponse 1 1)) -RequireLayers
 }
 Expect-Reject 'no observed native config-read request' { Get-DesktopConfigReadEvidence @() }
 Expect-Reject 'outstanding config-read reply' { Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1)) }
@@ -595,9 +702,9 @@ Expect-Reject 'invalid config-read params cannot become absent flags' {
     }
     Get-DesktopConfigReadEvidence @($request, (New-ConfigReadResponse 1 1))
 }
-foreach ($field in @('configIncludeLayers', 'configCwdProvided')) {
-    Expect-Reject ('configuration scope remains unsupported: ' + $field) {
-        $request = New-ConfigReadRequest 1 1; $request.$field = $true
+foreach ($includeLayers in @($false, $true)) {
+    Expect-Reject ('configuration cwd scope remains unsupported with layers: ' + $includeLayers) {
+        $request = New-ConfigReadRequest 1 1 $includeLayers; $request.configCwdProvided = $true
         Get-DesktopConfigReadEvidence @($request, (New-ConfigReadResponse 1 1))
     }
 }
@@ -690,25 +797,62 @@ foreach ($field in @('cwd', 'includeLayers', 'result', 'config', 'code', 'authPa
         Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1), $response)
     }
 }
+# Enabling layers changes only the accepted flag, not any validation or failure boundary.
+foreach ($field in @('configParamsValid', 'configIncludeLayers', 'configCwdProvided')) {
+    Expect-Reject ('layer request cannot omit shape metadata: ' + $field) {
+        $request = New-ConfigReadRequest 1 1 $true; $request.PSObject.Properties.Remove($field)
+        Get-DesktopConfigReadEvidence @($request, (New-ConfigReadResponse 1 1)) -RequireLayers
+    }
+}
+Expect-Reject 'layer request cannot bypass invalid parameter metadata' {
+    $request = New-ConfigReadRequest 1 1 $true; $request.configParamsValid = $false
+    Get-DesktopConfigReadEvidence @($request, (New-ConfigReadResponse 1 1)) -RequireLayers
+}
+Expect-Reject 'layer request cannot publish unknown metadata' {
+    $request = New-ConfigReadRequest 1 1 $true
+    $request | Add-Member -NotePropertyName config -NotePropertyValue 'PRIVATE_CANARY'
+    Get-DesktopConfigReadEvidence @($request, (New-ConfigReadResponse 1 1)) -RequireLayers
+}
+foreach ($class in @('unsupported_method', 'unknown', 'duplicate_id', 'correlation_limit')) {
+    Expect-Reject ('layer request cannot count an error as coverage: ' + $class) {
+        $response = New-ConfigReadResponse 1 1; $response.kind = 'rpc_error'; $response.class = $class
+        Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1 $true), $response) -RequireLayers
+    }
+}
+Expect-Reject 'successful layers-disabled reply cannot cover an outstanding layer request' {
+    Get-DesktopConfigReadEvidence @(
+        (New-ConfigReadRequest 1 1), (New-ConfigReadRequest 1 2 $true), (New-ConfigReadResponse 1 1)
+    ) -RequireLayers
+}
+Expect-Reject 'layer request cannot reuse a completed layers-disabled correlation' {
+    Get-DesktopConfigReadEvidence @(
+        (New-ConfigReadRequest 1 1), (New-ConfigReadResponse 1 1),
+        (New-ConfigReadRequest 1 1 $true), (New-ConfigReadResponse 1 1)
+    ) -RequireLayers
+}
 # The published summary stops at 256 records; evidence must consume the full snapshot.
 $prefix = @((New-ConfigReadRequest 1 1), (New-ConfigReadResponse 1 1))
 for ($index = 3; $index -le 300; $index++) {
     $prefix += [pscustomobject]@{ seq = $index; pid = 1; kind = 'stream_end'; direction = 'stderr'; class = 'eof' }
 }
 Expect-Pass 'config-read requests after the summary cutoff are still counted' {
-    $request = New-ConfigReadRequest 1 2; $request.seq = 301
+    $request = New-ConfigReadRequest 1 2 $true; $request.seq = 301
     $response = New-ConfigReadResponse 1 2; $response.seq = 302
-    $evidence = Get-DesktopConfigReadEvidence ($prefix + @($request, $response))
-    if ($evidence.requests -ne 2 -or $evidence.validatedResponses -ne 2) { throw 'Truncated evidence.' }
+    $evidence = Get-DesktopConfigReadEvidence ($prefix + @($request, $response)) -RequireLayers
+    if ($evidence.requests -ne 2 -or $evidence.validatedResponses -ne 2 -or
+        $evidence.layerRequests -ne 1 -or $evidence.layerValidatedResponses -ne 1 -or
+        $evidence.withoutLayerRequests -ne 1 -or $evidence.withoutLayerValidatedResponses -ne 1) {
+        throw 'Truncated config-read layer evidence.'
+    }
 }
-Expect-Reject 'outstanding config-read request beyond the summary cutoff fails' {
-    $request = New-ConfigReadRequest 1 2; $request.seq = 301
-    Get-DesktopConfigReadEvidence ($prefix + @($request))
+Expect-Reject 'outstanding config-read layer request beyond the summary cutoff fails' {
+    $request = New-ConfigReadRequest 1 2 $true; $request.seq = 301
+    Get-DesktopConfigReadEvidence ($prefix + @($request)) -RequireLayers
 }
-Expect-Reject 'native config-read error beyond the summary cutoff fails' {
-    $request = New-ConfigReadRequest 1 2; $request.seq = 301
+Expect-Reject 'config-read layer error beyond the summary cutoff fails' {
+    $request = New-ConfigReadRequest 1 2 $true; $request.seq = 301
     $response = New-ConfigReadResponse 1 2; $response.seq = 302; $response.kind = 'rpc_error'; $response.class = 'unknown'
-    Get-DesktopConfigReadEvidence ($prefix + @($request, $response))
+    Get-DesktopConfigReadEvidence ($prefix + @($request, $response)) -RequireLayers
 }
 Expect-Pass 'runtime config-read evidence consumes the full sanitized snapshot once' {
     $calls = @($ast.FindAll({
@@ -716,10 +860,13 @@ Expect-Pass 'runtime config-read evidence consumes the full sanitized snapshot o
         $node -is [Management.Automation.Language.CommandAst] -and
         $node.GetCommandName() -ceq 'Get-DesktopConfigReadEvidence'
     }, $true))
-    if ($calls.Count -ne 1 -or $calls[0].CommandElements.Count -ne 2 -or
+    if ($calls.Count -ne 1 -or $calls[0].CommandElements.Count -ne 3 -or
         $calls[0].CommandElements[1] -isnot [Management.Automation.Language.VariableExpressionAst] -or
-        $calls[0].CommandElements[1].VariablePath.UserPath -cne 'allEvents') {
-        throw 'ConfigRead evidence must consume the full sanitized snapshot.'
+        $calls[0].CommandElements[1].VariablePath.UserPath -cne 'allEvents' -or
+        $calls[0].CommandElements[2] -isnot [Management.Automation.Language.CommandParameterAst] -or
+        $calls[0].CommandElements[2].ParameterName -cne 'RequireLayers' -or
+        $null -ne $calls[0].CommandElements[2].Argument) {
+        throw 'ConfigRead evidence must consume the full sanitized snapshot and require actual layers.'
     }
 }
 
@@ -1041,7 +1188,8 @@ function New-NativeControlSuccess {
         schema = 1; scope = 'synthetic-loopback-only'; status = 'passed'; stage = 'complete'; failure = ''
         native_sha256 = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
         binary_verified = $true; version_verified = $true; adapter_clean_exit = $true; cleanup_complete = $true
-        config_reads = 3; catalog_models = 2; threads = 2; turns = 4; assistant_messages = 4
+        config_reads = 9; layer_reads = 6; stable_layer_rereads = 3; layer_version_changes = 1
+        catalog_models = 2; threads = 2; turns = 4; assistant_messages = 4
         thread_reads = 2; ownership_rejections = 2; alpha_requests = 2; beta_requests = 2
         fixture_errors = 0; unexpected_server_requests = 0
     }
@@ -1062,7 +1210,8 @@ foreach ($field in @('binary_verified', 'version_verified', 'adapter_clean_exit'
         }
     }
 }
-foreach ($field in @('config_reads', 'catalog_models', 'threads', 'turns', 'assistant_messages', 'thread_reads',
+foreach ($field in @('config_reads', 'layer_reads', 'stable_layer_rereads', 'layer_version_changes',
+    'catalog_models', 'threads', 'turns', 'assistant_messages', 'thread_reads',
     'ownership_rejections', 'alpha_requests', 'beta_requests', 'fixture_errors', 'unexpected_server_requests')) {
     foreach ($bad in @(-1, 99, 1.5, 'PRIVATE_CANARY', $null)) {
         Expect-Reject ('native success requires exact fixture count: ' + $field) {
@@ -1070,9 +1219,11 @@ foreach ($field in @('config_reads', 'catalog_models', 'threads', 'turns', 'assi
             ConvertTo-DesktopNativeControlEvidence $value
         }
     }
-    Expect-Reject ('native count cannot hide an incomplete or extra operation: ' + $field) {
-        $value = New-NativeControlSuccess; $value.$field++
-        ConvertTo-DesktopNativeControlEvidence $value
+    foreach ($delta in @(-1, 1)) {
+        Expect-Reject ('native count cannot hide an incomplete or extra operation: ' + $field) {
+            $value = New-NativeControlSuccess; $value.$field += $delta
+            ConvertTo-DesktopNativeControlEvidence $value
+        }
     }
 }
 foreach ($field in @('schema', 'scope', 'status', 'stage', 'failure', 'native_sha256')) {
@@ -1150,7 +1301,8 @@ foreach ($field in @('scope', 'status', 'stage', 'failure', 'native_sha256')) {
         Assert-ControlPlaneNativeSummary $value
     }
 }
-foreach ($field in @('config_reads', 'catalog_models', 'threads', 'turns', 'assistant_messages', 'thread_reads',
+foreach ($field in @('config_reads', 'layer_reads', 'stable_layer_rereads', 'layer_version_changes',
+    'catalog_models', 'threads', 'turns', 'assistant_messages', 'thread_reads',
     'ownership_rejections', 'alpha_requests', 'beta_requests', 'fixture_errors', 'unexpected_server_requests')) {
     foreach ($bad in @(-1, 2049, 0.5, 'PRIVATE_CANARY')) {
         Expect-Reject ('native failed-report count remains bounded: ' + $field) {

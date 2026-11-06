@@ -152,12 +152,12 @@ func TestRunControlPlane167TwoNativePeersAndFreshReads(t *testing.T) {
 	if text(initial, "codexHome") != control {
 		t.Fatal("control frontend exposed a private native home")
 	}
-	askConfig := func() object {
-		m := stream.ask(t, bridge, `{"id":"config","method":"config/read","params":{"includeLayers":false}}`)
-		return m
+	askConfig := func(includeLayers bool) object {
+		return stream.ask(t, bridge, fmt.Sprintf(`{"id":"config","method":"config/read","params":{"includeLayers":%t}}`, includeLayers))
 	}
-	first := askConfig()
+	first := askConfig(false)
 	result, _ := child(first, "result")
+	controlPlaneCheckLayer167(t, result, "", false)
 	config, _ := child(result, "config")
 	if len(config) != 2 || text(config, "model_provider") != controlPlaneProvider167 {
 		t.Fatal("config fabricated a default or policy before native catalog")
@@ -166,8 +166,9 @@ func TestRunControlPlane167TwoNativePeersAndFreshReads(t *testing.T) {
 	if !exists(catalog, "result") {
 		t.Fatal("native model catalog failed")
 	}
-	current := askConfig()
+	current := askConfig(true)
 	result, _ = child(current, "result")
+	controlPlaneCheckLayer167(t, result, `"magpie/openai/gpt"`, true)
 	config, _ = child(result, "config")
 	if text(config, "model") != "magpie/openai/gpt" {
 		t.Fatal("config did not use the actual merged native default")
@@ -213,7 +214,7 @@ func TestRunControlPlane167TwoNativePeersAndFreshReads(t *testing.T) {
 	if err := os.WriteFile(secondary, []byte(`"error":{"code":-32000,"message":"PRIVATE_POLICY","data":"PRIVATE_TOKEN"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	failed := askConfig()
+	failed := askConfig(true)
 	failure, _ := child(failed, "error")
 	if text(failure, "message") != controlPlaneUnavailable167 || exists(failed, "result") {
 		t.Fatal("fresh native policy error became config success")
@@ -221,7 +222,7 @@ func TestRunControlPlane167TwoNativePeersAndFreshReads(t *testing.T) {
 	if err := os.WriteFile(secondary, []byte(`"result":`+controlPlaneNullRequirements), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if !exists(askConfig(), "result") {
+	if !exists(askConfig(true), "result") {
 		t.Fatal("fresh recovery failed")
 	}
 	bridge.input.Close()

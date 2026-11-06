@@ -1054,32 +1054,67 @@ copy of native config. No synthetic `config.toml`, credential or origin record
 is written there.
 
 The production bridge view is intentionally narrower than native effective
-config. It accepts global `config/read` with layers disabled and no non-null
-cwd, advertises the logical frontend provider `magpie_bridge`, and exposes only
-bridge-owned routing facts and its explicit extension. Origins are empty.
-Every successful view is gated on fresh paired native
-`configRequirements/read` results that genuinely contain `requirements:null`.
+config. It accepts global `config/read` with `includeLayers` absent, false or
+true and no non-null cwd. It advertises the logical frontend provider
+`magpie_bridge` and exposes only bridge-owned routing facts and its explicit
+extension. A layers-enabled read returns one actual service-owned
+`sessionFlags` layer with `name`, `version` and `config`, not a user or system
+file layer. The sole layer's config equals the effective owned config, and each
+primitive config leaf has an origin naming that layer and version. Container
+objects have no origin entry. Layers-disabled reads omit `layers` but return
+the same config and origins.
+
+The version follows the pinned native fingerprint contract: `sha256:` plus the
+SHA-256 of recursively sorted compact UTF-8 JSON for the layer config. Repeated
+reads of the same snapshot retain the version. A successful full model-catalog
+refresh publishes the routing default and its complete layer snapshot together;
+failed or incomplete refreshes retain the previous snapshot. The default used
+by omitted-model thread creation comes from that same snapshot. A read selects
+one complete current snapshot only after both fresh native
+`configRequirements/read` results genuinely contain `requirements:null`.
 Native config is never read or merged, and no authentication, approval, policy
-or sandbox setting is manufactured. Logical provider values on the supported
-request and response paths are translated only after ownership checks. See
+or sandbox setting is manufactured. No config file is created for this layer.
+Config writes, non-null cwd reads, project and filesystem routes remain
+unsupported. Logical provider values on the supported request and response paths
+are translated only after ownership checks. See
 [`control_plane_167.go`](../../internal/appserverbridge/control_plane_167.go)
-(`validateControlPlaneRead167`, `controlPlaneConfig167` and
-`controlPlaneInitialize167`) and the
-[bridge contract](app-server-bridge.md) for the exact production schema,
-admission checks and failure behavior.
+and the [bridge contract](app-server-bridge.md) for the pinned native sources,
+exact production schema, snapshot publication and failure behavior.
 
 `Get-DesktopConfigReadEvidence` consumes the full sanitized `$allEvents`
-snapshot, not the 256-record preview. It requires at least one actual
-layers-disabled, unscoped Desktop request and a successful response for every
-observed such request. Invalid/missing shape metadata, errors, outstanding or
-unmatched replies, cross-process mismatches, reused correlations, and any
-duplicate-ID or saturation record fail the gate. The report retains only
-request/validated-response counts. Result/config bodies, cwd values, origin
-details and trace carriers are never inspected by this evidence helper or
-published. Counts rely on the production view and its requirement validator;
-they are not independent proof of native configuration equivalence or Desktop
-consumer support. Unsupported consumers fail honestly, without guessed
-fallback config or another Desktop launch.
+snapshot, not the 256-record preview. Both global layers-enabled and
+layers-disabled request shapes need correlated successful responses. The
+reviewed runtime explicitly selects `-RequireLayers`: at least one actual
+layers-enabled request must succeed, so a layers-disabled-only capture cannot
+claim layer coverage. Offline callers without that switch can still validate
+layers-disabled evidence. Invalid/missing native boolean metadata, non-null
+cwd, errors, outstanding or unmatched replies, cross-process mismatches, reused
+correlations, and any duplicate-ID or saturation record fail the gate.
+
+The report retains only total request/validated-response counts and their
+layers-enabled/layers-disabled splits. Replies inherit their request's flag
+through the process-and-correlation key, even when interleaved. Result/config
+bodies, cwd values, origin details, version hashes and trace carriers are never
+inspected by this evidence helper or published. Counts rely on the production
+view and its requirement validator; they are not independent proof of the
+layer's contents, native configuration equivalence or Desktop consumer support.
+Offline fixtures retain the previous failure guards and cover true-flag success,
+errors, cwd, missing/invalid metadata, unknown fields, reused correlations,
+unfinished replies, required true coverage and requests beyond the preview.
+Their definitions are not an execution result.
+
+Before strict auth, feature and config checks, `Get-DesktopRPCErrorEvidence`
+counts all observed RPC errors in the full sanitized snapshot, split into
+unsupported-method and other errors. It validates the fixed error labels,
+optional correlation metadata, bounded integers and exact metadata-only shape
+against the existing public method vocabulary. It retains no method, ID, code,
+message or result body. The report explicitly labels the selected scope as
+auth status, feature pages and global owned config only, with
+`fullDesktopCompatibility: "not-established"`. A green selected-profile
+capture does not establish support for project, filesystem, config-write or
+other unimplemented APIs. Zero observed errors is not full-lifecycle evidence.
+Existing failures remain failures; unsupported consumers are not replaced with
+guessed fallback config or another Desktop launch.
 
 ### Project and file-target classification in the same capture
 
@@ -1190,14 +1225,19 @@ deadline and uses an owned process-tree supervisor for cleanup.
 
 The helper performs config-read, model-list and resolved routing checks, then
 two projectless native threads with two text turns each against separate
-loopback synthetic Responses fixtures. It checks ownership rejection and final
-config consistency, then observes adapter exit and performs owned process-tree
-cleanup. The `adapter_clean_exit` flag means the adapter exited with status zero;
+loopback synthetic Responses fixtures. At each of the initial, resolved and
+final config phases it reads without layers, with layers, then with layers
+again. It checks exact config/layer equality, primitive-leaf origins, native
+content fingerprint, stable rereads and the single initial-to-resolved version
+change. It also checks ownership rejection and final config consistency, then
+observes adapter exit and performs owned process-tree cleanup. The
+`adapter_clean_exit` flag means the adapter exited with status zero;
 it does not prove that every native descendant exited on its own. Owned cleanup
 may forcibly stop remaining descendants through the kill-on-close job.
 `cleanup_complete` records completion of that cleanup, not graceful descendant
 shutdown. The main report accepts
-only its exact pinned success schema with three config reads, two catalog
+only its exact pinned success schema: `config_reads=9`, `layer_reads=6`,
+`stable_layer_rereads=3` and `layer_version_changes=1`, plus two catalog
 models, two threads, four turns, four assistant messages, two thread reads, two
 ownership rejections, two fixture requests per backend, zero fixture errors,
 zero unexpected server requests and all verification/cleanup flags true.
@@ -1211,6 +1251,11 @@ Desktop evidence. It proves neither real-service acceptance nor real-account,
 tool, corporate-policy or complete GUI compatibility, and makes no zero-egress
 claim. The existing no-auth and genuine feature-page gates keep their previous
 semantics.
+
+The [pre-change run at `66e39e44`](https://github.com/breakingtime126/magpie/actions/runs/42261517920)
+validated 297 Desktop records while previewing 256, but failed on the actual
+`includeLayers:true` request. Its separate native slice passed the older
+three-config-read fixture. That run does not verify the new layer support.
 
 Source preparation used GitHub connectors without an available execution
 environment. PowerShell parsing/fixtures, Go tests/vet/race/build and the

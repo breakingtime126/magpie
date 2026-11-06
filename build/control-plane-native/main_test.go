@@ -242,7 +242,8 @@ func TestPeerStopsUnreviewedServerRequest(t *testing.T) {
 
 func passedSummary() summary {
 	return summary{Schema: 1, Scope: "synthetic-loopback-only", Status: "passed", Stage: "complete",
-		NativeSHA256: nativeSHA, BinaryVerified: true, VersionVerified: true, ConfigReads: 3, CatalogModels: 2,
+		NativeSHA256: nativeSHA, BinaryVerified: true, VersionVerified: true, ConfigReads: 9,
+		LayerReads: 6, StableLayerRereads: 3, LayerVersionChanges: 1, CatalogModels: 2,
 		Threads: 2, Turns: 4, AssistantMessages: 4, ThreadReads: 2, OwnershipRejections: 2,
 		AlphaRequests: 2, BetaRequests: 2, AdapterCleanExit: true, CleanupComplete: true}
 }
@@ -252,6 +253,8 @@ func TestSummaryNeverAcceptsWeakenedSuccess(t *testing.T) {
 	}
 	for _, change := range []func(*summary){
 		func(s *summary) { s.Turns = 3 }, func(s *summary) { s.FixtureErrors = 1 },
+		func(s *summary) { s.ConfigReads = 3 }, func(s *summary) { s.LayerReads = 5 },
+		func(s *summary) { s.StableLayerRereads = 2 }, func(s *summary) { s.LayerVersionChanges = 0 },
 		func(s *summary) { s.NativeSHA256 = "unverified" }, func(s *summary) { s.CleanupComplete = false },
 		func(s *summary) { s.UnexpectedServerRequests = 1 }, func(s *summary) { s.Stage = "PRIVATE_PATH" },
 		func(s *summary) { s.Failure = "PRIVATE_NATIVE_ERROR" },
@@ -273,27 +276,6 @@ func TestCatalogRequiresBothActualAliasesAndOneDefault(t *testing.T) {
 	for _, raw := range []string{strings.Replace(valid, "beta", "alpha", 1), strings.Replace(valid, "\"isDefault\":false", "\"isDefault\":true", 1), strings.Replace(valid, "\"isDefault\":true", "\"isDefault\":false", 1)} {
 		if _, _, err := checkCatalog([]byte(raw)); err == nil {
 			t.Fatal("invalid catalog accepted")
-		}
-	}
-}
-
-func TestConfigReadOwnsOnlyReviewedRoutingFields(t *testing.T) {
-	initial := `{"config":{"model_provider":"magpie_bridge","magpie_bridge":{"version":1,"view":"routing-defaults","provider_routing":"fixed-per-thread","execution_policy":"backend-owned-per-thread","model_catalog":"model/list","supports":{"config_writes":false,"layer_reads":false,"cwd_reads":false},"provenance":{"model_provider":"bridge-routing"},"backends":[{"id":"alpha","provider":"alpha_provider","model_prefix":"magpie/alpha/","catalog_source":"native-model-list"},{"id":"beta","provider":"beta_provider","model_prefix":"magpie/beta/","catalog_source":"native-model-list"}]}},"origins":{}}`
-	if err := checkConfig([]byte(initial), ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkConfig([]byte(initial), "magpie/alpha/gpt-5.5"); err == nil {
-		t.Fatal("unresolved default accepted after catalog")
-	}
-	for _, raw := range []string{
-		strings.Replace(initial, "\"model_provider\":\"magpie_bridge\"", "\"model_provider\":\"alpha_provider\"", 1),
-		strings.Replace(initial, "\"origins\":{}", "\"origins\":{\"model\":\"native-private-path\"}", 1),
-		strings.Replace(initial, "\"config\":{", "\"config\":{\"approval_policy\":\"never\",", 1),
-		strings.Replace(initial, "\"config\":{", "\"config\":{\"token\":\"SYNTHETIC-SECRET\",", 1),
-		strings.TrimSuffix(initial, "}") + ",\"layers\":[]}",
-	} {
-		if checkConfig([]byte(raw), "") == nil {
-			t.Fatal("private or unreviewed config field accepted")
 		}
 	}
 }

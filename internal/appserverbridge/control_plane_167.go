@@ -1,7 +1,6 @@
 package appserverbridge
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -43,11 +42,11 @@ func validateControlPlaneRead167(line []byte) bool {
 		return false
 	}
 	// Native omission defaults includeLayers to false and cwd to None.
-	// Accept those equivalent unscoped reads, never a layer or path request.
+	// Both includeLayers values select the same unscoped session authority.
 	for key, value := range params {
 		switch key {
 		case "includeLayers":
-			if !bytes.Equal(bytes.TrimSpace(value), []byte("false")) {
+			if !requirementsBool(value) {
 				return false
 			}
 		case "cwd":
@@ -112,10 +111,18 @@ func (r *Router) controlPlaneReadResponse167(g *request, backend string, line []
 	if !sameJSON(g.results[r.backends[0].ID][0], g.results[r.backends[1].ID][0]) {
 		return r.reject(g, -32000, controlPlaneUnavailable167)
 	}
-	return r.finish(g, r.controlPlaneConfig167())
+	if r.controlSession167 == nil {
+		return r.reject(g, -32000, controlPlaneUnavailable167)
+	}
+	var includeLayers bool
+	_ = json.Unmarshal(g.params["includeLayers"], &includeLayers)
+	return r.finish(g, r.controlSession167.read(includeLayers))
 }
 
-func (r *Router) controlPlaneConfig167() object {
+// These are the session-owned settings applied by the frontend router. The
+// session snapshot is published at activation and complete catalog commits,
+// not synthesized by config/read or copied from a native configuration.
+func (r *Router) controlPlaneSessionConfig167(defaultModel string) object {
 	backends := []object{}
 	for _, b := range r.backends {
 		source := "native-model-list"
@@ -131,8 +138,8 @@ func (r *Router) controlPlaneConfig167() object {
 	config := object{"model_provider": raw(controlPlaneProvider167)}
 	// Never manufacture a default before a complete model/list succeeds.
 	// The same committed catalog and default already govern thread/start.
-	if _, found := r.models[r.defaultModel]; found && r.defaultModel != "" {
-		config["model"] = raw(r.defaultModel)
+	if defaultModel != "" {
+		config["model"] = raw(defaultModel)
 		provenance["model"] = raw("bridge-catalog-default")
 	}
 	config["magpie_bridge"] = raw(object{
@@ -141,13 +148,11 @@ func (r *Router) controlPlaneConfig167() object {
 		"execution_policy": raw("backend-owned-per-thread"),
 		"model_catalog":    raw("model/list"),
 		"supports": raw(object{
-			"config_writes": raw(false), "layer_reads": raw(false), "cwd_reads": raw(false),
+			"config_writes": raw(false), "layer_reads": raw(true), "cwd_reads": raw(false),
 		}),
 		"provenance": raw(provenance), "backends": raw(backends),
 	})
-	// Native origins are partial. None of their closed source variants names
-	// this bridge's routing state; the explicit extension carries provenance.
-	return object{"config": raw(config), "origins": raw(object{})}
+	return config
 }
 
 func controlPlaneThreadCreate167(method string) bool {

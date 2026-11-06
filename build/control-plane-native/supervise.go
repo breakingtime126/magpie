@@ -130,7 +130,7 @@ func validSummary(s summary) bool {
 	if !failures[s.Failure] {
 		return false
 	}
-	counts := []int{s.ConfigReads, s.CatalogModels, s.Threads, s.Turns, s.AssistantMessages, s.ThreadReads, s.OwnershipRejections, s.AlphaRequests, s.BetaRequests, s.FixtureErrors, s.UnexpectedServerRequests}
+	counts := []int{s.ConfigReads, s.LayerReads, s.StableLayerRereads, s.LayerVersionChanges, s.CatalogModels, s.Threads, s.Turns, s.AssistantMessages, s.ThreadReads, s.OwnershipRejections, s.AlphaRequests, s.BetaRequests, s.FixtureErrors, s.UnexpectedServerRequests}
 	for _, n := range counts {
 		if n < 0 || n > 2048 {
 			return false
@@ -139,7 +139,7 @@ func validSummary(s summary) bool {
 	if s.Status == "failed" {
 		return s.Failure != ""
 	}
-	want := []int{3, 2, 2, 4, 4, 2, 2, 2, 2, 0, 0}
+	want := []int{9, 6, 3, 1, 2, 2, 4, 4, 2, 2, 2, 2, 0, 0}
 	for i, n := range counts {
 		if n != want[i] {
 			return false

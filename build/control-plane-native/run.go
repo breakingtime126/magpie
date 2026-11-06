@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 )
 
@@ -171,10 +170,10 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	report.Stage = "initial_config"
-	if err := readConfig(p, ""); err != nil {
+	initialVersion, err := readConfig(p, "", report)
+	if err != nil {
 		return err
 	}
-	report.ConfigReads++
 	report.Stage = "catalog"
 	raw, err := p.rpc("model/list", map[string]any{})
 	if err != nil {
@@ -186,10 +185,14 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	}
 	report.CatalogModels = count
 	report.Stage = "resolved_config"
-	if err := readConfig(p, defaultModel); err != nil {
+	resolvedVersion, err := readConfig(p, defaultModel, report)
+	if err != nil {
 		return err
 	}
-	report.ConfigReads++
+	if initialVersion == resolvedVersion {
+		return failure("config_shape_mismatch")
+	}
+	report.LayerVersionChanges++
 	report.Stage = "threads"
 	var threads [2]string
 	for i, name := range []string{"alpha", "beta"} {
@@ -272,10 +275,16 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		report.ThreadReads++
 	}
 	report.Stage = "final_config"
-	if err := readConfig(p, defaultModel); err != nil {
+	finalVersion, err := readConfig(p, defaultModel, report)
+	if err != nil {
 		return err
 	}
-	report.ConfigReads++
+	if finalVersion != resolvedVersion {
+		return failure("config_shape_mismatch")
+	}
+	if err := emptyDirectory(controlHome); err != nil {
+		return err
+	}
 	for _, ch := range homes {
 		// Inspect only file existence inside homes created by this invocation.
 		// Never open an authentication file, even an unexpected one.
@@ -295,40 +304,6 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	report.AssistantMessages = count
-	return nil
-}
-
-func readConfig(p *peer, model string) error {
-	raw, err := p.rpc("config/read", map[string]any{"includeLayers": false})
-	if err != nil {
-		return err
-	}
-	return checkConfig(raw, model)
-}
-
-func checkConfig(raw json.RawMessage, model string) error {
-	provenance := map[string]any{"model_provider": "bridge-routing"}
-	config := map[string]any{"model_provider": "magpie_bridge"}
-	if model != "" {
-		config["model"] = model
-		provenance["model"] = "bridge-catalog-default"
-	}
-	var backends []any
-	for _, name := range []string{"alpha", "beta"} {
-		backends = append(backends, map[string]any{"id": name, "provider": name + "_provider",
-			"model_prefix": "magpie/" + name + "/", "catalog_source": "native-model-list"})
-	}
-	config["magpie_bridge"] = map[string]any{
-		"version": 1, "view": "routing-defaults", "provider_routing": "fixed-per-thread",
-		"execution_policy": "backend-owned-per-thread", "model_catalog": "model/list",
-		"supports":   map[string]any{"config_writes": false, "layer_reads": false, "cwd_reads": false},
-		"provenance": provenance, "backends": backends,
-	}
-	expected := jsonBytes(map[string]any{"config": config, "origins": map[string]any{}})
-	var actual, want any
-	if json.Unmarshal(raw, &actual) != nil || json.Unmarshal(expected, &want) != nil || !reflect.DeepEqual(actual, want) {
-		return failure("config_shape_mismatch")
-	}
 	return nil
 }
 

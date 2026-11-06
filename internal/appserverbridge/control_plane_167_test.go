@@ -16,7 +16,9 @@ const controlPlaneNullRequirements = `{"requirements":null,"supportsIndependentS
 func controlPlaneRouter(t *testing.T) *Router {
 	t.Helper()
 	r := testRouter(t, false)
-	r.controlPlaneRouting167 = true
+	if err := r.enableControlPlane167(); err != nil {
+		t.Fatal(err)
+	}
 	r.auth = (Config{ControlPlane: ControlPlaneRouting167}).authCompatibility()
 	return r
 }
@@ -51,8 +53,8 @@ func controlPlaneRead(t *testing.T, r *Router) object {
 		t.Fatal("routing view lost the original client ID")
 	}
 	result, _ := child(m, "result")
-	if len(result) != 2 || string(result["origins"]) != "{}" {
-		t.Fatal("routing view invented native origins or layers")
+	if len(result) != 2 || string(result["origins"]) == "{}" {
+		t.Fatal("routing view omitted session origins or invented unrequested layers")
 	}
 	config, _ := child(result, "config")
 	return config
@@ -117,7 +119,7 @@ func TestControlPlane167OwnedRoutingViewAndRealDefault(t *testing.T) {
 	}
 	supports, _ := child(extension, "supports")
 	if len(supports) != 3 || string(supports["config_writes"]) != "false" || string(supports["cwd_reads"]) != "false" ||
-		string(supports["layer_reads"]) != "false" {
+		string(supports["layer_reads"]) != "true" {
 		t.Fatal("unsupported config operations advertised")
 	}
 	controlPlaneCatalog(t, r, true)
@@ -158,9 +160,9 @@ func TestControlPlane167StrictRequests(t *testing.T) {
 		string([]byte{'{', '"', 0xff, '"', ':', '0', '}'}),
 	}
 	for _, params := range []string{
-		`{"includeLayers":true}`, `{"includeLayers":null}`, `{"includeLayers":0}`, `{"includeLayers":"false"}`,
+		`{"includeLayers":null}`, `{"includeLayers":0}`, `{"includeLayers":"false"}`,
 		`{"includeLayers":[]}`, `{"includeLayers":{}}`, `{"includeLayers":null,"cwd":null}`,
-		`{"includeLayers":true,"cwd":null}`, `{"includeLayers":false,"include\u004cayers":false}`,
+		`{"includeLayers":false,"include\u004cayers":false}`,
 		`{"cwd":null,"c\u0077d":null}`, `{"includeLayers":false,"cwd":null,"cwd":null}`,
 		`{"cwd":""}`, `{"cwd":"PRIVATE_PATH"}`, `{"cwd":false}`, `{"cwd":0}`, `{"cwd":[]}`, `{"cwd":{}}`,
 		`{"includeLayers":false,"cwd":""}`, `{"includeLayers":false,"cwd":"PRIVATE_PATH"}`,
@@ -245,7 +247,7 @@ func TestControlPlane167DefaultedParamsUseFreshPolicy(t *testing.T) {
 					m, _ := parseObject(done[0].Message)
 					result, _ := child(m, "result")
 					config, _ := child(result, "config")
-					if string(m["id"]) != "9007199254740993" || len(result) != 2 || string(result["origins"]) != "{}" ||
+					if string(m["id"]) != "9007199254740993" || len(result) != 2 || string(result["origins"]) == "{}" ||
 						len(config) != 2 || text(config, "model_provider") != controlPlaneProvider167 {
 						t.Fatal("defaulted config read changed the owned routing result or request ID")
 					}
@@ -571,7 +573,9 @@ func TestControlPlane167InitializeOwnsFrontendHome(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.controlPlaneRouting167 = true
+		if err := r.enableControlPlane167(); err != nil {
+			t.Fatal(err)
+		}
 		r.controlHome167 = t.TempDir()
 		return r
 	}

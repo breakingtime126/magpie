@@ -50,15 +50,43 @@ config/read before catalog resolution, actual native model/list, config/read
 with its resolved catalog default, two projectless threads selected by their
 alpha/beta aliases, two interleaved assistant-text turns per thread, rejection
 of opposite-backend model overrides, thread/read with logical providers, and
-a final unchanged routing-default read. Every assistant completion is audited
+a final unchanged routing-default read. Each config phase makes separate
+`includeLayers:false`, `true`, and `true` requests: nine reads in total, six
+with layers, and three stable layer rereads. Every assistant completion is audited
 at the reader boundary through adapter EOF. Exactly four distinct completions
 must match the known threads, actual turn IDs and route-specific synthetic
 answers. Extra, duplicate, unexplained or wrong-route completions fail even
 when no waiter would have consumed them. The assistant count is derived from
 that complete audit, not from successful waiter calls.
 
+The config checker owns an independent, fixed routing-view oracle. Its literal
+JSON is recursively sorted and compact before SHA-256, following the pinned
+[official fingerprint source](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/config/src/fingerprint.rs).
+Its explicit primitive-leaf origin list includes decimal array indices and
+excludes container origins. It calls no production bridge config, origin or
+fingerprint helper. Each true response must have exactly one `sessionFlags`
+layer, with `name`, `version` and `config`, no `disabledReason`, and config
+identical to the effective owned routing view. All origins must identify that
+same source and version. False responses must omit `layers` entirely while
+retaining identical config and origins. Missing, null, extra and duplicate
+fields, wrong sources, private/native fields and incorrect fingerprints fail.
+
+This is the bridge's actual frontend session routing authority, consistent with
+the pinned native
+[service-owned session source](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/config/src/thread_config.rs).
+It is not a native backend layer or an invented file. The fingerprint must
+change exactly once when the actual complete model catalog supplies its default.
+All fields and fingerprints must remain stable through the four routed turns.
+Every read still requires fresh paired native requirements replies.
+
+The strict success summary now requires `config_reads:9`, `layer_reads:6`,
+`stable_layer_rereads:3` and `layer_version_changes:1`. The existing two catalog
+models, two threads, four turns, four audited assistant completions, two thread
+reads and two ownership rejections remain required. No raw config, origin,
+fingerprint, thread ID or response is written to the summary.
+
 Native HOME, CODEX_HOME, control_home, and cwd are freshly created and separate.
-The control home has no fabricated config.toml. The fixture writes no auth.json,
+The control home remains empty through the final read and has no fabricated config.toml. The fixture writes no auth.json,
 copies no credentials, uses file credential storage and sets
 requires_openai_auth=false for both distinct native providers.
 Both model endpoints are numeric loopback HTTP SSE fixtures. Optional Apps,
@@ -88,7 +116,11 @@ job keeps this report separate from its Desktop capture.
 
 `go test -race ./build/control-plane-native` covers local synthetic fixtures,
 environment and input guards, exact pins, strict child lifecycle, unreviewed
-RPC/tool rejection, bounded protocol and summary privacy.
+RPC/tool rejection, bounded protocol and summary privacy. Config tests include
+source, shape, primitive-origin and digest mutations, wrong fingerprints applied
+consistently to all metadata, a changed later read, omission versus null, and
+duplicate/trailing JSON. The hash oracle includes the native source's fixed
+test vector and fixed initial/resolved routing-view fingerprints.
 The real acceptance is never silently skipped by these tests; it is the
 separate explicit Windows CI invocation above.
 

@@ -90,7 +90,11 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	router.configRequirementsRead = cfg.RequirementsRead != ""
 	router.configRequirementsNull167 = cfg.RequirementsRead == ConfigRequirementsCompareNull167
 	router.experimentalFeatureList167 = cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167
-	router.controlPlaneRouting167 = cfg.ControlPlane == ControlPlaneRouting167
+	if cfg.ControlPlane == ControlPlaneRouting167 {
+		if err := router.enableControlPlane167(); err != nil {
+			return err
+		}
+	}
 	router.controlHome167 = controlHome
 	router.controlNativeHomes167 = nativeHomes
 	router.auth = cfg.authCompatibility()

@@ -977,14 +977,57 @@ function Get-DesktopFeatureListEvidence([object[]]$Records) {
 }
 
 
+# Count errors in the full sanitized snapshot before strict profile checks run.
+# These observed counts are not a complete lifecycle or an API acceptance gate.
+function Get-DesktopRPCErrorEvidence([object[]]$Records, [string[]]$PublicMethods) {
+    $errors = 0
+    $unsupported = 0
+    $other = 0
+    $classes = @('startup_probe_unavailable', 'unsupported_authentication_capability',
+        'initialization_required', 'config_requirements_disabled', 'config_requirements_failed',
+        'gateway_oauth_disabled', 'unsupported_method', 'invalid_capabilities',
+        'invalid_initialization', 'already_initialized', 'unknown')
+    foreach ($event in $Records) {
+        if (-not $event.PSObject.Properties['kind'] -or $event.kind -cne 'rpc_error') { continue }
+        $names = @('seq', 'pid', 'kind', 'direction', 'class')
+        $hasMethod = [bool]$event.PSObject.Properties['method']
+        $hasCorrelation = [bool]$event.PSObject.Properties['correlation']
+        if ($hasMethod -ne $hasCorrelation) { throw 'RPC-error evidence has incomplete correlation metadata.' }
+        if ($hasMethod) { $names += @('method', 'correlation') }
+        if ($event.PSObject.Properties['code']) { $names += 'code' }
+        Assert-PublicShape $event $names
+        Assert-PublicInteger $event.seq 1 4294967296
+        Assert-PublicInteger $event.pid 1 4294967296
+        if ($event.kind -isnot [string] -or $event.direction -isnot [string] -or
+            @('to_bridge', 'from_bridge') -cnotcontains $event.direction -or
+            $event.class -isnot [string] -or $classes -cnotcontains $event.class) {
+            throw 'RPC-error evidence has invalid fixed metadata.'
+        }
+        if ($hasMethod) {
+            if ($event.method -isnot [string] -or $PublicMethods -cnotcontains $event.method) {
+                throw 'RPC-error evidence has an unreviewed method label.'
+            }
+            Assert-PublicInteger $event.correlation 1 4294967296
+        }
+        if ($event.PSObject.Properties['code']) { Assert-PublicInteger $event.code -4294967296 4294967296 }
+        $errors++
+        if ($event.class -ceq 'unsupported_method') { $unsupported++ } else { $other++ }
+    }
+    return [ordered]@{ rpcErrors = $errors; unsupportedMethodErrors = $unsupported; otherRpcErrors = $other }
+}
+
 # Only the full sanitized snapshot is evidence, never native config or response bodies.
 # Success relies on the production bridge-owned view and its fresh paired native
 # requirements:null checks. The observer does not prove the view's consumer support.
-function Get-DesktopConfigReadEvidence([object[]]$Records) {
+function Get-DesktopConfigReadEvidence([object[]]$Records, [switch]$RequireLayers) {
     $pending = @{}
     $seen = @{}
     $requests = 0
     $responses = 0
+    $layerRequests = 0
+    $layerResponses = 0
+    $withoutLayerRequests = 0
+    $withoutLayerResponses = 0
     foreach ($event in $Records) {
         if ($event.PSObject.Properties['class'] -and
             $event.class -in @('duplicate_id', 'correlation_limit')) {
@@ -1012,26 +1055,36 @@ function Get-DesktopConfigReadEvidence([object[]]$Records) {
                 }
             }
             if ($seen.ContainsKey($key) -or -not $event.configParamsValid -or
-                $event.configIncludeLayers -or $event.configCwdProvided -or
+                $event.configCwdProvided -or
                 ($event.PSObject.Properties['tracePresent'] -and -not $event.traceValid)) {
                 throw 'Configuration-read evidence has an unsupported request.'
             }
             $seen[$key] = $true
-            $pending[$key] = $true
+            $pending[$key] = $event.configIncludeLayers
             $requests++
+            if ($event.configIncludeLayers) { $layerRequests++ } else { $withoutLayerRequests++ }
         } elseif ($event.direction -ceq 'from_bridge' -and $event.class -ceq 'response') {
             Assert-PublicShape $event @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class')
             if (-not $pending.ContainsKey($key)) { throw 'Configuration-read evidence has an unmatched result.' }
+            if ($pending[$key]) { $layerResponses++ } else { $withoutLayerResponses++ }
             [void]$pending.Remove($key)
             $responses++
         } else {
             throw 'Configuration-read did not return a validated bridge-owned success.'
         }
     }
-    if ($pending.Count -ne 0 -or $requests -eq 0 -or $requests -ne $responses) {
+    if ($pending.Count -ne 0 -or $requests -eq 0 -or $requests -ne $responses -or
+        $layerRequests -ne $layerResponses -or $withoutLayerRequests -ne $withoutLayerResponses) {
         throw 'Configuration-read diagnostic lacks complete global request evidence.'
     }
-    return [ordered]@{ requests = $requests; validatedResponses = $responses }
+    if ($RequireLayers -and $layerRequests -eq 0) {
+        throw 'Configuration-read diagnostic lacks observed layer-request evidence.'
+    }
+    return [ordered]@{
+        requests = $requests; validatedResponses = $responses
+        layerRequests = $layerRequests; layerValidatedResponses = $layerResponses
+        withoutLayerRequests = $withoutLayerRequests; withoutLayerValidatedResponses = $withoutLayerResponses
+    }
 }
 
 # Pin the exact observed activation process through its OS handle before identity
@@ -1139,7 +1192,8 @@ function Get-DesktopCombinedOutcome($DesktopOutcome, [string]$NativeStatus, [str
 # real-service or account proof. Retain only the exact reviewed success schema.
 function ConvertTo-DesktopNativeControlEvidence($value) {
     $counts = [ordered]@{
-        config_reads = 3; catalog_models = 2; threads = 2; turns = 4
+        config_reads = 9; layer_reads = 6; stable_layer_rereads = 3; layer_version_changes = 1
+        catalog_models = 2; threads = 2; turns = 4
         assistant_messages = 4; thread_reads = 2; ownership_rejections = 2
         alpha_requests = 2; beta_requests = 2; fixture_errors = 0; unexpected_server_requests = 0
     }
@@ -2658,13 +2712,17 @@ requires_openai_auth = false
                 # the 256-record preview or the completeLifecycleEvidence flag.
                 $captureValidated = $true
                 $report.captureValidated = $true
+                $report.observer.rpcErrorEvidence = Get-DesktopRPCErrorEvidence $allEvents $methods
+                $report.observer.rpcErrorEvidenceLimit = 'Counts cover observed RPC errors in the full sanitized snapshot, including unsupported methods. They are not complete-lifecycle evidence; zero errors does not prove all Desktop APIs are supported.'
+                $report.observer.selectedCompatibilityScope = 'auth-status-feature-list-and-global-owned-config-only'
+                $report.observer.fullDesktopCompatibility = 'not-established'
                 # Full validated snapshots, not the truncated summary. No result payload is inspected or logged.
                 $report.observer.noAuthStatusEvidence = Get-DesktopNoAuthStatusEvidence $allEvents
                 $report.observer.noAuthStatusEvidenceLimit = 'Correlated success relies on the exact bridge no-auth result validator. It proves only this credential-free fixture, not login, token support or full Desktop compatibility.'
                 $report.observer.featureListEvidence = Get-DesktopFeatureListEvidence $allEvents
                 $report.observer.featureListEvidenceLimit = 'Correlated success relies on the production whole-page comparison validator, not observer inspection of results. Counts cover only observed unscoped requests, including limit-present requests and any cursor-present pages; no result, cursor or limit values are logged. It does not establish GUI usability, real-account support, inference or zero egress.'
-                $report.observer.configReadEvidence = Get-DesktopConfigReadEvidence $allEvents
-                $report.observer.configReadEvidenceLimit = 'Counts cover actual global, layers-disabled Desktop requests and their correlated successes in the full observed snapshot. They rely on the bridge-owned routing view and fresh paired native requirements:null validator, not native config inspection or observer result bodies. Unsupported consumers fail honestly; this is not GUI usability, shared native configuration, account or service evidence.'
+                $report.observer.configReadEvidence = Get-DesktopConfigReadEvidence $allEvents -RequireLayers
+                $report.observer.configReadEvidenceLimit = 'Counts cover actual global Desktop requests with and without layers and their correlated successes in the full observed snapshot, with at least one observed layer request required. They rely on the bridge-owned sessionFlags routing layer and fresh paired native requirements:null validator, not native config inspection or observer result bodies. Unsupported consumers fail honestly; this is not GUI usability, shared native configuration, account or service evidence.'
             }
         }
     }

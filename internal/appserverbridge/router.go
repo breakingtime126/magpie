@@ -45,6 +45,7 @@ type Router struct {
 	configRequirementsNull167  bool
 	experimentalFeatureList167 bool
 	controlPlaneRouting167     bool
+	controlSession167          *controlPlaneSession167
 	controlHome167             string
 	controlNativeHomes167      map[string]string
 
@@ -350,6 +351,12 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		}
 		if model == "" {
 			model = r.defaultModel
+			if r.controlPlaneRouting167 {
+				model = ""
+				if r.controlSession167 != nil {
+					model = r.controlSession167.model
+				}
+			}
 		}
 		route, ok := r.models[model]
 		if !ok {
@@ -1081,8 +1088,19 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 		}
 	}
 	if g.method == "model/list" {
+		var session *controlPlaneSession167
+		if r.controlPlaneRouting167 {
+			var err error
+			session, err = newControlPlaneSession167(r.controlPlaneSessionConfig167(defaultModel))
+			if err != nil {
+				return r.reject(g, -32000, controlPlaneUnavailable167), nil
+			}
+		}
+		// Publish routes, default and the service-owned session layer together.
+		// A failed or incomplete refresh leaves all three previous values intact.
 		r.models = routes
 		r.defaultModel = defaultModel
+		r.controlSession167 = session
 	} else if g.method == "thread/list" {
 		sortKey := text(g.params, "sortKey")
 		if sortKey == "" {

@@ -442,6 +442,24 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestExperimentalFeature167ConcurrentPages'
           printf '%s\n' "$output" | grep -F -- 'concurrent native feature pages must each reach both children'
           echo 'The old bridge rejects independent concurrent page reads; compilation or setup failures do not qualify.'
+      - name: Check out exact pre-owned-layer behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 66e39e44c2c26d23023278d1a0b8799d26f2b8bb
+          path: .ci-owned-layers-baseline
+          persist-credentials: false
+      - name: Prove native layer reads fail behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/control_plane_167_layers_red_test.go .ci-owned-layers-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-owned-layers-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestControlPlane167IncludeLayersBehavioralRed$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestControlPlane167IncludeLayersBehavioralRed'
+          printf '%s\n' "$output" | grep -F -- 'native includeLayers:true config/read must be accepted'
+          echo 'The old bridge rejects layer reads; compilation failure alone does not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |
