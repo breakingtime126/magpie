@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -23,71 +23,80 @@ import (
 )
 
 const (
-	maxTrace = 64 << 10
-	maxLine = 64 << 10
+	maxTrace   = 64 << 10
+	maxLine    = 64 << 10
 	maxPending = 256
-	activeEnv = "MAGPIE_CI_OBSERVER_ACTIVE"
+	activeEnv  = "MAGPIE_CI_OBSERVER_ACTIVE"
 )
 
 // event has no field capable of containing a raw RPC payload, ID, argv value,
 // path or stderr. String fields are assigned only fixed classifications.
 type event struct {
-	Sequence uint64 `json:"seq"`
-	PID int `json:"pid"`
-	Kind string `json:"kind"`
-	Direction string `json:"direction,omitempty"`
-	Method string `json:"method,omitempty"`
-	Correlation uint64 `json:"correlation,omitempty"`
-	Code *int64 `json:"code,omitempty"`
-	Class string `json:"class,omitempty"`
-	RequestAttestation *bool `json:"requestAttestation,omitempty"`
-	ExplicitGatewayOauth *bool `json:"explicitGatewayOauth,omitempty"`
-	RequiredHumanApproval *bool `json:"requiredHumanApproval,omitempty"`
-	ExperimentalAPI *bool `json:"experimentalApi,omitempty"`
-	Flag string `json:"flag,omitempty"`
-	ConfigKey string `json:"configKey,omitempty"`
-	ChildPID int `json:"child_pid,omitempty"`
-	Exit *int `json:"exit,omitempty"`
+	Sequence              uint64 `json:"seq"`
+	PID                   int    `json:"pid"`
+	Kind                  string `json:"kind"`
+	Direction             string `json:"direction,omitempty"`
+	Method                string `json:"method,omitempty"`
+	Correlation           uint64 `json:"correlation,omitempty"`
+	Code                  *int64 `json:"code,omitempty"`
+	Class                 string `json:"class,omitempty"`
+	RequestAttestation    *bool  `json:"requestAttestation,omitempty"`
+	ExplicitGatewayOauth  *bool  `json:"explicitGatewayOauth,omitempty"`
+	RequiredHumanApproval *bool  `json:"requiredHumanApproval,omitempty"`
+	ExperimentalAPI       *bool  `json:"experimentalApi,omitempty"`
+	Flag                  string `json:"flag,omitempty"`
+	ConfigKey             string `json:"configKey,omitempty"`
+	ChildPID              int    `json:"child_pid,omitempty"`
+	Exit                  *int   `json:"exit,omitempty"`
 }
 
 type pendingKey struct {
 	direction string
-	digest [32]byte
+	digest    [32]byte
 }
 type pendingRequest struct {
 	correlation uint64
-	method string
+	method      string
 }
 type observer struct {
-	mu sync.Mutex
-	out io.Writer
-	size int
-	sequence uint64
-	nextCorrelation uint64
-	pending map[pendingKey]pendingRequest
-	quarantined map[pendingKey]bool
+	mu                  sync.Mutex
+	out                 io.Writer
+	size                int
+	sequence            uint64
+	nextCorrelation     uint64
+	pending             map[pendingKey]pendingRequest
+	quarantined         map[pendingKey]bool
 	correlationDisabled bool
-	stopped bool
+	stopped             bool
 }
 
 func newObserver(w io.Writer) *observer {
-	return &observer{out:w, pending:make(map[pendingKey]pendingRequest), quarantined:make(map[pendingKey]bool)}
+	return &observer{out: w, pending: make(map[pendingKey]pendingRequest), quarantined: make(map[pendingKey]bool)}
 }
 
 // emitLocked never writes part of a record just to fill the remaining budget.
 // On trace IO failure observation stops, but forwarding continues unchanged.
 func (o *observer) emitLocked(e event) {
-	if o.stopped || o.out == nil { return }
+	if o.stopped || o.out == nil {
+		return
+	}
 	o.sequence++
 	e.Sequence = o.sequence
 	e.PID = os.Getpid()
 	b, err := json.Marshal(e)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	b = append(b, '\n')
-	if len(b) > maxTrace-o.size { o.out = nil; return }
+	if len(b) > maxTrace-o.size {
+		o.out = nil
+		return
+	}
 	n, err := o.out.Write(b)
 	o.size += n
-	if err != nil || n != len(b) { o.out = nil }
+	if err != nil || n != len(b) {
+		o.out = nil
+	}
 }
 func (o *observer) emit(e event) {
 	o.mu.Lock()
@@ -149,31 +158,41 @@ func errorClass(s string) string {
 // the trace. Typed string decoding makes escaped spellings correlate correctly.
 func digestID(raw json.RawMessage) ([32]byte, bool) {
 	var zero [32]byte
-	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) { return zero, false }
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return zero, false
+	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return sha256.Sum256([]byte("s:"+s)), true
+		return sha256.Sum256([]byte("s:" + s)), true
 	}
 	var n json.Number
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.UseNumber()
 	var v any
-	if d.Decode(&v) != nil { return zero, false }
+	if d.Decode(&v) != nil {
+		return zero, false
+	}
 	n, ok := v.(json.Number)
-	if !ok { return zero, false }
-	return sha256.Sum256([]byte("n:"+n.String())), true
+	if !ok {
+		return zero, false
+	}
+	return sha256.Sum256([]byte("n:" + n.String())), true
 }
 func boolField(m map[string]json.RawMessage, key string) *bool {
 	b := m[key]
-	if !bytes.Equal(b, []byte("true")) && !bytes.Equal(b, []byte("false")) { return nil }
+	if !bytes.Equal(b, []byte("true")) && !bytes.Equal(b, []byte("false")) {
+		return nil
+	}
 	v := bytes.Equal(b, []byte("true"))
 	return &v
 }
 func (o *observer) line(direction string, b []byte) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.stopped { return }
-	e := event{Kind:"rpc", Direction:direction}
+	if o.stopped {
+		return
+	}
+	e := event{Kind: "rpc", Direction: direction}
 	var m map[string]json.RawMessage
 	if json.Unmarshal(b, &m) != nil || m == nil {
 		e.Class = "unrecognized"
@@ -226,10 +245,16 @@ func (o *observer) line(direction string, b []byte) {
 	} else {
 		_, result := m["result"]
 		rawError, failure := m["error"]
-		if result == failure { e.Class = "unrecognized"; o.emitLocked(e); return }
+		if result == failure {
+			e.Class = "unrecognized"
+			o.emitLocked(e)
+			return
+		}
 		e.Class = "unmatched_response"
 		opposite := "to_bridge"
-		if direction == opposite { opposite = "from_bridge" }
+		if direction == opposite {
+			opposite = "from_bridge"
+		}
 		if id, ok := digestID(m["id"]); ok {
 			key := pendingKey{opposite, id}
 			if p, found := o.pending[key]; found {
@@ -240,7 +265,7 @@ func (o *observer) line(direction string, b []byte) {
 		}
 		if failure {
 			var failureObject struct {
-				Code *int64 `json:"code"`
+				Code    *int64 `json:"code"`
 				Message string `json:"message"`
 			}
 			e.Class = "unknown"
@@ -258,17 +283,20 @@ func (o *observer) line(direction string, b []byte) {
 // oversized lines are still forwarded immediately, including arbitrary binary
 // bytes; only their observation is omitted/classified.
 type lineObserver struct {
-	o *observer
+	o         *observer
 	direction string
-	buf []byte
+	buf       []byte
 	oversized bool
 }
+
 func (p *lineObserver) feed(b []byte) {
 	for _, c := range b {
 		if c == '\n' {
 			if p.oversized {
-				p.o.emit(event{Kind:"rpc", Direction:p.direction, Class:"oversized"})
-			} else if len(bytes.TrimSpace(p.buf)) > 0 { p.o.line(p.direction, p.buf) }
+				p.o.emit(event{Kind: "rpc", Direction: p.direction, Class: "oversized"})
+			} else if len(bytes.TrimSpace(p.buf)) > 0 {
+				p.o.line(p.direction, p.buf)
+			}
 			p.buf = p.buf[:0]
 			p.oversized = false
 			continue
@@ -277,18 +305,23 @@ func (p *lineObserver) feed(b []byte) {
 			if len(p.buf) == maxLine {
 				p.buf = p.buf[:0]
 				p.oversized = true
-			} else { p.buf = append(p.buf, c) }
+			} else {
+				p.buf = append(p.buf, c)
+			}
 		}
 	}
 }
 func (p *lineObserver) end(eof bool) {
-	if p.oversized { p.o.emit(event{Kind:"rpc", Direction:p.direction, Class:"oversized"})
+	if p.oversized {
+		p.o.emit(event{Kind: "rpc", Direction: p.direction, Class: "oversized"})
 	} else if len(p.buf) != 0 {
-		p.o.emit(event{Kind:"rpc", Direction:p.direction, Class:"unterminated"})
+		p.o.emit(event{Kind: "rpc", Direction: p.direction, Class: "unterminated"})
 	}
 	class := "read_error"
-	if eof { class = "eof" }
-	p.o.emit(event{Kind:"stream_end", Direction:p.direction, Class:class})
+	if eof {
+		class = "eof"
+	}
+	p.o.emit(event{Kind: "stream_end", Direction: p.direction, Class: class})
 }
 
 // pump logs observations before handing bytes to the other process, so a fast
@@ -298,14 +331,24 @@ func pump(dst io.Writer, src io.Reader, p *lineObserver) error {
 	for {
 		n, readErr := src.Read(buf)
 		if n > 0 {
-			if p != nil { p.feed(buf[:n]) }
+			if p != nil {
+				p.feed(buf[:n])
+			}
 			written, err := dst.Write(buf[:n])
-			if err != nil { return err }
-			if written != n { return io.ErrShortWrite }
+			if err != nil {
+				return err
+			}
+			if written != n {
+				return io.ErrShortWrite
+			}
 		}
 		if readErr != nil {
-			if p != nil { p.end(readErr == io.EOF) }
-			if readErr == io.EOF { return nil }
+			if p != nil {
+				p.end(readErr == io.EOF)
+			}
+			if readErr == io.EOF {
+				return nil
+			}
 			return readErr
 		}
 	}
@@ -318,26 +361,33 @@ func (o *observer) argv(args []string) {
 		case "app-server", "--check", "--help", "-h", "--version", "-V",
 			"--analytics-default-enabled", "--stdio", "--print-startup-config",
 			"--startup-sign-out":
-			o.emit(event{Kind:"argv", Flag:name})
+			o.emit(event{Kind: "argv", Flag: name})
 		case "--listen", "--startup-client-info":
-			o.emit(event{Kind:"argv", Flag:name})
-			if name == args[i] && i+1 < len(args) { i++ }
+			o.emit(event{Kind: "argv", Flag: name})
+			if name == args[i] && i+1 < len(args) {
+				i++
+			}
 		case "-c", "--config":
-			o.emit(event{Kind:"argv", Flag:name})
+			o.emit(event{Kind: "argv", Flag: name})
 			value := ""
 			if name == args[i] {
-				if i+1 < len(args) { i++; value = args[i] }
-			} else { _, value, _ = strings.Cut(args[i], "=") }
+				if i+1 < len(args) {
+					i++
+					value = args[i]
+				}
+			} else {
+				_, value, _ = strings.Cut(args[i], "=")
+			}
 			key, _, _ := strings.Cut(value, "=")
 			switch key {
 			case "features.code_mode_host", "features.prefer_mxc",
 				"features.windows_sandbox_service", "cli_auth_credentials_store":
-				o.emit(event{Kind:"argv_config", ConfigKey:key})
+				o.emit(event{Kind: "argv_config", ConfigKey: key})
 			default:
-				o.emit(event{Kind:"argv_config", Class:"unknown"})
+				o.emit(event{Kind: "argv_config", Class: "unknown"})
 			}
 		default:
-			o.emit(event{Kind:"argv", Class:"unknown"})
+			o.emit(event{Kind: "argv", Class: "unknown"})
 		}
 	}
 }
@@ -349,31 +399,51 @@ func setup() (string, *os.File, error) {
 		return "", nil, bad
 	}
 	resolved, err := filepath.EvalSymlinks(real)
-	if err != nil { return "", nil, bad }
+	if err != nil {
+		return "", nil, bad
+	}
 	target, err := os.Stat(resolved)
-	if err != nil || !target.Mode().IsRegular() { return "", nil, bad }
-	if runtime.GOOS != "windows" && target.Mode().Perm()&0111 == 0 { return "", nil, bad }
+	if err != nil || !target.Mode().IsRegular() {
+		return "", nil, bad
+	}
+	if runtime.GOOS != "windows" && target.Mode().Perm()&0111 == 0 {
+		return "", nil, bad
+	}
 	f, err := os.Open(resolved)
-	if err != nil { return "", nil, bad }
+	if err != nil {
+		return "", nil, bad
+	}
 	var header [2]byte
 	_, readErr := io.ReadFull(f, header[:])
 	f.Close()
 	ext := strings.ToLower(filepath.Ext(resolved))
-	if readErr != nil || string(header[:]) == "#!" || ext == ".cmd" || ext == ".bat" || ext == ".ps1" { return "", nil, bad }
+	if readErr != nil || string(header[:]) == "#!" || ext == ".cmd" || ext == ".bat" || ext == ".ps1" {
+		return "", nil, bad
+	}
 	self, err := os.Executable()
-	if err != nil { return "", nil, bad }
+	if err != nil {
+		return "", nil, bad
+	}
 	current, err := os.Stat(self)
-	if err != nil || os.SameFile(target, current) { return "", nil, bad }
+	if err != nil || os.SameFile(target, current) {
+		return "", nil, bad
+	}
 	parent, err := filepath.EvalSymlinks(filepath.Dir(prefix))
-	if err != nil { return "", nil, bad }
+	if err != nil {
+		return "", nil, bad
+	}
 	info, err := os.Stat(parent)
-	if err != nil || !info.IsDir() { return "", nil, bad }
+	if err != nil || !info.IsDir() {
+		return "", nil, bad
+	}
 	base := filepath.Base(prefix)
 	if base == "." || base == string(filepath.Separator) || strings.ContainsAny(base, "*?:<>|\"") {
 		return "", nil, bad
 	}
 	trace, err := openTrace(filepath.Join(parent, base))
-	if err != nil { return "", nil, bad }
+	if err != nil {
+		return "", nil, bad
+	}
 	return resolved, trace, nil
 }
 
@@ -383,7 +453,9 @@ func setup() (string, *os.File, error) {
 func openTrace(prefix string) (*os.File, error) {
 	for i := 1; i <= 16; i++ {
 		f, err := os.OpenFile(fmt.Sprintf("%s.%02d.jsonl", prefix, i), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if os.IsExist(err) { continue }
+		if os.IsExist(err) {
+			continue
+		}
 		return f, err
 	}
 	return nil, nil // Observation exhausted; do not alter bridge behavior.
@@ -393,7 +465,9 @@ func childEnvironment() []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if strings.EqualFold(key, activeEnv) { continue }
+		if strings.EqualFold(key, activeEnv) {
+			continue
+		}
 		env = append(env, value)
 	}
 	return append(env, activeEnv+"=1")
@@ -405,15 +479,24 @@ func childEnvironment() []string {
 // Separate OS pipes let stdout/stderr EOF propagate before process exit.
 func runChild(real string, args []string, input io.ReadCloser, output, diagnostics io.WriteCloser, o *observer) int {
 	inR, inW, err := os.Pipe()
-	if err != nil { o.emit(event{Kind:"setup_error"}); return 125 }
+	if err != nil {
+		o.emit(event{Kind: "setup_error"})
+		return 125
+	}
 	defer inR.Close()
 	defer inW.Close()
 	outR, outW, err := os.Pipe()
-	if err != nil { o.emit(event{Kind:"setup_error"}); return 125 }
+	if err != nil {
+		o.emit(event{Kind: "setup_error"})
+		return 125
+	}
 	defer outR.Close()
 	defer outW.Close()
 	errR, errW, err := os.Pipe()
-	if err != nil { o.emit(event{Kind:"setup_error"}); return 125 }
+	if err != nil {
+		o.emit(event{Kind: "setup_error"})
+		return 125
+	}
 	defer errR.Close()
 	defer errW.Close()
 	// Use the repository launch path and retain the exact argument vector.
@@ -421,24 +504,28 @@ func runChild(real string, args []string, input io.ReadCloser, output, diagnosti
 	cmd.Env, cmd.Stdin, cmd.Stdout, cmd.Stderr = childEnvironment(), inR, outW, errW
 	tree, err := proc.StartTreeStrict(cmd)
 	if err != nil {
-		o.emit(event{Kind:"child_start_failed"})
+		o.emit(event{Kind: "child_start_failed"})
 		return 125
 	}
-	o.emit(event{Kind:"child_start", ChildPID:cmd.Process.Pid})
+	o.emit(event{Kind: "child_start", ChildPID: cmd.Process.Pid})
 	inR.Close()
 	outW.Close()
 	errW.Close()
 	var copies sync.WaitGroup
 	copies.Add(2)
 	go func() {
-		err := pump(inW, input, &lineObserver{o:o, direction:"to_bridge"})
-		if err != nil { o.emit(event{Kind:"copy_error", Direction:"to_bridge"}) }
+		err := pump(inW, input, &lineObserver{o: o, direction: "to_bridge"})
+		if err != nil {
+			o.emit(event{Kind: "copy_error", Direction: "to_bridge"})
+		}
 		inW.Close()
 	}()
 	go func() {
 		defer copies.Done()
-		err := pump(output, outR, &lineObserver{o:o, direction:"from_bridge"})
-		if err != nil { o.emit(event{Kind:"copy_error", Direction:"from_bridge"}) }
+		err := pump(output, outR, &lineObserver{o: o, direction: "from_bridge"})
+		if err != nil {
+			o.emit(event{Kind: "copy_error", Direction: "from_bridge"})
+		}
 		outR.Close()
 		output.Close()
 	}()
@@ -447,17 +534,23 @@ func runChild(real string, args []string, input io.ReadCloser, output, diagnosti
 		// stderr is forwarded but never parsed or stored, even if it is JSON.
 		_, err := io.Copy(diagnostics, errR)
 		class := "eof"
-		if err != nil { class = "copy_error" }
-		o.emit(event{Kind:"stream_end", Direction:"stderr", Class:class})
+		if err != nil {
+			class = "copy_error"
+		}
+		o.emit(event{Kind: "stream_end", Direction: "stderr", Class: class})
 		errR.Close()
 		diagnostics.Close()
 	}()
 	err = tree.Wait()
 	code := 0
 	if err != nil {
-		if cmd.ProcessState != nil { code = cmd.ProcessState.ExitCode() } else { code = 125 }
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		} else {
+			code = 125
+		}
 	}
-	o.emit(event{Kind:"child_exit", ChildPID:cmd.Process.Pid, Exit:&code})
+	o.emit(event{Kind: "child_exit", ChildPID: cmd.Process.Pid, Exit: &code})
 	// Inherited Windows stdin may be a synchronous handle whose Read cannot
 	// be released by Close. Do not close or join it here. The executable exits
 	// immediately after this function returns, releasing that reader and handle.
@@ -480,11 +573,15 @@ func main() {
 		os.Exit(125)
 	}
 	var sink io.Writer
-	if trace != nil { sink = trace }
+	if trace != nil {
+		sink = trace
+	}
 	o := newObserver(sink)
-	o.emit(event{Kind:"observer_start", Class:"test_only"})
+	o.emit(event{Kind: "observer_start", Class: "test_only"})
 	o.argv(os.Args[1:])
 	code := runChild(real, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, o)
-	if trace != nil { trace.Close() }
+	if trace != nil {
+		trace.Close()
+	}
 	os.Exit(code)
 }
