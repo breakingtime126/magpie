@@ -44,6 +44,9 @@ type Router struct {
 	configRequirementsRead     bool
 	configRequirementsNull167  bool
 	experimentalFeatureList167 bool
+	controlPlaneRouting167     bool
+	controlHome167             string
+	controlNativeHomes167      map[string]string
 
 	auth authCompatibility
 
@@ -87,6 +90,9 @@ func (r *Router) next(prefix string) string {
 }
 func alias(backend, model string) string { return "magpie/" + backend + "/" + model }
 func (r *Router) send(g *request, backend string, params object) Delivery {
+	if r.controlPlaneRouting167 && g.method == "thread/list" {
+		params = r.controlPlaneThreadFilter167(backend, params)
+	}
 	return r.sendParams(g, backend, raw(params))
 }
 
@@ -139,7 +145,7 @@ func (r *Router) abandon(g *request) {
 func (r *Router) Client(line []byte) ([]Delivery, error) {
 	// Exact 0.167 reviewed reads reject ambiguous routing
 	// keys before a map can hide the guarded method behind another.
-	if (r.configRequirementsNull167 || r.auth.authStatusNoAuth || r.experimentalFeatureList167) && validateServerEnvelopeKeys(line) != nil {
+	if (r.configRequirementsNull167 || r.auth.authStatusNoAuth || r.experimentalFeatureList167 || r.controlPlaneRouting167) && validateServerEnvelopeKeys(line) != nil {
 		return []Delivery{fail(nil, -32600, "invalid client envelope")}, nil
 	}
 	m, err := parseObject(line)
@@ -168,6 +174,9 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 	}
 	if r.active[key] || r.nativeReadIDInUse(m["id"], method) {
 		return nil, errors.New("duplicate active client request id")
+	}
+	if r.controlPlaneRouting167 && !validateControlPlaneParams167(method, m["params"]) {
+		return []Delivery{fail(m["id"], -32602, "invalid routing parameters")}, nil
 	}
 	p, err := child(m, "params")
 	if err != nil {
@@ -208,6 +217,8 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return []Delivery{fail(g.id, -32600, "successful initialization of both backends is required")}, nil
 	}
 	switch method {
+	case "config/read":
+		return r.controlPlaneRead167(g, line), nil
 	case "experimentalFeature/list":
 		return r.experimentalFeatureListRequest167(g, line, m["params"]), nil
 	case "getAuthStatus":
@@ -264,6 +275,9 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return out, nil
 	case "model/list", "thread/list", "thread/loaded/list":
 		if method == "thread/list" {
+			if r.controlPlaneRouting167 && !validateControlPlaneThreadFilter167(p) {
+				return []Delivery{fail(g.id, -32602, "unsupported logical provider filter")}, nil
+			}
 			key := text(p, "sortKey")
 			if key != "" && key != "created_at" && key != "updated_at" && key != "recency_at" {
 				return []Delivery{fail(g.id, -32602, "unsupported thread sort key")}, nil
@@ -407,7 +421,11 @@ func (r *Router) pin(p object, backend string) error {
 	if e != nil {
 		return e
 	}
-	if provider != "" && provider != r.byID[backend].Provider {
+	expected := r.byID[backend].Provider
+	if r.controlPlaneRouting167 {
+		expected = controlPlaneProvider167
+	}
+	if provider != "" && provider != expected {
 		return errors.New("modelProvider cannot override the selected backend")
 	}
 	return nil
@@ -492,6 +510,12 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	if g.failed {
 		return nil, nil
 	}
+	if g.method == "initialize" && r.controlPlaneRouting167 {
+		return r.controlPlaneInitialize167(g, backend, line), nil
+	}
+	if g.method == "config/read" && r.controlPlaneRouting167 {
+		return r.controlPlaneReadResponse167(g, backend, line), nil
+	}
 	if g.method == "experimentalFeature/list" {
 		return r.experimentalFeatureListResponse167(g, backend, line), nil
 	}
@@ -554,6 +578,9 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		out := []Delivery{deliver("", m)}
 		r.abandon(g)
 		return out, nil
+	}
+	if r.controlPlaneRouting167 && !validateControlPlaneResult167(g.method, m["result"]) {
+		return nil, errors.New("invalid native routing result")
 	}
 	result, e := child(m, "result")
 	if e != nil || !exists(m, "result") {
@@ -677,6 +704,11 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		if exists(result, "modelProvider") && text(result, "modelProvider") != r.byID[backend].Provider {
 			return nil, errors.New("backend changed provider")
 		}
+		if r.controlPlaneRouting167 && controlPlaneThreadCreate167(g.method) {
+			if err := r.projectControlPlaneProvider167(backend, result); err != nil {
+				return nil, err
+			}
+		}
 		r.rewriteModel(backend, result, "model")
 		return r.finish(g, result), nil
 	}
@@ -772,14 +804,27 @@ func (r *Router) rewriteModel(backend string, o object, key string) {
 		o[key] = raw(alias(backend, s))
 	}
 }
-func (r *Router) rewriteThread(backend string, t object) { r.rewriteModel(backend, t, "model") }
+func (r *Router) rewriteThread(backend string, t object) {
+	r.rewriteModel(backend, t, "model")
+	if r.controlPlaneRouting167 {
+		// bindThread has already validated the native provider and owner.
+		t["modelProvider"] = raw(controlPlaneProvider167)
+	}
+}
 
 func (r *Router) serverMessage(backend, method string, m object) ([]Delivery, error) {
+	if r.controlPlaneRouting167 && (method == "thread/started" || method == "thread/settings/updated") &&
+		validateBackendEnvelopeKeys(m["params"]) != nil {
+		return nil, errors.New("invalid native routing notification")
+	}
 	p, e := child(m, "params")
 	if e != nil {
 		return nil, e
 	}
 	if method == "thread/started" {
+		if r.controlPlaneRouting167 && validateBackendEnvelopeKeys(p["thread"]) != nil {
+			return nil, errors.New("invalid native thread notification")
+		}
 		t, e := child(p, "thread")
 		if e != nil {
 			return nil, e
@@ -834,9 +879,17 @@ func (r *Router) serverMessage(backend, method string, m object) ([]Delivery, er
 			}
 		}
 		if method == "thread/settings/updated" {
+			if r.controlPlaneRouting167 && validateBackendEnvelopeKeys(p["threadSettings"]) != nil {
+				return nil, errors.New("invalid native thread settings")
+			}
 			settings, e := child(p, "threadSettings")
 			if e != nil {
 				return nil, e
+			}
+			if r.controlPlaneRouting167 {
+				if err := r.projectControlPlaneProvider167(backend, settings); err != nil {
+					return nil, err
+				}
 			}
 			r.rewriteModel(backend, settings, "model")
 			p["threadSettings"] = raw(settings)
@@ -951,6 +1004,9 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 					seen[id] = true
 				}
 				continue
+			}
+			if r.controlPlaneRouting167 && g.method == "thread/list" && validateBackendEnvelopeKeys(encoded) != nil {
+				return nil, errors.New("invalid native thread list item")
 			}
 			item, e := parseObject(encoded)
 			if e != nil {

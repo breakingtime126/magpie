@@ -57,6 +57,15 @@ type event struct {
 	FeatureListCursorProvided *bool    `json:"featureListCursorProvided,omitempty"`
 	FeatureListLimitProvided  *bool    `json:"featureListLimitProvided,omitempty"`
 	FeatureListThreadProvided *bool    `json:"featureListThreadIdProvided,omitempty"`
+	ProjectListParamsValid    *bool    `json:"projectListParamsValid,omitempty"`
+	ProjectListCursorProvided *bool    `json:"projectListCursorProvided,omitempty"`
+	ProjectListLimitProvided  *bool    `json:"projectListLimitProvided,omitempty"`
+	ProjectListSortKey        string   `json:"projectListSortKey,omitempty"`
+	ProjectListSortDirection  string   `json:"projectListSortDirection,omitempty"`
+	FSReadParamsShapeValid    *bool    `json:"fsReadParamsShapeValid,omitempty"`
+	FSReadPathForm            string   `json:"fsReadPathForm,omitempty"`
+	FSReadBasename            string   `json:"fsReadBasename,omitempty"`
+	FSReadLexicalRoot         string   `json:"fsReadLexicalRoot,omitempty"`
 	Flag                      string   `json:"flag,omitempty"`
 	ConfigKey                 string   `json:"configKey,omitempty"`
 	ConfigValue               string   `json:"configValue,omitempty"`
@@ -91,6 +100,7 @@ type observer struct {
 	correlationDisabled bool
 	stopped             bool
 	publicPlugins       *publicPluginCatalog
+	readTargetRoots     *readTargetRoots
 }
 
 func newObserver(w io.Writer) *observer {
@@ -260,7 +270,8 @@ func (o *observer) line(direction string, b []byte) {
 		}
 		if direction == "to_bridge" && e.Class == "request" &&
 			(method == "getAuthStatus" || method == "configRequirements/read" ||
-				method == "config/read" || method == "experimentalFeature/list") {
+				method == "config/read" || method == "experimentalFeature/list" ||
+				method == "project/list" || method == "fs/readFile") {
 			e.TracePresent, e.TraceValid = observedRequestTrace(b, method)
 		}
 		if direction == "to_bridge" && method == "getAuthStatus" && e.Class == "request" {
@@ -268,6 +279,10 @@ func (o *observer) line(direction string, b []byte) {
 		}
 		if direction == "to_bridge" && e.Class == "request" {
 			switch method {
+			case "project/list":
+				o.observedProjectList(b, &e)
+			case "fs/readFile":
+				o.observedFSReadFile(b, &e)
 			case "config/read":
 				e.ConfigParamsValid, e.ConfigIncludeLayers, e.ConfigCwdProvided = observedConfigRead(b)
 			case "experimentalFeature/list":
@@ -511,7 +526,8 @@ func childEnvironment() []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if strings.EqualFold(key, activeEnv) || strings.EqualFold(key, publicPluginCatalogEnv) {
+		if strings.EqualFold(key, activeEnv) || strings.EqualFold(key, publicPluginCatalogEnv) ||
+			strings.EqualFold(key, readTargetRootsEnv) {
 			continue
 		}
 		env = append(env, value)
@@ -626,6 +642,15 @@ func main() {
 		}
 		catalog = loaded
 	}
+	var roots *readTargetRoots
+	if value, present := os.LookupEnv(readTargetRootsEnv); present {
+		loaded, err := parseReadTargetRoots(value)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "desktop-rpc-observer: invalid test-only setup")
+			os.Exit(125)
+		}
+		roots = loaded
+	}
 	real, trace, err := setup()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "desktop-rpc-observer: invalid test-only setup")
@@ -637,6 +662,7 @@ func main() {
 	}
 	o := newObserver(sink)
 	o.publicPlugins = catalog
+	o.readTargetRoots = roots
 	o.emit(event{Kind: "observer_start", Class: "test_only"})
 	if catalog != nil {
 		o.emit(event{Kind: "public_plugin_catalog", PublicPluginCatalogSHA256: catalog.digest})

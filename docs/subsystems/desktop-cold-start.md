@@ -913,11 +913,12 @@ only the observed window, not complete process lifetime or future requests.
 Offline fixtures cover the profile's default-off boundaries and these
 success/failure correlations. Exact-head CI must establish execution results.
 
-The remaining config read is deliberately unsupported: two fixed native
+The no-auth mode alone leaves config read unsupported: two fixed native
 providers do not produce one identical effective config, and native config
-serialization can contain provider secrets even without raw layers. No
-primary-only config, invented shared defaults or weakened policy is substituted
-to make the Desktop continue.
+serialization can contain provider secrets even without raw layers. The
+separately selected bridge-owned routing view below does not read or merge those
+native configurations, invent shared defaults, or weaken policy to make Desktop
+continue.
 
 ### Genuine feature-page comparison CI gate
 
@@ -972,15 +973,24 @@ The same two fresh empty homes, no inherited credential environment, no imported
 account/keyring and loopback discard model endpoints remain in force. This is
 genuine read-only feature-page compatibility in the disposable fixture, not a
 real-account or inference test, and it makes no zero-egress claim.
-`config/read`, `project/list` and `fs/readFile` remain unsupported. In
-particular, different native provider configurations are not replaced with
-invented shared configuration. GUI usability and complete Desktop compatibility
-remain unverified.
+This feature-only mode does not add config, project or filesystem routes.
+The separate bridge-owned routing view below now handles only its exact global
+`config/read` shape; `project/list` and `fs/readFile` remain unsupported.
+Different native provider configurations are never replaced with invented
+shared configuration. GUI usability and complete Desktop compatibility remain
+unverified.
 
 ### Optional full-file read-caller syntax metadata
 
-Under the existing `-InspectStaticLauncher` opt-in, a separate captured Node
-process runs
+The optional runtime pass is currently **not run**. The earlier package pass
+exhausted its node limit, so repeating it supplies no new evidence for this
+control-plane run. The cold-start report records
+`status: "not-run", reason: "prior_node_limit_no_new_evidence"`. The original
+mandatory public-plugin inspection and signed-MSIX provenance pass still run
+under `-InspectStaticLauncher`. Source/parser/schema regressions for the optional
+inspector remain in CI.
+
+When invoked separately for source inspection, a captured Node process can run
 [`inspect-desktop-read-callers.mjs`](../../build/inspect-desktop-read-callers.mjs)
 after the existing public catalog has passed its original signed-MSIX provenance
 check. It receives only the verified installation root and that independently
@@ -1026,6 +1036,149 @@ report. Complete means complete parsing within the selected source scope, not
 complete consumer coverage. Zero reported facts are never proof of absence.
 Offline PowerShell fixtures cover schema, bounds, digest mismatch, incomplete
 coverage, fixed false proof flags, output framing/status, redaction and aggregate
-call limits. Execution of the new fixtures and the real optional package pass
-still require exact-head CI. This diagnostic enables no auth/config route,
+call limits. Execution of the fixtures requires exact-head CI. The optional full-file
+package pass remains uninvoked for the combined control-plane check. This diagnostic enables no auth/config route,
 changes no defaults and introduces no additional Desktop launch or request.
+
+
+### Bridge-owned routing view in the combined CI profile
+
+Only `-EnableReviewedLaunchCompatibility`, with its existing separate startup
+opt-in, selects `control_plane: "routing-v0.167.0-alpha.3.2"`. Default, baseline
+and startup-only configurations do not add this mode. The same repository,
+branch, hosted-runner, signed Desktop version/package digest and both native
+executable version/digest checks remain mandatory. The helper configuration
+adds a fresh, separate `control_home` outside the Desktop workspace and all
+four native HOME/CODEX_HOME directories. It is actual bridge-owned state, not a
+copy of native config. No synthetic `config.toml`, credential or origin record
+is written there.
+
+The production bridge view is intentionally narrower than native effective
+config. It accepts global `config/read` with layers disabled and no non-null
+cwd, advertises the logical frontend provider `magpie_bridge`, and exposes only
+bridge-owned routing facts and its explicit extension. Origins are empty.
+Every successful view is gated on fresh paired native
+`configRequirements/read` results that genuinely contain `requirements:null`.
+Native config is never read or merged, and no authentication, approval, policy
+or sandbox setting is manufactured. Logical provider values on the supported
+request and response paths are translated only after ownership checks. See
+[`control_plane_167.go`](../../internal/appserverbridge/control_plane_167.go)
+(`validateControlPlaneRead167`, `controlPlaneConfig167` and
+`controlPlaneInitialize167`) and the
+[bridge contract](app-server-bridge.md) for the exact production schema,
+admission checks and failure behavior.
+
+`Get-DesktopConfigReadEvidence` consumes the full sanitized `$allEvents`
+snapshot, not the 256-record preview. It requires at least one actual
+layers-disabled, unscoped Desktop request and a successful response for every
+observed such request. Invalid/missing shape metadata, errors, outstanding or
+unmatched replies, cross-process mismatches, reused correlations, and any
+duplicate-ID or saturation record fail the gate. The report retains only
+request/validated-response counts. Result/config bodies, cwd values, origin
+details and trace carriers are never inspected by this evidence helper or
+published. Counts rely on the production view and its requirement validator;
+they are not independent proof of native configuration equivalence or Desktop
+consumer support. Unsupported consumers fail honestly, without guessed
+fallback config or another Desktop launch.
+
+### Project and file-target classification in the same capture
+
+The same single Desktop capture adds request-only metadata for `project/list`
+and `fs/readFile`. It does not route either method or read a target.
+[The observer contract](../../build/desktop-rpc-observer/read-target-contract.md)
+defines the pinned native request oracle, complete enums, strict JSON/Unicode
+rules, and lexical comparison limits.
+
+PowerShell accepts only each method's exact shape, native booleans and fixed
+labels under the existing envelope, correlation and optional trace guards:
+
+- `projectListParamsValid`, then only when true cursor/limit-presence booleans
+  and fixed sort-key/direction labels. A direction requires a sort key.
+- `fsReadParamsShapeValid`, then only when true fixed path-form, basename and
+  lexical-root labels. Shape validity is not native path validity or read
+  authority. No path, arbitrary basename, cursor, limit value, hash or raw error
+  is published.
+- Invalid parameter shapes expose only false validity. Invalid trace exposes
+  only the existing trace-presence/validity pair. Responses, notifications,
+  wrong-direction and ambiguous-correlation records carry no target metadata.
+
+The private `MAGPIE_CI_READ_TARGET_ROOTS` object is serialized from the
+harness-created primary/secondary HOME and CODEX_HOME directories, disposable
+workspace, verified installed package root, and the separate control home when
+the control-plane profile is selected. Nothing is inferred from user
+environment, requests or native config. The variable is passed only to the
+observer launch and stripped before child launch. Its values are neither
+printed nor hashed. Exact key/type/size and conservative Windows spelling
+checks fail closed. These labels describe lexical relationships only; no
+symlink, junction, file contents or physical containment is inspected. In
+particular, `control_home` does not authorize reading a config file there.
+
+Existing public-catalog/provenance tests remain intact. New synthetic
+PowerShell fixtures cover all target enums, sort relationships, trace,
+correlation, missing/wrong-cased/duplicate fields, invalid-only shapes,
+redaction, explicit root provenance and root bounds. Their source definitions
+are not a claim that execution passed.
+
+### Separate native end-to-end slice, one Windows job
+
+After actual Desktop capture succeeds and the exact observed activation process
+is confirmed exited, the same job invokes
+[`build/control-plane-native/invoke.ps1`](../../build/control-plane-native/invoke.ps1)
+once. If Desktop's owned config view fails, this stage remains explicitly
+not-run. There is no fallback to a synthetic Desktop result and no extra Desktop
+launch.
+
+The reviewed profile retains the original process object and OS handle returned
+by the activation launch, recording its exact full-precision creation time at
+that point. Cleanup uses that same object and rechecks its PID, captured creation
+time and verified package identity, including the recorded package observation,
+before signaling it. WMI CreationDate remains report metadata and is never used
+as a cleanup equality key; no timestamp tolerance is introduced. It requests window close and waits up to five seconds, then, if
+needed, terminates only that same handle-pinned process and waits another five
+seconds. Missing or mismatched identity, process-operation errors without a
+confirmed exit, or an unconfirmed survivor keep the native stage not-run. The
+explicit `desktopActivationExited` boolean gates invocation independently
+of the cleanup-error report. No reused PID, executable name or unverified
+process is targeted. This is activation-process exit evidence only, not a claim
+that all Desktop package descendants exited. Baseline and startup-only cleanup
+behavior is unchanged.
+
+The workflow passes the exact commit-built adapter/helper and the already
+verified official resource `codex.exe`, plus the official pinned model catalog.
+The catalog source is
+[`c40729ea…/codex-rs/models-manager/models.json`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/models-manager/models.json),
+Git blob `489ebe3f2483348641a16160ce8491dd077eabca`; the helper independently
+checks native version/hash and catalog identity. Its temporary parent and
+helper environment are fresh siblings, never borrowed Desktop/native state.
+The wrapper clears inherited environment, keeps only its explicit OS/runtime
+allowlist, captures bounded output, suppresses raw stderr, enforces a hard
+deadline and uses an owned process-tree supervisor for cleanup.
+
+The helper performs config-read, model-list and resolved routing checks, then
+two projectless native threads with two text turns each against separate
+loopback synthetic Responses fixtures. It checks ownership rejection and final
+config consistency, then observes adapter exit and performs owned process-tree
+cleanup. The `adapter_clean_exit` flag means the adapter exited with status zero;
+it does not prove that every native descendant exited on its own. Owned cleanup
+may forcibly stop remaining descendants through the kill-on-close job.
+`cleanup_complete` records completion of that cleanup, not graceful descendant
+shutdown. The main report accepts
+only its exact pinned success schema with three config reads, two catalog
+models, two threads, four turns, four assistant messages, two thread reads, two
+ownership rejections, two fixture requests per backend, zero fixture errors,
+zero unexpected server requests and all verification/cleanup flags true.
+Failures never become empty or successful reports. Only fixed labels, exact
+public pin and counts/booleans are retained, not RPC bodies, IDs, prompts,
+answers, paths, credential data or raw errors.
+
+This is explicitly `synthetic-loopback-only` evidence from the same compiled
+adapter and actual official native app servers. It is separate from actual
+Desktop evidence. It proves neither real-service acceptance nor real-account,
+tool, corporate-policy or complete GUI compatibility, and makes no zero-egress
+claim. The existing no-auth and genuine feature-page gates keep their previous
+semantics.
+
+Source preparation used GitHub connectors without an available execution
+environment. PowerShell parsing/fixtures, Go tests/vet/race/build and the
+combined real Windows run were not executed during authoring. Exact-head CI
+must report those results before this change is called verified.

@@ -5,6 +5,8 @@ param(
     [ValidateSet('baseline', 'bridge', 'observe')][string]$Mode = 'baseline',
     [string]$BridgeExecutable = '',
     [string]$ObserverExecutable = '',
+    [string]$NativeControlExecutable = '',
+    [string]$NativeControlCatalog = '',
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$InspectStaticLauncher
@@ -105,7 +107,7 @@ function Assert-PublicRequestTraceEvent($record) {
         if ($record.$name -isnot [string]) { throw 'Invalid native trace metadata label.' }
     }
     if ($record.kind -cne 'rpc' -or $record.direction -cne 'to_bridge' -or
-        @('getAuthStatus', 'configRequirements/read', 'config/read', 'experimentalFeature/list') -cnotcontains $record.method -or
+        @('getAuthStatus', 'configRequirements/read', 'config/read', 'experimentalFeature/list', 'project/list', 'fs/readFile') -cnotcontains $record.method -or
         $record.class -cne 'request') { throw 'Native trace metadata occurred outside its request scope.' }
     if ($record.method -ceq 'getAuthStatus' -and $record.traceValid) {
         if (-not $record.PSObject.Properties['authParamsValid'] -or $record.authParamsValid -isnot [bool]) {
@@ -129,6 +131,22 @@ function Assert-PublicRequestTraceEvent($record) {
         if ($record.featureListParamsValid) {
             $names += @('featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided')
         }
+    }
+    if ($record.traceValid -and $record.method -ceq 'project/list') {
+        if (-not $record.PSObject.Properties['projectListParamsValid'] -or $record.projectListParamsValid -isnot [bool]) {
+            throw 'Valid traced project envelope needs parameter validity.'
+        }
+        $names += 'projectListParamsValid'
+        if ($record.projectListParamsValid) {
+            $names += @('projectListCursorProvided', 'projectListLimitProvided', 'projectListSortKey', 'projectListSortDirection')
+        }
+    }
+    if ($record.traceValid -and $record.method -ceq 'fs/readFile') {
+        if (-not $record.PSObject.Properties['fsReadParamsShapeValid'] -or $record.fsReadParamsShapeValid -isnot [bool]) {
+            throw 'Valid traced file-read envelope needs parameter shape validity.'
+        }
+        $names += 'fsReadParamsShapeValid'
+        if ($record.fsReadParamsShapeValid) { $names += @('fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot') }
     }
     Assert-PublicShape $record $names
 }
@@ -162,6 +180,7 @@ function Assert-PublicAuthRequestEvent($record) {
 }
 function Assert-PublicReadRequestEvent($record) {
     Assert-PublicRequestTraceEvent $record
+    Assert-PublicReadTargetEvent $record
     $configFields = @('configParamsValid', 'configIncludeLayers', 'configCwdProvided')
     $featureFields = @('featureListParamsValid', 'featureListCursorProvided',
         'featureListLimitProvided', 'featureListThreadIdProvided')
@@ -198,6 +217,59 @@ function Assert-PublicReadRequestEvent($record) {
         foreach ($field in $fields[1..($fields.Count - 1)]) {
             if ($record.$field -isnot [bool]) { throw 'Invalid read-request boolean.' }
         }
+    }
+}
+function Get-PublicReadTargetLabels([string]$Field) {
+    switch -CaseSensitive ($Field) {
+        'projectListSortKey' { return @('absent', 'position', 'recencyAt') }
+        'projectListSortDirection' { return @('absent', 'asc', 'desc') }
+        'fsReadPathForm' { return @('empty', 'drive_absolute', 'unc_absolute', 'drive_relative', 'rooted', 'relative', 'device') }
+        'fsReadBasename' { return @('config.toml', 'AGENTS.md', 'SKILL.md', 'auth.json', 'other') }
+        'fsReadLexicalRoot' { return @('unconfigured', 'unclassified', 'outside', 'ambiguous', 'primary_home',
+            'primary_codex_home', 'secondary_home', 'secondary_codex_home', 'workspace', 'verified_package', 'control_home') }
+        default { throw 'Unknown read-target metadata field.' }
+    }
+}
+function Assert-PublicReadTargetEvent($record) {
+    Assert-PublicRequestTraceEvent $record
+    $project = @('projectListParamsValid', 'projectListCursorProvided', 'projectListLimitProvided',
+        'projectListSortKey', 'projectListSortDirection')
+    $file = @('fsReadParamsShapeValid', 'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot')
+    $hasProject = $false
+    $hasFile = $false
+    foreach ($field in $project) { if ($record.PSObject.Properties[$field]) { $hasProject = $true } }
+    foreach ($field in $file) { if ($record.PSObject.Properties[$field]) { $hasFile = $true } }
+    if (-not $hasProject -and -not $hasFile) { return }
+    if ($hasProject -and $hasFile) { throw 'Mixed read-target metadata families.' }
+    $fields = $project
+    $method = 'project/list'
+    if ($hasFile) { $fields = $file; $method = 'fs/readFile' }
+    $validity = $fields[0]
+    if (-not $record.PSObject.Properties[$validity] -or $record.$validity -isnot [bool]) {
+        throw 'Invalid read-target parameter validity.'
+    }
+    $names = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class', $validity)
+    if ($record.$validity) { $names += $fields[1..($fields.Count - 1)] }
+    if ($record.PSObject.Properties['tracePresent']) { $names += @('tracePresent', 'traceValid') }
+    Assert-PublicShape $record $names
+    foreach ($field in @('seq', 'pid', 'correlation')) { Assert-PublicInteger $record.$field 1 4294967296 }
+    foreach ($field in @('kind', 'direction', 'method', 'class')) {
+        if ($record.$field -isnot [string]) { throw 'Invalid read-target metadata label.' }
+    }
+    if ($record.kind -cne 'rpc' -or $record.direction -cne 'to_bridge' -or
+        $record.method -cne $method -or $record.class -cne 'request') {
+        throw 'Read-target metadata occurred outside its exact request scope.'
+    }
+    if (-not $record.$validity) { return }
+    foreach ($field in $fields[1..($fields.Count - 1)]) {
+        if ($field -cin @('projectListCursorProvided', 'projectListLimitProvided')) {
+            if ($record.$field -isnot [bool]) { throw 'Invalid project-list presence boolean.' }
+        } elseif ($record.$field -isnot [string] -or @(Get-PublicReadTargetLabels $field) -cnotcontains $record.$field) {
+            throw 'Invalid fixed read-target classification.'
+        }
+    }
+    if ($hasProject -and $record.projectListSortKey -ceq 'absent' -and $record.projectListSortDirection -cne 'absent') {
+        throw 'Project-list sort direction requires a sort key.'
     }
 }
 function Get-PublicPluginShapes {
@@ -680,7 +752,7 @@ function Assert-DesktopCompatibilityPackage([bool]$LaunchCompatibility, [string]
 }
 function New-DesktopBridgeSettings(
     $Backends, [bool]$StartupProbe, [bool]$LaunchCompatibility,
-    [string]$VersionText, [string]$BackendHash
+    [string]$VersionText, [string]$BackendHash, [string]$ControlHome = ''
 ) {
     if ($LaunchCompatibility -and -not $StartupProbe) {
         throw 'Reviewed launch compatibility requires the separate exact-version startup opt-in.'
@@ -703,6 +775,13 @@ function New-DesktopBridgeSettings(
         $settings.startup_probe = 'compare-unrestricted-v0.167.0-alpha.3.2'
     }
     if ($LaunchCompatibility) {
+        if ([string]::IsNullOrWhiteSpace($ControlHome)) { throw 'Reviewed control-plane mode requires a fresh bridge-owned home.' }
+        foreach ($backendEntry in $copies) {
+            if ($ControlHome -ieq $backendEntry.home -or $ControlHome -ieq $backendEntry.codex_home) {
+                throw 'Bridge-owned home must be separate from every native home.'
+            }
+        }
+        $settings.control_home = $ControlHome
         # Separate CI-only consent: enabling startup inspection alone never selects these modes.
         $settings.desktop_plugin_override = 'codex-app-tools-v0.167.0-alpha.3.2'
         $settings.attestation = 'unavailable-v0.167.0-alpha.3.2'
@@ -711,8 +790,57 @@ function New-DesktopBridgeSettings(
         $settings.config_requirements_read = 'compare-null-v0.167.0-alpha.3.2'
         $settings.auth_status = 'primary-no-auth-v0.167.0-alpha.3.2'
         $settings.experimental_feature_list = 'compare-v0.167.0-alpha.3.2'
+        $settings.control_plane = 'routing-v0.167.0-alpha.3.2'
     }
     return $settings
+}
+
+# Observer-only references. Callers supply only the homes/workspace they just created
+# and the package root established by signed install + registration verification.
+# This serializes lexical labels, not filesystem authority, and is never published.
+function New-DesktopReadTargetEnvironment($Backends, [string]$Workspace, [string]$VerifiedPackage, [string]$ControlHome = '') {
+    if (@($Backends).Count -ne 2) { throw 'Read-target references require both disposable backends.' }
+    $roots = [ordered]@{
+        primaryHome = $Backends[0].home
+        primaryCodexHome = $Backends[0].codex_home
+        secondaryHome = $Backends[1].home
+        secondaryCodexHome = $Backends[1].codex_home
+        workspace = $Workspace
+        verifiedPackage = $VerifiedPackage
+    }
+    if (-not [string]::IsNullOrEmpty($ControlHome)) {
+        if ($ControlHome -ieq $Workspace -or @($roots.Values) -icontains $ControlHome) {
+            throw 'Bridge-owned read-target root must remain separate.'
+        }
+        $roots.controlHome = $ControlHome
+    }
+    foreach ($value in $roots.Values) {
+        if ($value -isnot [string] -or $value.Length -lt 1 -or
+            [Text.Encoding]::UTF8.GetByteCount($value) -gt 4096 -or $value -cmatch '[^\x20-\x7e]') {
+            throw 'Invalid disposable read-target root.'
+        }
+        $path = $value.Replace('/', '\')
+        if ($path -cmatch '^[A-Za-z]:\\') {
+            $tail = $path.Substring(3)
+        } elseif ($path.StartsWith('\\') -and -not $path.StartsWith('\\?\') -and -not $path.StartsWith('\\.\')) {
+            $tail = $path.Substring(2)
+            if ($tail.TrimEnd('\').Split('\').Count -lt 2) { throw 'Invalid disposable read-target root.' }
+        } else { throw 'Invalid disposable read-target root.' }
+        if ($tail.EndsWith('\')) { $tail = $tail.Substring(0, $tail.Length - 1) }
+        if ($tail.Length -eq 0 -and $path.Length -ne 3) { throw 'Invalid disposable read-target root.' }
+        if ($tail.Length -gt 0) {
+            foreach ($part in $tail.Split('\')) {
+                if ($part.Length -eq 0 -or $part -ceq '.' -or $part -ceq '..' -or
+                    $part -cmatch '[<>:"|?*~]' -or $part.EndsWith('.') -or $part.EndsWith(' ') -or
+                    $part -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)') {
+                    throw 'Invalid disposable read-target root.'
+                }
+            }
+        }
+    }
+    $json = $roots | ConvertTo-Json -Depth 3 -Compress
+    if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 16384) { throw 'Disposable read-target references exceed their bound.' }
+    return $json
 }
 
 # Read only already-sanitized request/response metadata, never authentication payloads.
@@ -848,6 +976,142 @@ function Get-DesktopFeatureListEvidence([object[]]$Records) {
     }
 }
 
+
+# Only the full sanitized snapshot is evidence, never native config or response bodies.
+# Success relies on the production bridge-owned view and its fresh paired native
+# requirements:null checks. The observer does not prove the view's consumer support.
+function Get-DesktopConfigReadEvidence([object[]]$Records) {
+    $pending = @{}
+    $seen = @{}
+    $requests = 0
+    $responses = 0
+    foreach ($event in $Records) {
+        if ($event.PSObject.Properties['class'] -and
+            $event.class -in @('duplicate_id', 'correlation_limit')) {
+            throw 'Configuration-read evidence has ambiguous correlation.'
+        }
+        if (-not $event.PSObject.Properties['method']) { continue }
+        if ($event.method -isnot [string]) { throw 'Configuration-read evidence has invalid method metadata.' }
+        if ($event.method -cne 'config/read') { continue }
+        foreach ($field in @('seq', 'pid', 'correlation')) {
+            if (-not $event.PSObject.Properties[$field]) { throw 'Configuration-read evidence lacks request correlation.' }
+            Assert-PublicInteger $event.$field 1 4294967296
+        }
+        foreach ($field in @('kind', 'direction', 'class')) {
+            if (-not $event.PSObject.Properties[$field] -or $event.$field -isnot [string]) {
+                throw 'Configuration-read evidence lacks request correlation.'
+            }
+        }
+        if ($event.kind -cne 'rpc') { throw 'Configuration-read did not return a validated bridge-owned success.' }
+        $key = [string]$event.pid + ':' + [string]$event.correlation
+        if ($event.direction -ceq 'to_bridge' -and $event.class -ceq 'request') {
+            Assert-PublicReadRequestEvent $event
+            foreach ($field in @('configParamsValid', 'configIncludeLayers', 'configCwdProvided')) {
+                if (-not $event.PSObject.Properties[$field] -or $event.$field -isnot [bool]) {
+                    throw 'Configuration-read evidence lacks valid request flags.'
+                }
+            }
+            if ($seen.ContainsKey($key) -or -not $event.configParamsValid -or
+                $event.configIncludeLayers -or $event.configCwdProvided -or
+                ($event.PSObject.Properties['tracePresent'] -and -not $event.traceValid)) {
+                throw 'Configuration-read evidence has an unsupported request.'
+            }
+            $seen[$key] = $true
+            $pending[$key] = $true
+            $requests++
+        } elseif ($event.direction -ceq 'from_bridge' -and $event.class -ceq 'response') {
+            Assert-PublicShape $event @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class')
+            if (-not $pending.ContainsKey($key)) { throw 'Configuration-read evidence has an unmatched result.' }
+            [void]$pending.Remove($key)
+            $responses++
+        } else {
+            throw 'Configuration-read did not return a validated bridge-owned success.'
+        }
+    }
+    if ($pending.Count -ne 0 -or $requests -eq 0 -or $requests -ne $responses) {
+        throw 'Configuration-read diagnostic lacks complete global request evidence.'
+    }
+    return [ordered]@{ requests = $requests; validatedResponses = $responses }
+}
+
+# Pin the exact observed activation process through its OS handle before identity
+# checks. This confirms only that process exited, never a whole package tree.
+# The injected package reader lets offline tests exercise every decision without
+# launching or terminating anything.
+function Complete-DesktopActivationProcess(
+    $Process, [int]$ExpectedPid, [string]$ObservedCreatedUtc,
+    [string]$ExpectedPackage, [scriptblock]$ReadPackageIdentity
+) {
+    try {
+        if ($null -eq $Process -or $ExpectedPid -le 0 -or
+            [string]::IsNullOrWhiteSpace($ObservedCreatedUtc) -or
+            [string]::IsNullOrWhiteSpace($ExpectedPackage) -or $null -eq $ReadPackageIdentity) {
+            throw 'Missing activation identity.'
+        }
+        # Acquiring and retaining this handle prevents later operations from
+        # reopening an unrelated process that reused the numeric PID.
+        $pinnedHandle = $Process.Handle
+        if ($pinnedHandle -eq [IntPtr]::Zero -or $Process.Id -ne $ExpectedPid -or
+            $Process.StartTime.ToUniversalTime().ToString('o') -cne $ObservedCreatedUtc) {
+            throw 'Activation identity mismatch.'
+        }
+        $packageIdentity = & $ReadPackageIdentity $ExpectedPid
+        if ($packageIdentity -isnot [string] -or $packageIdentity -cne $ExpectedPackage) {
+            throw 'Activation package identity mismatch.'
+        }
+        if ($Process.HasExited) { return $true }
+        try { [void]$Process.CloseMainWindow() }
+        catch { if ($Process.HasExited) { return $true }; throw }
+        if ($Process.WaitForExit(5000)) {
+            if (-not $Process.HasExited) { throw 'Activation exit is unknown.' }
+            return $true
+        }
+        # The same handle-pinned Process object is the only termination target.
+        # Never resolve the PID again or terminate by executable/package name.
+        try { [void]$Process.Kill() }
+        catch { if ($Process.HasExited) { return $true }; throw }
+        if (-not $Process.WaitForExit(5000) -or -not $Process.HasExited) {
+            throw 'Activation termination is unconfirmed.'
+        }
+        return $true
+    } catch {
+        throw 'The verified Desktop activation process exit could not be confirmed.'
+    }
+}
+
+# A passing native slice is separate synthetic-loopback evidence, never Desktop,
+# real-service or account proof. Retain only the exact reviewed success schema.
+function ConvertTo-DesktopNativeControlEvidence($value) {
+    $counts = [ordered]@{
+        config_reads = 3; catalog_models = 2; threads = 2; turns = 4
+        assistant_messages = 4; thread_reads = 2; ownership_rejections = 2
+        alpha_requests = 2; beta_requests = 2; fixture_errors = 0; unexpected_server_requests = 0
+    }
+    $flags = @('binary_verified', 'version_verified', 'adapter_clean_exit', 'cleanup_complete')
+    Assert-PublicShape $value (@('schema', 'scope', 'status', 'stage', 'failure', 'native_sha256') + $flags + @($counts.Keys))
+    Assert-PublicInteger $value.schema 1 1
+    if ($value.scope -isnot [string] -or $value.scope -cne 'synthetic-loopback-only' -or
+        $value.status -isnot [string] -or $value.status -cne 'passed' -or
+        $value.stage -isnot [string] -or $value.stage -cne 'complete' -or
+        $value.failure -isnot [string] -or $value.failure -cne '' -or
+        $value.native_sha256 -isnot [string] -or
+        $value.native_sha256 -cne '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39') {
+        throw 'Native control-plane evidence did not pass its exact pinned fixture.'
+    }
+    foreach ($field in $flags) {
+        if ($value.$field -isnot [bool] -or -not $value.$field) {
+            throw 'Native control-plane evidence lacks verified isolation or cleanup.'
+        }
+    }
+    foreach ($field in $counts.Keys) { Assert-PublicInteger $value.$field $counts[$field] $counts[$field] }
+    $safe = [ordered]@{
+        schema = 1; scope = 'synthetic-loopback-only'; status = 'passed'; stage = 'complete'
+        failure = ''; native_sha256 = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+    }
+    foreach ($field in $flags) { $safe[$field] = $true }
+    foreach ($field in $counts.Keys) { $safe[$field] = $counts[$field] }
+    return $safe
+}
 
 # This optional static pass is independent of the existing catalog's resource budget.
 # The expected ASAR identity must already be verified against the signed original MSIX.
@@ -1055,6 +1319,10 @@ $report = [ordered]@{
         'Bridge phase tests launch only; explicit CI compatibility opt-ins are recorded separately, never evidence of account login.', 'Window visibility is not model or account acceptance.')
 }
 $activationPid = 0
+$activationExitConfirmed = $false
+$ownedActivationProcess = $null
+$ownedActivationCreatedUtc = ''
+$observed = @{}
 $eventSource = 'MagpieDesktopProcessStart'
 $subscription = $null
 $exitCode = 1
@@ -1081,11 +1349,29 @@ See the report artifact for public package, session, and process evidence.
 "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
 }
 try {
+    if ($EnableReviewedLaunchCompatibility) {
+        $report.desktopActivationExited = $false
+        $report.desktopActivationExitLimit = 'This confirms only the exact observed activation process exited. It does not establish that every Desktop package descendant exited.'
+        $report.nativeControlPlane = [ordered]@{
+            schema = 1; scope = 'synthetic-loopback-only'; status = 'not-run'; reason = 'desktop_capture_not_completed'
+        }
+        $expectedNativeControl = Join-Path $env:RUNNER_TEMP ('magpie-control-native-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+        $expectedNativeCatalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
+        if ($NativeControlExecutable -cne $expectedNativeControl -or $NativeControlCatalog -cne $expectedNativeCatalog) {
+            Block 'The exact commit-built native control-plane helper and pinned catalog are required.'
+        }
+        try {
+            Assert-PublicRegularPath $NativeControlExecutable
+            Assert-PublicRegularPath $NativeControlCatalog
+        } catch { Block 'The native control-plane helper or catalog is not an intact regular file.' }
+    } elseif (-not [string]::IsNullOrEmpty($NativeControlExecutable) -or -not [string]::IsNullOrEmpty($NativeControlCatalog)) {
+        Block 'Native control-plane checks require the existing explicit reviewed compatibility profile.'
+    }
     # Presence checks only. Never read, copy, print, or delete any authentication value.
     foreach ($name in @('OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'CODEX_API_KEY', 'CODEX_AUTH_JSON',
         'CODEX_HOME', 'CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG',
         'MAGPIE_CI_REAL_BRIDGE', 'MAGPIE_CI_TRACE_FILE', 'MAGPIE_CI_OBSERVER_ACTIVE',
-        'MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES')) {
+        'MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES', 'MAGPIE_CI_READ_TARGET_ROOTS')) {
         if ([Environment]::GetEnvironmentVariable($name)) { Block ('Unexpected existing auth/override environment name: ' + $name) }
     }
     if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\auth.json')) { Block 'Unexpected existing Codex authentication file.' }
@@ -1450,68 +1736,16 @@ namespace DesktopColdProbe {
         [IO.File]::WriteAllText((Join-Path $out 'static-launcher-metadata.json'), $staticJSON,
             (New-Object Text.UTF8Encoding($false)))
 
-        # Optional source-only pass. Earlier catalog failures remain fatal and are outside this catch.
-        # Its expected identity is trusted only after Confirm-PublicCatalogProvenance above.
-        $report.staticReadCallers = [ordered]@{ schema = 1; status = 'unavailable'; reason = 'inspection_failed' }
-        $report.staticReadCallersLimit = 'Positive source syntax only. No transport, runtime response value, complete consumer coverage, path authority or absence claim. Source filenames, expressions, values, paths and raw errors are not published. No additional launch or RPC is issued.'
-        $readCallerProcess = $null
-        try {
-            $callerInspector = Join-Path $env:GITHUB_WORKSPACE 'build/inspect-desktop-read-callers.mjs'
-            if ($callerInspector.Contains('"')) { throw 'Invalid read-caller inspector path.' }
-            $readCallers = New-Object Diagnostics.ProcessStartInfo
-            $readCallers.FileName = $node
-            $readCallers.Arguments = '--max-old-space-size=1024 "' + $callerInspector +
-                '" --package-root "' + $app.InstallLocation + '" --expected-asar-sha256 ' + $publicPluginCatalog.archiveSha256
-            $readCallers.UseShellExecute = $false
-            $readCallers.CreateNoWindow = $true
-            $readCallers.RedirectStandardOutput = $true
-            $readCallers.RedirectStandardError = $true
-            $readCallers.WorkingDirectory = $work
-            $readCallers.EnvironmentVariables.Clear()
-            foreach ($name in @('SystemRoot', 'WINDIR', 'TEMP', 'TMP')) {
-                $value = [Environment]::GetEnvironmentVariable($name)
-                if ($value) { $readCallers.EnvironmentVariables[$name] = $value }
-            }
-            $readCallers.EnvironmentVariables['HOME'] = $work
-            $readCallers.EnvironmentVariables['USERPROFILE'] = $work
-            $readCallers.EnvironmentVariables['GITHUB_ACTIONS'] = 'true'
-            $readCallers.EnvironmentVariables['RUNNER_OS'] = 'Windows'
-            $readCallerProcess = [Diagnostics.Process]::Start($readCallers)
-            $readCallerOut = $readCallerProcess.StandardOutput.ReadToEndAsync()
-            $readCallerErr = $readCallerProcess.StandardError.ReadToEndAsync()
-            if (-not $readCallerProcess.WaitForExit(60000)) {
-                $report.staticReadCallers.reason = 'process_timeout'
-                throw 'Read-caller inspector timed out.'
-            }
-            if (-not $readCallerOut.Wait(2000) -or -not $readCallerErr.Wait(2000)) {
-                throw 'Read-caller inspector output did not close.'
-            }
-            $readCallerText = $readCallerOut.GetAwaiter().GetResult()
-            $readCallerErrorText = $readCallerErr.GetAwaiter().GetResult()
-            $safeReadCallers = ConvertFrom-DesktopReadCallerOutput $readCallerText $readCallerErrorText `
-                $readCallerProcess.ExitCode $publicPluginCatalog.archiveSha256
-            $readCallerJSON = $safeReadCallers | ConvertTo-Json -Depth 16
-            [IO.File]::WriteAllText((Join-Path $out 'static-read-callers-metadata.json'), $readCallerJSON,
-                (New-Object Text.UTF8Encoding($false)))
-            $report.staticReadCallers = $safeReadCallers
-        } catch {
-            # Never relay process output, exception text or paths; this optional stage cannot unblock routing.
-            if ($report.staticReadCallers.reason -cne 'process_timeout') {
-                $report.staticReadCallers = [ordered]@{ schema = 1; status = 'unavailable'; reason = 'inspection_failed' }
-            }
-        } finally {
-            if ($readCallerProcess) {
-                try {
-                    if (-not $readCallerProcess.HasExited) {
-                        $readCallerProcess.Kill()
-                        [void]$readCallerProcess.WaitForExit(2000)
-                    }
-                } catch {}
-                try { $readCallerProcess.Dispose() } catch {}
-            }
+        # The prior full-file caller pass exhausted its node bound. Keep its offline
+        # parser/schema regressions, but do not repeat an uninformative runtime scan.
+        # The mandatory signed-package public-plugin provenance pass above is unchanged.
+        $report.staticReadCallers = [ordered]@{
+            schema = 1; status = 'not-run'; reason = 'prior_node_limit_no_new_evidence'
         }
+        $report.staticReadCallersLimit = 'The optional full-file read-caller pass was not run. Its earlier node limit provides no caller or absence evidence; source-only regressions remain enabled.'
 
     }
+    $controlHome = ''
     $bridgeName = $null
     if ($Mode -ne 'baseline') {
         $report.stage = 'registered-alias-and-bridge-configuration'
@@ -1618,8 +1852,13 @@ requires_openai_auth = false
         if ($EnableReviewedStartupProbe) {
             $actualBackendHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant()
         }
+        if ($EnableReviewedLaunchCompatibility) {
+            $controlHome = Join-Path $env:RUNNER_TEMP ('desktop-control-home-' + [guid]::NewGuid().ToString('N'))
+            try { New-Item -ItemType Directory -Path $controlHome | Out-Null }
+            catch { Block 'The separate bridge-owned home could not be created.' }
+        }
         $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe $EnableReviewedStartupProbe `
-            -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash
+            -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome
         [IO.File]::WriteAllText($bridgeConfig, ($bridgeSettings | ConvertTo-Json -Depth 5),
             (New-Object Text.UTF8Encoding($false)))
         $report.bridge = [ordered]@{
@@ -1647,6 +1886,7 @@ requires_openai_auth = false
                 config_requirements_read = $bridgeSettings.config_requirements_read
                 auth_status = $bridgeSettings.auth_status
                 experimental_feature_list = $bridgeSettings.experimental_feature_list
+                control_plane = $bridgeSettings.control_plane
             }
             $report.bridge.launchCompatibilityLimits = @(
                 'Only the exact reviewed Desktop plugin override is forwarded. No plugin installation, copy, cache link or shared backend working directory is configured.',
@@ -1655,7 +1895,7 @@ requires_openai_auth = false
                 'Auth status preserves includeToken requests but accepts only a genuine primary no-auth null/null/false result in these empty disposable homes. It is not real-account support or a guarantee against receiving credentials if misused.',
                 'Requirements succeed only after fresh native reads from both backends actually return requirements:null. Errors, missing or non-null results are never replaced with null.',
                 'Feature pages succeed only after fresh unscoped reads from both native backends match completely. Cursor and limit are preserved; non-null thread scope, errors and unequal pages fail closed.',
-                'config/read, project/list and fs/readFile remain unsupported. GUI usability is unverified.',
+                'Global config/read returns bridge-owned routing facts only, after fresh paired requirements:null checks. It never reads native config, fabricates policy or auth fields, or accepts cwd or raw layers. project/list and fs/readFile remain unsupported. GUI usability is unverified.',
                 'Configured modes and observed responses are separate evidence. No successful initialization, plugin loadability, account, model or zero-egress claim.'
             )
         }
@@ -1719,6 +1959,8 @@ requires_openai_auth = false
         if ($Mode -eq 'observe') {
             $start.EnvironmentVariables['MAGPIE_CI_REAL_BRIDGE'] = $BridgeExecutable
             $start.EnvironmentVariables['MAGPIE_CI_TRACE_FILE'] = $tracePrefix
+            $start.EnvironmentVariables['MAGPIE_CI_READ_TARGET_ROOTS'] = New-DesktopReadTargetEnvironment `
+                -Backends $backends -Workspace $work -VerifiedPackage $app.InstallLocation -ControlHome $controlHome
             if ($null -ne $publicPluginEnvironment) {
                 $start.EnvironmentVariables['MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES'] = $publicPluginEnvironment
             }
@@ -1728,6 +1970,13 @@ requires_openai_auth = false
         $started = [Diagnostics.Process]::Start($start)
         if (-not $started) { Block 'Registered alias did not return a process.' }
         $activationPid = $started.Id
+        if ($EnableReviewedLaunchCompatibility) {
+            # Keep the original process and its full-precision identity. WMI's
+            # CreationDate is only report metadata, never a cleanup equality key.
+            $ownedActivationProcess = $started
+            $null = $ownedActivationProcess.Handle
+            $ownedActivationCreatedUtc = $ownedActivationProcess.StartTime.ToUniversalTime().ToString('o')
+        }
         $report.activation = [ordered]@{ method = 'newly-registered-application-alias'; processId = $activationPid }
     }
     $windows = @()
@@ -1823,7 +2072,10 @@ requires_openai_auth = false
                 'publicPluginCatalogSHA256', 'publicPluginRef', 'configPluginShape',
                 'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid',
                 'configParamsValid', 'configIncludeLayers', 'configCwdProvided', 'featureListParamsValid',
-                'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided')
+                'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided',
+                'projectListParamsValid', 'projectListCursorProvided', 'projectListLimitProvided',
+                'projectListSortKey', 'projectListSortDirection', 'fsReadParamsShapeValid',
+                'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot')
             $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
@@ -2177,7 +2429,8 @@ requires_openai_auth = false
             $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid',
                 'configParamsValid', 'configIncludeLayers', 'configCwdProvided', 'featureListParamsValid',
-                'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided')
+                'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided',
+                'projectListParamsValid', 'projectListCursorProvided', 'projectListLimitProvided', 'fsReadParamsShapeValid')
             $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit', 'publicPluginRef')
             $seenPublicCatalogs = @{}
             $allEvents = @()
@@ -2250,6 +2503,11 @@ requires_openai_auth = false
                                 'configLexicalRoot' { $configFamilies }
                                 'configLiteral' { $configLiterals }
                                 'configPluginShape' { Get-PublicPluginShapes }
+                                'projectListSortKey' { Get-PublicReadTargetLabels 'projectListSortKey' }
+                                'projectListSortDirection' { Get-PublicReadTargetLabels 'projectListSortDirection' }
+                                'fsReadPathForm' { Get-PublicReadTargetLabels 'fsReadPathForm' }
+                                'fsReadBasename' { Get-PublicReadTargetLabels 'fsReadBasename' }
+                                'fsReadLexicalRoot' { Get-PublicReadTargetLabels 'fsReadLexicalRoot' }
                             }
                             if ($allowed -cnotcontains $value) { Block 'Observer emitted an unreviewed metadata label.' }
                         }
@@ -2341,6 +2599,8 @@ requires_openai_auth = false
                 $report.observer.noAuthStatusEvidenceLimit = 'Correlated success relies on the exact bridge no-auth result validator. It proves only this credential-free fixture, not login, token support or full Desktop compatibility.'
                 $report.observer.featureListEvidence = Get-DesktopFeatureListEvidence $allEvents
                 $report.observer.featureListEvidenceLimit = 'Correlated success relies on the production whole-page comparison validator, not observer inspection of results. Counts cover only observed unscoped requests, including limit-present requests and any cursor-present pages; no result, cursor or limit values are logged. It does not establish GUI usability, real-account support, inference or zero egress.'
+                $report.observer.configReadEvidence = Get-DesktopConfigReadEvidence $allEvents
+                $report.observer.configReadEvidenceLimit = 'Counts cover actual global, layers-disabled Desktop requests and their correlated successes in the full observed snapshot. They rely on the bridge-owned routing view and fresh paired native requirements:null validator, not native config inspection or observer result bodies. Unsupported consumers fail honestly; this is not GUI usability, shared native configuration, account or service evidence.'
             }
         }
     }
@@ -2356,17 +2616,87 @@ requires_openai_auth = false
     try {
         if ($subscription) { Unregister-Event -SourceIdentifier $eventSource -ErrorAction SilentlyContinue }
         Get-Event -SourceIdentifier $eventSource -ErrorAction SilentlyContinue | Remove-Event -ErrorAction SilentlyContinue
-        # Stop only the activation process, after rechecking package identity and creation time.
-        if ($activationPid -gt 0 -and $report.Contains('registration') -and
-            [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -eq $report.registration.packageFullName) {
-            $created = Get-Process -Id $activationPid -ErrorAction SilentlyContinue
-            if ($created -and $observed.ContainsKey([string]$activationPid) -and
-                $created.StartTime.ToUniversalTime().ToString('o') -eq $observed[[string]$activationPid].createdUtc) {
-                [void]$created.CloseMainWindow()
-                if (-not $created.WaitForExit(5000)) { Stop-Process -Id $activationPid -ErrorAction SilentlyContinue }
+        if ($EnableReviewedLaunchCompatibility) {
+            try {
+                if ($null -eq $ownedActivationProcess -or [string]::IsNullOrWhiteSpace($ownedActivationCreatedUtc) -or
+                    $activationPid -le 0 -or -not $report.Contains('registration') -or
+                    -not $observed.ContainsKey([string]$activationPid) -or
+                    $observed[[string]$activationPid].processId -ne $activationPid -or
+                    -not $observed[[string]$activationPid].packageIdentityVerified) {
+                    throw 'The Desktop activation identity is unavailable for cleanup.'
+                }
+                $activationExitConfirmed = Complete-DesktopActivationProcess -Process $ownedActivationProcess `
+                    -ExpectedPid $activationPid -ObservedCreatedUtc $ownedActivationCreatedUtc `
+                    -ExpectedPackage $report.registration.packageFullName `
+                    -ReadPackageIdentity { param($ProcessId) [DesktopColdProbe.Native]::PackageFor([uint32]$ProcessId) }
+            } finally {
+                if ($null -ne $ownedActivationProcess) { $ownedActivationProcess.Dispose() }
+            }
+        } else {
+            # Stop only the activation process, after rechecking package identity and creation time.
+            if ($activationPid -gt 0 -and $report.Contains('registration') -and
+                [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -eq $report.registration.packageFullName) {
+                $created = Get-Process -Id $activationPid -ErrorAction SilentlyContinue
+                if ($created -and $observed.ContainsKey([string]$activationPid) -and
+                    $created.StartTime.ToUniversalTime().ToString('o') -eq $observed[[string]$activationPid].createdUtc) {
+                    [void]$created.CloseMainWindow()
+                    if (-not $created.WaitForExit(5000)) { Stop-Process -Id $activationPid -ErrorAction SilentlyContinue }
+                }
             }
         }
     } catch { $report.cleanupErrorType = $_.Exception.GetType().FullName }
-    finally { Save-Report }
+    if ($EnableReviewedLaunchCompatibility) {
+        $report.desktopActivationExited = [bool]$activationExitConfirmed
+    }
 }
+
+# Same Windows job, after actual Desktop capture and confirmed activation-process exit.
+# A failed Desktop view never falls back to synthetic evidence or another launch.
+if ($EnableReviewedLaunchCompatibility -and $exitCode -eq 0) {
+    if (-not $activationExitConfirmed -or $report.Contains('cleanupErrorType')) {
+        $report.status = 'blocked'
+        $report.stage = 'desktop-cleanup'
+        $report.reason = 'The observed Desktop activation process exit was not confirmed; the separate native check was not started.'
+        $report.nativeControlPlane.reason = 'desktop_cleanup_not_completed'
+        $exitCode = 1
+    } else {
+        $nativeFailureStage = 'wrapper'
+        $nativeSummaryValidated = $false
+        try {
+            $report.stage = 'synthetic-native-control-plane'
+            $nativeScratch = Join-Path $env:RUNNER_TEMP ('native-control-scratch-' + [guid]::NewGuid().ToString('N'))
+            $nativeHelperHome = Join-Path $env:RUNNER_TEMP ('native-control-helper-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $nativeScratch, $nativeHelperHome | Out-Null
+            . (Join-Path $env:GITHUB_WORKSPACE 'build/control-plane-native/invoke.ps1')
+            $nativeEvidence = Invoke-ControlPlaneNative -HelperExecutable $NativeControlExecutable `
+                -BridgeExecutable $BridgeExecutable -CodexExecutable $officialBackend.FullName `
+                -CatalogPath $NativeControlCatalog -ScratchParent $nativeScratch -HelperHome $nativeHelperHome
+            Assert-ControlPlaneNativeSummary $nativeEvidence
+            $nativeSummaryValidated = $true
+            if ($null -ne $nativeEvidence -and $nativeEvidence.PSObject.Properties['stage'] -and
+                $nativeEvidence.stage -is [string] -and
+                @('inputs', 'version', 'initialize', 'initial_config', 'catalog', 'resolved_config',
+                    'threads', 'turns', 'ownership', 'final_config', 'shutdown', 'complete', 'supervisor') -ccontains $nativeEvidence.stage) {
+                $nativeFailureStage = $nativeEvidence.stage
+            }
+            $report.nativeControlPlane = ConvertTo-DesktopNativeControlEvidence $nativeEvidence
+            $report.nativeControlPlaneLimit = 'The same compiled adapter and verified official native executable completed two projectless native threads with two text turns each against isolated loopback synthetic Responses fixtures. This is separate from actual Desktop evidence, not a real-service, account, tool, corporate-policy, GUI-usability or zero-egress claim.'
+            $report.stage = 'desktop-capture-and-synthetic-native-control-completed'
+        } catch {
+            $report.status = 'blocked'
+            $report.reason = 'The isolated native control-plane check did not produce complete validated success.'
+            if ($nativeSummaryValidated -and $nativeEvidence.status -ceq 'failed') {
+                # The wrapper's exact schema includes only bounded counts, fixed enums and the public pin.
+                $report.nativeControlPlane = $nativeEvidence
+            } else {
+                $report.nativeControlPlane = [ordered]@{
+                    schema = 1; scope = 'synthetic-loopback-only'; status = 'failed'
+                    stage = $nativeFailureStage; reason = 'native_control_validation_failed'
+                }
+            }
+            $exitCode = 1
+        }
+    }
+}
+Save-Report
 exit $exitCode

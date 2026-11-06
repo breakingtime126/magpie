@@ -62,7 +62,8 @@ func NativeRequestID167Valid(data []byte) bool {
 func (r *Router) nativeReadIDInUse(id json.RawMessage, method string) bool {
 	strict := func(method string) bool {
 		return (r.auth.authStatusNoAuth && method == "getAuthStatus") ||
-			(r.experimentalFeatureList167 && method == "experimentalFeature/list")
+			(r.experimentalFeatureList167 && method == "experimentalFeature/list") ||
+			(r.controlPlaneRouting167 && method == "config/read")
 	}
 	key, err := authCompatibilityID(id)
 	if err != nil {

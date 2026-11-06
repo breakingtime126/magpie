@@ -11,7 +11,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
-    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'ConvertFrom-PublicRPCMethodFacts', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Assert-PublicReadRequestEvent', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
+    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'ConvertFrom-PublicRPCMethodFacts', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Assert-PublicReadRequestEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
     'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
@@ -1253,4 +1253,169 @@ process.stdout.write(JSON.stringify(inspectPackage(root)));
         finally { $stream.Dispose() }
     }
 } finally { Remove-Item -LiteralPath $temporary -Force -Recurse }
+
+# Request-target fields are fixed classifications, not filesystem authority.
+function New-ReadTargetEvent([string]$Method, [bool]$Valid = $true) {
+    $record = [pscustomobject][ordered]@{
+        seq = 1; pid = 2; kind = 'rpc'; direction = 'to_bridge'; method = $Method
+        correlation = 3; class = 'request'
+    }
+    if ($Method -ceq 'project/list') {
+        $record | Add-Member -NotePropertyName projectListParamsValid -NotePropertyValue $Valid
+        if ($Valid) {
+            $record | Add-Member -NotePropertyName projectListCursorProvided -NotePropertyValue $false
+            $record | Add-Member -NotePropertyName projectListLimitProvided -NotePropertyValue $false
+            $record | Add-Member -NotePropertyName projectListSortKey -NotePropertyValue 'absent'
+            $record | Add-Member -NotePropertyName projectListSortDirection -NotePropertyValue 'absent'
+        }
+    } else {
+        $record | Add-Member -NotePropertyName fsReadParamsShapeValid -NotePropertyValue $Valid
+        if ($Valid) {
+            $record | Add-Member -NotePropertyName fsReadPathForm -NotePropertyValue 'drive_absolute'
+            $record | Add-Member -NotePropertyName fsReadBasename -NotePropertyValue 'other'
+            $record | Add-Member -NotePropertyName fsReadLexicalRoot -NotePropertyValue 'outside'
+        }
+    }
+    return $record
+}
+foreach ($method in @('project/list', 'fs/readFile')) {
+    foreach ($valid in @($false, $true)) {
+        foreach ($trace in @($false, $true)) {
+            Expect-Pass 'read-target exact shape with optional trace' {
+                $record = New-ReadTargetEvent $method $valid
+                if ($trace) {
+                    $record | Add-Member -NotePropertyName tracePresent -NotePropertyValue $true
+                    $record | Add-Member -NotePropertyName traceValid -NotePropertyValue $true
+                }
+                Assert-PublicCanonicalJSON ($record | ConvertTo-Json -Compress) $record
+                if (@(Assert-PublicReadRequestEvent $record).Count -ne 0) { throw 'Unexpected read-target output.' }
+            }
+        }
+    }
+    Expect-Pass 'invalid trace suppresses read-target metadata' {
+        Assert-PublicReadRequestEvent ([pscustomobject]@{
+            seq = 1; pid = 2; kind = 'rpc'; direction = 'to_bridge'; method = $method
+            correlation = 3; class = 'request'; tracePresent = $true; traceValid = $false
+        })
+    }
+    Expect-Pass 'response retains no target metadata' {
+        Assert-PublicReadRequestEvent ([pscustomobject]@{
+            seq = 1; pid = 2; kind = 'rpc'; direction = 'from_bridge'; method = $method
+            correlation = 3; class = 'response'
+        })
+    }
+    $fields = @('projectListParamsValid', 'projectListCursorProvided', 'projectListLimitProvided',
+        'projectListSortKey', 'projectListSortDirection')
+    if ($method -ceq 'fs/readFile') {
+        $fields = @('fsReadParamsShapeValid', 'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot')
+    }
+    foreach ($field in $fields) {
+        foreach ($bad in @($null, 0, 1, 'PRIVATE_CANARY', @('PRIVATE_CANARY'), [pscustomobject]@{ raw = 'PRIVATE_CANARY' })) {
+            Expect-Reject ('read-target invalid type or value: ' + $field) {
+                $record = New-ReadTargetEvent $method; $record.$field = $bad
+                Assert-PublicReadRequestEvent $record
+            }
+        }
+        Expect-Reject ('read-target missing field: ' + $field) {
+            $record = New-ReadTargetEvent $method; $record.PSObject.Properties.Remove($field)
+            Assert-PublicReadRequestEvent $record
+        }
+        Expect-Reject ('read-target wrong field casing: ' + $field) {
+            $record = New-ReadTargetEvent $method; $value = $record.$field
+            $record.PSObject.Properties.Remove($field)
+            $record | Add-Member -NotePropertyName $field.ToUpperInvariant() -NotePropertyValue $value
+            Assert-PublicReadRequestEvent $record
+        }
+        Expect-Reject ('read-target duplicate decoded field: ' + $field) {
+            $record = New-ReadTargetEvent $method
+            $json = $record | ConvertTo-Json -Compress
+            $key = '"' + $field + '":'
+            $alias = '"\u' + ([int][char]$field[0]).ToString('x4') + $field.Substring(1) + '":'
+            $rawValue = $record.$field | ConvertTo-Json -Compress
+            $json = $json.Replace($key, ($key + $rawValue + ',' + $alias))
+            $decoded = $json | ConvertFrom-Json
+            Assert-PublicCanonicalJSON $json $decoded
+            Assert-PublicReadRequestEvent $decoded
+        }
+    }
+    foreach ($field in $fields[1..($fields.Count - 1)]) {
+        Expect-Reject ('invalid target shape suppresses partial fields: ' + $field) {
+            $record = New-ReadTargetEvent $method $false
+            $record | Add-Member -NotePropertyName $field -NotePropertyValue $false
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+    foreach ($row in @(@('kind', 'rpc_error'), @('direction', 'from_bridge'), @('direction', 'stderr'),
+        @('method', 'config/read'), @('method', 'Project/list'), @('class', 'response'),
+        @('class', 'notification'), @('class', 'duplicate_id'), @('class', 'correlation_limit'))) {
+        Expect-Reject 'read-target metadata outside exact client request' {
+            $record = New-ReadTargetEvent $method; $record.($row[0]) = $row[1]
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+    foreach ($field in @('seq', 'pid', 'correlation')) {
+        foreach ($bad in @(0, -1, 4294967297L, 1.5, 'PRIVATE_CANARY')) {
+            Expect-Reject ('read-target invalid correlation: ' + $field) {
+                $record = New-ReadTargetEvent $method; $record.$field = $bad
+                Assert-PublicReadRequestEvent $record
+            }
+        }
+    }
+    foreach ($field in @('params', 'path', 'root', 'hash', 'error', 'result', 'cursor', 'limit',
+        'configParamsValid', 'authParamsValid', 'featureListParamsValid', 'PRIVATE_CANARY')) {
+        Expect-Reject ('read-target raw or mixed-family data: ' + $field) {
+            $record = New-ReadTargetEvent $method
+            $record | Add-Member -NotePropertyName $field -NotePropertyValue 'PRIVATE_CANARY'
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+    Expect-Reject 'invalid trace cannot carry target metadata' {
+        $record = New-ReadTargetEvent $method
+        $record | Add-Member -NotePropertyName tracePresent -NotePropertyValue $true
+        $record | Add-Member -NotePropertyName traceValid -NotePropertyValue $false
+        Assert-PublicReadRequestEvent $record
+    }
+    foreach ($field in @('tracePresent', 'traceValid')) {
+        Expect-Reject ('read-target partial trace: ' + $field) {
+            $record = New-ReadTargetEvent $method
+            $record | Add-Member -NotePropertyName $field -NotePropertyValue $true
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+}
+foreach ($field in @('fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot')) {
+    foreach ($label in @(Get-PublicReadTargetLabels $field)) {
+        Expect-Pass ('fixed fs-read classification: ' + $field + ':' + $label) {
+            $record = New-ReadTargetEvent 'fs/readFile'; $record.$field = $label
+            Assert-PublicReadRequestEvent $record
+        }
+        Expect-Reject ('fs-read label spelling is exact: ' + $field) {
+            $record = New-ReadTargetEvent 'fs/readFile'; $record.$field = $label + '_PRIVATE_CANARY'
+            Assert-PublicReadRequestEvent $record
+        }
+    }
+}
+foreach ($key in @('absent', 'position', 'recencyAt')) {
+    foreach ($direction in @('absent', 'asc', 'desc')) {
+        foreach ($cursor in @($false, $true)) {
+            foreach ($limit in @($false, $true)) {
+                $action = {
+                    $record = New-ReadTargetEvent 'project/list'
+                    $record.projectListSortKey = $key; $record.projectListSortDirection = $direction
+                    $record.projectListCursorProvided = $cursor; $record.projectListLimitProvided = $limit
+                    Assert-PublicReadRequestEvent $record
+                }
+                if ($key -ceq 'absent' -and $direction -cne 'absent') {
+                    Expect-Reject 'project direction without sort key is invalid' $action
+                } else { Expect-Pass 'project sort and presence combination remains exact' $action }
+            }
+        }
+    }
+}
+Expect-Reject 'project and fs metadata families cannot be mixed' {
+    $record = New-ReadTargetEvent 'project/list'
+    $record | Add-Member -NotePropertyName fsReadParamsShapeValid -NotePropertyValue $false
+    Assert-PublicReadRequestEvent $record
+}
+
 Write-Output ('PUBLIC_CATALOG_PS_TESTS_PASSED=' + $script:passed)

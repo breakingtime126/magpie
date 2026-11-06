@@ -50,7 +50,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" {
+	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" || cfg.ControlPlane != "" {
 		// Check both reviewed executables before either process can read or
 		// refresh account/policy state. This is not an OS security boundary.
 		for _, backend := range cfg.Backends {
@@ -67,6 +67,22 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 			return errors.New("cannot resolve working_directory")
 		}
 	}
+	controlHome := ""
+	nativeHomes := map[string]string{}
+	if cfg.ControlPlane == ControlPlaneRouting167 {
+		var err error
+		controlHome, err = filepath.EvalSymlinks(cfg.ControlHome)
+		if err != nil {
+			return errors.New("cannot resolve control_home")
+		}
+		for _, b := range cfg.Backends {
+			home, err := filepath.EvalSymlinks(b.CodexHome)
+			if err != nil {
+				return errors.New("cannot resolve native config home")
+			}
+			nativeHomes[b.ID] = home
+		}
+	}
 	router, err := NewRouter(cfg.Backends)
 	if err != nil {
 		return err
@@ -74,6 +90,9 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	router.configRequirementsRead = cfg.RequirementsRead != ""
 	router.configRequirementsNull167 = cfg.RequirementsRead == ConfigRequirementsCompareNull167
 	router.experimentalFeatureList167 = cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167
+	router.controlPlaneRouting167 = cfg.ControlPlane == ControlPlaneRouting167
+	router.controlHome167 = controlHome
+	router.controlNativeHomes167 = nativeHomes
 	router.auth = cfg.authCompatibility()
 	ctx, cancel := context.WithCancel(parent)
 	processContext, stopProcesses := context.WithCancel(context.WithoutCancel(parent))

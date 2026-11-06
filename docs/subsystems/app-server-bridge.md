@@ -44,8 +44,11 @@ Schema compatibility does not certify a Desktop/backend runtime combination.
 
 ## Routing contracts
 
-1. `initialize` is sent independently to both children. The primary child's
-   genuine result is returned only after both succeed. At that point the
+1. `initialize` is sent independently to both children. By default the primary
+   child's genuine result is returned only after both succeed. The separate
+   [routing control plane](#exact-0167-owned-routing-control-plane) instead validates
+   both native identities and reports its own explicit frontend `codexHome`.
+   At that point the
    bridge is ready, before emitting the merged response; no client
    `initialized` notification is required. A real `initialized` notification
    is passed unchanged to both children when early, delayed, or repeated,
@@ -1005,8 +1008,9 @@ successful initialize without a client `initialized` notification. Correcting
 that readiness gate does not authorize or implement `getAuthStatus`.
 Even `includeToken:false,refreshToken:false`
 can reach credential-refresh behavior, so the bridge does not fabricate status
-or call it a guaranteed offline read. `config/read`, gateway/account login
-mutations and external-token refresh remain unsupported. The inspected
+or call it a guaranteed offline read. At this historical stage `config/read`,
+gateway/account login mutations and external-token refresh remained unsupported.
+The later independent routing-only view below does not enable authentication. The inspected
 `config/read` wrapper waits for readiness but is not a fixed serial step in the
 main initialization function. Returning only one backend's full configuration
 would misrepresent the other backend's provider and permission context.
@@ -1150,7 +1154,9 @@ race checks, the full suite and official-runtime tests were not run for this
 change. The integrating commit/CI record must name actual checks and the exact
 tested head. No Desktop GUI startup, real account, proof, OAuth login, model
 inference, tool execution or corporate policy acceptance is established.
-`config/read`, login/cancel and external-token refresh remain unsupported.
+`config/read` remains unsupported by these auth modes; the separate
+[routing control plane](#exact-0167-owned-routing-control-plane) supplies only its
+own routing view. Login/cancel and external-token refresh remain unsupported.
 Requirements inspection does not enable `getAuthStatus`; only its separate
 CI-only no-auth mode can do so. This mode never produces a proof or grants
 login authority.
@@ -1265,7 +1271,10 @@ request vocabulary and adds boolean-only request-shape metadata for
 [complete vocabulary and read-shape contract](desktop-cold-start.md#complete-pinned-rpc-vocabulary-and-read-request-shapes)
 defines those exact fields and publication limits. This is diagnostic
 classification, not generic routing, payload capture, request execution, or
-evidence that Desktop actually sent a particular candidate. `config/read` remains unsupported in production. The separately enabled
+evidence that Desktop actually sent a particular candidate. `config/read` remains
+unsupported by default; its separately enabled
+[routing control plane](#exact-0167-owned-routing-control-plane) is described below.
+The separately enabled
 [feature-page comparison](#exact-0167-shared-experimental-feature-pages) below
 is the sole production exception for `experimentalFeature/list`; diagnostic
 recognition alone enables nothing. Existing trace and auth-flag recognition
@@ -1450,8 +1459,9 @@ system, credential-derived and network-backed state. Separate homes and page
 equality do not prove credential isolation, equal underlying policies, or
 zero egress. No feature is enabled or disabled by the bridge.
 `experimentalFeature/enablement/set`, non-null thread-scoped feature reads,
-`config/read`, and previously unsupported authentication routes remain
-unsupported. Existing capability guards, including human-approval rejection,
+and previously unsupported authentication routes remain unsupported.
+This feature mode does not enable `config/read`; only its separate routing
+control plane can supply the owned routing view described below. Existing capability guards, including human-approval rejection,
 remain in force; this mode does not enable an auth capability.
 
 Implementation:
@@ -1479,3 +1489,190 @@ the full suite and real Desktop behavior were **not run while authoring**.
 The integrating CI record must give the exact tested head and actual outcomes.
 No real account, model inference, tool execution, Windows zero-egress,
 corporate-policy or completed Desktop GUI acceptance is claimed.
+
+### Exact 0.167 owned routing control plane
+
+The independent default-off setting
+`control_plane: "routing-v0.167.0-alpha.3.2"` enables a **bridge-owned routing
+defaults view**, not a native effective configuration or shared execution-policy
+authority. It is absent from ordinary examples/defaults. It does not implement
+projects, filesystem access, configuration writes, authentication or account
+mutation. It does not inject or alter approval, sandbox, permission-profile,
+workspace-root or environment settings.
+
+Activation also requires `control_home`: an explicit, existing absolute directory
+for the frontend server's own state namespace. The caller creates this directory;
+the bridge never creates it, copies a native configuration into it or invents a
+`config.toml`. It must not overlap either child's HOME or CODEX_HOME in either
+direction. Existing canonical-path and file-identity checks reject symlink aliases.
+A stray `control_home` with the mode disabled is rejected. It is a namespace
+declaration, not a filesystem grant, broker allowlist or proof of OS isolation.
+
+Both configured executable SHA-256 pins must match before either native child
+starts, even when this is the sole selected compatibility mode. Partial/future
+mode names and combinations with retained 0.166 modes are rejected. The native
+provider identifier `magpie_bridge` is reserved and cannot be configured on a
+child. Other exact 0.167 opt-ins remain independent. The existing 0.167
+required-human-approval capability guard also applies; this adds no new auth-state
+gate and enables no authentication capability. Operator-supplied pins bind the
+selected files, not independently their version, signature or provenance.
+
+#### Frontend initialization and native homes
+
+This mode validates both complete native initialize responses before readiness.
+Each must contain exactly `userAgent`, `codexHome`, `platformFamily` and
+`platformOs`. The reported native home must match that child's configured home
+or its canonical spelling resolved before launch. Windows drive/UNC
+extended-length spelling and case differences are normalized lexically. No
+child-supplied arbitrary path is resolved, opened or inspected.
+
+The common user agent and platform metadata must agree. Only then does the bridge
+return those genuine common metadata values with `codexHome` replaced by the
+resolved, explicitly designated `control_home` and become ready. This is a
+projected bridge response, not an unchanged native initialize response. Missing,
+unexpected or differing metadata and native initialization failures produce a
+sanitized failure and never grant readiness. Child environment variables and
+CODEX_HOME paths remain unchanged. Initialization without this mode keeps its
+previous behavior.
+
+A Desktop attempt to read a nonexistent control-home config file is a real
+unsupported dependency. Do not satisfy it by copying a private backend config,
+returning fictional file bytes or expanding filesystem access.
+
+#### Strict routing config request and fresh policy precondition
+
+Only the observed `config/read` params object `{"includeLayers":false}` is accepted.
+The property is required and must be literal false. `cwd` is unsupported,
+including explicit null. Missing/null params, layer requests and unknown fields
+fail locally. Native string-or-int64 IDs and the existing bounded optional trace
+shape apply. The 64 KiB strict policy JSON reader rejects decoded duplicate keys,
+invalid UTF-8/surrogate text, depth/container overflow and trailing content.
+Trace metadata is not propagated.
+
+After both children have initialized, every accepted call sends a fresh internal
+`configRequirements/read` with native `params:null` to each child. It preserves
+the existing exact 0.167 validator: success requires two genuine complete
+`{"requirements":null,"supportsIndependentSpeedModes":true}` views. Non-null or
+unsupported policy, malformed envelopes, errors and disagreement fail the entire
+read with `bridge routing configuration unavailable`. Backend error text/data
+never appears in the response. A prior success is not cached. There is one
+outstanding config read at a time; ordinary active-request limits and bounded
+late-response tombstones apply.
+
+These internal policy reads do not enable the public requirements route. They
+also do not establish equal effective execution permissions or authorize a shared
+policy claim. Native policy reloads may refresh credential-derived, managed or
+network-backed state; this is not an offline or no-side-effects guarantee.
+
+**No native `config/read` is ever issued.** The returned config is constructed
+from the bridge's actual routing state rather than filtered native config.
+
+#### Exact owned result and provenance
+
+The result contains only `config` and `origins:{}`; `layers` is omitted.
+`config` contains:
+
+- `model_provider: "magpie_bridge"`, the reserved frontend routing authority.
+- Optional `model`, the actual alias in the current complete merged model catalog
+  that the existing router would use for an omitted new-thread model. Before a
+  successful catalog, or when its current result has no default, this field is
+  omitted. It is not fabricated, set to null or resolved by an implicit model read.
+- `magpie_bridge`, an explicit extension with `version:1`,
+  `view:"routing-defaults"`, `provider_routing:"fixed-per-thread"`,
+  `execution_policy:"backend-owned-per-thread"` and `model_catalog:"model/list"`.
+  Its `supports` object has exactly `config_writes:false`, `layer_reads:false` and
+  `cwd_reads:false`. Its `provenance` object names
+  `model_provider:"bridge-routing"` and, only when model is present,
+  `model:"bridge-catalog-default"`.
+- The extension's `backends` array contains exactly two entries, each with only
+  `id`, configured native `provider`, `model_prefix` and `catalog_source`.
+  A prefix is `magpie/<backend ID>/`. Catalog source is `native-model-list` or
+  `configured-descriptors` according to that backend's existing configuration.
+  The default alias therefore unambiguously identifies its catalog provenance.
+  Configured descriptors are declared metadata, not native availability,
+  entitlement or successful service use.
+
+No approval, sandbox, permission, login, instruction, feature or native
+`model_providers` fields are advertised. No path, endpoint, header, credential,
+environment table or native storage location enters the owned config view.
+`origins` is intentionally partial: the native closed source union has no
+bridge-routing variant, and the extension supplies honest provenance instead.
+No synthetic user/system/session origin or native version hash is invented.
+
+The source oracle is
+[protocol/v2/config.rs](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/config.rs)
+and its
+[ConfigReadResponse JSON schema](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/schema/json/v2/ConfigReadResponse.json).
+That JSON schema requires only config and origins; Config has no required
+properties and accepts extensions. Generated TypeScript nevertheless describes
+nullable policy fields and layers as required. This is therefore a deliberately
+partial JSON-schema-valid owned view, **not proof of compatibility with every
+native or Desktop consumer**. Never add invented null policy fields to hide that
+difference.
+
+#### Logical provider routing
+
+Only known protocol fields are translated. On thread start/resume/fork, an
+omitted/null provider or `modelProvider:"magpie_bridge"` is accepted. Other
+explicit provider IDs are rejected in this mode. The selected model alias
+chooses a new thread's owner; an existing thread's previously verified owner
+chooses resume/fork. Only that owner's configured native provider is sent to the
+child. The logical provider never becomes a native config value or model-service
+destination.
+
+For thread listing, `modelProviders:["magpie_bridge"]` becomes a single-element
+filter for each child's own native provider on **every** native page. Omitted,
+null and empty filters keep their existing distinct native semantics. Unsupported
+provider entries are rejected before native reads or bridge pagination.
+
+Every native Thread must pass the existing provider/ownership checks before its
+frontend `modelProvider` is projected. This covers thread list, started
+notifications and the supported Thread-returning response siblings:
+start/resume/fork/read/unarchive/revert/legacy rollback. Top-level
+start/resume/fork provider fields and `threadSettings.modelProvider` are also
+validated against the sending owner before projection. Missing/null/foreign
+required providers fail closed. Duplicate keys are rejected on the consumed
+routing objects, including Thread-returning siblings.
+
+Native IDs and ownership remain unchanged. Existing model aliases and
+cross-provider rejection still apply. Arbitrary nested user/tool content is not
+recursively scanned or rewritten. Existing native permission fields,
+approval routing, account ownership and attestation rules are preserved.
+
+#### Implementation and acceptance boundary
+
+Implementation lives in
+[`control_plane_167.go`](../../internal/appserverbridge/control_plane_167.go),
+with mode/path validation in [`config.go`](../../internal/appserverbridge/config.go),
+launch wiring in [`run.go`](../../internal/appserverbridge/run.go), exact native-ID
+collision handling in [`native_trace_167.go`](../../internal/appserverbridge/native_trace_167.go),
+and the existing ownership paths in [`router.go`](../../internal/appserverbridge/router.go).
+
+[`control_plane_167_test.go`](../../internal/appserverbridge/control_plane_167_test.go)
+covers strict requests, genuine fresh policy preconditions, errors/recovery,
+default provenance, routing projections, provider/filter rejection, native
+pagination, duplicate routing objects, unchanged arbitrary payloads and
+permissions, mode/pin/version gates, explicit control-home isolation and
+initialize metadata projection.
+[`control_plane_run_test.go`](../../internal/appserverbridge/control_plane_run_test.go)
+uses copied synthetic native peers through real subprocess pipes: config read,
+actual fixture model listing, two owned projectless threads and two text turns
+each, policy failure/recovery, process pins and EOF cleanup.
+[`control_plane_167_red_test.go`](../../internal/appserverbridge/control_plane_167_red_test.go)
+uses only base APIs and can be copied alone to exact base
+`70e603d8481c28b9f84cadf2f7183255044e11b4` for an assertion-level unknown-mode red.
+
+These source blobs were authored with connectors only. Formatting, compilation,
+unit/lifecycle tests, old-base red, race/vet/build/full-suite checks, official
+native synthetic integration and signed Desktop consumer behavior were **not
+run while authoring**. The integration record must identify the exact tested
+head and actual outcomes.
+
+The next acceptance slice is an isolated no-account official-native synthetic
+text flow plus one actual signed Desktop batch. If Desktop rejects the logical
+provider, requires omitted global policy/config fields, requests config writes
+or needs an unsupported filesystem/project authority, report that boundary and
+stop. Do not invent native values, route primary config as a shared authority,
+or widen access to make the test green. No production account, credential/proof
+isolation, inference entitlement, tool execution, zero-egress, corporate-policy
+or completed same-window Desktop acceptance is claimed here.

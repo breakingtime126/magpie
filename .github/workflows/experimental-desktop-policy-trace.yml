@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/experimental-desktop-policy-trace.yml
       - build/desktop-rpc-observer/**
+      - build/control-plane-native/**
       - build/test-desktop-cold-start.ps1
       - build/test-desktop-public-catalog.ps1
       - build/test-desktop-ci-profile.ps1
@@ -47,6 +48,21 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Check source formatting before regression gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          format_status=0
+          diff="$(gofmt -d build/control-plane-native build/desktop-rpc-observer internal/appserverbridge cmd/magpie-codex-bridge 2>&1)" || format_status=$?
+          if [[ "$format_status" -ne 0 || -n "$diff" ]]; then
+            printf '%s\n' "$diff"
+            while IFS= read -r file; do
+              printf 'PROBE_FORMAT_FILE=%s:' "$file"
+              gofmt "$file" | base64 -w0
+              printf '\n'
+            done < <(gofmt -l build/control-plane-native build/desktop-rpc-observer internal/appserverbridge cmd/magpie-codex-bridge || true)
+            exit 1
+          fi
       - name: Check out exact pre-extension behavior for red regression
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -365,27 +381,41 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestExperimentalFeature167BehavioralRed'
           printf '%s\n' "$output" | grep -F -- 'exact default-off experimental feature comparison mode was not accepted:'
           echo 'The old bridge fails the exact mode assertion; compilation or setup failures do not qualify.'
+      - name: Check out exact pre-control-plane behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 70e603d8481c28b9f84cadf2f7183255044e11b4
+          path: .ci-control-plane-baseline
+          persist-credentials: false
+      - name: Prove owned control mode and private target metadata fail behaviorally on the old code
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/control_plane_167_red_test.go .ci-control-plane-baseline/internal/appserverbridge/
+          cp build/desktop-rpc-observer/read_target_metadata_red_test.go .ci-control-plane-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-control-plane-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^(TestControlPlane167RedExactModeLoads|TestProjectListMetadataRed|TestFSReadTargetMetadataRed|TestReadTargetEnvironmentMetadataRed)$' ./internal/appserverbridge ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestControlPlane167RedExactModeLoads'
+          printf '%s\n' "$output" | grep -F -- 'explicit routing-only control plane must load:'
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestProjectListMetadataRed'
+          printf '%s\n' "$output" | grep -F -- 'target metadata field projectList'
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestFSReadTargetMetadataRed'
+          printf '%s\n' "$output" | grep -F -- 'target metadata field fsRead'
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestReadTargetEnvironmentMetadataRed'
+          printf '%s\n' "$output" | grep -F -- 'observer-only read target roots reached child environment'
+          echo 'The old code fails all four named behavior assertions; compilation or setup failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |
           set -euo pipefail
-          format_status=0
-          diff="$(gofmt -d build/desktop-rpc-observer internal/appserverbridge cmd/magpie-codex-bridge 2>&1)" || format_status=$?
-          if [[ "$format_status" -ne 0 || -n "$diff" ]]; then
-            printf '%s\n' "$diff"
-            while IFS= read -r file; do
-              printf 'PROBE_FORMAT_FILE=%s:' "$file"
-              gofmt "$file" | base64 -w0
-              printf '\n'
-            done < <(gofmt -l build/desktop-rpc-observer internal/appserverbridge cmd/magpie-codex-bridge || true)
-            exit 1
-          fi
           pwsh -NoProfile -File build/test-desktop-public-catalog.ps1
           pwsh -NoProfile -File build/test-desktop-ci-profile.ps1
           node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs build/inspect-desktop-mcp-catalog.test.mjs build/inspect-desktop-mcp-catalog-red.test.mjs
           node --max-old-space-size=1024 --test build/inspect-desktop-read-callers.test.mjs build/inspect-desktop-read-callers-package.test.mjs
-          go test -race -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
-          go vet -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
+          go test -race -count=1 -timeout=10m -tags nogui ./build/control-plane-native ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
+          go vet -tags nogui ./build/control-plane-native ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
 
   observed-policy-read:
     needs: observer-unit
@@ -457,7 +487,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Static metadata inspector tests failed.' }
           node --max-old-space-size=1024 --test build/inspect-desktop-read-callers.test.mjs build/inspect-desktop-read-callers-package.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Read caller inspector tests failed.' }
-          go test -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
+          go test -count=1 -timeout=10m -tags nogui ./build/control-plane-native ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           if ($LASTEXITCODE -ne 0) { throw 'Windows observer tests failed.' }
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
@@ -465,11 +495,35 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Production bridge build failed.' }
           go build -trimpath -o $observer ./build/desktop-rpc-observer
           if ($LASTEXITCODE -ne 0) { throw 'Test observer build failed.' }
-      - name: Observe explicit reviewed launch compatibility without extra requests
+          $native = Join-Path $env:RUNNER_TEMP ('magpie-control-native-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          go build -trimpath -o $native ./build/control-plane-native
+          if ($LASTEXITCODE -ne 0) { throw 'Native control-plane acceptance helper build failed.' }
+      - name: Materialize the pinned public native model fixture
+        run: |
+          $catalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
+          if (Test-Path -LiteralPath $catalog) { throw 'Native model fixture target already exists.' }
+          $url = 'https://raw.githubusercontent.com/openai/codex/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/models-manager/models.json'
+          Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $catalog
+          $file = Get-Item -LiteralPath $catalog
+          if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+              $file.Length -le 0 -or $file.Length -gt 10485760) { throw 'Native model fixture has invalid size or type.' }
+          $bytes = [IO.File]::ReadAllBytes($catalog)
+          $header = [Text.Encoding]::ASCII.GetBytes("blob " + $bytes.Length + [char]0)
+          $sha = [Security.Cryptography.SHA1]::Create()
+          try {
+            $hash = $sha.ComputeHash([byte[]]($header + $bytes))
+            $actual = ([BitConverter]::ToString($hash)).Replace('-', '').ToLowerInvariant()
+            if ($actual -cne '489ebe3f2483348641a16160ce8491dd077eabca') { throw 'Native model fixture identity mismatch.' }
+          } finally { $sha.Dispose() }
+          Write-Output 'Pinned public native catalog fixture verified; this is not live entitlement evidence.'
+      - name: Observe reviewed Desktop config and isolated native text turns
+        shell: pwsh
         run: |
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
-          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -InspectStaticLauncher
+          $native = Join-Path $env:RUNNER_TEMP ('magpie-control-native-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          $catalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
+          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -InspectStaticLauncher
       - name: Upload only sanitized diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

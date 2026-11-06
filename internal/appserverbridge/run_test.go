@@ -55,6 +55,12 @@ func fixtureServer() {
 	if os.WriteFile(filepath.Join(home, "fixture-report"), report, 0600) != nil {
 		os.Exit(3)
 	}
+	if handled, code := controlPlaneFixture(); handled {
+		if code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
 	if handled, code := experimentalFeatureFixture(); handled {
 		if code != 0 {
 			os.Exit(code)

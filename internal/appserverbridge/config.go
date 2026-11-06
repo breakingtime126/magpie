@@ -18,6 +18,11 @@ import (
 type Config struct {
 	Backends []Backend `json:"backends"`
 
+	// ControlPlane exposes only bridge-owned routing defaults. Native execution
+	// policy and all account/permission contracts remain separately owned.
+	ControlPlane string `json:"control_plane,omitempty"`
+	ControlHome  string `json:"control_home,omitempty"`
+
 	// Auth compatibility modes are independent, explicit and disabled by default.
 	// They never authorize generating proof tokens or starting an OAuth login.
 	AuthStatus               string `json:"auth_status,omitempty"`
@@ -93,6 +98,12 @@ func LoadConfig(input io.Reader) (Config, error) {
 // Validate checks isolation before any subprocess starts. All paths must exist;
 // symlinks are resolved so aliases cannot silently share account state.
 func (cfg Config) Validate() error {
+	if cfg.ControlPlane != "" && cfg.ControlPlane != ControlPlaneRouting167 {
+		return errors.New("unsupported control_plane mode")
+	}
+	if cfg.ControlPlane == "" && cfg.ControlHome != "" {
+		return errors.New("control_home requires the routing control plane")
+	}
 	if cfg.AuthStatus != "" && cfg.AuthStatus != AuthStatusPrimaryNoAuth167 {
 		return errors.New("unsupported auth_status mode")
 	}
@@ -128,7 +139,7 @@ func (cfg Config) Validate() error {
 		cfg.StartupProbe == StartupProbeCompareUnrestricted
 	current := cfg.RequirementsRead == ConfigRequirementsCompareNull167 ||
 		cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 ||
-		cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167
+		cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167 || cfg.ControlPlane == ControlPlaneRouting167
 	if legacy && current {
 		return errors.New("incompatible versions in selected compatibility modes")
 	}
@@ -146,7 +157,7 @@ func (cfg Config) Validate() error {
 	ids := map[string]bool{}
 	var homes []string
 	for i, b := range cfg.Backends {
-		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" {
+		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" || cfg.ControlPlane != "" {
 			digest, err := hex.DecodeString(b.StartupProbeSHA256)
 			if err != nil || len(digest) != 32 {
 				return errors.New("reviewed compatibility requires a SHA256 pin for each backend")
@@ -156,6 +167,9 @@ func (cfg Config) Validate() error {
 			return fmt.Errorf("backend %d needs a unique alphanumeric id", i+1)
 		}
 		ids[b.ID] = true
+		if cfg.ControlPlane == ControlPlaneRouting167 && b.Provider == controlPlaneProvider167 {
+			return errors.New("logical bridge provider is reserved for the frontend")
+		}
 		if !backendName.MatchString(b.Provider) {
 			return fmt.Errorf("backend %s has an invalid provider", b.ID)
 		}
@@ -218,6 +232,24 @@ func (cfg Config) Validate() error {
 				return fmt.Errorf("backend %s has an invalid, reserved or duplicate inherited environment name", b.ID)
 			}
 			seen[upper] = true
+		}
+	}
+	if cfg.ControlPlane == ControlPlaneRouting167 {
+		if !filepath.IsAbs(cfg.ControlHome) {
+			return errors.New("control_home must be an explicit absolute directory")
+		}
+		real, err := filepath.EvalSymlinks(cfg.ControlHome)
+		if err != nil {
+			return errors.New("control_home must already exist")
+		}
+		st, err := os.Stat(real)
+		if err != nil || !st.IsDir() {
+			return errors.New("control_home must be a directory")
+		}
+		for _, home := range homes {
+			if pathsOverlap(home, real) {
+				return errors.New("control_home must not overlap any backend home")
+			}
 		}
 	}
 	if cfg.WorkingDirectory != "" {
@@ -292,7 +324,7 @@ func (cfg Config) auth167() bool {
 func (cfg Config) authCompatibility() authCompatibility {
 	return authCompatibility{
 		authStatusNoAuth:       cfg.AuthStatus == AuthStatusPrimaryNoAuth167,
-		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167 || cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167,
+		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167 || cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167 || cfg.ControlPlane == ControlPlaneRouting167,
 		attestationUnavailable: cfg.Attestation == AttestationUnavailable || cfg.Attestation == AttestationUnavailable167,
 		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167,
 		gatewayProviderName:    cfg.GatewayOAuthProviderName,
