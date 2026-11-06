@@ -93,7 +93,10 @@ It selects no launch-compatibility, auth, attestation, routing or UI modes. The 
 version/hash, private bridge homes, window capture and sanitized process evidence
 remain mandatory.
 
-Four non-fail-fast matrix jobs each get their own fresh Windows 2025 VM:
+The original acceptance contract has four independent fresh-VM cases, all still
+uncompleted. The workflow temporarily schedules only the single observation-only
+case below until its result is interpreted; it does not repeat this four-case
+matrix unchanged:
 
 - `baseline`: first official AUMID activation with no overrides, requiring a
   live observed original native executable with the pinned image path/hash.
@@ -159,6 +162,62 @@ PID to disappear from CIM, while a separate stdin-held live child must remain
 a guard blocker. Its fixed booleans can support or refute the lifetime hypothesis
 on the actual runner without installing a package or changing environment.
 The lifecycle fix and that new fixture still require exact-head Windows execution.
+
+At `53ab904f`, both owned probes were confirmed exited and closed, with zero CIM
+rows before and after close in every case. The Windows fixture likewise reported
+`heldExitedVisibleBeforeClose=false`, `exitedVisibleAfterClose=false`, and
+`liveNeighborStillBlocks=true` in both hosts. All four package cases still found
+exactly one package-identity match, with zero Desktop/native/bridge-name matches
+and zero owned-probe PID matches. Retained probe handles therefore do **not**
+explain the observed blocker on these runners. The process's role is unknown;
+package identity alone does not establish that the Desktop GUI was already open.
+The bridge's `--check` reads configuration without starting children.
+
+### One observation-only freshness pass
+
+The temporary `freshness-observation` case uses baseline provisioning and checks,
+then stops at the same strict predicate. It never sets USER variables or activates
+Desktop, even if there are no matches. The original acceptance cases remain in
+source, but the native-entry workflow now schedules only this one fresh VM after
+the existing safety gate. No result automatically triggers another run or weakens
+the guard.
+
+[`desktop-entry-observe.ps1`](../../build/desktop-entry-observe.ps1) receives at
+most four matching PIDs through a bounded private input file. A separate
+allowlisted helper has a 30-second execution deadline and a 4 KiB output bound;
+input is capped at 16 KiB. Each opened process handle requests only query-limited
+and synchronize rights. Package identity, creation time and executable image
+come from that same held handle. PIDs are reopened after the initial guard scan,
+so these records describe the current process at each matching PID, not proof
+of the original scanned generation. `originalGenerationVerified` is always
+false; no causal attribution or exemption follows from PID reuse assumptions. An `observed` record requires the expected
+package to be revalidated and the process to stay alive throughout the reads.
+A parent PID is queried while that child is pinned and alive, then the parent
+is separately pinned. Parent creation must predate the child and both must
+remain alive; a newer reused PID is unverified. An exact match to the harness's
+PID and full creation time is a separate fixed relation label.
+
+Only closed labels, booleans and counts leave the helper. Image labels compare
+exact paths under the verified install root against the three pinned manifest
+applications, the known native resource and package Codex executable, or exact
+paths for RuntimeBroker, backgroundTaskHost, ApplicationFrameHost, svchost,
+dllhost and Explorer under the runner's Windows root. These are image-path
+classifications, not role/safety exemptions or independent binary-signature
+proof. An unknown path becomes `other`; inaccessible or changed processes remain
+unavailable. No arbitrary names, paths, arguments, environment, credentials,
+PIDs or timestamps are published. The helper disposes only the query handles it
+opened, never signals or terminates a matched process.
+
+The full match count still governs the blocker; the four-record cap cannot omit
+a blocker from the predicate. Even a verified RuntimeBroker label would only
+identify the observed process. Deciding whether a package-associated broker can
+coexist with a genuine fresh Desktop launch requires interpreting this one result,
+not automatically excluding it. New fixtures cover exact-path classification,
+manifest changes, raw-field rejection, portable Int32/Int64 JSON integers
+(with bool/double/string rejected), stale parent generations, query-only
+native interop, the complete bounded helper against an owned non-package test
+process, the observation cap and unconditional stops before activation
+or environment writes. These new changes still need exact-head Windows execution.
 
 The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
 allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving
@@ -1512,4 +1571,18 @@ fixtures independently check exact enum/type/shape acceptance and rejection.
 The additional fields ride the already-needed combined CI capture; they add
 no diagnostic-only launch or account/filesystem access. Definitions and source
 review are not execution evidence.
+
+### Initial welcome snapshot observation
+
+The disposable [welcome helper](../../build/desktop-welcome-step.ps1) adds one
+nullable, count-only summary to an initial classified zero-action stop. It
+reuses the last already-owned ControlView snapshot and counts existing reads;
+it makes no additional UIA call and does not change the strict action classifier,
+shell-readiness predicate, deadlines, retries or production bridge APIs. The
+[live contract](../../build/desktop-live-welcome.md) defines the fixed fields,
+schema validation and stop condition. Unknown names and types never enter the
+report. Normalized heading counts are diagnostic only, never action authority.
+The parent continues to report a failed live slice. If one capture does not
+identify a concrete harmless mismatch for separate review, stop this lane
+rather than repeating diagnostics or expanding onboarding behavior.
 

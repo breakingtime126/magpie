@@ -57,7 +57,7 @@ $config.backends[0].command='other.exe'; Reject { ConvertTo-LiveConfiguration $c
 $config.backends[1].home=$scratch; Reject { ConvertTo-LiveConfiguration $config $scratch $exe } 'reject path authority'; $config.backends[1].home=Join-Path $scratch 'beta-home'
 $config.backends[0].provider='foreign'; Reject { ConvertTo-LiveConfiguration $config $scratch $exe } 'reject provider authority'; $config.backends[0].provider='alpha_provider'
 $config | Add-Member NoteProperty extra 'unknown'; Reject { ConvertTo-LiveConfiguration $config $scratch $exe } 'reject extra config'
-$welcome=ConvertFrom-LiveJSON '{"schema":1,"scope":"synthetic-welcome-only","status":"observed","reason":"single_transition_attempted","stage":"complete","actions":3,"suggestionsDisabled":true,"engineeringSelected":true,"continueInvoked":true,"nextScreen":"unreviewed_screen","targetObservations":null}'
+$welcome=ConvertFrom-LiveJSON '{"schema":1,"scope":"synthetic-welcome-only","status":"observed","reason":"single_transition_attempted","stage":"complete","actions":3,"suggestionsDisabled":true,"engineeringSelected":true,"continueInvoked":true,"nextScreen":"unreviewed_screen","targetObservations":null,"initialReadObservation":null}'
 Assert-WelcomeResult $welcome
 $welcome.targetObservations=[pscustomobject]@{
     engineering=[pscustomobject]@{interactiveCount=1;controlType='RadioButton'}
@@ -87,7 +87,7 @@ Pass ((Get-LiveWelcomeOutcome $prior $true $welcome $true).exitCode -eq 1) 'stop
 $prior.exitCode=1; $prior.reason='original Desktop or native failure'
 Pass ((Get-LiveWelcomeOutcome $prior $false $null $false).reason -ceq $prior.reason) 'failure precedence'
 # Exhausted initial shell-only snapshots are a distinct zero-action stop.
-$notReady=ConvertFrom-LiveJSON '{"schema":1,"scope":"synthetic-welcome-only","status":"stopped","reason":"accessibility_not_ready","stage":"welcome_read","actions":0,"suggestionsDisabled":false,"engineeringSelected":false,"continueInvoked":false,"nextScreen":"not_observed","targetObservations":{"engineering":{"interactiveCount":0,"controlType":"absent"},"suggestions":{"interactiveCount":0,"controlType":"absent"},"continue":{"interactiveCount":0,"controlType":"absent"}}}'
+$notReady=ConvertFrom-LiveJSON '{"schema":1,"scope":"synthetic-welcome-only","status":"stopped","reason":"accessibility_not_ready","stage":"welcome_read","actions":0,"suggestionsDisabled":false,"engineeringSelected":false,"continueInvoked":false,"nextScreen":"not_observed","targetObservations":{"engineering":{"interactiveCount":0,"controlType":"absent"},"suggestions":{"interactiveCount":0,"controlType":"absent"},"continue":{"interactiveCount":0,"controlType":"absent"}},"initialReadObservation":{"snapshotCount":4,"headingExactCount":0,"headingWhitespaceNormalizedCount":0,"targets":{"engineering":{"interactiveCount":0,"noninteractiveCount":0},"suggestions":{"interactiveCount":0,"noninteractiveCount":0},"continue":{"interactiveCount":0,"noninteractiveCount":0}},"chromeRejection":"none"}}'
 Assert-WelcomeResult $notReady
 $successfulPrior=[pscustomobject]@{status='observed';stage='native-complete';reason='original';exitCode=0}
 Pass ((Get-LiveWelcomeOutcome $successfulPrior $true $notReady $true).exitCode -eq 1) 'accessibility readiness stop is not success'
@@ -102,6 +102,79 @@ $notReady.targetObservations.engineering.interactiveCount=1; $notReady.targetObs
 Reject { Assert-WelcomeResult $notReady } 'readiness stop must have absent targets'
 $notReady.targetObservations.engineering.interactiveCount=0; $notReady.targetObservations.engineering.controlType='absent'
 $notReady.reason='unknown_readiness_reason'; Reject { Assert-WelcomeResult $notReady } 'readiness reason vocabulary remains fixed'
+$notReady.reason='accessibility_not_ready'
+# The added summary is mandatory only for classified initial stops, and never
+# upgrades their outcome. Unknown fields/types and raw labels remain rejected.
+function InitialStopFixture {
+    return (ConvertFrom-LiveJSON ($notReady | ConvertTo-Json -Depth 6 -Compress))
+}
+$initialStop=InitialStopFixture
+$initialStop.reason='unreviewed_screen'; $initialStop.initialReadObservation.chromeRejection='container_type'
+Assert-WelcomeResult $initialStop
+Pass ((Get-LiveWelcomeOutcome $successfulPrior $true $initialStop $true).exitCode -eq 1) 'initial diagnostic cannot clear failure'
+foreach ($reason in @('node_count','window_count','unexpected_interactive','named_content','container_type')) {
+    $initialStop.initialReadObservation.chromeRejection=$reason
+    Assert-WelcomeResult $initialStop
+}
+# Positive evidence for noninteractive labels and normalized-only heading.
+$initialStop.initialReadObservation.headingWhitespaceNormalizedCount=1
+$initialStop.initialReadObservation.targets.engineering.noninteractiveCount=1
+Assert-WelcomeResult $initialStop
+$invalidInitial = @(
+    { param($v) $v.initialReadObservation=$null },
+    { param($v) $v.initialReadObservation | Add-Member NoteProperty extra 'PRIVATE_CANARY' },
+    { param($v) $v.initialReadObservation.PSObject.Properties.Remove('snapshotCount') },
+    { param($v) $v.initialReadObservation.snapshotCount=0 },
+    { param($v) $v.initialReadObservation.snapshotCount=5 },
+    { param($v) $v.initialReadObservation.snapshotCount='1' },
+    { param($v) $v.initialReadObservation.snapshotCount=$true },
+    { param($v) $v.initialReadObservation.headingExactCount=-1 },
+    { param($v) $v.initialReadObservation.headingExactCount=501 },
+    { param($v) $v.initialReadObservation.headingExactCount=1 },
+    { param($v) $v.initialReadObservation.headingWhitespaceNormalizedCount=501 },
+    { param($v) $v.initialReadObservation.headingWhitespaceNormalizedCount=0.5 },
+    { param($v) $v.initialReadObservation.chromeRejection='PRIVATE_CANARY' },
+    { param($v) $v.initialReadObservation.chromeRejection='None' },
+    { param($v) $v.initialReadObservation.chromeRejection=$null },
+    { param($v) $v.initialReadObservation.targets | Add-Member NoteProperty extra @{} },
+    { param($v) $v.initialReadObservation.targets.engineering | Add-Member NoteProperty label 'PRIVATE_CANARY' },
+    { param($v) $v.initialReadObservation.targets.engineering.interactiveCount=1 },
+    { param($v) $v.initialReadObservation.targets.engineering.noninteractiveCount=-1 },
+    { param($v) $v.initialReadObservation.targets.engineering.noninteractiveCount=501 },
+    { param($v) $v.initialReadObservation.targets.engineering.noninteractiveCount='0' },
+    { param($v) $v.initialReadObservation.targets.engineering.noninteractiveCount=$false },
+    { param($v) $v.actions=1 },
+    { param($v) $v.suggestionsDisabled=$true },
+    { param($v) $v.engineeringSelected=$true },
+    { param($v) $v.continueInvoked=$true },
+    { param($v) $v.stage='suggestions_off' },
+    { param($v) $v.reason='uia_provider_error' },
+    { param($v) $v.nextScreen='unreviewed_screen' },
+    { param($v) $v.targetObservations=$null },
+    { param($v) $v.initialReadObservation.chromeRejection='container_type' },
+    { param($v) $v.initialReadObservation.targets.engineering.noninteractiveCount=1 },
+    { param($v) $v.reason='unreviewed_screen' }
+)
+foreach ($change in $invalidInitial) {
+    $value=InitialStopFixture
+    & $change $value
+    Reject { Assert-WelcomeResult $value } 'invalid initial summary is rejected'
+}
+$value=InitialStopFixture; $value.reason='protected_screen'
+$value.initialReadObservation.headingWhitespaceNormalizedCount=1
+$value.initialReadObservation.targets.engineering.noninteractiveCount=500
+Reject { Assert-WelcomeResult $value } 'aggregate label bound'
+$value=InitialStopFixture; $value.reason='owner_release_failed'
+Assert-WelcomeResult $value
+$value.initialReadObservation=$null
+Assert-WelcomeResult $value
+$value=InitialStopFixture; $value.reason='uia_provider_error'; $value.initialReadObservation=$null
+Assert-WelcomeResult $value
+$value=InitialStopFixture; $value.PSObject.Properties.Remove('initialReadObservation')
+Reject { Assert-WelcomeResult $value } 'old helper result shape is rejected'
+$welcome.initialReadObservation=(InitialStopFixture).initialReadObservation
+Reject { Assert-WelcomeResult $welcome } 'partial action cannot retain initial summary'
+$welcome.initialReadObservation=$null
 # Exact package-relative executable spelling supports manifest separators only.
 $packageRoot=Join-Path ([IO.Path]::GetTempPath()) 'synthetic-package'
 $expectedExecutable=[IO.Path]::GetFullPath((Join-Path (Join-Path $packageRoot 'app') 'ChatGPT.exe'))
@@ -163,7 +236,7 @@ try {
         Write-Output ('WINDOWS_HELPER_LAUNCH_RESULT=' + ($smoke | ConvertTo-Json -Depth 5 -Compress))
         Pass ($smoke.status -ceq 'stopped' -and $smoke.reason -ceq 'invalid_context' -and
             $smoke.stage -ceq 'initialization' -and $smoke.actions -eq 0 -and -not $smoke.continueInvoked -and
-            $null -eq $smoke.targetObservations -and $diagnostic.reason -ceq 'helper_result_validated' -and
+            $null -eq $smoke.targetObservations -and $null -eq $smoke.initialReadObservation -and $diagnostic.reason -ceq 'helper_result_validated' -and
             -not $diagnostic.partialActionUncertain) 'real PS5.1 helper rejects zero context before UI'
         Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=invalid_context_verified'
     } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_non_windows' }

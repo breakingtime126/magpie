@@ -1,7 +1,7 @@
 # CI-only native package entry helpers. Dot-sourcing has no side effects.
 function Get-EntryVariableNames { return @('CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG') }
 function Assert-EntryOptions([string]$Case, [string]$Mode, [bool]$OtherOptIn, [string]$WorkflowRef) {
-    $modes = @{ baseline='baseline'; treatment='bridge'; 'restore-before-activation'='bridge'; 'alias-control'='bridge' }
+    $modes = @{ baseline='baseline'; treatment='bridge'; 'restore-before-activation'='bridge'; 'alias-control'='bridge'; 'freshness-observation'='baseline' }
     if (-not $modes.ContainsKey($Case) -or $modes[$Case] -cne $Mode -or $OtherOptIn -or
         $WorkflowRef -cne 'breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry.yml@refs/heads/experiment/app-server-bridge-v0.1.3035') {
         throw 'Native entry requires its dedicated disposable workflow and exact case, without other opt-ins.'
@@ -74,13 +74,14 @@ function Test-EntryMachineOverride {
         return $false
     } finally { if ($null -ne $key) { $key.Dispose() } }
 }
-function Invoke-EntryBoundedHelper($Start, [int]$Milliseconds) {
+function Invoke-EntryBoundedHelper($Start, [int]$Milliseconds, [int]$MaxBytes = 512) {
+    if ($MaxBytes -notin @(512,4096)) { throw 'Unreviewed helper output bound.' }
     # Reuse the existing byte-bounded held-process supervisor; this selects no welcome behavior.
     . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
     Initialize-LiveSupervisor
     $child=$null
     try {
-        $child=[DesktopLive.BoundedProcess]::new($Start,512,$Milliseconds)
+        $child=[DesktopLive.BoundedProcess]::new($Start,$MaxBytes,$Milliseconds)
         if (-not $child.Wait($Milliseconds)) {
             $child.Stop()
             if (-not $child.Wait(5000)) { $script:entryHelperExitUnconfirmed=$true; throw 'Native entry helper exit unconfirmed.' }
@@ -265,7 +266,8 @@ function Read-EntryProbeVisibility([int]$ProcessId) {
     } catch { return [ordered]@{ status='unavailable'; matches=$null } }
 }
 function Get-EntryFreshnessEvidence([object[]]$Processes, [string]$ExpectedPackage, [string]$BridgeName,
-    [int]$VersionProbeId, [int]$ConfigurationProbeId, [scriptblock]$ReadPackage) {
+    [int]$VersionProbeId, [int]$ConfigurationProbeId, [scriptblock]$ReadPackage,
+    [Collections.Generic.List[int]]$MatchedProcessIds = $null) {
     if ([string]::IsNullOrWhiteSpace($ExpectedPackage) -or [string]::IsNullOrWhiteSpace($BridgeName) -or
         $Processes.Count -gt 65536 -or $null -eq $ReadPackage) { throw 'Invalid freshness guard inputs.' }
     $facts=[ordered]@{ matches=0; package=0; desktopName=0; nativeName=0; bridgeName=0;
@@ -276,6 +278,7 @@ function Get-EntryFreshnessEvidence([object[]]$Processes, [string]$ExpectedPacka
         $bridgeMatch=$item.Name -ieq $BridgeName
         if (-not ($packageMatch -or $desktopMatch -or $nativeMatch -or $bridgeMatch)) { continue }
         $facts.matches++
+        if ($null -ne $MatchedProcessIds -and $MatchedProcessIds.Count -lt 4) { $MatchedProcessIds.Add([int]$item.ProcessId) }
         if ($packageMatch) { $facts.package++ }
         if ($desktopMatch) { $facts.desktopName++ }
         if ($nativeMatch) { $facts.nativeName++ }

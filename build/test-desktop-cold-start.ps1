@@ -11,7 +11,7 @@ param(
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
     [switch]$InspectStaticLauncher,
-    [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control')][string]$NativeEntryCase = ''
+    [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
 )
 
 # Pure validation helpers are AST-loaded by the focused tests, without running the probe.
@@ -2319,12 +2319,22 @@ requires_openai_auth = false
     [uint32]$launched = 0
     if ($NativeEntryCase) {
         # Registration and configuration must not have launched Desktop. No second activation is attempted.
+        $matchedProcessIds=[Collections.Generic.List[int]]::new()
         $freshness = Get-EntryFreshnessEvidence -Processes @(Get-CimInstance Win32_Process) `
             -ExpectedPackage $app.PackageFullName -BridgeName $bridgeName `
             -VersionProbeId $versionProbeId -ConfigurationProbeId $configurationProbeId `
-            -ReadPackage { param($ProcessId) [DesktopColdProbe.Native]::PackageFor([uint32]$ProcessId) }
+            -ReadPackage { param($ProcessId) [DesktopColdProbe.Native]::PackageFor([uint32]$ProcessId) } `
+            -MatchedProcessIds $matchedProcessIds
         $report.nativeEntry.freshnessGuard = $freshness
+        if ($NativeEntryCase -ceq 'freshness-observation') {
+            . (Join-Path $PSScriptRoot 'desktop-entry-observe.ps1')
+            $report.nativeEntry.matchedProcessObservation=Invoke-EntryFreshnessObservation `
+                -ProcessIds $matchedProcessIds -Matches $freshness.matches -Package $app.PackageFullName `
+                -PackageRoot $app.InstallLocation -Applications $report.manifest.applications -Work $work
+            $report.nativeEntry.observationLimit='Read-only fixed path/package/parent labels. No process exemption, termination, USER write or activation, even with zero matches. Unknown labels remain blockers.'
+        }
         if ($freshness.matches -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }
+        if ($NativeEntryCase -ceq 'freshness-observation') { Block 'Observation-only baseline finished; activation and USER writes are deliberately not attempted.' }
         if ($NativeEntryCase -cin @('treatment','restore-before-activation')) {
             Set-EntryOverrides $entryState @{
                 CODEX_CLI_PATH=$BridgeExecutable; MAGPIE_APP_SERVER_BRIDGE_CONFIG=$bridgeConfig

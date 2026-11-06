@@ -113,7 +113,7 @@ ExpectLineage $facts 19 $false
 $facts = LineageFacts
 for ($i = 100; $i -lt 130; $i++) { $facts[$i] = Fact (1000 + $i) 10 }
 ExpectLineage $facts 20 $false
-foreach ($name in @('Test-WelcomeChromeOnly', 'Read-WelcomeReadySnapshot')) {
+foreach ($name in @('Get-WelcomeChromeRejection', 'Test-WelcomeChromeOnly', 'Read-WelcomeReadySnapshot', 'Get-WelcomeInitialObservation')) {
     $definition = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true)
     . ([scriptblock]::Create($definition.Extent.Text))
 }
@@ -133,21 +133,21 @@ $ready = Read-WelcomeReadySnapshot -ReadSnapshot {
     $readiness.Reads++
     if ($readiness.Reads -eq 1) { $shell } else { $welcome }
 } -ElapsedSeconds { 0.0 } -Pause { $readiness.Pauses++ }
-if ($ready.Decision -cne 'welcome' -or $readiness.Reads -ne 2 -or $readiness.Pauses -ne 1) {
+if ($ready.Decision -cne 'welcome' -or $readiness.Reads -ne 2 -or $readiness.Pauses -ne 1 -or $ready.SnapshotCount -ne 2) {
     throw 'Pending-to-welcome readiness differs.'
 }
 $readiness = [pscustomobject]@{ Reads = 0; Pauses = 0 }
 $ready = Read-WelcomeReadySnapshot -ReadSnapshot {
     $readiness.Reads++; $shell
 } -ElapsedSeconds { 0.0 } -Pause { $readiness.Pauses++ }
-if ($ready.Decision -cne 'accessibility_not_ready' -or $readiness.Reads -ne 4 -or $readiness.Pauses -ne 3) {
+if ($ready.Decision -cne 'accessibility_not_ready' -or $readiness.Reads -ne 4 -or $readiness.Pauses -ne 3 -or $ready.SnapshotCount -ne 4) {
     throw 'Read-count readiness bound differs.'
 }
 $readiness = [pscustomobject]@{ Reads = 0; Pauses = 0 }
 $ready = Read-WelcomeReadySnapshot -ReadSnapshot {
     $readiness.Reads++; $shell
 } -ElapsedSeconds { 3.0 } -Pause { $readiness.Pauses++ }
-if ($ready.Decision -cne 'accessibility_not_ready' -or $readiness.Reads -ne 1 -or $readiness.Pauses -ne 0) {
+if ($ready.Decision -cne 'accessibility_not_ready' -or $readiness.Reads -ne 1 -or $readiness.Pauses -ne 0 -or $ready.SnapshotCount -ne 1) {
     throw 'Time readiness bound differs.'
 }
 foreach ($unsafe in @((Node 'Sign in' 'Button' $true), (Node 'Unknown content' 'Text'),
@@ -156,7 +156,7 @@ foreach ($unsafe in @((Node 'Sign in' 'Button' $true), (Node 'Unknown content' '
     $ready = Read-WelcomeReadySnapshot -ReadSnapshot {
         $readiness.Reads++; $shell; $unsafe
     } -ElapsedSeconds { 0.0 } -Pause { $readiness.Pauses++ }
-    if ($ready.Decision -ceq 'accessibility_not_ready' -or $readiness.Reads -ne 1 -or $readiness.Pauses -ne 0) {
+    if ($ready.Decision -ceq 'accessibility_not_ready' -or $readiness.Reads -ne 1 -or $readiness.Pauses -ne 0 -or $ready.SnapshotCount -ne 1) {
         throw 'Unsafe content was retried.'
     }
 }
@@ -171,6 +171,82 @@ try {
 } catch { $ownershipFailed = $true }
 if (-not $ownershipFailed -or $readiness.Reads -ne 2 -or $readiness.Pauses -ne 1) {
     throw 'Ownership failure was retried or swallowed.'
+}
+
+# Synthetic neighboring shapes, not a claim about the unrecorded live tree.
+# The first rejected predicate has a fixed label; none does not grant actions.
+function ExpectChrome($nodes, [string]$reason) {
+    if ((Get-WelcomeChromeRejection $nodes) -cne $reason -or
+        (Test-WelcomeChromeOnly $nodes) -ne ($reason -ceq 'none')) {
+        throw 'Chrome classification changed its acceptance predicate.'
+    }
+}
+ExpectChrome $shell 'none'
+ExpectChrome @() 'node_count'
+ExpectChrome (@((Node '' 'Pane')) * 501) 'node_count'
+ExpectChrome @((Node '' 'Pane')) 'window_count'
+ExpectChrome ($shell + (Node 'ChatGPT' 'Window')) 'window_count'
+ExpectChrome ($shell + (Node '' 'Button' $true $false)) 'unexpected_interactive'
+ExpectChrome ($shell + (Node 'Private canary label' 'Text')) 'named_content'
+ExpectChrome ($shell + (Node '' 'TitleBar')) 'container_type'
+ExpectChrome @((Node '' 'TitleBar'), (Node 'Private canary label' 'Text')) 'container_type'
+ExpectChrome @((Node 'Private canary label' 'Text'), (Node '' 'TitleBar')) 'named_content'
+foreach ($type in @('Pane','Document','Group','Text','Custom')) {
+    ExpectChrome ($shell + (Node '' $type)) 'none'
+}
+foreach ($name in @('Minimize','Maximize','Restore','Close')) {
+    ExpectChrome ($shell + (Node $name 'Button' $true $false)) 'none'
+}
+$whitespace = @((Node "  Which best`tdescribes your work?  " 'Text'),
+    (Node 'Engineering' 'Text'), (Node 'Engineering' 'RadioButton' $true),
+    (Node 'Suggest personalized tasks' 'Text'), (Node 'Continue' 'Text'),
+    (Node 'Continue' 'Button' $true $false), (Node 'Private canary label' 'Private canary type'))
+$initial = Get-WelcomeInitialObservation $whitespace 1
+if ($initial.snapshotCount -ne 1 -or $initial.headingExactCount -ne 0 -or
+    $initial.headingWhitespaceNormalizedCount -ne 1 -or $initial.chromeRejection -cne 'named_content' -or
+    $initial.targets.engineering.interactiveCount -ne 1 -or $initial.targets.engineering.noninteractiveCount -ne 1 -or
+    $initial.targets.suggestions.interactiveCount -ne 0 -or $initial.targets.suggestions.noninteractiveCount -ne 1 -or
+    $initial.targets.continue.interactiveCount -ne 1 -or $initial.targets.continue.noninteractiveCount -ne 1) {
+    throw 'Initial snapshot counts differ.'
+}
+# Normalized heading evidence never makes an unreviewed snapshot actionable.
+Expect $whitespace 'unreviewed_screen'
+$serialized = $initial | ConvertTo-Json -Depth 5 -Compress
+if ($serialized -cmatch 'canary|Which|Engineering|Suggest personalized|Continue' -or $serialized.Length -gt 1024) {
+    throw 'Initial observation contains raw labels or exceeds its fixed size.'
+}
+$initial = Get-WelcomeInitialObservation ($welcome + (Node 'Which best describes your work?' 'Text')) 4
+if ($initial.headingExactCount -ne 2 -or $initial.headingWhitespaceNormalizedCount -ne 2) {
+    throw 'Exact heading duplicates were not counted.'
+}
+foreach ($invalidCount in @(0,5)) {
+    $rejected = $false
+    try { $null = Get-WelcomeInitialObservation $shell $invalidCount } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Invalid snapshot count was accepted.' }
+}
+$rejected = $false
+try { $null = Get-WelcomeInitialObservation (@((Node '' 'Pane')) * 501) 1 } catch { $rejected = $true }
+if (-not $rejected) { throw 'Unbounded initial snapshot was accepted.' }
+
+# Exercise the actual snapshot consumer with a fixture reader. No UIA or input.
+$reviewFunction = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-ReviewedWelcome' }, $true)
+. ([scriptblock]::Create($reviewFunction.Extent.Text))
+function Read-VisibleNodes { $script:fixtureReads++; return $script:fixtureNodes }
+foreach ($initialRead in @($true,$false)) {
+    $script:fixtureReads = 0; $script:fixtureNodes = $whitespace
+    $result = [ordered]@{ reason = 'uia_provider_error'; actions = 0; targetObservations = $null; initialReadObservation = $null }
+    $stopped = $false
+    try { $null = Get-ReviewedWelcome -InitialRead:$initialRead } catch { $stopped = $true }
+    if (-not $stopped -or $result.reason -cne 'unreviewed_screen' -or $result.actions -ne 0 -or
+        $script:fixtureReads -ne 1 -or ($null -ne $result.initialReadObservation) -ne $initialRead) {
+        throw 'Observation altered stop, read count or later-read behavior.'
+    }
+}
+$script:fixtureReads = 0; $script:fixtureNodes = $welcome
+$result = [ordered]@{ reason = 'uia_provider_error'; actions = 0; targetObservations = $null; initialReadObservation = $null }
+$null = Get-ReviewedWelcome -InitialRead
+if ($script:fixtureReads -ne 1 -or $null -ne $result.initialReadObservation -or $result.actions -ne 0) {
+    throw 'Accepted welcome acquired a stopped-snapshot diagnostic.'
 }
 Write-Output 'Desktop welcome policy, ownership and readiness fixtures passed.'
 

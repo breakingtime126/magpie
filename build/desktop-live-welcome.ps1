@@ -96,7 +96,7 @@ function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex) {
     return [pscustomobject]@{ Backends=$backends; Workspace=$workspace; ControlHome=$control }
 }
 function Assert-WelcomeResult($Value) {
-    Assert-LiveShape $Value @('schema','scope','status','reason','stage','actions','suggestionsDisabled','engineeringSelected','continueInvoked','nextScreen','targetObservations')
+    Assert-LiveShape $Value @('schema','scope','status','reason','stage','actions','suggestionsDisabled','engineeringSelected','continueInvoked','nextScreen','targetObservations','initialReadObservation')
     if ($null -ne $Value.targetObservations) {
         Assert-LiveShape $Value.targetObservations @('engineering','suggestions','continue')
         foreach ($key in @('engineering','suggestions','continue')) {
@@ -125,6 +125,47 @@ function Assert-WelcomeResult($Value) {
         -not $Value.suggestionsDisabled -or -not $Value.engineeringSelected -or -not $Value.continueInvoked -or
         $Value.actions -lt 1 -or $Value.nextScreen -ceq 'not_observed')) { throw 'Invalid welcome observation.' }
     if ($Value.status -ceq 'stopped' -and ($Value.reason -ceq 'single_transition_attempted' -or ($Value.nextScreen -cne 'not_observed' -and $Value.reason -cne 'owner_release_failed'))) { throw 'Invalid stopped welcome.' }
+    $initialReasons = @('protected_screen','unreviewed_screen','unreviewed_control','unreviewed_text','ambiguous_control','accessibility_not_ready')
+    if ($Value.stage -ceq 'welcome_read' -and $initialReasons -ccontains $Value.reason -and
+        $null -eq $Value.initialReadObservation) { throw 'Missing initial welcome observation.' }
+    if ($null -ne $Value.initialReadObservation) {
+        if ($Value.status -cne 'stopped' -or $Value.stage -cne 'welcome_read' -or $Value.actions -ne 0 -or
+            $Value.suggestionsDisabled -or $Value.engineeringSelected -or $Value.continueInvoked -or
+            $Value.nextScreen -cne 'not_observed' -or $null -eq $Value.targetObservations -or
+            ($initialReasons -cnotcontains $Value.reason -and $Value.reason -cne 'owner_release_failed')) {
+            throw 'Initial observation must describe a zero-action stop.'
+        }
+        $initial = $Value.initialReadObservation
+        Assert-LiveShape $initial @('snapshotCount','headingExactCount','headingWhitespaceNormalizedCount','targets','chromeRejection')
+        Assert-LiveInteger $initial.snapshotCount 1 4
+        Assert-LiveInteger $initial.headingExactCount 0 500
+        Assert-LiveInteger $initial.headingWhitespaceNormalizedCount $initial.headingExactCount 500
+        Assert-LiveStrings $initial @('chromeRejection')
+        if (@('none','node_count','window_count','unexpected_interactive','named_content','container_type') -cnotcontains $initial.chromeRejection) {
+            throw 'Invalid initial chrome classification.'
+        }
+        Assert-LiveShape $initial.targets @('engineering','suggestions','continue')
+        $labelCount = $initial.headingWhitespaceNormalizedCount
+        foreach ($key in @('engineering','suggestions','continue')) {
+            $target = $initial.targets.$key
+            Assert-LiveShape $target @('interactiveCount','noninteractiveCount')
+            Assert-LiveInteger $target.interactiveCount 0 500
+            Assert-LiveInteger $target.noninteractiveCount 0 500
+            if ($target.interactiveCount -ne $Value.targetObservations.$key.interactiveCount) {
+                throw 'Initial target counts disagree.'
+            }
+            $labelCount += $target.interactiveCount + $target.noninteractiveCount
+        }
+        if ($labelCount -gt 500) { throw 'Initial labels exceed snapshot bound.' }
+        if ($Value.reason -ceq 'unreviewed_screen' -and
+            ($initial.headingExactCount -ne 0 -or $initial.chromeRejection -ceq 'none')) {
+            throw 'Invalid unreviewed initial screen observation.'
+        }
+        if ($Value.reason -ceq 'accessibility_not_ready' -and
+            ($labelCount -ne 0 -or $initial.chromeRejection -cne 'none')) {
+            throw 'Invalid shell-only initial observation.'
+        }
+    }
     if ($Value.reason -ceq 'accessibility_not_ready') {
         if ($Value.status -cne 'stopped' -or $Value.stage -cne 'welcome_read' -or $Value.actions -ne 0 -or
             $Value.suggestionsDisabled -or $Value.engineeringSelected -or $Value.continueInvoked -or

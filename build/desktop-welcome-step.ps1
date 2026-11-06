@@ -41,8 +41,8 @@ function Get-WelcomeDecision($Nodes) {
 
 # This is a readiness condition, never action authority. It excludes all content,
 # even familiar welcome labels: only empty containers and exact window chrome.
-function Test-WelcomeChromeOnly($Nodes) {
-    if ($Nodes.Count -lt 1 -or $Nodes.Count -gt 500) { return $false }
+function Get-WelcomeChromeRejection($Nodes) {
+    if ($Nodes.Count -lt 1 -or $Nodes.Count -gt 500) { return 'node_count' }
     $windows = 0
     foreach ($node in $Nodes) {
         if ($node.Type -ceq 'Window' -and -not $node.Interactive -and
@@ -51,9 +51,15 @@ function Test-WelcomeChromeOnly($Nodes) {
             @('Minimize', 'Maximize', 'Restore', 'Close') -ccontains $node.Name) { continue }
         if (-not $node.Interactive -and $node.Name -ceq '' -and
             @('Pane', 'Document', 'Group', 'Text', 'Custom') -ccontains $node.Type) { continue }
-        return $false
+        if ($node.Interactive) { return 'unexpected_interactive' }
+        if ($node.Name -cne '') { return 'named_content' }
+        return 'container_type'
     }
-    return $windows -eq 1
+    if ($windows -ne 1) { return 'window_count' }
+    return 'none'
+}
+function Test-WelcomeChromeOnly($Nodes) {
+    return (Get-WelcomeChromeRejection $Nodes) -ceq 'none'
 }
 
 # Initial read only. Each callback is a full owned/foreground-verified snapshot.
@@ -63,15 +69,40 @@ function Read-WelcomeReadySnapshot([scriptblock]$ReadSnapshot, [scriptblock]$Ela
         $nodes = @(& $ReadSnapshot)
         $decision = Get-WelcomeDecision $nodes
         if ($decision -cne 'unreviewed_screen' -or -not (Test-WelcomeChromeOnly $nodes)) {
-            return [pscustomobject]@{ Nodes = $nodes; Decision = $decision }
+            return [pscustomobject]@{ Nodes = $nodes; Decision = $decision; SnapshotCount = ($read + 1) }
         }
         if ($read -eq 3 -or (& $ElapsedSeconds) -ge 3) {
-            return [pscustomobject]@{ Nodes = $nodes; Decision = 'accessibility_not_ready' }
+            return [pscustomobject]@{ Nodes = $nodes; Decision = 'accessibility_not_ready'; SnapshotCount = ($read + 1) }
         }
         & $Pause
         if ((& $ElapsedSeconds) -ge 3) {
-            return [pscustomobject]@{ Nodes = $nodes; Decision = 'accessibility_not_ready' }
+            return [pscustomobject]@{ Nodes = $nodes; Decision = 'accessibility_not_ready'; SnapshotCount = ($read + 1) }
         }
+    }
+}
+
+# One summary of the already-read initial stopped snapshot, never action authority.
+# Unknown names/types collapse to fixed categories; no UIA calls or raw text output.
+function Get-WelcomeInitialObservation($Nodes, [int]$SnapshotCount) {
+    if ($SnapshotCount -lt 1 -or $SnapshotCount -gt 4 -or $Nodes.Count -gt 500) {
+        throw 'Invalid initial welcome observation bounds.'
+    }
+    $heading = 'Which best describes your work?'
+    $targets = [ordered]@{}
+    foreach ($spec in @(@('engineering','Engineering'),
+        @('suggestions','Suggest personalized tasks'), @('continue','Continue'))) {
+        $matches = @($Nodes | Where-Object { $_.Name -ceq $spec[1] })
+        $targets[$spec[0]] = [ordered]@{
+            interactiveCount = @($matches | Where-Object { $_.Interactive }).Count
+            noninteractiveCount = @($matches | Where-Object { -not $_.Interactive }).Count
+        }
+    }
+    return [ordered]@{
+        snapshotCount = $SnapshotCount
+        headingExactCount = @($Nodes | Where-Object { $_.Name -ceq $heading }).Count
+        headingWhitespaceNormalizedCount = @($Nodes | Where-Object { ($_.Name -replace '\s+', ' ').Trim() -ceq $heading }).Count
+        targets = $targets
+        chromeRejection = Get-WelcomeChromeRejection $Nodes
     }
 }
 
@@ -120,7 +151,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $result = [ordered]@{ schema = 1; scope = 'synthetic-welcome-only'; status = 'stopped';
     reason = 'uia_provider_error'; stage = 'initialization'; actions = 0; suggestionsDisabled = $false;
-    engineeringSelected = $false; continueInvoked = $false; nextScreen = 'not_observed'; targetObservations = $null }
+    engineeringSelected = $false; continueInvoked = $false; nextScreen = 'not_observed'; targetObservations = $null;
+    initialReadObservation = $null }
 $owner = $null
 $heldProviders = @{}
 # Only our own fixed labels reach the report. Never classify provider exception text.
@@ -288,7 +320,12 @@ public static class WelcomeNative {
             $decision = Get-WelcomeDecision $nodes
         }
         $result.targetObservations = Get-WelcomeTargetObservations $nodes
-        if ($decision -cne 'welcome') { Stop-Welcome $decision }
+        if ($decision -cne 'welcome') {
+            if ($InitialRead) {
+                $result.initialReadObservation = Get-WelcomeInitialObservation $nodes $snapshot.SnapshotCount
+            }
+            Stop-Welcome $decision
+        }
         return $nodes
     }
     function Get-Target($Nodes, [string]$Name, [string]$Type) {

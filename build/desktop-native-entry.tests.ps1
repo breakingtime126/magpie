@@ -3,10 +3,11 @@
 param([switch]$BreakRestoration)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'desktop-native-entry.ps1')
+. (Join-Path $PSScriptRoot 'desktop-entry-observe.ps1')
 $count=0
 function Pass([bool]$Condition, [string]$Name) { if (-not $Condition) { throw $Name }; $script:count++ }
 function Reject([scriptblock]$Action, [string]$Name) { $failed=$false; try { $null=& $Action } catch { $failed=$true }; Pass $failed $Name }
-$files=@('desktop-native-entry.ps1','desktop-entry-activate.ps1','desktop-native-entry.tests.ps1','test-desktop-cold-start.ps1')
+$files=@('desktop-native-entry.ps1','desktop-entry-activate.ps1','desktop-native-entry.tests.ps1','desktop-entry-observe.ps1','test-desktop-cold-start.ps1')
 foreach ($file in $files) {
     $tokens=$null; $errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $file),[ref]$tokens,[ref]$errors)
@@ -103,8 +104,8 @@ Pass (($facts | ConvertTo-Json -Compress) -notmatch 'private-unreported|unrelate
 Reject { Get-EntryFreshnessEvidence $rows '' 'fixture-bridge.exe' 11 12 { $null } } 'empty expected package never matches unknown identities'
 Reject { Get-EntryFreshnessEvidence $rows 'fixture.package' 'fixture-bridge.exe' 11 12 { throw 'synthetic read failure' } } 'freshness read errors fail closed'
 $workflow='breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry.yml@refs/heads/experiment/app-server-bridge-v0.1.3035'
-foreach ($case in @('baseline','treatment','restore-before-activation','alias-control')) {
-    $mode='bridge'; if ($case -ceq 'baseline') { $mode='baseline' }
+foreach ($case in @('baseline','treatment','restore-before-activation','alias-control','freshness-observation')) {
+    $mode='bridge'; if ($case -cin @('baseline','freshness-observation')) { $mode='baseline' }
     Assert-EntryOptions $case $mode $false $workflow
     Reject { Assert-EntryOptions $case $mode $true $workflow } 'no accidental compatibility opt-in'
     Reject { Assert-EntryOptions $case $mode $false 'wrong' } 'exact workflow guard'
@@ -256,6 +257,80 @@ if ($PSVersionTable.PSEdition -ceq 'Desktop') {
         }
     }
 }
+# Exact image classification and observation schema never emit an unknown path/name.
+$applications=@([pscustomobject]@{id='App';executable='app/ChatGPT.exe'},
+    [pscustomobject]@{id='CodexChromeNativeHost';executable='app/resources/plugins/openai-bundled/plugins/chrome/extension-host/windows/x64/extension-host.exe'},
+    [pscustomobject]@{id='CodexCoreCommandRunner';executable='app/resources/codex-command-runner.exe'})
+$images=Get-EntryKnownImages 'C:\fixture-package' 'C:\Windows' $applications
+Pass ((Get-EntryImageLabel 'C:\Windows\System32\RuntimeBroker.exe' $images) -ceq 'windows_runtime_broker') 'exact Windows broker image path'
+Pass ((Get-EntryImageLabel 'C:\Windows\System32\nested\RuntimeBroker.exe' $images) -ceq 'other') 'broker basename is not identity'
+Pass ((Get-EntryImageLabel 'C:\fixture-package\app\resources\codex-command-runner.exe' $images) -ceq 'package_command_runner') 'exact manifest image path'
+Pass ((Get-EntryImageLabel 'C:\unreported-private-path\RuntimeBroker.exe' $images) -ceq 'other') 'unknown path stays an opaque label'
+$applications[0].executable='app/unknown.exe'
+Reject { Get-EntryKnownImages 'C:\fixture-package' 'C:\Windows' $applications } 'changed manifest path rejected'
+$applications[0].executable='app/ChatGPT.exe'
+Pass ((Get-EntryParentRelation 200 100 $true $true 42 42 100) -ceq 'harness') 'exact harness parent generation'
+Pass ((Get-EntryParentRelation 200 100 $true $true 43 42 100) -ceq 'held-parent-predates-child') 'held parent existed before child'
+Pass ((Get-EntryParentRelation 200 300 $true $true 42 42 100) -ceq 'unverified') 'reused newer parent PID is not lineage'
+Pass ((Get-EntryParentRelation 200 200 $true $true 42 42 100) -ceq 'unverified') 'equal creation timestamps cannot prove parent generation'
+Pass ((Get-EntryParentRelation 200 100 $false $true 42 42 100) -ceq 'unverified') 'exited child prevents parent proof'
+$observation='{"schema":1,"scope":"freshness-observation-only","matches":1,"truncated":false,"originalGenerationVerified":false,"records":[{"status":"observed","image":"windows_runtime_broker","package":"expected","liveThroughout":true,"parentImage":"windows_service_host","parentPackage":"none","parentRelation":"held-parent-predates-child"}]}' | ConvertFrom-Json
+Assert-EntryObservation $observation 1
+foreach ($invalidInteger in @([double]1,'1',$true)) {
+    $observation.schema=$invalidInteger; Reject { Assert-EntryObservation $observation 1 } 'JSON schema rejects floating string and boolean types'
+    $observation.schema=[long]1; $observation.matches=$invalidInteger
+    Reject { Assert-EntryObservation $observation 1 } 'JSON counts reject floating string and boolean types'
+}
+$observation.schema=[long]1; $observation.matches=[long]1
+Assert-EntryObservation $observation 1
+$observation.originalGenerationVerified=$true
+Reject { Assert-EntryObservation $observation 1 } 'reopened PID cannot claim original guard generation'
+$observation.originalGenerationVerified=$false
+$observation.records[0].image=@('windows_runtime_broker')
+Reject { Assert-EntryObservation $observation 1 } 'label array is not a fixed string'
+$observation.records[0].image='windows_runtime_broker'; $observation.records[0].parentRelation='unverified'
+Reject { Assert-EntryObservation $observation 1 } 'unverified parent cannot retain classified metadata'
+$observation.records[0].parentRelation='held-parent-predates-child'
+$observation.records[0].image='C:\unreported-private-path'; Reject { Assert-EntryObservation $observation 1 } 'observation rejects raw image path'
+$observation.records[0].image='windows_runtime_broker'; $observation.records[0].package='other'
+Reject { Assert-EntryObservation $observation 1 } 'observed matched package must be revalidated through held handle'
+$observation.records[0].package='expected'; $observation.records[0].liveThroughout=$false
+Reject { Assert-EntryObservation $observation 1 } 'exit before metadata completion remains unavailable'
+$observation.records[0].liveThroughout=$true
+$observation.records[0] | Add-Member NoteProperty commandLine 'unreported'
+Reject { Assert-EntryObservation $observation 1 } 'observation rejects extra private fields'
+$matchedIds=[Collections.Generic.List[int]]::new()
+$many=@(1..6 | ForEach-Object { [pscustomobject]@{ProcessId=$_;Name='ChatGPT.exe'} })
+$manyFacts=Get-EntryFreshnessEvidence $many 'fixture.package' 'fixture-bridge.exe' 0 0 { $null } $matchedIds
+Pass ($manyFacts.matches -eq 6 -and $matchedIds.Count -eq 4) 'inspection cap never weakens all-match guard'
+Initialize-EntryHeldObservation
+$heldSelf=$null
+try {
+    $heldSelf=[DesktopEntryReadOnly.Held]::new($PID)
+    Pass ($heldSelf.Alive -and $heldSelf.ImagePath -ieq $hostPath -and
+        $heldSelf.CreatedTicks -eq (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks) 'query-only held handle captures exact current process metadata'
+    Pass ($heldSelf.PackageRelation('fixture.package') -cin @('none','other')) 'package query does not invent expected identity'
+} finally { if ($null -ne $heldSelf) { $heldSelf.Dispose() } }
+# Exercise the complete helper/JSON path against only this owned test process.
+# Its package is deliberately absent/different: this is unavailable observation,
+# never fake package identity, provisioning, Desktop activation or a guard waiver.
+$observationScratch=Join-Path ([IO.Path]::GetTempPath()) ('entry-observation-test-'+[guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $observationScratch | Out-Null
+try {
+    $selfIds=[Collections.Generic.List[int]]::new(); $selfIds.Add($PID)
+    $selfObservation=Invoke-EntryFreshnessObservation $selfIds 1 'OpenAI.Codex_26.1103.3517.0_x64__2p2nqsd0c76g0' `
+        'C:\fixture-package' $applications $observationScratch
+    Pass ($selfObservation.records.Count -eq 1 -and $selfObservation.records[0].status -ceq 'unavailable' -and
+        $selfObservation.records[0].package -cin @('none','other') -and -not $selfObservation.originalGenerationVerified) 'complete bounded observation helper preserves unavailable package identity'
+} finally { Remove-Item -LiteralPath $observationScratch -Recurse -Force }
+# Observation-only mode has two unconditional stop paths before environment writes or activation.
+$source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'))
+$observationOffset=$source.IndexOf('$report.nativeEntry.matchedProcessObservation=Invoke-EntryFreshnessObservation')
+$strictBlock=$source.IndexOf("if (`$freshness.matches -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }")
+$zeroBlock=$source.IndexOf("if (`$NativeEntryCase -ceq 'freshness-observation') { Block 'Observation-only baseline finished; activation and USER writes are deliberately not attempted.' }")
+$writeOffset=$source.IndexOf('            Set-EntryOverrides $entryState')
+Pass ($observationOffset -gt 0 -and $strictBlock -gt $observationOffset -and $zeroBlock -gt $strictBlock -and
+    $writeOffset -gt $zeroBlock) 'inspection cannot fall through into writes or activation even with zero matches'
 # Actual Windows lifetime oracle: keep an exited process handle, then close it.
 # A separate live fixture remains a blocker, and is never passed to that cleanup.
 $exitedFixture=$null; $liveFixture=$null

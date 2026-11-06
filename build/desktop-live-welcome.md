@@ -25,7 +25,7 @@ all genuine native startup/policy checks still run; rejected settings fail.
 The first screenshot precedes the one welcome attempt. The second capture uses
 only the same HWND and activation process after rechecking held process identity
 and package, including after a stopped UIA result. No later-page action occurs.
-The fixed eleven-field helper result includes only enums, counts, booleans and
+The fixed twelve-field helper result includes only enums, counts, booleans and
 narrow target observations, never raw UI text or pattern probes. It is not
 full onboarding, composer or model evidence. A stopped/unavailable/unchanged
 welcome cannot produce an overall success, and cannot overwrite a prior
@@ -71,6 +71,29 @@ in-flight snapshot; individual OS calls still rely on the unchanged 20-second
 internal and 30-second external limits. Unknown/protected content and ownership/provider errors stop immediately;
 no later-page read or action is retried. Exhaustion reports the fixed reason
 accessibility_not_ready at welcome_read, with zero actions, all targets absent
-and no completed action state. The eleven-field schema is unchanged. This is
+and no completed action state. This is
 missing accessibility readiness, not proof that the visible welcome content is
 unknown or that onboarding succeeded. The parent keeps it a failed live slice.
+
+The nullable `initialReadObservation` field explains a classified initial stop
+once, from its last already-read owned ControlView snapshot. It records the
+existing readiness snapshot count (one through four), exact and whitespace-only
+normalized heading counts, and exact target-label counts split into interactive
+and noninteractive nodes. It also records the first existing shell predicate
+rejection: `node_count`, `unexpected_interactive`, `named_content`,
+`container_type`, or `window_count`; `none` means the shell predicate accepted
+the snapshot, not that welcome actions are allowed. It contains no raw names,
+types, paths, application data or pattern probes. Before a classified snapshot,
+after an accepted initial welcome, and for later reads the field remains null.
+The strict parent schema requires the non-null summary to describe a stopped
+`welcome_read` result with zero actions and no completed action state, checks
+count consistency with existing target observations, and retains failure.
+
+This adds no snapshot, UI action, retry, timeout or classification exception.
+Whitespace-normalized evidence never satisfies the exact heading action gate.
+The observation can distinguish a rejected shell shape from missing labels; it
+does not diagnose why a provider omitted content or establish a next screen.
+Stop this diagnostic lane after one capture unless its fixed facts identify a
+specific harmless mismatch for separate review. An unexplained/inaccessible
+tree remains blocked, with no coordinate input, fabricated onboarding state,
+broadened allowlist, accessibility-enabling setting, or longer blind polling.
