@@ -185,6 +185,8 @@ jobs:
               -not $text.Contains('catalog argument was not identified by the bound public index')) {
             throw 'The old observer must fail the catalog behavior assertion, not compile or skip.'
           }
+          # GitHub's PowerShell epilogue propagates native LASTEXITCODE; this failure was just verified as expected.
+          $global:LASTEXITCODE = 0
       - name: Check probe syntax before execution
         run: |
           $errors = $null
