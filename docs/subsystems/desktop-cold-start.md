@@ -45,7 +45,9 @@ CreateProcess alias reparse tag `0x8000001B`. The probe never parses undocumente
 APPEXECLINK payload strings or fabricates an alias. Actual runtime package identity
 remains a separate mandatory check. Non-shell process
 creation supplies a minimal, non-secret, process-local environment containing
-the exact commit-built bridge path. It never writes user/system environment.
+the exact commit-built bridge path. These default baseline/direct-launch modes never write user/system environment.
+The separate native-entry experiment below permits exactly two temporary USER
+path variables on a fresh disposable VM, with mandatory rollback.
 
 The pinned package contains both `app\\Codex.exe` and
 `app\\resources\\codex.exe`. Only the latter resource backend is considered, and
@@ -64,7 +66,7 @@ The probe requires a matching child process-start event under a package-verified
 Desktop parent, and records file hashes before/after. Short-lived events may not
 permit querying the running image path; this evidence is not proof of a successful
 protocol or model request. Static adapter error markers may be detected in fresh
-app log files; no raw log lines, auth files or arbitrary environment are emitted. Do not substitute naked extracted EXEs, global environment changes or
+app log files; no raw log lines, auth files or arbitrary environment are emitted. Do not substitute naked extracted EXEs, unreviewed persistent environment changes or
 debug injection to make this test appear to pass.
 
 A screenshot of at most 1 MiB is also emitted as base64 in workflow logs for
@@ -76,6 +78,114 @@ facts and the fresh unauthenticated window image. They do not contain the MSIX,
 offline license, app data, credentials, raw process command lines, or environment
 values. Test-created activation is closed when possible; the disposable VM is
 the final process and filesystem lifetime boundary.
+
+## Bounded USER-environment native-entry experiment
+
+[Experimental Desktop native entry](../../.github/workflows/experimental-desktop-native-entry.yml)
+adds a separate, default-off `-NativeEntryCase` selector to the existing signed
+package harness. The production bridge and existing baseline/policy workflows
+retain their behavior; this is not an installer or a deployment recommendation.
+The new case requires the exact experimental repository, branch, GitHub-hosted
+runner and dedicated workflow path. It rejects separate startup/compatibility/UI switches. The entry selector itself
+selects only the existing exact-version genuine startup comparison in the two
+private native homes, so the bridge need not exit instantly at that boundary.
+It selects no launch-compatibility, auth, attestation, routing or UI modes. The same pinned signed package, registered identity, original backend
+version/hash, private bridge homes, window capture and sanitized process evidence
+remain mandatory.
+
+Four non-fail-fast matrix jobs each get their own fresh Windows 2025 VM:
+
+- `baseline`: first official AUMID activation with no overrides, requiring a
+  live observed original native executable with the pinned image path/hash.
+- `treatment`: write only `CODEX_CLI_PATH` and
+  `MAGPIE_APP_SERVER_BRIDGE_CONFIG` to `HKCU\Environment` as two `REG_SZ`
+  paths to this job's exact bridge/config, read them back, notify the shell,
+  then make the first official AUMID activation.
+- `restore-before-activation`: set/readback/notify the same two values, restore
+  and verify their exact prior absence, notify again, and only then perform
+  the first AUMID activation. It requires the original native image. This is
+  an independent fresh-activation control, not a second launch of treatment's
+  possibly still-running package family.
+- `alias-control`: the existing verified application-execution alias with
+  explicit process-local bridge paths, plus the new exact image evidence and
+  root cleanup checks. This is a positive launch-selection control, never
+  evidence for Start/taskbar or shell environment inheritance.
+
+Preflight rejects either target name's presence in process, machine or USER
+state, including an empty or differently typed USER value. USER presence is
+checked before reading any prior value. The exact prior state is consequently
+known absence, not a saved user configuration. Existing default `.codex/auth.json`
+or `.codex/config.toml` files are presence-only blockers; credentials are never
+read. An alternate process HOME/CODEX_HOME, any prior Desktop/native/bridge
+process or existing registration blocks the experiment. No persistent HOME,
+CODEX_HOME, APPDATA, machine environment, security/network setting, package
+content, Explorer restart, logoff or new session is used.
+
+The [helper](../../build/desktop-native-entry.ps1) marks mutation attempted
+before its first write and restores both names independently in the harness's
+`finally`, before activation-process cleanup. Even a partial/uncertain write,
+notification failure or launch exception cannot skip the rollback attempt.
+Readback must show both exact original absences. Values, raw environment,
+arguments, credential files and runner tokens are not published. Scratch remains
+private until VM disposal because whole-family exit is not established.
+
+The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
+allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving
+window, so the parent applies a separate ten-second helper deadline and verifies
+that owned helper's exit after timeout. A `sent` notification does not prove
+Explorer or an activation broker refreshed anything. Persistent restoration and
+notification status are reported separately.
+
+Normal activation runs in an allowlisted PowerShell helper with neither override
+in its process environment. The helper itself checks their absence before
+calling `IApplicationActivationManager::ActivateApplication` with no arguments.
+It does not reconstruct USER values into the caller environment. The parent
+also remains override-free. The returned Desktop PID must be a freshly created,
+package-verified process in the interactive session; the harness holds its OS
+handle and full-precision creation identity through exact-root cleanup.
+
+This tests official AUMID API activation, **not a literal Start-menu/taskbar
+click**. An event-driven bounded image watcher starts before activation and opens both
+child and parent handles while alive, retaining exact image path and both
+creation times. The main sweep also samples live children. Exact path/hash
+evidence must be tied directly to the held activation parent and its full-precision
+creation identity. Late or inaccessible events are counted as misses, never
+upgraded from executable-name evidence. A uniquely named bridge process-start
+event alone remains `bridge-start-event-only`; a short-lived child may escape live
+image capture. No bridge observation remains unknown, even if an original native
+image is seen. Both bridge and native image evidence can coexist after fallback.
+Only exact bridge image evidence passes treatment/alias selection; only original
+native image evidence without any bridge event passes the two native controls.
+All successes also require capture success, exact persistent restoration and
+confirmed exit of the held activation root. Cleanup failure fails the job.
+
+Bridge selection demonstrates the backend executable choice only. It does not
+independently establish that the bridge read the configured environment path,
+started both native backends, completed startup, logged in or served a model.
+The bridge may still stop at a later intentionally unsupported argument/protocol boundary.
+There is no observer/wire trace in this entry-only slice, and no permission or
+full launch-compatibility behavior is broadened to keep a process alive; the
+separately documented genuine startup comparison is the only opt-in. Full package-family
+exit and same-session runtime rollback after a running treatment remain unproven.
+
+Offline [safety fixtures](../../build/desktop-native-entry.tests.ps1) use only mock
+snapshots/callbacks. They cover dirty preflight, absent-versus-empty/type equality,
+partial writes before/after errors, rollback of both names despite an individual
+failure, notification failure, concurrent state changes, no token/override in the
+activation caller, controls and failure precedence. Process fixtures exercise
+normal output, byte overflow and timeout with confirmed helper exit; Windows
+PowerShell also compiles and runs the image-event observer against an owned
+stdin-held fixture, verifies exact child/parent creation identities and checks
+callback shutdown before releasing the fixture. A deliberate missing-second-
+rollback mutation must fail the behavior assertion. Parsing and fixtures run in
+both PowerShell hosts before any of the four package jobs. No PowerShell runtime
+or real Windows activation was available during source authoring; exact-commit
+CI results must be recorded before any claim that this experiment passed.
+
+Sources: [Windows process environments](https://learn.microsoft.com/en-us/windows/win32/procthread/environment-variables),
+[WM_SETTINGCHANGE](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-settingchange),
+[SendMessageTimeout](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagetimeoutw),
+and [AUMID activation](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-iapplicationactivationmanager-activateapplication).
 
 ## Policy-read diagnostic
 
@@ -1371,3 +1481,4 @@ fixtures independently check exact enum/type/shape acceptance and rejection.
 The additional fields ride the already-needed combined CI capture; they add
 no diagnostic-only launch or account/filesystem access. Definitions and source
 review are not execution evidence.
+

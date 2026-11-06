@@ -1,0 +1,102 @@
+name: Experimental Desktop native entry
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [experiment/app-server-bridge-v0.1.3035]
+    paths:
+      - .github/workflows/experimental-desktop-native-entry.yml
+      - build/desktop-native-entry.ps1
+      - build/desktop-native-entry.tests.ps1
+      - build/desktop-entry-activate.ps1
+      - build/test-desktop-cold-start.ps1
+      - build/desktop-live-welcome.ps1
+      - build/test-desktop-ci-profile.ps1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-desktop-native-entry-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  safety-fixtures:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Parse and run offline safety fixtures in both PowerShell hosts
+        shell: pwsh
+        run: |
+          $savedNativePreference = $PSNativeCommandUseErrorActionPreference
+          try {
+            $PSNativeCommandUseErrorActionPreference = $false
+            $output = & pwsh -NoProfile -File build/desktop-native-entry.tests.ps1 -BreakRestoration 2>&1
+            $status = $LASTEXITCODE
+          } finally { $PSNativeCommandUseErrorActionPreference = $savedNativePreference }
+          if ($status -eq 0 -or ($output | Out-String) -notlike '*treatment rollback removes both introduced values*') {
+            throw 'Missing-second-rollback mutation did not fail the behavior assertion.'
+          }
+          Write-Output 'Behavioral mutation rejected: skipping the second rollback write.'
+          ./build/desktop-native-entry.tests.ps1
+          powershell -NoProfile -NonInteractive -File build/desktop-native-entry.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell safety fixtures failed.' }
+          powershell -NoProfile -NonInteractive -File build/test-desktop-ci-profile.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Existing default compatibility profile fixtures failed.' }
+  native-entry:
+    needs: safety-fixtures
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [baseline, treatment, restore-before-activation, alias-control]
+    env:
+      CGO_ENABLED: '0'
+      GOOS: windows
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build exact commit bridge without changing production code
+        run: |
+          $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          go build -trimpath -tags nogui -o $bridge ./cmd/magpie-codex-bridge
+          if ($LASTEXITCODE -ne 0) { throw 'Bridge build failed.' }
+      - name: First package activation on this fresh disposable VM
+        env:
+          ENTRY_CASE: ${{ matrix.case }}
+        run: |
+          $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          $mode = 'bridge'
+          if ($env:ENTRY_CASE -ceq 'baseline') { $mode = 'baseline' }
+          ./build/test-desktop-cold-start.ps1 -Mode $mode -BridgeExecutable $bridge -NativeEntryCase $env:ENTRY_CASE
+      - name: Preserve sanitized observations only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-native-entry-${{ matrix.case }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/desktop-cold-start-report/report.json
+            ${{ runner.temp }}/desktop-cold-start-report/official-window.png
+            ${{ runner.temp }}/desktop-cold-start-report/signature.txt
+          if-no-files-found: warn
+          retention-days: 7

@@ -10,7 +10,8 @@ param(
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
-    [switch]$InspectStaticLauncher
+    [switch]$InspectStaticLauncher,
+    [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control')][string]$NativeEntryCase = ''
 )
 
 # Pure validation helpers are AST-loaded by the focused tests, without running the probe.
@@ -1538,6 +1539,12 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
     -LaunchCompatibility $EnableReviewedLaunchCompatibility -StaticLauncher $InspectStaticLauncher `
     -Actions $env:GITHUB_ACTIONS -RunnerEnvironment $env:RUNNER_ENVIRONMENT `
     -Repository $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF
+if ($NativeEntryCase) {
+    . (Join-Path $PSScriptRoot 'desktop-native-entry.ps1')
+    Assert-EntryOptions -Case $NativeEntryCase -Mode $Mode `
+        -OtherOptIn ($EnableReviewedStartupProbe -or $EnableReviewedLaunchCompatibility -or $EnableReviewedLiveWelcome -or $InspectStaticLauncher) `
+        -WorkflowRef $env:GITHUB_WORKFLOW_REF
+}
 if ($EnableReviewedLiveWelcome) {
     . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
     Assert-LiveWelcomeOptions -Enabled $true -Mode $Mode -Startup $EnableReviewedStartupProbe -Compatibility $EnableReviewedLaunchCompatibility
@@ -1566,6 +1573,13 @@ $liveFixtureStopped = $false
 $liveAfterCaptured = $false
 $publicPluginCatalog = $null
 $publicPluginEnvironment = $null
+$entryState = $null
+$entryImages = @{}
+$entryBridgeStarts = @()
+$entryCleanupError = $false
+$script:entryHelperExitUnconfirmed = $false
+$entryImageObserver = $null
+$entryActivationAttempted = $false
 function Block([string]$reason) {
     $report.reason = $reason
     throw $reason
@@ -1587,6 +1601,28 @@ See the report artifact for public package, session, and process evidence.
 "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
 }
 try {
+    if ($NativeEntryCase) {
+        $report.nativeEntry = [ordered]@{
+            case=$NativeEntryCase; scope='disposable-native-entry-only'; selection='not-observed'
+            apiActivationIsNotLiteralClick=$true; callerOverridesAbsent=$false
+            bridgeConfigInheritance='not-directly-observed'; processFamilyExit='not-proven'
+            postRestoreActivation='not-attempted'; persistentRestoration='not-yet-verified'
+        }
+        $report.limits += 'Native entry does not establish Start/taskbar click equivalence, config-read inheritance, completed startup, login or chat.'
+        $before = Read-EntryUserEnvironment -RequireAbsent
+        $profilePresent = $false
+        foreach ($leaf in @('.codex\auth.json','.codex\config.toml')) {
+            if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE $leaf)) { $profilePresent = $true }
+        }
+        if ([Environment]::GetEnvironmentVariable('CODEX_HOME') -or
+            ([Environment]::GetEnvironmentVariable('HOME') -and $env:HOME -ine $env:USERPROFILE)) {
+            $profilePresent = $true
+        }
+        $preexisting = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('ChatGPT.exe','Codex.exe') }).Count -gt 0
+        Assert-EntryFresh $before (Test-EntryProcessOverride) (Test-EntryMachineOverride) $profilePresent $preexisting
+        $entryState = New-EntryTransaction $before
+        $report.nativeEntry.preflight='no-existing-overrides-profile-or-desktop'
+    }
     if ($EnableReviewedLaunchCompatibility) {
         $report.captureValidated = $false
         $report.captureValidationLimit = 'This flag covers the full bounded, sanitized metadata snapshots and preceding package/window/child identity checks. It does not mean Desktop compatibility succeeded or the complete process lifecycle was observed.'
@@ -1772,7 +1808,7 @@ namespace DesktopColdProbe {
     if ($report.manifest.name -ne 'OpenAI.Codex' -or $report.manifest.architecture -ne 'x64') {
         Block 'Unexpected official package identity or architecture; inspect evidence before proceeding.'
     }
-    Assert-DesktopCompatibilityPackage -LaunchCompatibility $EnableReviewedLaunchCompatibility `
+    Assert-DesktopCompatibilityPackage -LaunchCompatibility ($EnableReviewedLaunchCompatibility -or [bool]$NativeEntryCase) `
         -DesktopVersion $report.manifest.version -PackageHash $report.download.packageSha256
     # Exact Desktop executable observed in the verified 26.1103.3517.0 package.
     # The two other applications are native Chrome host and command runner, not Desktop.
@@ -1997,7 +2033,7 @@ namespace DesktopColdProbe {
     }
     $controlHome = ''
     $bridgeName = $null
-    if ($Mode -ne 'baseline') {
+    if ($Mode -ne 'baseline' -or $NativeEntryCase) {
         $report.stage = 'registered-alias-and-bridge-configuration'
         $expectedBridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
         if ($BridgeExecutable -ne $expectedBridge -or -not (Test-Path -LiteralPath $BridgeExecutable -PathType Leaf)) {
@@ -2073,6 +2109,11 @@ namespace DesktopColdProbe {
             Block 'Resource executable did not identify itself as the official Codex CLI.'
         }
         $report.officialBackendVersion = $versionText
+        if ($NativeEntryCase -and ($versionText -cne 'codex-cli 0.167.0-alpha.3.2' -or
+            (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant() -cne
+                '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39')) {
+            Block 'Native entry requires the exact reviewed original backend.'
+        }
         $backends = @()
         foreach ($id in @('alpha', 'beta')) {
             $backendHome = Join-Path $work ($id + '-home')
@@ -2099,7 +2140,7 @@ requires_openai_auth = false
         }
         $bridgeConfig = Join-Path $work 'launch-only-bridge.json'
         $actualBackendHash = ''
-        if ($EnableReviewedStartupProbe) {
+        if ($EnableReviewedStartupProbe -or $NativeEntryCase) {
             $actualBackendHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant()
         }
         if ($EnableReviewedLaunchCompatibility) {
@@ -2138,7 +2179,7 @@ requires_openai_auth = false
                 $report.liveWelcome.status = 'ready'; $report.liveWelcome.reason = 'welcome_not_attempted'
             } catch { Block 'The live fixture could not establish its bounded reviewed contract.' }
         }
-        $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe $EnableReviewedStartupProbe `
+        $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe ($EnableReviewedStartupProbe -or [bool]$NativeEntryCase) `
             -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome
         if ($EnableReviewedLiveWelcome) {
             $bridgeSettings.working_directory = $liveWorkspace
@@ -2155,8 +2196,8 @@ requires_openai_auth = false
             configuration = 'Two empty homes, loopback discard endpoints, no auth or startup compatibility opt-in.'
             processObservationLimit = 'Start event identifies the uniquely named configured bridge and package parent; a short-lived image path may not be queryable.'
         }
-        $report.bridge.startupInspectionEnabled = [bool]$EnableReviewedStartupProbe
-        if ($EnableReviewedStartupProbe) {
+        $report.bridge.startupInspectionEnabled = ($EnableReviewedStartupProbe -or [bool]$NativeEntryCase)
+        if ($EnableReviewedStartupProbe -or $NativeEntryCase) {
             $report.bridge.configuration = 'Two empty homes, loopback discard endpoints, exact-version SHA-pinned startup inspection only; no authentication or JSONL policy opt-in.'
             $report.bridge.startupInspectionLimits = 'Both official one-shot results must match completely and be genuinely unrestricted. Non-null requirements remain unsupported, never replaced by null. No login or inference; no zero-egress claim.'
         }
@@ -2222,7 +2263,35 @@ requires_openai_auth = false
     $report.stage = 'normal-package-activation'
     $subscription = Register-CimIndicationEvent -Query 'SELECT * FROM Win32_ProcessStartTrace' -SourceIdentifier $eventSource
     [uint32]$launched = 0
-    if ($Mode -eq 'baseline') {
+    if ($NativeEntryCase) {
+        # Registration and configuration must not have launched Desktop. No second activation is attempted.
+        $existingFamily = @(Get-CimInstance Win32_Process | Where-Object {
+            [DesktopColdProbe.Native]::PackageFor([uint32]$_.ProcessId) -eq $app.PackageFullName -or
+            $_.Name -in @('ChatGPT.exe','Codex.exe',$bridgeName)
+        })
+        if ($existingFamily.Count -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }
+        if ($NativeEntryCase -cin @('treatment','restore-before-activation')) {
+            Set-EntryOverrides $entryState @{
+                CODEX_CLI_PATH=$BridgeExecutable; MAGPIE_APP_SERVER_BRIDGE_CONFIG=$bridgeConfig
+            } { Read-EntryUserEnvironment } { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange }
+            if ($NativeEntryCase -ceq 'restore-before-activation') {
+                Restore-EntryOverrides $entryState { Read-EntryUserEnvironment } `
+                    { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange }
+                $report.nativeEntry.postRestoreActivation='first-activation-after-verified-persistent-restore'
+            }
+        }
+        Initialize-EntryImageObserver
+        $entryImageObserver=[DesktopEntryImages.Observer]::new($BridgeExecutable,$officialBackend.FullName)
+        if (Test-EntryProcessOverride) { Block 'Native-entry caller environment must remain override-free.' }
+        $report.nativeEntry.callerOverridesAbsent=$true
+    }
+    $entryActivationFloor = [DateTime]::UtcNow
+    if ($NativeEntryCase -and $NativeEntryCase -cne 'alias-control') {
+        $entryActivationAttempted=$true
+        $result = Invoke-EntryActivation (Join-Path $PSScriptRoot 'desktop-entry-activate.ps1') $aumid
+        $activationPid = $result.processId
+        $report.activation = [ordered]@{ method='AUMID-allowlisted-helper'; hresult='0x00000000'; processId=$activationPid }
+    } elseif ($Mode -eq 'baseline') {
         $hr = [DesktopColdProbe.Native]::Activate($aumid, [ref]$launched)
         $activationPid = [int]$launched
         $report.activation = [ordered]@{ method = 'AUMID'; hresult = ('0x{0:X8}' -f $hr); processId = $activationPid }
@@ -2255,6 +2324,7 @@ requires_openai_auth = false
         }
         $start.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $bridgeConfig
         Assert-PublicEnvironmentSize $start.EnvironmentVariables
+        if ($NativeEntryCase) { $entryActivationAttempted=$true }
         $started = [Diagnostics.Process]::Start($start)
         if (-not $started) { Block 'Registered alias did not return a process.' }
         $activationPid = $started.Id
@@ -2267,11 +2337,46 @@ requires_openai_auth = false
         }
         $report.activation = [ordered]@{ method = 'newly-registered-application-alias'; processId = $activationPid }
     }
+    if ($NativeEntryCase) {
+        $ownedActivationProcess = Get-Process -Id $activationPid -ErrorAction Stop
+        $null = $ownedActivationProcess.Handle
+        $entryActivationStartTime = $ownedActivationProcess.StartTime.ToUniversalTime()
+        $ownedActivationCreatedUtc = $entryActivationStartTime.ToString('o')
+        if ($ownedActivationProcess.StartTime.ToUniversalTime() -lt $entryActivationFloor -or
+            $ownedActivationProcess.SessionId -ne $processSession -or
+            [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName) {
+            Block 'Native activation is not the newly created verified package process.'
+        }
+    }
     $windows = @()
     $observed = @{}
     for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Seconds 1
         foreach ($p in @(Get-CimInstance Win32_Process -Filter "SessionId=$processSession")) {
+            if ($NativeEntryCase -and $p.ExecutablePath -and
+                ($p.ExecutablePath -ieq $BridgeExecutable -or $p.ExecutablePath -ieq $officialBackend.FullName) -and
+                [int]$p.ParentProcessId -eq $activationPid -and $null -ne $ownedActivationProcess -and
+                -not $ownedActivationProcess.HasExited -and
+                $ownedActivationProcess.StartTime.ToUniversalTime().ToString('o') -ceq $ownedActivationCreatedUtc -and
+                [DesktopColdProbe.Native]::PackageFor([uint32]$p.ParentProcessId) -ceq $app.PackageFullName) {
+                $child = $null
+                try {
+                    $child = Get-Process -Id $p.ProcessId -ErrorAction Stop
+                    $null = $child.Handle
+                    if ($child.StartTime.ToUniversalTime() -ge $entryActivationFloor -and
+                        $child.SessionId -eq $processSession -and -not $child.HasExited -and
+                        $child.MainModule.FileName -ieq $p.ExecutablePath) {
+                        $kind = 'original-native'
+                        $expectedHash = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+                        if ($p.ExecutablePath -ieq $BridgeExecutable) { $kind='bridge'; $expectedHash=$report.bridge.sha256 }
+                        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $child.MainModule.FileName).Hash.ToLowerInvariant() -ceq $expectedHash) {
+                            $entryImages[[string]$p.ProcessId] = [ordered]@{processId=[int]$p.ProcessId;
+                                parentProcessId=[int]$p.ParentProcessId; kind=$kind; exactImageAndHashVerified=$true;
+                                createdUtc=$child.StartTime.ToUniversalTime().ToString('o')}
+                        }
+                    }
+                } catch { } finally { if ($null -ne $child) { $child.Dispose() } }
+            }
             if ([DesktopColdProbe.Native]::PackageFor([uint32]$p.ProcessId) -eq $app.PackageFullName) {
                 $observed[[string]$p.ProcessId] = [ordered]@{
                     processId = [int]$p.ProcessId; parentProcessId = [int]$p.ParentProcessId
@@ -2295,6 +2400,29 @@ requires_openai_auth = false
         processId = [int]$_.ProcessID; parentProcessId = [int]$_.ParentProcessID; name = [string]$_.ProcessName
         startedFileTime = [string]$_.TIME_CREATED
     } })
+    if ($NativeEntryCase) {
+        foreach ($image in $entryImageObserver.Snapshot()) {
+            if ($image.ParentId -ne $activationPid -or $image.CreatedTicks -lt $entryActivationFloor.Ticks -or
+                $image.ParentCreatedTicks -ne $ownedActivationProcess.StartTime.ToUniversalTime().Ticks) { continue }
+            $kind='original-native'; $expectedImage=$officialBackend.FullName
+            $expectedHash='40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+            if ($image.Path -ieq $BridgeExecutable) { $kind='bridge'; $expectedImage=$BridgeExecutable; $expectedHash=$report.bridge.sha256 }
+            if ($image.Path -ieq $expectedImage -and
+                (Get-FileHash -Algorithm SHA256 -LiteralPath $expectedImage).Hash.ToLowerInvariant() -ceq $expectedHash) {
+                $entryImages[[string]$image.ProcessId]=[ordered]@{processId=$image.ProcessId;parentProcessId=$image.ParentId;
+                    kind=$kind;exactImageAndHashVerified=$true;source='live-process-start-event';
+                    createdUtc=([DateTime]::new($image.CreatedTicks,[DateTimeKind]::Utc)).ToString('o')}
+            }
+        }
+        $report.nativeEntry.imageObserverMisses=$entryImageObserver.Misses
+        $report.nativeEntry.imageObserverSaturated=$entryImageObserver.Full
+        $entryBridgeStarts = @($report.processStarts | Where-Object {
+            $_.name -ceq $bridgeName -and $observed.ContainsKey([string]$_.parentProcessId)
+        })
+        $report.nativeEntry.childImages = @($entryImages.Values)
+        $report.nativeEntry.bridgeStartEvents = $entryBridgeStarts
+        $report.nativeEntry.observationLimit = 'A short-lived child can escape image verification. Missing bridge evidence is not proof of noninheritance; native and bridge observations can both occur after fallback.'
+    }
     if (-not $observed.ContainsKey([string]$activationPid)) { Block 'Activation PID package identity was not observed.' }
     if ($windows.Count -eq 0) { Block 'No visible window belonging to the verified package appeared.' }
     $report.stage = 'window-capture'
@@ -2399,7 +2527,7 @@ requires_openai_auth = false
             }
         }
         $report.bridge.diagnosticMarkers = @($report.bridge.diagnosticMarkers | Select-Object -Unique)
-        if ($bridgeStarts.Count -eq 0) { Block 'No uniquely named configured child start event was observed under the verified Desktop package.' }
+        if ($bridgeStarts.Count -eq 0 -and -not $NativeEntryCase) { Block 'No uniquely named configured child start event was observed under the verified Desktop package.' }
         if ($Mode -eq 'observe') {
             $report.observer.sha256After = (Get-FileHash -Algorithm SHA256 -LiteralPath $ObserverExecutable).Hash.ToLowerInvariant()
             if ($report.observer.sha256After -ne $report.observer.sha256) { Block 'Observer bytes changed during the diagnostic.' }
@@ -2964,14 +3092,34 @@ requires_openai_auth = false
     $report.reason = 'Verified package process and window observed. Direct mode requires the bridge child; observe mode requires the separately identified observer and validated metadata. Review screenshot and first failing exchange; no policy, login, model or production acceptance is claimed.'
     $exitCode = 0
 } catch {
-    if (-not $report.Contains('reason')) { $report.reason = $_.Exception.Message }
+    if (-not $report.Contains('reason')) { $report.reason = $(if ($NativeEntryCase) { 'native_entry_operation_failed' } else { $_.Exception.Message }) }
     $report.errorType = $_.Exception.GetType().FullName
     $report.errorHResult = ('0x{0:X8}' -f $_.Exception.HResult)
 } finally {
+    if ($NativeEntryCase) {
+        $report.nativeEntry.primaryOutcome=[ordered]@{status=$report.status;stage=$report.stage;
+            reason=$report.reason;exitCode=$exitCode}
+    }
+    # Restore first, before process cleanup can fail. This does not refresh existing process environments.
+    if ($NativeEntryCase -and $null -ne $entryState) {
+        try {
+            Restore-EntryOverrides $entryState { Read-EntryUserEnvironment } `
+                { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange }
+        } catch { $entryCleanupError=$true }
+        $report.nativeEntry.persistentRestoration=$(if ($entryState.RestoreVerified) { 'exact-prior-absence-verified' } else { 'unconfirmed' })
+        $report.nativeEntry.userWriteReadbackVerified=$entryState.SetVerified
+        $report.nativeEntry.setBroadcast=$entryState.SetBroadcast
+        $report.nativeEntry.restoreBroadcast=$entryState.RestoreBroadcast
+        $report.nativeEntry.broadcastLimit='A sent or timed-out notification does not prove another process refreshed its environment.'
+    }
     try {
+        if ($null -ne $entryImageObserver) {
+            try { $entryImageObserver.Dispose() } catch { $entryCleanupError=$true }
+        }
         if ($subscription) { Unregister-Event -SourceIdentifier $eventSource -ErrorAction SilentlyContinue }
         Get-Event -SourceIdentifier $eventSource -ErrorAction SilentlyContinue | Remove-Event -ErrorAction SilentlyContinue
-        if ($EnableReviewedLaunchCompatibility) {
+        if (($EnableReviewedLaunchCompatibility -or $NativeEntryCase) -and
+            (-not $NativeEntryCase -or $activationPid -gt 0 -or $null -ne $ownedActivationProcess)) {
             try {
                 if ($null -eq $ownedActivationProcess -or [string]::IsNullOrWhiteSpace($ownedActivationCreatedUtc) -or
                     $activationPid -le 0 -or -not $report.Contains('registration') -or
@@ -3000,7 +3148,7 @@ requires_openai_auth = false
             }
         }
     } catch { $report.cleanupErrorType = $_.Exception.GetType().FullName }
-    if ($EnableReviewedLaunchCompatibility) {
+    if ($EnableReviewedLaunchCompatibility -or $NativeEntryCase) {
         $report.desktopActivationExited = [bool]$activationExitConfirmed
     }
     if ($EnableReviewedLiveWelcome -and $null -ne $liveFixture) {
@@ -3082,6 +3230,36 @@ if ($EnableReviewedLiveWelcome) {
     $liveOutcome = Get-LiveWelcomeOutcome $prior $liveFixtureStopped $liveWelcome $liveAfterCaptured
     $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode
 }
+if ($NativeEntryCase) {
+    $outcome = Get-EntryOutcome -Case $NativeEntryCase -BridgeStarts $entryBridgeStarts.Count `
+        -VerifiedBridgeImages @($entryImages.Values | Where-Object { $_.kind -ceq 'bridge' }).Count `
+        -NativeImages @($entryImages.Values | Where-Object { $_.kind -ceq 'original-native' }).Count `
+        -ActivationExited $activationExitConfirmed -RegistryRestored ($null -ne $entryState -and $entryState.RestoreVerified) `
+        -CleanupError ($entryCleanupError -or $script:entryHelperExitUnconfirmed -or $report.Contains('cleanupErrorType')) -CaptureSucceeded ($exitCode -eq 0)
+    if (-not $entryActivationAttempted -and -not $entryCleanupError -and
+        ($null -eq $entryState -or $entryState.RestoreVerified)) { $outcome='not-attempted' }
+    $report.nativeEntry.selection=$outcome
+    $report.nativeEntry.activationAttempted=$entryActivationAttempted
+    $report.nativeEntry.runtimeRollback=$(if ($NativeEntryCase -ceq 'restore-before-activation' -and
+        $outcome -ceq 'original-native-observed') { 'fresh-first-activation-original-native-observed' } else { 'not-proven' })
+    $report.nativeEntry.activationRootExited=$activationExitConfirmed
+    $report.nativeEntry.helperExitUnconfirmed=$script:entryHelperExitUnconfirmed
+    $report.nativeEntry.rootCleanup=$(if (-not $entryActivationAttempted) { 'not-attempted' }
+        elseif ($activationExitConfirmed) { 'exited' } else { 'unconfirmed' })
+    # No same-VM second activation, broad process kill, or private scratch deletion.
+    $report.nativeEntry.privateScratchRetained=$true
+    if ($outcome -cin @('original-native-observed','bridge-image-observed')) {
+        $report.status='observed'; $report.stage='native-entry-selection-observed'
+        $report.reason='Only the exact selected child image and activation-root exit are established; see nativeEntry limits.'
+        $exitCode=0
+    } else {
+        if ($report.nativeEntry.primaryOutcome.exitCode -eq 0) {
+            $report.status='blocked'; $report.stage='native-entry-result'; $report.reason=$outcome
+        }
+        $exitCode=1
+    }
+}
 Save-Report
 exit $exitCode
+
 
