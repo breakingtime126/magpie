@@ -651,7 +651,7 @@ jobs:
           }
           ./build/desktop-live-welcome.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Live welcome integration fixtures failed.' }
-          powershell -NoProfile -File build/desktop-welcome-step.tests.ps1
+          powershell -NoProfile -NonInteractive -File build/desktop-welcome-step.tests.ps1 -CheckNativeInterop
           if ($LASTEXITCODE -ne 0) { throw 'Welcome policy fixtures failed.' }
       - name: Observe one welcome transition and isolated native text turns
         shell: pwsh

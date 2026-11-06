@@ -1,4 +1,7 @@
-# Pure state-policy fixtures. No Desktop, UIA, network, accounts or input.
+# Pure state-policy fixtures; optional native snapshot check under Windows PS5.1.
+# No Desktop launch, UI access, network, accounts or input.
+[CmdletBinding()]
+param([switch]$CheckNativeInterop)
 $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'desktop-welcome-step.ps1'), [ref]$tokens, [ref]$errors)
@@ -67,4 +70,81 @@ if ($observations.continue.controlType -cne 'Edit' -or $observations.engineering
     $observations.engineering.interactiveCount -ne 0 -or ($observations | ConvertTo-Json -Depth 5 -Compress) -match 'canary') {
     throw 'Target role/count or redaction failed.'
 }
-Write-Output 'Desktop welcome policy fixtures passed.'
+$lineageFunction = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Test-WelcomeLineage' }, $true)
+. ([scriptblock]::Create($lineageFunction.Extent.Text))
+function Fact([long]$start, [int]$parent) {
+    [pscustomobject]@{ Alive = $true; IdentityValid = $true; StartTicks = $start;
+        ActualStartTicks = $start; ParentId = $parent; CurrentParentId = $parent }
+}
+function LineageFacts {
+    return @{ 10 = (Fact 100 0); 20 = (Fact 200 10); 30 = (Fact 300 20) }
+}
+function ExpectLineage($facts, [int]$id, [bool]$expected) {
+    if ((Test-WelcomeLineage $facts 10 $id) -ne $expected) { throw 'Ownership proof differs.' }
+}
+ExpectLineage (LineageFacts) 10 $true
+ExpectLineage (LineageFacts) 20 $true
+ExpectLineage (LineageFacts) 30 $true
+ExpectLineage (LineageFacts) 0 $false
+ExpectLineage (LineageFacts) 99 $false
+foreach ($id in @(10, 20, 30)) {
+    $facts = LineageFacts; $facts[$id].Alive = $false
+    ExpectLineage $facts 30 $false
+    $facts = LineageFacts; $facts[$id].IdentityValid = $false
+    ExpectLineage $facts 30 $false
+    $facts = LineageFacts; $facts[$id].ActualStartTicks++
+    ExpectLineage $facts 30 $false
+}
+$facts = LineageFacts; $facts[20].CurrentParentId = 99
+ExpectLineage $facts 30 $false
+$facts = LineageFacts; $facts[20].ParentId = 99; $facts[20].CurrentParentId = 99
+ExpectLineage $facts 30 $false
+$facts = LineageFacts; $facts[20].StartTicks = 300; $facts[20].ActualStartTicks = 300
+ExpectLineage $facts 30 $false
+$facts = LineageFacts; $facts[20].ParentId = 30; $facts[20].CurrentParentId = 30
+ExpectLineage $facts 30 $false
+$facts = LineageFacts; $facts.Remove(20)
+ExpectLineage $facts 30 $false
+$facts = @{ 10 = (Fact 100 0) }
+for ($i = 1; $i -le 8; $i++) { $facts[10 + $i] = Fact (100 + $i) (9 + $i) }
+ExpectLineage $facts 18 $true
+$facts[19] = Fact 109 18
+ExpectLineage $facts 19 $false
+$facts = LineageFacts
+for ($i = 100; $i -lt 130; $i++) { $facts[$i] = Fact (1000 + $i) 10 }
+ExpectLineage $facts 20 $false
+Write-Output 'Desktop welcome policy and ownership fixtures passed.'
+
+if ($CheckNativeInterop) {
+    try {
+        if ($PSVersionTable.PSEdition -cne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5 -or
+            $PSVersionTable.PSVersion.Minor -ne 1 -or $env:OS -cne 'Windows_NT') {
+            throw 'Native check requires Windows PowerShell 5.1.'
+        }
+        # Extract only the exact literal argument. Never execute the helper body,
+        # its Add-Type command AST, or an expandable/evaluated script fragment.
+        $definitions = @($ast.FindAll({ param($n)
+            $n -is [Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -ceq 'Add-Type' -and $n.CommandElements.Count -eq 3 -and
+            $n.CommandElements[1] -is [Management.Automation.Language.CommandParameterAst] -and
+            $n.CommandElements[1].ParameterName -ceq 'TypeDefinition' -and
+            $n.CommandElements[2] -is [Management.Automation.Language.StringConstantExpressionAst] -and
+            $n.CommandElements[2].StringConstantType -eq [Management.Automation.Language.StringConstantType]::SingleQuotedHereString -and
+            $n.CommandElements[2].Value.Contains('public static class WelcomeNative {')
+        }, $true))
+        if ($definitions.Count -ne 1) { throw 'Expected one constant native definition.' }
+        $definition = $definitions[0].CommandElements[2].Value
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes 2>$null
+        Add-Type -TypeDefinition $definition 2>$null
+        # One supported read-only process snapshot. No window/UIA methods called.
+        $parents = [WelcomeNative]::Parents()
+        if ($parents.Count -lt 1 -or $parents.Count -gt 8192 -or -not $parents.ContainsKey([int]$PID)) {
+            throw 'Invalid native snapshot.'
+        }
+    } catch {
+        # Do not emit compiler/provider errors, process IDs, paths or the map.
+        Write-Output 'Desktop welcome native interop check failed.'
+        exit 1
+    }
+    Write-Output 'Desktop welcome native interop check passed.'
+}

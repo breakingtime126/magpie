@@ -48,3 +48,17 @@ and failure precedence, target label redaction, plus actual offline timeout and
 stdout-bound child processes. Run build/desktop-live-welcome.tests.ps1 in pwsh
 and build/desktop-welcome-step.tests.ps1 in Windows PowerShell 5.1. Existing
 baseline and profile gates remain in the workflow.
+
+The visible HWND must still belong to the held activation process. A UIA node
+may belong to an Electron descendant only after a bounded, retained-handle
+parent-chain proof to that activation, with exact executable, registered package,
+session and creation identities at every hop. The helper rejects zero, unknown,
+exited or foreign owners, caps the cache at 32 processes and ancestry at eight
+links, and revalidates current target ownership before each action. It never
+uses executable names or package membership alone as authority.
+
+Windows PS5.1 offline tests also compile the exact constant native helper
+definition and exercise one read-only bounded Toolhelp process snapshot, without
+Desktop activation or UI methods. Passing that check is not UI ownership or
+conversation acceptance. The separate zero-context real helper launch smoke
+continues to check argv, environment and fixed result parsing before any UI.
