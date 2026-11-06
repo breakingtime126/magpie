@@ -54,7 +54,8 @@ inherited authentication environment. This is an identity/version check, not a
 model or authentication request.
 
 The baseline/direct bridge configuration has two new empty homes and loopback discard endpoints,
-no API key, and no startup, requirements, attestation or OAuth opt-ins. The separate
+no API key, and no startup, requirements, attestation, OAuth, auth-status or
+feature-list opt-ins. The separate
 instrumented follow-ups below record their separate startup and launch-compatibility
 opt-ins. Startup inspection alone still selects only its original profile. The exact
 commit-built production bridge uses a unique commit-derived filename and is
@@ -188,7 +189,9 @@ executable pin on both backend entries. It separately adds:
 - `attestation=unavailable-v0.167.0-alpha.3.2`;
 - `gateway_oauth=primary-read-only-v0.167.0-alpha.3.2`;
 - `gateway_oauth_provider_name="CI alpha launch-only"`;
-- `config_requirements_read=compare-null-v0.167.0-alpha.3.2`.
+- `config_requirements_read=compare-null-v0.167.0-alpha.3.2`;
+- `auth_status=primary-no-auth-v0.167.0-alpha.3.2`;
+- `experimental_feature_list=compare-v0.167.0-alpha.3.2`.
 
 These are configured modes, not assertions that their runtime exchanges succeeded.
 The native forwarding contract and fail-closed behavior are documented in
@@ -213,7 +216,7 @@ without recording response bodies, credentials, proof tokens or raw arguments.
 A green observation still means bounded process/window/metadata evidence only.
 
 [Offline PowerShell profile tests](../../build/test-desktop-ci-profile.ps1)
-AST-load only the three allowlisted gate/configuration helpers. They cover missing
+AST-load only the allowlisted gate/configuration, sanitized-shape and evidence helpers. They cover missing
 opt-ins, baseline/direct modes, repository/branch/runner denials, unchanged default
 and startup-only JSON, all exact compatibility values, both executable pins,
 independent backend homes, unchanged caller inputs, exact Desktop version/package
@@ -915,3 +918,114 @@ providers do not produce one identical effective config, and native config
 serialization can contain provider secrets even without raw layers. No
 primary-only config, invented shared defaults or weakened policy is substituted
 to make the Desktop continue.
+
+### Genuine feature-page comparison CI gate
+
+The subsequent signed Desktop
+[run at 2ab7bcd9](https://github.com/breakingtime126/magpie/actions/runs/42233630209)
+observed nine correlated successful `getAuthStatus` exchanges, six preserving
+`includeToken:true`. Its actual `experimentalFeature/list` request had valid
+native trace and parameter metadata, a non-null uint32 limit, absent/null cursor,
+and absent/null thread scope. That feature request was still unsupported at
+that source revision. These are observed request shapes, not a successful
+feature page or usable GUI.
+
+Only the same explicitly selected `-EnableReviewedLaunchCompatibility` profile
+now adds `experimental_feature_list:"compare-v0.167.0-alpha.3.2"`. Baseline,
+startup-only and default configurations remain unchanged. The existing exact
+signed Desktop `26.1103.3517.0` package gate, backend
+`0.167.0-alpha.3.2` version and both native executable digest pins still apply.
+There are no additional diagnostic RPCs: the observer forwards Desktop's actual
+requests unchanged.
+
+Each accepted unscoped request obtains a fresh native page from both children.
+The bridge preserves cursor and limit, including subsequent cursor-present
+pages, and succeeds only when both entire validated native pages match. It does
+not merge a feature catalog, replace a native error with an empty page, invent
+shared flags, return a primary-only page, or enable features. A non-null
+`threadId` remains unsupported. See the
+[bridge reference](app-server-bridge.md) for the production admission, page
+validation and comparison contract.
+
+`Get-DesktopFeatureListEvidence` consumes the full already-sanitized
+`$allEvents` snapshot, not the 256-record report preview or raw RPC bodies.
+It requires actual, valid unscoped requests and correlated successful replies,
+including at least one limit-present request. It checks native boolean shape
+metadata, valid optional trace metadata and per-process correlation. Errors,
+missing flags, reused correlations, duplicate/saturated correlation records
+from any method, unmatched replies and outstanding requests fail the gate.
+Cursor-present requests remain admissible and must have their own replies.
+Only request/reply counts and limit/cursor-presence counts are reported, never
+page bodies, cursor values, numeric limit values, thread IDs or trace carriers.
+
+Observer success alone cannot independently establish equal native pages. These
+counts rely on the enabled production whole-page validator and cover only the
+observed snapshot, not the complete process lifetime or future requests.
+Offline fixtures exercise multiple processes, out-of-order replies, optional
+trace, pagination presence, invalid/missing shapes, wrong methods/directions/IDs,
+native errors, ambiguous correlation and failures after the preview cutoff.
+Existing auth evidence semantics and shared sanitizers are unchanged. New
+fixtures and actual feature success require exact-head CI evidence; the earlier
+run above is not verification of the new mode.
+
+The same two fresh empty homes, no inherited credential environment, no imported
+account/keyring and loopback discard model endpoints remain in force. This is
+genuine read-only feature-page compatibility in the disposable fixture, not a
+real-account or inference test, and it makes no zero-egress claim.
+`config/read`, `project/list` and `fs/readFile` remain unsupported. In
+particular, different native provider configurations are not replaced with
+invented shared configuration. GUI usability and complete Desktop compatibility
+remain unverified.
+
+### Optional full-file read-caller syntax metadata
+
+Under the existing `-InspectStaticLauncher` opt-in, a separate captured Node
+process runs
+[`inspect-desktop-read-callers.mjs`](../../build/inspect-desktop-read-callers.mjs)
+after the existing public catalog has passed its original signed-MSIX provenance
+check. It receives only the verified installation root and that independently
+verified ASAR digest. The reader requires the installed archive to match before
+analyzing selected complete `.vite/build/*.js` files. It neither executes
+package code nor reads any target of a `fs/readFile` expression.
+
+This optional pass has separate limits: 16 MiB per source, 32 MiB combined
+source bytes, 2,048 selected files, four million parser tokens, two million
+allocated nodes and two million visited nodes, depth 512, 30 seconds of shared
+analysis time, 128 calls across all sources and a 64 KiB report. A separate
+Node heap cap is 1,024 MiB and the process timeout is 60 seconds. The original
+catalog, parser and observer budgets are unchanged. Both streams are captured;
+stderr and raw exceptions are discarded. Timeout, unexpected output, invalid
+metadata or a failure to establish provenance is unavailable evidence, never
+a finding that there are no callers. Optional failures do not bypass earlier
+mandatory checks or change Desktop launch/RPC behavior.
+
+PowerShell validates canonical JSON, exact schemas, fixed method/field/marker
+vocabularies, integer bounds, aggregate call limits, distinct ordered source
+references and offsets, proof flags fixed to false, and the trusted archive
+digest. It publishes only a sanitized projection in
+`static-read-callers-metadata.json` and the report: public source digests with
+ordinal references, bounded counts/offsets, fixed classifications and public
+response-field components. Source filenames, source text, actual paths,
+identifiers, values and raw errors are not published.
+
+The only candidate methods are `config/read`, `experimentalFeature/list`,
+`project/list` and `fs/readFile`. A literal first argument is a positive
+syntax fact, not an established RPC transport binding. Response-member facts
+cover immediate awaits and restricted same-block const references only; wrapper
+calls, aliases, callbacks and broader consumer flow remain unresolved. Mutations
+can affect values, so even a recognized response-member expression does not prove
+its runtime value. Path classifications and fixed filename markers establish
+neither an actual resolved path/root nor authority to read one. The explicit
+`runtimeBindingProven`, `responseValueProven` and `pathAuthorityProven` flags
+remain false.
+
+A wholly parsed source may contribute positive facts. Syntax or local
+analysis limits omit that whole source and mark the package report partial;
+global bounds, read/provenance failures and unknown failures discard the whole
+report. Complete means complete parsing within the selected source scope, not
+complete consumer coverage. Zero reported facts are never proof of absence.
+Offline PowerShell fixtures cover schema, bounds, digest mismatch, incomplete
+coverage, fixed false proof flags, output framing/status, redaction and aggregate
+call limits. Execution of the new fixtures and the real optional package pass
+still require exact-head CI. This diagnostic enables no auth/config route,
+changes no defaults and introduces no additional Desktop launch or request.

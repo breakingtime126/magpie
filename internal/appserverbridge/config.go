@@ -29,6 +29,10 @@ type Config struct {
 	// It is separate from the one-shot startup inspection opt-in.
 	RequirementsRead string `json:"config_requirements_read,omitempty"`
 
+	// ExperimentalFeatureList compares fresh unscoped native pages. Each child
+	// reloads its configuration; this opt-in is not a network isolation promise.
+	ExperimentalFeatureList string `json:"experimental_feature_list,omitempty"`
+
 	// StartupProbe is disabled unless explicitly enabled after review of both
 	// authorities and the official probe's credential/network/cache effects.
 	StartupProbe string `json:"startup_probe,omitempty"`
@@ -108,6 +112,9 @@ func (cfg Config) Validate() error {
 	if cfg.RequirementsRead != "" && cfg.RequirementsRead != ConfigRequirementsCompareSafe && cfg.RequirementsRead != ConfigRequirementsCompareNull167 {
 		return errors.New("unsupported config_requirements_read mode")
 	}
+	if cfg.ExperimentalFeatureList != "" && cfg.ExperimentalFeatureList != ExperimentalFeatureListCompare167 {
+		return errors.New("unsupported experimental_feature_list mode")
+	}
 	if cfg.StartupProbe != "" && !StartupProbeSupported(cfg.StartupProbe) {
 		return errors.New("unsupported startup_probe mode")
 	}
@@ -121,7 +128,7 @@ func (cfg Config) Validate() error {
 		cfg.StartupProbe == StartupProbeCompareUnrestricted
 	current := cfg.RequirementsRead == ConfigRequirementsCompareNull167 ||
 		cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 ||
-		cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167
+		cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167
 	if legacy && current {
 		return errors.New("incompatible versions in selected compatibility modes")
 	}
@@ -139,7 +146,7 @@ func (cfg Config) Validate() error {
 	ids := map[string]bool{}
 	var homes []string
 	for i, b := range cfg.Backends {
-		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" {
+		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" {
 			digest, err := hex.DecodeString(b.StartupProbeSHA256)
 			if err != nil || len(digest) != 32 {
 				return errors.New("reviewed compatibility requires a SHA256 pin for each backend")
@@ -285,7 +292,7 @@ func (cfg Config) auth167() bool {
 func (cfg Config) authCompatibility() authCompatibility {
 	return authCompatibility{
 		authStatusNoAuth:       cfg.AuthStatus == AuthStatusPrimaryNoAuth167,
-		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167 || cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167,
+		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167 || cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167,
 		attestationUnavailable: cfg.Attestation == AttestationUnavailable || cfg.Attestation == AttestationUnavailable167,
 		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167,
 		gatewayProviderName:    cfg.GatewayOAuthProviderName,

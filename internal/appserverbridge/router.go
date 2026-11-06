@@ -41,8 +41,9 @@ type page struct {
 // loop, never concurrently. Losing the connection loses its ownership map;
 // a new connection must discover saved threads with thread/list again.
 type Router struct {
-	configRequirementsRead    bool
-	configRequirementsNull167 bool
+	configRequirementsRead     bool
+	configRequirementsNull167  bool
+	experimentalFeatureList167 bool
 
 	auth authCompatibility
 
@@ -86,9 +87,15 @@ func (r *Router) next(prefix string) string {
 }
 func alias(backend, model string) string { return "magpie/" + backend + "/" + model }
 func (r *Router) send(g *request, backend string, params object) Delivery {
+	return r.sendParams(g, backend, raw(params))
+}
+
+// Rebuild only the transport envelope; native read params keep their source
+// spelling and values, including optional nulls and pagination limits.
+func (r *Router) sendParams(g *request, backend string, params json.RawMessage) Delivery {
 	id := r.next("request")
 	r.pending["s:"+id] = pending{g, backend}
-	return deliver(backend, object{"id": raw(id), "method": raw(g.method), "params": raw(params)})
+	return deliver(backend, object{"id": raw(id), "method": raw(g.method), "params": params})
 }
 func (r *Router) end(g *request) {
 	if r.active[g.key] {
@@ -130,9 +137,9 @@ func (r *Router) abandon(g *request) {
 // Client accepts one client JSONL message. Unsupported operations fail
 // locally, rather than guessing a backend or broadcasting user input.
 func (r *Router) Client(line []byte) ([]Delivery, error) {
-	// Exact 0.167 requirements/auth diagnostics reject ambiguous routing
+	// Exact 0.167 reviewed reads reject ambiguous routing
 	// keys before a map can hide the guarded method behind another.
-	if (r.configRequirementsNull167 || r.auth.authStatusNoAuth) && validateServerEnvelopeKeys(line) != nil {
+	if (r.configRequirementsNull167 || r.auth.authStatusNoAuth || r.experimentalFeatureList167) && validateServerEnvelopeKeys(line) != nil {
 		return []Delivery{fail(nil, -32600, "invalid client envelope")}, nil
 	}
 	m, err := parseObject(line)
@@ -159,7 +166,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 	if err != nil {
 		return []Delivery{fail(m["id"], -32600, err.Error())}, nil
 	}
-	if r.active[key] || (r.auth.authStatusNoAuth && r.authStatusIDInUse(m["id"], method)) {
+	if r.active[key] || r.nativeReadIDInUse(m["id"], method) {
 		return nil, errors.New("duplicate active client request id")
 	}
 	p, err := child(m, "params")
@@ -201,6 +208,8 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return []Delivery{fail(g.id, -32600, "successful initialization of both backends is required")}, nil
 	}
 	switch method {
+	case "experimentalFeature/list":
+		return r.experimentalFeatureListRequest167(g, line, m["params"]), nil
 	case "getAuthStatus":
 		if !r.auth.authStatusNoAuth {
 			return []Delivery{fail(g.id, -32601, "method is not supported by this experimental bridge")}, nil
@@ -482,6 +491,9 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	g := pending.group
 	if g.failed {
 		return nil, nil
+	}
+	if g.method == "experimentalFeature/list" {
+		return r.experimentalFeatureListResponse167(g, backend, line), nil
 	}
 	if g.method == "getAuthStatus" {
 		return r.finishAuthStatus167(g, line), nil

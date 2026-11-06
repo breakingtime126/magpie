@@ -710,6 +710,7 @@ function New-DesktopBridgeSettings(
         $settings.gateway_oauth_provider_name = 'CI alpha launch-only'
         $settings.config_requirements_read = 'compare-null-v0.167.0-alpha.3.2'
         $settings.auth_status = 'primary-no-auth-v0.167.0-alpha.3.2'
+        $settings.experimental_feature_list = 'compare-v0.167.0-alpha.3.2'
     }
     return $settings
 }
@@ -770,6 +771,271 @@ function Get-DesktopNoAuthStatusEvidence([object[]]$Records) {
         requests = $requests; validatedResponses = $responses
         includeTokenRequests = $tokenRequests; includeTokenValidatedResponses = $tokenResponses
     }
+}
+
+# Only full, already-sanitized snapshots belong here, never native params or results.
+# Correlated success is meaningful only with the pinned feature-list compare mode:
+# its production validator requires fresh native whole-page equality from both children.
+function Get-DesktopFeatureListEvidence([object[]]$Records) {
+    $pending = @{}
+    $seen = @{}
+    $requests = 0
+    $responses = 0
+    $limitRequests = 0
+    $limitResponses = 0
+    $cursorRequests = 0
+    $cursorResponses = 0
+    foreach ($event in $Records) {
+        if ($event.PSObject.Properties['class'] -and
+            $event.class -in @('duplicate_id', 'correlation_limit')) {
+            throw 'Feature-list evidence has ambiguous correlation.'
+        }
+        if (-not $event.PSObject.Properties['method']) { continue }
+        if ($event.method -isnot [string]) { throw 'Feature-list evidence has invalid method metadata.' }
+        if ($event.method -cne 'experimentalFeature/list') { continue }
+        foreach ($field in @('seq', 'pid', 'correlation')) {
+            if (-not $event.PSObject.Properties[$field]) { throw 'Feature-list evidence lacks request correlation.' }
+            Assert-PublicInteger $event.$field 1 4294967296
+        }
+        foreach ($field in @('kind', 'direction', 'class')) {
+            if (-not $event.PSObject.Properties[$field] -or $event.$field -isnot [string]) {
+                throw 'Feature-list evidence lacks request correlation.'
+            }
+        }
+        if ($event.kind -cne 'rpc') { throw 'Feature-list did not return a validated native success.' }
+        $key = [string]$event.pid + ':' + [string]$event.correlation
+        if ($event.direction -ceq 'to_bridge' -and $event.class -ceq 'request') {
+            # Reuse the existing diagnostic shape checks; do not widen the sanitizer.
+            Assert-PublicReadRequestEvent $event
+            foreach ($field in @('featureListParamsValid', 'featureListCursorProvided',
+                'featureListLimitProvided', 'featureListThreadIdProvided')) {
+                if (-not $event.PSObject.Properties[$field] -or $event.$field -isnot [bool]) {
+                    throw 'Feature-list evidence lacks valid request flags.'
+                }
+            }
+            if ($seen.ContainsKey($key) -or -not $event.featureListParamsValid -or
+                $event.featureListThreadIdProvided -or
+                ($event.PSObject.Properties['tracePresent'] -and -not $event.traceValid)) {
+                throw 'Feature-list evidence has an unsupported request.'
+            }
+            $seen[$key] = $true
+            $pending[$key] = @{
+                limit = [bool]$event.featureListLimitProvided
+                cursor = [bool]$event.featureListCursorProvided
+            }
+            $requests++
+            if ($event.featureListLimitProvided) { $limitRequests++ }
+            if ($event.featureListCursorProvided) { $cursorRequests++ }
+        } elseif ($event.direction -ceq 'from_bridge' -and $event.class -ceq 'response') {
+            Assert-PublicShape $event @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class')
+            if (-not $pending.ContainsKey($key)) { throw 'Feature-list evidence has an unmatched result.' }
+            if ($pending[$key].limit) { $limitResponses++ }
+            if ($pending[$key].cursor) { $cursorResponses++ }
+            [void]$pending.Remove($key)
+            $responses++
+        } else {
+            throw 'Feature-list did not return a validated native success.'
+        }
+    }
+    if ($pending.Count -ne 0 -or $requests -eq 0 -or $requests -ne $responses -or
+        $limitRequests -eq 0 -or $limitRequests -ne $limitResponses -or $cursorRequests -ne $cursorResponses) {
+        throw 'Feature-list diagnostic lacks complete limit-present request evidence.'
+    }
+    return [ordered]@{
+        requests = $requests; validatedResponses = $responses
+        limitRequests = $limitRequests; limitValidatedResponses = $limitResponses
+        cursorRequests = $cursorRequests; cursorValidatedResponses = $cursorResponses
+    }
+}
+
+
+# This optional static pass is independent of the existing catalog's resource budget.
+# The expected ASAR identity must already be verified against the signed original MSIX.
+function ConvertTo-DesktopReadCallerEvidence($value, [string]$ExpectedArchiveHash) {
+    Assert-PublicHash $ExpectedArchiveHash
+    $failureCodes = @('input_limit', 'token_limit', 'depth_limit', 'deadline', 'call_limit',
+        'node_limit', 'local_node_limit', 'field_limit', 'syntax_error', 'analysis_failed',
+        'source_limit', 'source_read_failed', 'archive_mismatch', 'archive_changed',
+        'package_path', 'report_limit', 'invalid_arguments', 'disposable_windows_ci_required')
+    if (-not $value.PSObject.Properties['status'] -or $value.status -isnot [string]) {
+        throw 'Invalid read-caller status type.'
+    }
+    if ($value.PSObject.Properties['status'] -and $value.status -ceq 'unavailable') {
+        Assert-PublicShape $value @('schema', 'status', 'reason')
+        Assert-PublicInteger $value.schema 1 1
+        if ($value.reason -isnot [string] -or $failureCodes -cnotcontains $value.reason) {
+            throw 'Unreviewed read-caller failure.'
+        }
+        return [ordered]@{ schema = 1; status = 'unavailable'; reason = $value.reason }
+    }
+    Assert-PublicShape $value @('schema', 'status', 'archiveSha256', 'filesSelected',
+        'filesComplete', 'sourceBytes', 'sources')
+    Assert-PublicInteger $value.schema 1 1
+    Assert-PublicHash $value.archiveSha256
+    if ($value.archiveSha256 -cne $ExpectedArchiveHash -or $value.status -isnot [string] -or
+        @('complete', 'partial') -cnotcontains $value.status) {
+        throw 'Read-caller source identity or status mismatch.'
+    }
+    Assert-PublicInteger $value.filesSelected 0 2048
+    Assert-PublicInteger $value.filesComplete 0 $value.filesSelected
+    Assert-PublicInteger $value.sourceBytes 0 33554432
+    if ($value.sources -isnot [System.Array] -or $value.sources.Count -ne $value.filesSelected) {
+        throw 'Invalid read-caller source coverage.'
+    }
+    $methods = @('config/read', 'experimentalFeature/list', 'project/list', 'fs/readFile')
+    $fields = @('config', 'origins', 'layers', 'model', 'model_provider', 'model_providers', 'features',
+        'data', 'nextCursor', 'id', 'name', 'roots', 'metadata', 'position',
+        'createdAt', 'updatedAt', 'recencyAt', 'dataBase64')
+    $markers = @('config_toml', 'agents_md', 'skill_md', 'auth_json', 'dot_codex')
+    $pathSyntax = @('unresolved', 'template', 'call', 'identifier', 'member', 'binary',
+        'conditional', 'literal_absolute', 'literal_relative', 'other')
+    $previousSource = ''
+    $sources = @()
+    $complete = 0
+    $calls = 0
+    foreach ($source in $value.sources) {
+        Assert-PublicShape $source @('path', 'sha256', 'analysis')
+        Assert-PublicHash $source.sha256
+        if ($source.path -isnot [string] -or
+            $source.path -cnotmatch '^\.vite/build/[A-Za-z0-9][A-Za-z0-9_.-]{0,190}\.js\z' -or
+            [StringComparer]::Ordinal.Compare($previousSource, $source.path) -ge 0) {
+            throw 'Invalid read-caller source reference.'
+        }
+        $previousSource = $source.path
+        $analysis = $source.analysis
+        if (-not $analysis.PSObject.Properties['status'] -or $analysis.status -isnot [string]) {
+            throw 'Invalid read-caller source status type.'
+        }
+        if ($analysis.PSObject.Properties['status'] -and $analysis.status -ceq 'unavailable') {
+            Assert-PublicShape $analysis @('schema', 'status', 'reason')
+            Assert-PublicInteger $analysis.schema 1 1
+            if ($analysis.reason -isnot [string] -or
+                @('syntax_error', 'local_node_limit', 'field_limit') -cnotcontains $analysis.reason) {
+                throw 'Invalid partial read-caller reason.'
+            }
+            $safeAnalysis = [ordered]@{ schema = 1; status = 'unavailable'; reason = $analysis.reason }
+        } else {
+            Assert-PublicShape $analysis @('schema', 'status', 'sourceParsedCompletely',
+                'runtimeBindingProven', 'responseValueProven', 'consumerCoverage', 'calls')
+            Assert-PublicInteger $analysis.schema 1 1
+            if ($analysis.status -cne 'source_syntax_only' -or
+                $analysis.sourceParsedCompletely -isnot [bool] -or -not $analysis.sourceParsedCompletely -or
+                $analysis.runtimeBindingProven -isnot [bool] -or $analysis.runtimeBindingProven -or
+                $analysis.responseValueProven -isnot [bool] -or $analysis.responseValueProven -or
+                $analysis.consumerCoverage -isnot [string] -or
+                $analysis.consumerCoverage -cne 'direct_await_and_sibling_const_only' -or
+                $analysis.calls -isnot [System.Array] -or $analysis.calls.Count -gt 128) {
+                throw 'Invalid read-caller analysis scope.'
+            }
+            $complete++
+            $safeCalls = @()
+            $previousOffset = -1
+            foreach ($call in $analysis.calls) {
+                $names = @('method', 'offsetUtf16', 'relation', 'responseFields')
+                if ($call.PSObject.Properties['method'] -and $call.method -ceq 'fs/readFile') {
+                    $names += @('pathSyntax', 'pathMarkers', 'pathAuthorityProven')
+                }
+                Assert-PublicShape $call $names
+                Assert-PublicInteger $call.offsetUtf16 0 16777215
+                $calls++
+                if ($call.method -isnot [string] -or $methods -cnotcontains $call.method -or
+                    $call.relation -isnot [string] -or $call.relation -cne 'literal_first_argument_only' -or
+                    $call.offsetUtf16 -le $previousOffset -or
+                    $call.responseFields -isnot [System.Array] -or $call.responseFields.Count -gt 32 -or
+                    $calls -gt 128) { throw 'Invalid read-caller call metadata.' }
+                $previousOffset = $call.offsetUtf16
+                $safeFields = @()
+                $seenFields = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+                foreach ($field in $call.responseFields) {
+                    Assert-PublicShape $field @('relation', 'path')
+                    if ($field.relation -isnot [string] -or
+                        @('await_member', 'const_binding') -cnotcontains $field.relation -or
+                        $field.path -isnot [System.Array] -or $field.path.Count -lt 1 -or $field.path.Count -gt 3) {
+                        throw 'Invalid read-caller field relation.'
+                    }
+                    foreach ($part in $field.path) {
+                        if ($part -isnot [string] -or $fields -cnotcontains $part) {
+                            throw 'Unreviewed read-caller response field.'
+                        }
+                    }
+                    if (-not $seenFields.Add($field.relation + ':' + ($field.path -join '.'))) {
+                        throw 'Duplicate read-caller field relation.'
+                    }
+                    $safeFields += [ordered]@{ relation = $field.relation; path = @($field.path) }
+                }
+                $safeCall = [ordered]@{
+                    method = $call.method; offsetUtf16 = $call.offsetUtf16
+                    relation = 'literal_first_argument_only'; responseFields = $safeFields
+                }
+                if ($call.method -ceq 'fs/readFile') {
+                    if ($call.pathSyntax -isnot [string] -or $pathSyntax -cnotcontains $call.pathSyntax -or
+                        $call.pathAuthorityProven -isnot [bool] -or $call.pathAuthorityProven -or
+                        $call.pathMarkers -isnot [System.Array] -or $call.pathMarkers.Count -gt 5) {
+                        throw 'Invalid read-caller path classification.'
+                    }
+                    $previousMarker = -1
+                    foreach ($marker in $call.pathMarkers) {
+                        if ($marker -isnot [string]) { throw 'Invalid read-caller path marker type.' }
+                        $markerIndex = [Array]::IndexOf($markers, $marker)
+                        if ($markerIndex -le $previousMarker) { throw 'Unreviewed or unordered read-caller path marker.' }
+                        $previousMarker = $markerIndex
+                    }
+                    if ($call.pathSyntax -ceq 'unresolved' -and $call.pathMarkers.Count -ne 0) {
+                        throw 'Unresolved read-caller path has unsupported markers.'
+                    }
+                    $safeCall.pathSyntax = $call.pathSyntax
+                    $safeCall.pathMarkers = @($call.pathMarkers)
+                    $safeCall.pathAuthorityProven = $false
+                }
+                $safeCalls += $safeCall
+            }
+            $safeAnalysis = [ordered]@{
+                schema = 1; status = 'source_syntax_only'; sourceParsedCompletely = $true
+                runtimeBindingProven = $false; responseValueProven = $false
+                consumerCoverage = 'direct_await_and_sibling_const_only'
+                calls = $safeCalls
+            }
+        }
+        # Do not publish raw source filenames or filesystem paths.
+        $sources += [ordered]@{ source = $sources.Count; sha256 = $source.sha256; analysis = $safeAnalysis }
+    }
+    if ($complete -ne $value.filesComplete -or
+        ($value.status -ceq 'complete' -and $complete -ne $value.filesSelected) -or
+        ($value.status -ceq 'partial' -and $complete -eq $value.filesSelected)) {
+        throw 'Inconsistent read-caller completeness.'
+    }
+    return [ordered]@{
+        schema = 1; status = $value.status; archiveSha256 = $ExpectedArchiveHash
+        filesSelected = $value.filesSelected; filesComplete = $complete; sourceBytes = $value.sourceBytes
+        callCount = $calls; sources = $sources
+    }
+}
+function ConvertFrom-DesktopReadCallerOutput(
+    [string]$Text, [string]$ErrorText, [int]$ExitCode, [string]$ExpectedArchiveHash
+) {
+    $prefix = 'DESKTOP_READ_CALLERS_METADATA='
+    if ($Text.Length -gt 65600 -or $ErrorText.Length -ne 0 -or @(0, 2) -notcontains $ExitCode) {
+        throw 'Unexpected read-caller process output.'
+    }
+    $line = $Text
+    if ($line.EndsWith("`n")) {
+        $line = $line.Substring(0, $line.Length - 1)
+        if ($line.EndsWith("`r")) { $line = $line.Substring(0, $line.Length - 1) }
+    }
+    if (-not $line.StartsWith($prefix, [StringComparison]::Ordinal) -or
+        $line.Contains("`r") -or $line.Contains("`n")) { throw 'Invalid read-caller output framing.' }
+    $body = $line.Substring($prefix.Length)
+    if ([Text.Encoding]::UTF8.GetByteCount($body) -gt 65536) { throw 'Read-caller output size exceeded.' }
+    try {
+        $value = $body | ConvertFrom-Json
+        Assert-PublicCanonicalJSON $body $value
+        $safe = ConvertTo-DesktopReadCallerEvidence $value $ExpectedArchiveHash
+    } catch { throw 'Invalid read-caller metadata.' }
+    if (($safe.status -ceq 'unavailable' -and $ExitCode -ne 2) -or
+        ($safe.status -cne 'unavailable' -and $ExitCode -ne 0)) {
+        throw 'Read-caller process status mismatch.'
+    }
+    return $safe
 }
 
 Set-StrictMode -Version Latest
@@ -1183,6 +1449,68 @@ namespace DesktopColdProbe {
         $staticJSON = $staticReport | ConvertTo-Json -Depth 12
         [IO.File]::WriteAllText((Join-Path $out 'static-launcher-metadata.json'), $staticJSON,
             (New-Object Text.UTF8Encoding($false)))
+
+        # Optional source-only pass. Earlier catalog failures remain fatal and are outside this catch.
+        # Its expected identity is trusted only after Confirm-PublicCatalogProvenance above.
+        $report.staticReadCallers = [ordered]@{ schema = 1; status = 'unavailable'; reason = 'inspection_failed' }
+        $report.staticReadCallersLimit = 'Positive source syntax only. No transport, runtime response value, complete consumer coverage, path authority or absence claim. Source filenames, expressions, values, paths and raw errors are not published. No additional launch or RPC is issued.'
+        $readCallerProcess = $null
+        try {
+            $callerInspector = Join-Path $env:GITHUB_WORKSPACE 'build/inspect-desktop-read-callers.mjs'
+            if ($callerInspector.Contains('"')) { throw 'Invalid read-caller inspector path.' }
+            $readCallers = New-Object Diagnostics.ProcessStartInfo
+            $readCallers.FileName = $node
+            $readCallers.Arguments = '--max-old-space-size=1024 "' + $callerInspector +
+                '" --package-root "' + $app.InstallLocation + '" --expected-asar-sha256 ' + $publicPluginCatalog.archiveSha256
+            $readCallers.UseShellExecute = $false
+            $readCallers.CreateNoWindow = $true
+            $readCallers.RedirectStandardOutput = $true
+            $readCallers.RedirectStandardError = $true
+            $readCallers.WorkingDirectory = $work
+            $readCallers.EnvironmentVariables.Clear()
+            foreach ($name in @('SystemRoot', 'WINDIR', 'TEMP', 'TMP')) {
+                $value = [Environment]::GetEnvironmentVariable($name)
+                if ($value) { $readCallers.EnvironmentVariables[$name] = $value }
+            }
+            $readCallers.EnvironmentVariables['HOME'] = $work
+            $readCallers.EnvironmentVariables['USERPROFILE'] = $work
+            $readCallers.EnvironmentVariables['GITHUB_ACTIONS'] = 'true'
+            $readCallers.EnvironmentVariables['RUNNER_OS'] = 'Windows'
+            $readCallerProcess = [Diagnostics.Process]::Start($readCallers)
+            $readCallerOut = $readCallerProcess.StandardOutput.ReadToEndAsync()
+            $readCallerErr = $readCallerProcess.StandardError.ReadToEndAsync()
+            if (-not $readCallerProcess.WaitForExit(60000)) {
+                $report.staticReadCallers.reason = 'process_timeout'
+                throw 'Read-caller inspector timed out.'
+            }
+            if (-not $readCallerOut.Wait(2000) -or -not $readCallerErr.Wait(2000)) {
+                throw 'Read-caller inspector output did not close.'
+            }
+            $readCallerText = $readCallerOut.GetAwaiter().GetResult()
+            $readCallerErrorText = $readCallerErr.GetAwaiter().GetResult()
+            $safeReadCallers = ConvertFrom-DesktopReadCallerOutput $readCallerText $readCallerErrorText `
+                $readCallerProcess.ExitCode $publicPluginCatalog.archiveSha256
+            $readCallerJSON = $safeReadCallers | ConvertTo-Json -Depth 16
+            [IO.File]::WriteAllText((Join-Path $out 'static-read-callers-metadata.json'), $readCallerJSON,
+                (New-Object Text.UTF8Encoding($false)))
+            $report.staticReadCallers = $safeReadCallers
+        } catch {
+            # Never relay process output, exception text or paths; this optional stage cannot unblock routing.
+            if ($report.staticReadCallers.reason -cne 'process_timeout') {
+                $report.staticReadCallers = [ordered]@{ schema = 1; status = 'unavailable'; reason = 'inspection_failed' }
+            }
+        } finally {
+            if ($readCallerProcess) {
+                try {
+                    if (-not $readCallerProcess.HasExited) {
+                        $readCallerProcess.Kill()
+                        [void]$readCallerProcess.WaitForExit(2000)
+                    }
+                } catch {}
+                try { $readCallerProcess.Dispose() } catch {}
+            }
+        }
+
     }
     $bridgeName = $null
     if ($Mode -ne 'baseline') {
@@ -1318,6 +1646,7 @@ requires_openai_auth = false
                 gateway_oauth_provider_name = $bridgeSettings.gateway_oauth_provider_name
                 config_requirements_read = $bridgeSettings.config_requirements_read
                 auth_status = $bridgeSettings.auth_status
+                experimental_feature_list = $bridgeSettings.experimental_feature_list
             }
             $report.bridge.launchCompatibilityLimits = @(
                 'Only the exact reviewed Desktop plugin override is forwarded. No plugin installation, copy, cache link or shared backend working directory is configured.',
@@ -1325,6 +1654,8 @@ requires_openai_auth = false
                 'Attestation remains unavailable. An attestation failure is not evidence of a Windows token failure.',
                 'Auth status preserves includeToken requests but accepts only a genuine primary no-auth null/null/false result in these empty disposable homes. It is not real-account support or a guarantee against receiving credentials if misused.',
                 'Requirements succeed only after fresh native reads from both backends actually return requirements:null. Errors, missing or non-null results are never replaced with null.',
+                'Feature pages succeed only after fresh unscoped reads from both native backends match completely. Cursor and limit are preserved; non-null thread scope, errors and unequal pages fail closed.',
+                'config/read, project/list and fs/readFile remain unsupported. GUI usability is unverified.',
                 'Configured modes and observed responses are separate evidence. No successful initialization, plugin loadability, account, model or zero-egress claim.'
             )
         }
@@ -2008,6 +2339,8 @@ requires_openai_auth = false
                 # Full validated snapshots, not the truncated summary. No result payload is inspected or logged.
                 $report.observer.noAuthStatusEvidence = Get-DesktopNoAuthStatusEvidence $allEvents
                 $report.observer.noAuthStatusEvidenceLimit = 'Correlated success relies on the exact bridge no-auth result validator. It proves only this credential-free fixture, not login, token support or full Desktop compatibility.'
+                $report.observer.featureListEvidence = Get-DesktopFeatureListEvidence $allEvents
+                $report.observer.featureListEvidenceLimit = 'Correlated success relies on the production whole-page comparison validator, not observer inspection of results. Counts cover only observed unscoped requests, including limit-present requests and any cursor-present pages; no result, cursor or limit values are logged. It does not establish GUI usability, real-account support, inference or zero egress.'
             }
         }
     }

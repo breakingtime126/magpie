@@ -69,6 +69,9 @@ func fixtureServer() int {
 			return fixtureStartupProbe(os.Args[1:])
 		}
 	}
+	if handled, code := experimentalFeatureFixture(); handled {
+		return code
+	}
 	if handled, code := authStatusFixture(); handled {
 		return code
 	}

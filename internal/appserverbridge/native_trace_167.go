@@ -56,3 +56,27 @@ func NativeRequestID167Valid(data []byte) bool {
 	_, err := authCompatibilityID(data)
 	return err == nil
 }
+
+// Compare native integer identity too: -0 and 0 cannot name two simultaneous
+// requests when either one is this strictly typed diagnostic operation.
+func (r *Router) nativeReadIDInUse(id json.RawMessage, method string) bool {
+	strict := func(method string) bool {
+		return (r.auth.authStatusNoAuth && method == "getAuthStatus") ||
+			(r.experimentalFeatureList167 && method == "experimentalFeature/list")
+	}
+	key, err := authCompatibilityID(id)
+	if err != nil {
+		return false
+	}
+	for _, pending := range r.pending {
+		g := pending.group
+		if !strict(method) && !strict(g.method) {
+			continue
+		}
+		other, err := authCompatibilityID(g.id)
+		if err == nil && key == other {
+			return true
+		}
+	}
+	return false
+}

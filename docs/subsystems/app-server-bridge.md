@@ -104,6 +104,8 @@ revert/legacy rollback/unsubscribe, turn start/interrupt/steer, and the primary
 backend's account/rate-limit reads. `thread/rollback` is the older protocol
 spelling, forwarded unchanged; `thread/revert` is the newer spelling. The child
 version determines availability. Unsupported methods return `-32601`.
+The separate default-off [feature-page comparison](#exact-0167-shared-experimental-feature-pages)
+adds only unscoped `experimentalFeature/list` under its pinned contract.
 
 The separate experimental methods `environment/info` and `environment/status`
 accept only `{ "environmentId": "local" }` in this bridge. The native local ID, when enabled,
@@ -1263,9 +1265,11 @@ request vocabulary and adds boolean-only request-shape metadata for
 [complete vocabulary and read-shape contract](desktop-cold-start.md#complete-pinned-rpc-vocabulary-and-read-request-shapes)
 defines those exact fields and publication limits. This is diagnostic
 classification, not generic routing, payload capture, request execution, or
-evidence that Desktop actually sent a particular candidate. Those two reads
-remain unsupported in production, and the existing trace and auth-flag
-recognition gates are not relaxed. The earlier
+evidence that Desktop actually sent a particular candidate. `config/read` remains unsupported in production. The separately enabled
+[feature-page comparison](#exact-0167-shared-experimental-feature-pages) below
+is the sole production exception for `experimentalFeature/list`; diagnostic
+recognition alone enables nothing. Existing trace and auth-flag recognition
+gates are not relaxed. The earlier
 [`native_methods_red_test.go`](../../build/desktop-rpc-observer/native_methods_red_test.go)
 continues to cover its assertion-level public-label regression.
 
@@ -1369,3 +1373,109 @@ including a real correlated Desktop `includeToken:true` request receiving the
 validated native no-auth success. Synthetic protocol success alone is not
 Desktop GUI acceptance, real authentication, model inference, tool execution,
 or corporate policy acceptance.
+
+### Exact 0.167 shared experimental feature pages
+
+The independent default-off property
+`experimental_feature_list: "compare-v0.167.0-alpha.3.2"` enables only
+unscoped `experimentalFeature/list`. It is absent from examples and defaults.
+Both configured executable SHA-256 pins must pass before either child starts,
+including when this is the only selected mode. Partial/future names and
+mixtures with the retained 0.166 modes fail validation. Other exact 0.167
+modes may coexist but remain separate opt-ins. As with the other modes,
+operator-supplied pins do not independently verify version, signature,
+provenance, or credential isolation.
+
+The source oracle is official
+[`experimental_feature.rs`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/experimental_feature.rs),
+[`catalog_processor.rs`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/catalog_processor.rs#L358-L459),
+and the [feature registry](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/features/src/lib.rs).
+The request requires a params object containing only optional `cursor`
+(string or null), `limit` (uint32 or null), and `threadId` (null only).
+Missing fields preserve their native defaults. A non-null thread ID, even a
+known owned ID, is unsupported here. The native string-or-int64 ID and bounded
+optional trace rules apply; duplicate decoded keys, unknown envelope/param
+fields and malformed text/types fail locally. Trace is never propagated.
+
+Each accepted call sends fresh requests to both children with the **actual
+native params values**, including omitted fields and explicit nulls. Ordinary
+JSON serialization may compact whitespace or escape equivalent string bytes;
+there is no semantic transformation. Limit is never
+discarded, capped, defaulted, or rewritten, including `0` and `4294967295`.
+The native producer clamps zero to one, uses its own full size when limit is
+absent/null, and interprets a cursor as an offset into its current registry.
+A subsequent cursor request is another fresh paired read. The bridge neither
+exhausts native pages, creates a snapshot, replaces a cursor with null, nor
+uses the generic merged model/thread-list paginator.
+
+Success requires both complete native pages to agree: every row field,
+boolean, nullable metadata value, row order and `nextCursor`. Each row has
+exactly `name`, `stage`, `displayName`, `description`, `announcement`,
+`enabled`, and `defaultEnabled`. Stages are the five native enum values.
+Beta metadata is string-valued (including empty strings); other stages have
+three null metadata fields. Flags are literal booleans. Duplicate feature
+names, missing/extra fields, wrong types, malformed Unicode and duplicate
+decoded keys fail closed. Native non-null response cursors are canonical
+positive decimal offsets. Only a validated genuine empty terminal page can
+produce an empty success, never an error fallback.
+
+After equality, the actual primary result is returned through the same JSON
+serialization, without field reconstruction, flag replacement, union/intersection,
+or a prior cached result. Any child error, malformed result or disagreement
+returns only `-32000` and `shared experimental features unavailable`.
+Native error message/data are not relayed. Correlation violations can end the
+connection. Failures release the entire pending group immediately and retain
+only the existing bounded transport-ID tombstones for late siblings. One
+feature read may be pending at a time; readiness and active-input caps remain
+unchanged. Native numeric ID aliases `-0` and `0` cannot overlap a live
+feature request, including through another route.
+
+These are local conservative budgets, not limits promised by the native
+schema: 64 KiB per request, 256 decoded bytes per input cursor, 128 bytes per
+feature name, 4,096 bytes per metadata string, 256 rows/container entries,
+depth 12, and 128 KiB per complete child response envelope and separately
+validated result. The two retained results are capped at 256 KiB. A result at
+its standalone limit still needs envelope overhead when routed. No next-page
+responses are automatically requested or retained. The pinned registry has
+201 rows, a 39-byte longest key and a 90-byte longest literal; the source-derived
+Windows-default fixture is 30,741 compact JSON bytes. That fixture reconstructs
+`enabled` from defaults for testing and is **not an observed live policy**.
+The larger response budget has a regression above 64 KiB and at the full
+envelope boundary. The shared strict JSON reader preserves the previous
+auth-error byte/container/depth checks; policy/trace validators are unchanged.
+
+**A read-only API is not an offline guarantee.** Every unscoped native call
+reloads the child's current configuration. This can consult or refresh managed,
+system, credential-derived and network-backed state. Separate homes and page
+equality do not prove credential isolation, equal underlying policies, or
+zero egress. No feature is enabled or disabled by the bridge.
+`experimentalFeature/enablement/set`, non-null thread-scoped feature reads,
+`config/read`, and previously unsupported authentication routes remain
+unsupported. Existing capability guards, including human-approval rejection,
+remain in force; this mode does not enable an auth capability.
+
+Implementation:
+[`experimental_feature_167.go`](../../internal/appserverbridge/experimental_feature_167.go),
+[`native_json.go`](../../internal/appserverbridge/native_json.go), and the
+existing configuration/router/runner.
+[`experimental_feature_167_test.go`](../../internal/appserverbridge/experimental_feature_167_test.go)
+covers native pagination inputs, source-byte preservation, full comparison,
+strict requests/responses, large pages, malformed Unicode, ID aliases,
+cleanup/tombstone caps, default-off and version/capability gates.
+[`experimental_feature_167_red_test.go`](../../internal/appserverbridge/experimental_feature_167_red_test.go)
+uses only APIs from base `2ab7bcd946dba06d9467b9db2dfa5b799a24d87d`;
+copying that file alone supports an assertion-level unknown-mode red.
+[`experimental_feature_run_test.go`](../../internal/appserverbridge/experimental_feature_run_test.go)
+and the [compiled adapter test](../../cmd/magpie-codex-bridge/experimental_feature_test.go)
+exercise genuine subprocess lifecycle using copied synthetic executables:
+fresh paired reads, supplied limits/cursors, unchanged source results,
+sanitized failures, recovery, both pins before either child, default rejection,
+and child EOF markers. The lifecycle test file plus its fixture dispatch hook
+also compiles against that base and must fail its fresh-page assertion.
+
+These source blobs were prepared with connectors only. Go formatting, unit/
+lifecycle/compiled-adapter tests, assertion-level reds, race/vet/build checks,
+the full suite and real Desktop behavior were **not run while authoring**.
+The integrating CI record must give the exact tested head and actual outcomes.
+No real account, model inference, tool execution, Windows zero-egress,
+corporate-policy or completed Desktop GUI acceptance is claimed.

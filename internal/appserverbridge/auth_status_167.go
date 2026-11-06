@@ -3,9 +3,6 @@ package appserverbridge
 import (
 	"bytes"
 	"encoding/json"
-	"io"
-	"strconv"
-	"unicode/utf8"
 )
 
 // AuthStatusPrimaryNoAuth167 is a default-off diagnostic for the reviewed
@@ -57,33 +54,10 @@ func validateAuthStatusRequest167(line []byte) bool {
 	return true
 }
 
-// Compare native integer identity too: -0 and 0 cannot name two simultaneous
-// requests when either one is this strictly typed diagnostic operation.
-func (r *Router) authStatusIDInUse(id json.RawMessage, method string) bool {
-	key, err := authCompatibilityID(id)
-	if err != nil {
-		return false
-	}
-	for _, pending := range r.pending {
-		g := pending.group
-		if method != "getAuthStatus" && g.method != "getAuthStatus" {
-			continue
-		}
-		other, err := authCompatibilityID(g.id)
-		if err == nil && key == other {
-			return true
-		}
-	}
-	return false
-}
-
 // Retain the actual params object and token flags, compacted only by JSON
 // encoding. No trace or extra envelope field enters the primary request.
 func (r *Router) sendAuthStatus167(g *request, params json.RawMessage) Delivery {
-	id := r.next("request")
-	backend := r.backends[0].ID
-	r.pending["s:"+id] = pending{g, backend}
-	return deliver(backend, object{"id": raw(id), "method": raw(g.method), "params": params})
+	return r.sendParams(g, r.backends[0].ID, params)
 }
 
 func (r *Router) authStatusFailure(g *request, code int64) []Delivery {
@@ -135,104 +109,8 @@ func (r *Router) finishAuthStatus167(g *request, line []byte) []Delivery {
 	return []Delivery{deliver("", object{"id": g.id, "result": m["result"]})}
 }
 
-// Native error strings/data are opaque and may legitimately contain control
-// escapes, unlike policy text. Check bounded structure and decoded duplicate
-// keys without copying those values into diagnostics. This validator never
-// relaxes the independent requirements, capability or trace validators.
+// Keep the auth response limits unchanged while sharing strict native JSON
+// decoding with the separately bounded experimental feature catalog.
 func authStatusResponseJSON(data []byte) bool {
-	if len(data) > requirementsJSONLimit || !utf8.Valid(data) || !authStatusSurrogatesValid(data) {
-		return false
-	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.UseNumber()
-	if !authStatusResponseValue(d, 0) {
-		return false
-	}
-	_, err := d.Token()
-	return err == io.EOF
-}
-
-func authStatusResponseValue(d *json.Decoder, depth int) bool {
-	token, err := d.Token()
-	if err != nil {
-		return false
-	}
-	delim, container := token.(json.Delim)
-	if !container {
-		return true
-	}
-	if depth >= requirementsJSONDepth {
-		return false
-	}
-	switch delim {
-	case '{':
-		seen := make(map[string]bool)
-		for count := 0; d.More(); count++ {
-			if count >= requirementsContainerLimit {
-				return false
-			}
-			token, err := d.Token()
-			key, ok := token.(string)
-			if err != nil || !ok || seen[key] {
-				return false
-			}
-			seen[key] = true
-			if !authStatusResponseValue(d, depth+1) {
-				return false
-			}
-		}
-		last, err := d.Token()
-		return err == nil && last == json.Delim('}')
-	case '[':
-		for count := 0; d.More(); count++ {
-			if count >= requirementsContainerLimit || !authStatusResponseValue(d, depth+1) {
-				return false
-			}
-		}
-		last, err := d.Token()
-		return err == nil && last == json.Delim(']')
-	default:
-		return false
-	}
-}
-
-// encoding/json replaces unpaired UTF-16 escapes with U+FFFD. Reject those
-// malformed escapes before decoding, but retain genuinely valid U+FFFD text
-// in discarded native errors. Escaped backslashes never begin Unicode escapes.
-func authStatusSurrogatesValid(data []byte) bool {
-	for i := 0; i < len(data); i++ {
-		if data[i] != '\\' {
-			continue
-		}
-		i++
-		if i >= len(data) {
-			return false
-		}
-		if data[i] != 'u' {
-			continue
-		}
-		if i+4 >= len(data) {
-			return false
-		}
-		value, err := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
-		if err != nil {
-			return false
-		}
-		i += 4
-		if value >= 0xDC00 && value <= 0xDFFF {
-			return false
-		}
-		if value < 0xD800 || value > 0xDBFF {
-			continue
-		}
-		if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
-			return false
-		}
-		low, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
-		if err != nil || low < 0xDC00 || low > 0xDFFF {
-			return false
-		}
-		i += 6
-	}
-	return true
+	return nativeReadJSON(data, requirementsJSONLimit, requirementsContainerLimit)
 }

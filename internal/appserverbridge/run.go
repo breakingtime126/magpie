@@ -50,7 +50,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" {
+	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" {
 		// Check both reviewed executables before either process can read or
 		// refresh account/policy state. This is not an OS security boundary.
 		for _, backend := range cfg.Backends {
@@ -73,6 +73,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	}
 	router.configRequirementsRead = cfg.RequirementsRead != ""
 	router.configRequirementsNull167 = cfg.RequirementsRead == ConfigRequirementsCompareNull167
+	router.experimentalFeatureList167 = cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167
 	router.auth = cfg.authCompatibility()
 	ctx, cancel := context.WithCancel(parent)
 	processContext, stopProcesses := context.WithCancel(context.WithoutCancel(parent))

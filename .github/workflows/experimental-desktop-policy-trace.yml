@@ -15,6 +15,7 @@ on:
       - build/inspect-desktop-public-plugin-*.mjs
       - build/inspect-desktop-ast-limits*.mjs
       - build/inspect-desktop-mcp-catalog*.mjs
+      - build/inspect-desktop-read-callers*.mjs
       - build/vendor/acorn-8.15.0/**
       - internal/appserverbridge/**
       - cmd/magpie-codex-bridge/**
@@ -346,6 +347,24 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestReadRequestShapesMetadataRed'
           printf '%s\n' "$output" | grep -F -- 'read-request shape boolean missing or incorrect'
           echo 'Both old diagnostic behaviors fail their exact assertions; compilation or setup failures do not qualify.'
+      - name: Check out exact pre-feature-list behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 2ab7bcd946dba06d9467b9db2dfa5b799a24d87d
+          path: .ci-feature-list-baseline
+          persist-credentials: false
+      - name: Prove exact feature page comparison fails behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/experimental_feature_167_red_test.go .ci-feature-list-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-feature-list-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestExperimentalFeature167BehavioralRed$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestExperimentalFeature167BehavioralRed'
+          printf '%s\n' "$output" | grep -F -- 'exact default-off experimental feature comparison mode was not accepted:'
+          echo 'The old bridge fails the exact mode assertion; compilation or setup failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |
@@ -364,6 +383,7 @@ jobs:
           pwsh -NoProfile -File build/test-desktop-public-catalog.ps1
           pwsh -NoProfile -File build/test-desktop-ci-profile.ps1
           node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs build/inspect-desktop-mcp-catalog.test.mjs build/inspect-desktop-mcp-catalog-red.test.mjs
+          node --max-old-space-size=1024 --test build/inspect-desktop-read-callers.test.mjs build/inspect-desktop-read-callers-package.test.mjs
           go test -race -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           go vet -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
 
@@ -435,6 +455,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CI compatibility profile tests failed.' }
           node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs build/inspect-desktop-mcp-catalog.test.mjs build/inspect-desktop-mcp-catalog-red.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Static metadata inspector tests failed.' }
+          node --max-old-space-size=1024 --test build/inspect-desktop-read-callers.test.mjs build/inspect-desktop-read-callers-package.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Read caller inspector tests failed.' }
           go test -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           if ($LASTEXITCODE -ne 0) { throw 'Windows observer tests failed.' }
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
