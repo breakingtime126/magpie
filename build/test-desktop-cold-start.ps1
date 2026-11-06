@@ -1,7 +1,10 @@
-# Official Store-package baseline only. No sign-in, package modification, or CLI override.
+# Official Store-package baseline and registered-alias bridge launch. No sign-in or package modification.
 # Run solely in the disposable, branch-guarded GitHub hosted job.
 [CmdletBinding()]
-param()
+param(
+    [ValidateSet('baseline', 'bridge')][string]$Mode = 'baseline',
+    [string]$BridgeExecutable = ''
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -14,10 +17,10 @@ $out = Join-Path $env:RUNNER_TEMP 'desktop-cold-start-report'
 $work = Join-Path $env:RUNNER_TEMP ('desktop-cold-start-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $out, $work | Out-Null
 $report = [ordered]@{
-    schema = 1; sourceCommit = $env:GITHUB_SHA; mode = 'official-baseline'
+    schema = 1; sourceCommit = $env:GITHUB_SHA; mode = $Mode
     status = 'blocked'; stage = 'preflight'; startedUtc = [DateTime]::UtcNow.ToString('o')
     limits = @('No account login or user credentials.', 'Latest official package, not pinned historical Desktop.',
-        'No bridge override in this first baseline phase.', 'Window visibility is not model or account acceptance.')
+        'Bridge phase tests launch only, with startup/auth compatibility modes disabled.', 'Window visibility is not model or account acceptance.')
 }
 $activationPid = 0
 $eventSource = 'MagpieDesktopProcessStart'
@@ -33,7 +36,8 @@ function Save-Report {
     $json | Set-Content -LiteralPath (Join-Path $out 'report.json') -Encoding UTF8
     Write-Output ('DESKTOP_COLD_START_REPORT=' + ($report | ConvertTo-Json -Depth 12 -Compress))
     @"
-## Official Desktop cold-start baseline
+## Official Desktop cold-start probe
+Mode: $Mode
 Commit: $env:GITHUB_SHA
 Status: $($report.status)
 Stage: $($report.stage)
@@ -222,18 +226,111 @@ namespace DesktopColdProbe {
         $app.Publisher -ne $report.manifest.publisher -or [string]$app.Status -ne 'Ok') {
         Block 'Registered package does not match the verified download.'
     }
+    $bridgeName = $null
+    if ($Mode -eq 'bridge') {
+        $report.stage = 'registered-alias-and-bridge-configuration'
+        $expectedBridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+        if ($BridgeExecutable -ne $expectedBridge -or -not (Test-Path -LiteralPath $BridgeExecutable -PathType Leaf)) {
+            Block 'The exact commit-built bridge executable is unavailable.'
+        }
+        $bridgeName = [IO.Path]::GetFileName($BridgeExecutable)
+        $desktopAliases = @($desktopApp.SelectNodes(".//*[local-name()='ExecutionAlias']") |
+            ForEach-Object { $_.GetAttribute('Alias') })
+        if ($desktopAliases -notcontains 'chatgpt-desktop.exe') { Block 'No reviewed official Desktop execution alias exists.' }
+        $alias = Join-Path $env:LOCALAPPDATA ('Microsoft\WindowsApps\' + $app.PackageFamilyName + '\chatgpt-desktop.exe')
+        if (-not (Test-Path -LiteralPath $alias)) { Block 'The package-qualified registered Desktop alias is unavailable.' }
+        # Discover the intact installed backend, never copy credentials or execute an extracted EXE.
+        $officialBackends = @(Get-ChildItem -LiteralPath $app.InstallLocation -Filter codex.exe -File -Recurse)
+        $report.backendCandidates = @($officialBackends | ForEach-Object { $_.FullName.Substring($app.InstallLocation.Length).TrimStart('\') })
+        if ($officialBackends.Count -ne 1) { Block 'Installed official backend executable is not uniquely identified.' }
+        $officialBackend = $officialBackends[0]
+        $backends = @()
+        foreach ($id in @('alpha', 'beta')) {
+            $home = Join-Path $work ($id + '-home')
+            $codexHome = Join-Path $work ($id + '-codex')
+            New-Item -ItemType Directory -Path $home, $codexHome | Out-Null
+            # Fail-local endpoint only, no API keys and no authorization to infer or sign in.
+            $toml = @"
+model_provider = "$($id)_provider"
+model = "gpt-5.5"
+[features]
+apps = false
+plugins = false
+[model_providers.$($id)_provider]
+name = "CI $id launch-only"
+base_url = "http://127.0.0.1:9/v1"
+wire_api = "responses"
+requires_openai_auth = false
+"@
+            [IO.File]::WriteAllText((Join-Path $codexHome 'config.toml'), $toml, (New-Object Text.UTF8Encoding($false)))
+            $backends += [ordered]@{
+                id = $id; provider = ($id + '_provider'); command = $officialBackend.FullName
+                home = $home; codex_home = $codexHome
+            }
+        }
+        $bridgeConfig = Join-Path $work 'launch-only-bridge.json'
+        # Modes remain absent: do not claim this newer Desktop/backend equals reviewed 0.166 semantics.
+        [IO.File]::WriteAllText($bridgeConfig, (@{ backends = $backends } | ConvertTo-Json -Depth 5),
+            (New-Object Text.UTF8Encoding($false)))
+        $report.bridge = [ordered]@{
+            fileName = $bridgeName
+            sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $BridgeExecutable).Hash.ToLowerInvariant()
+            backendRelativePath = $officialBackend.FullName.Substring($app.InstallLocation.Length).TrimStart('\')
+            backendSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant()
+            aliasName = 'chatgpt-desktop.exe'; aliasPackageQualified = $true
+            configuration = 'Two empty homes, loopback discard endpoints, no auth or startup compatibility opt-in.'
+            processObservationLimit = 'Start event identifies the uniquely named configured bridge and package parent; a short-lived image path may not be queryable.'
+        }
+        $check = New-Object Diagnostics.ProcessStartInfo
+        $check.FileName = $BridgeExecutable; $check.Arguments = '--check'
+        $check.UseShellExecute = $false; $check.CreateNoWindow = $true
+        $check.EnvironmentVariables.Clear()
+        foreach ($name in @('SystemRoot', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ($value) { $check.EnvironmentVariables[$name] = $value }
+        }
+        $check.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $bridgeConfig
+        $checker = [Diagnostics.Process]::Start($check)
+        if (-not $checker.WaitForExit(10000)) { $checker.Kill(); Block 'Bridge configuration validation timed out.' }
+        if ($checker.ExitCode -ne 0) { Block 'Launch-only bridge configuration did not validate.' }
+        $report.bridge.configurationValidated = $true
+    }
     $aumid = $app.PackageFamilyName + '!' + $desktopApp.GetAttribute('Id')
     $report.aumid = $aumid
     $report.stage = 'normal-package-activation'
     $subscription = Register-CimIndicationEvent -Query 'SELECT * FROM Win32_ProcessStartTrace' -SourceIdentifier $eventSource
     [uint32]$launched = 0
-    $hr = [DesktopColdProbe.Native]::Activate($aumid, [ref]$launched)
-    $activationPid = [int]$launched
-    $report.activation = [ordered]@{ hresult = ('0x{0:X8}' -f $hr); processId = $activationPid }
-    if ($hr -ne 0 -or $activationPid -le 0) { Block 'Normal package activation failed.' }
+    if ($Mode -eq 'baseline') {
+        $hr = [DesktopColdProbe.Native]::Activate($aumid, [ref]$launched)
+        $activationPid = [int]$launched
+        $report.activation = [ordered]@{ method = 'AUMID'; hresult = ('0x{0:X8}' -f $hr); processId = $activationPid }
+        if ($hr -ne 0 -or $activationPid -le 0) { Block 'Normal package activation failed.' }
+    } else {
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = $alias; $start.UseShellExecute = $false
+        $start.WorkingDirectory = $work
+        # Explicit non-secret Windows environment only; no runner tokens or shell-wide override.
+        $start.EnvironmentVariables.Clear()
+        foreach ($name in @('SystemRoot', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
+            'TEMP', 'TMP', 'COMSPEC', 'HOMEDRIVE', 'HOMEPATH', 'USERNAME', 'USERDOMAIN',
+            'ALLUSERSPROFILE', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)',
+            'COMMONPROGRAMFILES', 'COMMONPROGRAMFILES(X86)', 'PROCESSOR_ARCHITECTURE',
+            'NUMBER_OF_PROCESSORS', 'OS', 'SESSIONNAME')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ($value) { $start.EnvironmentVariables[$name] = $value }
+        }
+        $start.EnvironmentVariables['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot +
+            ';' + (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
+        $start.EnvironmentVariables['CODEX_CLI_PATH'] = $BridgeExecutable
+        $start.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $bridgeConfig
+        $started = [Diagnostics.Process]::Start($start)
+        if (-not $started) { Block 'Registered alias did not return a process.' }
+        $activationPid = $started.Id
+        $report.activation = [ordered]@{ method = 'registered-package-qualified-alias'; processId = $activationPid }
+    }
     $windows = @()
     $observed = @{}
-    for ($i = 0; $i -lt 30; $i++) {
+    for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Seconds 1
         foreach ($p in @(Get-CimInstance Win32_Process -Filter "SessionId=$processSession")) {
             if ([DesktopColdProbe.Native]::PackageFor([uint32]$p.ProcessId) -eq $app.PackageFullName) {
@@ -249,7 +346,6 @@ namespace DesktopColdProbe {
             $observed.ContainsKey([string]$_.ProcessId) -and
             [DesktopColdProbe.Native]::PackageFor([uint32]$_.ProcessId) -eq $app.PackageFullName
         })
-        if ($windows.Count -gt 0 -and $i -ge 9) { break }
     }
     $report.processes = @($observed.Values | Sort-Object processId)
     $report.windows = @($windows | Select-Object ProcessId, Left, Top, Width, Height)
@@ -258,6 +354,7 @@ namespace DesktopColdProbe {
         $observed.ContainsKey([string]$_.ProcessID) -or $observed.ContainsKey([string]$_.ParentProcessID)
     } | ForEach-Object { [ordered]@{
         processId = [int]$_.ProcessID; parentProcessId = [int]$_.ParentProcessID; name = [string]$_.ProcessName
+        startedFileTime = [string]$_.TIME_CREATED
     } })
     if (-not $observed.ContainsKey([string]$activationPid)) { Block 'Activation PID package identity was not observed.' }
     if ($windows.Count -eq 0) { Block 'No visible window belonging to the verified package appeared.' }
@@ -283,9 +380,36 @@ namespace DesktopColdProbe {
         Write-Output ('DESKTOP_SCREENSHOT_PNG=' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($capturePath)))
     }
     $report.capture = 'official-window.png; screen pixels may contain occlusion and require visual review'
+    if ($Mode -eq 'bridge') {
+        $bridgeStarts = @($report.processStarts | Where-Object {
+            $_.name -eq $bridgeName -and $observed.ContainsKey([string]$_.parentProcessId)
+        })
+        $report.bridge.startEvents = $bridgeStarts
+        $report.bridge.sha256After = (Get-FileHash -Algorithm SHA256 -LiteralPath $BridgeExecutable).Hash.ToLowerInvariant()
+        if ($report.bridge.sha256After -ne $report.bridge.sha256) { Block 'Bridge bytes changed during the probe.' }
+        $report.bridge.diagnosticMarkers = @()
+        $markers = @('magpie startup probe unavailable', 'unsupported arguments; use --help',
+            'unsupported startup sign-out', 'invalid or unreadable bridge configuration')
+        # Inspect only fresh test-app .log files, emit exact static marker names, never log lines or auth files.
+        $logRoots = @((Join-Path $env:LOCALAPPDATA ('Packages\' + $app.PackageFamilyName + '\LocalCache')),
+            (Join-Path $env:APPDATA 'Codex'), (Join-Path $env:APPDATA 'ChatGPT'))
+        foreach ($root in $logRoots) {
+            if (-not (Test-Path -LiteralPath $root)) { continue }
+            foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.log' -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.Length -le 1048576 } | Select-Object -First 20)) {
+                foreach ($marker in $markers) {
+                    if (Select-String -LiteralPath $file.FullName -SimpleMatch -Pattern $marker -Quiet) {
+                        $report.bridge.diagnosticMarkers += $marker
+                    }
+                }
+            }
+        }
+        $report.bridge.diagnosticMarkers = @($report.bridge.diagnosticMarkers | Select-Object -Unique)
+        if ($bridgeStarts.Count -eq 0) { Block 'No uniquely named bridge child start event was observed under the verified Desktop package.' }
+    }
     $report.status = 'observed'
-    $report.stage = 'baseline-window-observed'
-    $report.reason = 'Normal activation produced a package-identity-verified process and visible window. Screenshot review remains required; no bridge or logged-in behavior tested.'
+    $report.stage = $(if ($Mode -eq 'baseline') { 'baseline-window-observed' } else { 'bridge-child-start-observed' })
+    $report.reason = 'Verified package process and window observed. In bridge mode, the configured uniquely named bridge start event is required. Screenshot and startup-blocker review remain required; no successful protocol, login, or model behavior is claimed.'
     $exitCode = 0
 } catch {
     if (-not $report.Contains('reason')) { $report.reason = $_.Exception.Message }

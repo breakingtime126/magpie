@@ -24,16 +24,29 @@ runner session, the probe stops and reports that limitation.
 
 Activation uses the registered AUMID and Windows' application activation manager.
 Process package identity, visible window geometry and a bounded screenshot are
-separate evidence. A screenshot can be occluded and must be reviewed; a green
+separate evidence. Each launch is observed for 60 seconds without UI interaction. A screenshot can
+be occluded and must be reviewed; a green
 job means only that those baseline observations were obtained. It is not a
 successful bridge connection, usable model picker, account login, model response,
 or production acceptance.
 
 The first phase deliberately does not set `CODEX_CLI_PATH`. Normal MSIX activation
 has no per-launch environment-block parameter, so setting an environment variable
-in PowerShell does not prove that Desktop receives it. A later bridge phase needs
-both a verified supported launch path and actual uniquely identified bridge-child
-evidence. Do not substitute naked extracted EXEs, global environment changes or
+in PowerShell does not prove that Desktop receives it. The second job uses another fresh VM and the same SHA-pinned official package.
+It launches only the already registered, package-qualified `chatgpt-desktop.exe`
+alias declared under that manifest's Desktop application. Non-shell process
+creation supplies a minimal, non-secret, process-local environment containing
+the exact commit-built bridge path. It never writes user/system environment.
+
+The bridge configuration has two new empty homes and loopback discard endpoints,
+no API key, and no startup, requirements, attestation or OAuth opt-ins for this
+newer unreviewed runtime. The exact production bridge is built unchanged with a
+unique commit-derived filename and validated using `--check` before monitoring.
+The probe requires a matching child process-start event under a package-verified
+Desktop parent, and records file hashes before/after. Short-lived events may not
+permit querying the running image path; this evidence is not proof of a successful
+protocol or model request. Static adapter error markers may be detected in fresh
+app log files; no raw log lines, auth files or arbitrary environment are emitted. Do not substitute naked extracted EXEs, global environment changes or
 debug injection to make this test appear to pass.
 
 A screenshot of at most 1 MiB is also emitted as base64 in workflow logs for

@@ -8,6 +8,8 @@ on:
     paths:
       - .github/workflows/experimental-desktop-cold-start.yml
       - build/test-desktop-cold-start.ps1
+      - cmd/magpie-codex-bridge/**
+      - internal/appserverbridge/**
 
 permissions:
   contents: read
@@ -44,6 +46,50 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: official-desktop-baseline-${{ github.sha }}
+          path: ${{ runner.temp }}/desktop-cold-start-report
+          if-no-files-found: error
+          retention-days: 7
+
+  bridge-alias:
+    needs: official-baseline
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    runs-on: windows-2025
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: '0'
+      GOOS: windows
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Check out the exact experimental commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up the pinned Go version
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build the exact bridge without changing its behavior
+        run: |
+          $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          go build -trimpath -tags nogui -o $bridge ./cmd/magpie-codex-bridge
+          if ($LASTEXITCODE -ne 0) { throw 'Bridge build failed.' }
+      - name: Test the registered official alias in this fresh VM
+        run: |
+          $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          ./build/test-desktop-cold-start.ps1 -Mode bridge -BridgeExecutable $bridge
+      - name: Upload sanitized bridge-launch evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: official-desktop-bridge-alias-${{ github.sha }}
           path: ${{ runner.temp }}/desktop-cold-start-report
           if-no-files-found: error
           retention-days: 7
