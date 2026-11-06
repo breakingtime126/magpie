@@ -84,10 +84,10 @@ func LoadConfig(input io.Reader) (Config, error) {
 // Validate checks isolation before any subprocess starts. All paths must exist;
 // symlinks are resolved so aliases cannot silently share account state.
 func (cfg Config) Validate() error {
-	if cfg.Attestation != "" && cfg.Attestation != AttestationUnavailable {
+	if cfg.Attestation != "" && cfg.Attestation != AttestationUnavailable && cfg.Attestation != AttestationUnavailable167 {
 		return errors.New("unsupported attestation mode")
 	}
-	if cfg.GatewayOAuth != "" && cfg.GatewayOAuth != GatewayOAuthPrimaryRead {
+	if cfg.GatewayOAuth != "" && cfg.GatewayOAuth != GatewayOAuthPrimaryRead && cfg.GatewayOAuth != GatewayOAuthPrimaryRead167 {
 		return errors.New("unsupported gateway_oauth mode")
 	}
 	if cfg.GatewayOAuth != "" {
@@ -106,8 +106,12 @@ func (cfg Config) Validate() error {
 	// These options select contracts for the same executable pair. A newer
 	// one-shot profile cannot silently authorize the older JSONL contracts.
 	if cfg.StartupProbe == StartupProbeCompareUnrestricted167 &&
-		(cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "") {
+		(cfg.RequirementsRead != "" || cfg.Attestation == AttestationUnavailable || cfg.GatewayOAuth == GatewayOAuthPrimaryRead) {
 		return errors.New("startup_probe version is incompatible with the selected JSONL compatibility modes")
+	}
+	if cfg.auth167() && (cfg.RequirementsRead != "" || cfg.Attestation == AttestationUnavailable ||
+		cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.StartupProbe == StartupProbeCompareUnrestricted) {
+		return errors.New("auth compatibility version is incompatible with the selected compatibility modes")
 	}
 	if len(cfg.Backends) != 2 {
 		return errors.New("bridge requires exactly two backends")
@@ -259,4 +263,18 @@ func reservedEnv(key string) bool {
 		return true
 	}
 	return strings.HasPrefix(key, "CODEX_") || strings.HasPrefix(key, "XDG_") || strings.HasPrefix(key, "LD_") || strings.HasPrefix(key, "DYLD_") || strings.HasSuffix(key, "_PROXY") || key == "ALL_PROXY" || key == "NO_PROXY"
+}
+
+// auth167 selects only the exact reviewed auth contract; it enables no probe.
+func (cfg Config) auth167() bool {
+	return cfg.Attestation == AttestationUnavailable167 || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167
+}
+
+func (cfg Config) authCompatibility() authCompatibility {
+	return authCompatibility{
+		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167,
+		attestationUnavailable: cfg.Attestation == AttestationUnavailable || cfg.Attestation == AttestationUnavailable167,
+		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167,
+		gatewayProviderName:    cfg.GatewayOAuthProviderName,
+	}
 }

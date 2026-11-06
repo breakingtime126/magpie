@@ -174,7 +174,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		if r.phase != "cold" {
 			return []Delivery{fail(g.id, -32600, "already initialized")}, nil
 		}
-		if (r.auth.attestationUnavailable || r.auth.gatewayRead) && validateRequirementsJSON(line) != nil {
+		if (r.auth.attestationUnavailable || r.auth.gatewayRead || r.auth.rejectHumanApproval) && validateRequirementsJSON(line) != nil {
 			return []Delivery{fail(g.id, -32602, "invalid initialization message")}, nil
 		}
 		if err := r.auth.negotiate(caps); err != nil {

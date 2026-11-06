@@ -69,11 +69,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 		return err
 	}
 	router.configRequirementsRead = cfg.RequirementsRead == ConfigRequirementsCompareSafe
-	router.auth = authCompatibility{
-		attestationUnavailable: cfg.Attestation == AttestationUnavailable,
-		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead,
-		gatewayProviderName:    cfg.GatewayOAuthProviderName,
-	}
+	router.auth = cfg.authCompatibility()
 	ctx, cancel := context.WithCancel(parent)
 	processContext, stopProcesses := context.WithCancel(context.WithoutCancel(parent))
 	defer stopProcesses()

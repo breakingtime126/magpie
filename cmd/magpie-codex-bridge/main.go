@@ -44,6 +44,7 @@ JSONL configRequirements/read is independently disabled unless config_requiremen
 That mode verifies both backend pins and returns only matching complete reviewed public policy views.
 It may refresh policy/authentication state.
 Independent pinned auth modes can report attestation unavailable and read only the primary gateway status.
+Exact 0.167 auth modes require unavailable-v0.167.0-alpha.3.2 or primary-read-only-v0.167.0-alpha.3.2.
 They preserve true capability flags; no proof token, OAuth login or full Desktop compatibility is provided.
 Attestation RPC failure is not equivalent to Windows Desktop's opaque error-token response.
 --check validates configuration without starting children or changing state.
@@ -221,7 +222,7 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 	}
 	if op == check {
 		fmt.Fprintln(diagnostics, "magpie-codex-bridge: configuration valid; no children started")
-		if cfg.Attestation == appserverbridge.AttestationUnavailable {
+		if cfg.Attestation == appserverbridge.AttestationUnavailable || cfg.Attestation == appserverbridge.AttestationUnavailable167 {
 			fmt.Fprintln(diagnostics, "magpie-codex-bridge: attestation mode returns RPC failure, not Windows Desktop error tokens")
 		}
 		return 0

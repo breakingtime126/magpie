@@ -9,9 +9,11 @@ import (
 	"time"
 )
 
-// These modes implement only the reviewed, deliberately narrow 0.166 contract.
+// These independent modes select reviewed, deliberately narrow auth contracts.
 const AttestationUnavailable = "unavailable-v0.166"
 const GatewayOAuthPrimaryRead = "primary-read-only-v0.166"
+const AttestationUnavailable167 = "unavailable-v0.167.0-alpha.3.2"
+const GatewayOAuthPrimaryRead167 = "primary-read-only-v0.167.0-alpha.3.2"
 
 var errAuthCompatibility = errors.New("unsupported authentication compatibility message")
 var errGatewayRead = errors.New("gateway OAuth status unavailable")
@@ -22,6 +24,7 @@ type attestationRate struct {
 }
 
 type authCompatibility struct {
+	rejectHumanApproval    bool
 	attestationUnavailable bool
 	gatewayRead            bool
 	gatewayProviderName    string
@@ -33,6 +36,13 @@ type authCompatibility struct {
 
 // negotiate commits both flags together and never changes the client's object.
 func (a *authCompatibility) negotiate(caps object) error {
+	// This separate opt-in changes approval behavior in 0.167 and has not
+	// been reviewed. Reject it without rewriting the client's capability.
+	if value, present := caps["requiredHumanApproval"]; present && a.rejectHumanApproval {
+		if !bytes.Equal(bytes.TrimSpace(value), []byte("false")) {
+			return errAuthCompatibility
+		}
+	}
 	attestation, gateway := false, false
 	for _, item := range []struct {
 		name    string

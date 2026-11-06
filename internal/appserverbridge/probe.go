@@ -23,7 +23,7 @@ const StartupProbeCompareUnrestricted = "compare-unrestricted-v0.166"
 
 // StartupProbeCompareUnrestricted167 opts into only the reviewed
 // 0.167.0-alpha.3.2 startup inspection. It does not enable any JSONL auth or
-// requirements compatibility mode, which remain scoped to 0.166.0-alpha.6.
+// requirements compatibility mode. Auth requires its separate exact-version opt-in.
 const StartupProbeCompareUnrestricted167 = "compare-unrestricted-v0.167.0-alpha.3.2"
 
 // StartupProbeSupported reports whether mode selects an explicitly reviewed

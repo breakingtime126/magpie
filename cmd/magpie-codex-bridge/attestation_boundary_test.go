@@ -11,7 +11,7 @@ import (
 )
 
 func TestCheckDescribesAttestationBoundaryWithoutStartingChildren(t *testing.T) {
-	for _, mode := range []string{"", appserverbridge.AttestationUnavailable} {
+	for _, mode := range []string{"", appserverbridge.AttestationUnavailable, appserverbridge.AttestationUnavailable167} {
 		t.Run(mode, func(t *testing.T) {
 			var output bufferCloser
 			var diagnostics bytes.Buffer

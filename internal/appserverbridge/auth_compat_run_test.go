@@ -98,7 +98,7 @@ func authCompatFixture() (bool, int) {
 				return true, 39
 			}
 			result = json.RawMessage(response)
-		case "account/gatewayOAuth/login", "account/gatewayOAuth/cancel":
+		case "account/gatewayOAuth/login", "account/gatewayOAuth/cancel", "getAuthStatus", "account/chatgptAuthTokens/refresh":
 			fmt.Fprintln(os.Stderr, "auth-secret-forbidden-call")
 			return true, 40
 		}
@@ -146,7 +146,11 @@ func writeAuthCompatResponse(t *testing.T, cfg Config, required bool, status any
 }
 
 func TestRunAuthCompatPrewarmAndPrimaryRead(t *testing.T) {
-	cfg := authCompatConfig(t)
+	testRunAuthCompatPrewarmAndPrimaryRead(t, authCompatConfig(t))
+}
+
+func testRunAuthCompatPrewarmAndPrimaryRead(t *testing.T, cfg Config) {
+	t.Helper()
 	bridge := startFixtureBridge(t, cfg)
 	stream := readRequirementsStream(t, bridge)
 	response := stream.ask(t, bridge, `{"id":1,"method":"initialize","params":{"clientInfo":{"name":"auth-test","version":"1"},"capabilities":{"requestAttestation":true,"explicitGatewayOauth":true}}}`)
@@ -186,7 +190,7 @@ func TestRunAuthCompatPrewarmAndPrimaryRead(t *testing.T) {
 			t.Fatalf("primary truth or ID changed: %s", raw(response))
 		}
 	}
-	for _, method := range []string{"account/gatewayOAuth/login", "account/gatewayOAuth/cancel"} {
+	for _, method := range []string{"account/gatewayOAuth/login", "account/gatewayOAuth/cancel", "getAuthStatus", "account/chatgptAuthTokens/refresh"} {
 		response := stream.ask(t, bridge, string(raw(object{"id": raw(method), "method": raw(method), "params": raw(nil)})))
 		if !exists(response, "error") || exists(response, "result") {
 			t.Fatal("unsupported auth mutation accepted")
@@ -197,7 +201,7 @@ func TestRunAuthCompatPrewarmAndPrimaryRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-stream.done
-	if stream.err != nil || strings.Count(string(stream.transcript), "\n") != 11 || strings.Contains(string(stream.transcript), "attestation/generate") || strings.Contains(string(stream.transcript), "secret") {
+	if stream.err != nil || strings.Count(string(stream.transcript), "\n") != 13 || strings.Contains(string(stream.transcript), "attestation/generate") || strings.Contains(string(stream.transcript), "secret") {
 		t.Fatalf("unexpected client auth traffic: %q", stream.transcript)
 	}
 	for i, b := range cfg.Backends {
@@ -224,7 +228,7 @@ func TestRunAuthCompatPrewarmAndPrimaryRead(t *testing.T) {
 				if string(msg["params"]) != "null" {
 					t.Fatal("gateway params not canonical null")
 				}
-			case "account/gatewayOAuth/login", "account/gatewayOAuth/cancel":
+			case "account/gatewayOAuth/login", "account/gatewayOAuth/cancel", "getAuthStatus", "account/chatgptAuthTokens/refresh":
 				t.Fatal("auth mutation reached child")
 			case "":
 				failures++
@@ -284,6 +288,11 @@ func TestRunAuthCompatChecksBothPinsAndModes(t *testing.T) {
 }
 
 func TestRunAuthCompatRejectsUnsafePrimaryResponses(t *testing.T) {
+	testRunAuthCompatRejectsUnsafePrimaryResponses(t, authCompatConfig)
+}
+
+func testRunAuthCompatRejectsUnsafePrimaryResponses(t *testing.T, config func(*testing.T) Config) {
+	t.Helper()
 	for _, patch := range []object{
 		{"error": raw("auth-secret-error")},
 		{"authUrl": raw("https://auth-secret.invalid/")},
@@ -293,7 +302,7 @@ func TestRunAuthCompatRejectsUnsafePrimaryResponses(t *testing.T) {
 		{"providerName": raw("unreviewed")},
 	} {
 		t.Run(string(raw(patch)), func(t *testing.T) {
-			cfg := authCompatConfig(t)
+			cfg := config(t)
 			cfg.Attestation = ""
 			result := writeAuthCompatResponse(t, cfg, true, "notReady")
 			for k, v := range patch {

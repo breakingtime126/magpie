@@ -467,8 +467,8 @@ Each backend's `startup_probe_sha256` must be the SHA-256 of its separately
 reviewed native executable. Neither profile is a range, automatic version
 detection, or permission to enable another compatibility mode. Unknown profile
 names fail configuration validation. The new 0.167 profile cannot be combined
-with any `config_requirements_read`, `attestation` or `gateway_oauth` mode:
-those modes remain reviewed only for 0.166.0-alpha.6. Such mixed configurations
+with the legacy 0.166 requirements/auth modes. Only the separately selected,
+exact 0.167 auth modes below may accompany it. Cross-version configurations
 fail before either child starts, for one-shot and JSONL launches alike. Existing
 0.166 combinations remain unchanged. The shipped example enables neither profile.
 Config validation checks pin syntax; the probe hashes **both** binaries before starting either one. A pin
@@ -784,7 +784,7 @@ for real accounts needs the applicable authorization and policy review.
 The JSONL requirements/auth implementation and fixture assumptions above are
 pinned to official source `4f093f2748667f3b0e6a07e3d4055121cbd3ce64`, Codex
 `0.166.0-alpha.6`. The separately reviewed 0.167 one-shot profile does not
-extend these JSONL modes.
+automatically enable these JSONL modes.
 Tests use synthetic processes and synthetic statuses/errors only. They do not
 run a real Desktop proof generator or validate OAuth, proof headers, accounts,
 model inference or service acceptance.
@@ -902,3 +902,44 @@ Independent auth compatibility fixtures cover capability preservation, terminal
 same-backend attestation errors, primary-only gateway status and rejection of
 login, private URLs, unsafe errors and cross-provider response IDs;
 none of these are represented as actual Desktop startup acceptance.
+
+### Exact 0.167 auth opt-ins
+
+Two additional, independent default-off modes select the auth contract reviewed
+against Codex `0.167.0-alpha.3.2`: `attestation: "unavailable-v0.167.0-alpha.3.2"` and
+`gateway_oauth: "primary-read-only-v0.167.0-alpha.3.2"`. The gateway mode still
+requires the reviewed provider display name. Neither mode enables the other,
+a startup probe, login, proof generation or requirements inspection. Legacy
+names keep their original scope. Partial mode names, cross-version mode combinations, the
+legacy startup profile and any requirements-read mode are rejected before
+either child starts. The exact 0.167 startup profile may accompany these modes
+but does not enable them. Both executables must pass their configured SHA256
+pins before either JSONL child starts; naming a profile is not runtime version
+detection or an independent guarantee that the selected binary is official.
+The JSONL runner checks only the operator-supplied executable digests. The
+operator must independently verify each binary's version and provenance;
+these checks do not verify a signature.
+
+The auth implementation is reused under the separately reviewed source
+[`c40729ea5cf8e947481b130c59807273eda2f8e9`](https://github.com/openai/codex/tree/c40729ea5cf8e947481b130c59807273eda2f8e9).
+Attestation still receives only an origin-specific genuine RPC failure, including
+prewarming before a thread response. Gateway inspection still preserves fresh,
+validated primary readiness and safe null-URL/null-error notifications.
+The true authentication flags, experimental capability and notification opt-out
+list remain unchanged. The new independent `requiredHumanApproval` opt-in is
+not implemented: true or malformed values fail initialization locally, with no
+child initialize request; absent or explicit false is preserved. This guard
+also applies when the exact 0.167 startup profile alone is selected.
+
+Official 0.167 gateway storage adds `gateway_oauth.credentials_store`
+(`keyring` by default, or plaintext `CODEX_HOME/secrets/gateway_oauth.json`
+for `file`). The bridge never changes this choice or reads a keychain.
+The explicit gateway flag still prevents automatic browser authorization, not
+credential reuse or refresh. `getAuthStatus`, login, cancel and external-token
+refresh remain unsupported; they are not offline substitutes.
+
+The exact-mode tests reuse native synthetic prewarm and primary-read assertions
+and add version combinations, both pin positions, capability preservation,
+human-approval rejection and zero-child-request checks. These are synthetic
+protocol tests, not official Desktop handshake, proof, OAuth or service-acceptance
+evidence. The real Desktop startup launch-parameter investigation is separate.
