@@ -304,7 +304,6 @@ func TestControlPlane167FreshPolicyFailuresAndCleanup(t *testing.T) {
 		t.Fatal("routing read tombstones grew without bound")
 	}
 	out := controlPlaneAsk(t, r)
-	expectError(t, client(t, r, `{"id":"overlap","method":"config/read","params":{"includeLayers":false}}`))
 	reply(t, r, out[0], controlPlaneNullRequirements)
 	reply(t, r, out[1], controlPlaneNullRequirements)
 	controlPlaneRead(t, r)

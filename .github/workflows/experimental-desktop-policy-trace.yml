@@ -460,6 +460,38 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestControlPlane167IncludeLayersBehavioralRed'
           printf '%s\n' "$output" | grep -F -- 'native includeLayers:true config/read must be accepted'
           echo 'The old bridge rejects layer reads; compilation failure alone does not qualify.'
+      - name: Check out exact pre-concurrent-config behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 09b526eb76a1f6e033c51db57eba58ed80026e86
+          path: .ci-config-concurrency-baseline
+          persist-credentials: false
+      - name: Prove overlapping config reads fail behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/control_plane_167_concurrency_test.go .ci-config-concurrency-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-config-concurrency-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestControlPlane167ConcurrentReads$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestControlPlane167ConcurrentReads'
+          printf '%s\n' "$output" | grep -F -- 'second overlapping native-equivalent config read must reach both backends'
+          echo 'The old singleton guard rejects a separate valid read; compilation failures do not qualify.'
+      - name: Prove thread-list metadata is missing on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/thread_list_metadata_red_test.go .ci-config-concurrency-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-config-concurrency-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^(TestThreadListFilterShapesObserved|TestThreadListRejectionClassesObserved)$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestThreadListFilterShapesObserved'
+          printf '%s\n' "$output" | grep -F -- 'thread/list filter shape metadata missing or incorrect'
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestThreadListRejectionClassesObserved'
+          printf '%s\n' "$output" | grep -F -- 'thread/list exact rejection class missing or unsafe'
+          echo 'The old observer lacks these fixed labels; compilation failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

@@ -10,6 +10,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile(
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'New-DesktopBridgeSettings',
     'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
+    'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
     'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
     $definitions = @($ast.FindAll({
@@ -517,7 +518,7 @@ function New-RPCErrorEvent {
         method = 'project/list'; correlation = 1; code = -32601; class = 'unsupported_method'
     }
 }
-$fixturePublicMethods = @('project/list', 'fs/readFile', 'config/read', 'unknown')
+$fixturePublicMethods = @('thread/list', 'project/list', 'fs/readFile', 'config/read', 'unknown')
 Expect-Pass 'full-snapshot RPC errors retain unsupported and other errors after preview cutoff' {
     $events = @()
     for ($index = 1; $index -le 300; $index++) {
@@ -527,7 +528,7 @@ Expect-Pass 'full-snapshot RPC errors retain unsupported and other errors after 
     $unmatched = New-RPCErrorEvent; $unmatched.seq = 302; $unmatched.class = 'unknown'
     foreach ($field in @('method', 'correlation', 'code')) { $unmatched.PSObject.Properties.Remove($field) }
     $evidence = Get-DesktopRPCErrorEvidence ($events + @($unsupported, $unmatched)) $fixturePublicMethods
-    Assert-Keys ([pscustomobject]$evidence) @('rpcErrors', 'unsupportedMethodErrors', 'otherRpcErrors')
+    Assert-Keys ([pscustomobject]$evidence) @('rpcErrors', 'unsupportedMethodErrors', 'otherRpcErrors', 'threadListErrors')
     if ($evidence.rpcErrors -ne 2 -or $evidence.unsupportedMethodErrors -ne 1 -or $evidence.otherRpcErrors -ne 1) {
         throw 'RPC error counts were truncated or changed.'
     }
@@ -585,6 +586,104 @@ Expect-Pass 'runtime error summary precedes strict profile validators and consum
     }
 }
 
+# The fixed rejection buckets are diagnostic counts, never an acceptance gate.
+Expect-Pass 'thread-list buckets cover only correlated from-bridge errors in the full snapshot' {
+    $events = @()
+    for ($index = 1; $index -le 300; $index++) {
+        $events += [pscustomobject]@{ seq = $index; pid = 1; kind = 'stream_end'; direction = 'stderr'; class = 'eof' }
+    }
+    $labels = @(Get-PublicThreadListErrorClasses) + @('unknown', 'unsupported_method')
+    foreach ($label in $labels) {
+        $event = New-RPCErrorEvent
+        $event.seq = 301 + $events.Count; $event.method = 'thread/list'; $event.code = -32602; $event.class = $label
+        $events += $event
+    }
+    $unmatched = New-RPCErrorEvent; $unmatched.class = 'unknown'
+    foreach ($field in @('method', 'correlation')) { $unmatched.PSObject.Properties.Remove($field) }
+    $events += $unmatched
+    $wrongDirection = New-RPCErrorEvent; $wrongDirection.method = 'thread/list'
+    $wrongDirection.direction = 'to_bridge'; $wrongDirection.class = 'unknown'; $events += $wrongDirection
+    $evidence = Get-DesktopRPCErrorEvidence $events $fixturePublicMethods
+    $expectedKeys = @(Get-PublicThreadListErrorClasses) + @('unknown', 'other')
+    Assert-Keys ([pscustomobject]$evidence.threadListErrors) $expectedKeys
+    foreach ($label in $expectedKeys) {
+        if ($evidence.threadListErrors[$label] -isnot [int] -or $evidence.threadListErrors[$label] -ne 1) {
+            throw 'Thread-list fixed rejection buckets were truncated or broadened.'
+        }
+    }
+    if ($evidence.rpcErrors -ne 12 -or $evidence.unsupportedMethodErrors -ne 1 -or $evidence.otherRpcErrors -ne 11) {
+        throw 'Thread-list buckets changed the existing total counters.'
+    }
+}
+foreach ($label in @(Get-PublicThreadListErrorClasses)) {
+    foreach ($row in @(@('method', 'project/list'), @('direction', 'to_bridge'), @('kind', 'rpc'),
+        @('code', -32000), @('code', '-32602'), @('code', $null))) {
+        Expect-Reject 'thread-list rejection labels require their exact error scope and code' {
+            $event = New-RPCErrorEvent; $event.method = 'thread/list'; $event.code = -32602; $event.class = $label
+            $event.($row[0]) = $row[1]
+            Assert-PublicThreadListEvent $event
+        }
+    }
+    foreach ($variant in @($label.ToUpperInvariant(), ($label + '_PRIVATE_CANARY'), ('PRIVATE_CANARY_' + $label))) {
+        Expect-Reject 'thread-list rejection labels have no casing or prefix aliases' {
+            $event = New-RPCErrorEvent; $event.method = 'thread/list'; $event.code = -32602; $event.class = $variant
+            Get-DesktopRPCErrorEvidence @($event) $fixturePublicMethods
+        }
+    }
+    foreach ($field in @('method', 'correlation', 'code')) {
+        Expect-Reject 'thread-list rejection cannot omit required correlation or code' {
+            $event = New-RPCErrorEvent; $event.method = 'thread/list'; $event.code = -32602; $event.class = $label
+            $event.PSObject.Properties.Remove($field)
+            Get-DesktopRPCErrorEvidence @($event) $fixturePublicMethods
+        }
+    }
+}
+function New-ThreadListShapeEvent {
+    return [pscustomobject][ordered]@{
+        seq = 1; pid = 1; kind = 'rpc'; direction = 'to_bridge'; method = 'thread/list'; correlation = 1; class = 'request'
+        threadListProjectIdShape = 'absent'; threadListParentIdShape = 'absent'
+        threadListAncestorIdShape = 'absent'; threadListAttachedIdShape = 'absent'
+    }
+}
+foreach ($field in @(Get-PublicThreadListShapeFields)) {
+    foreach ($label in @('absent', 'null', 'string', 'invalid')) {
+        Expect-Pass 'thread-list field types remain distinct fixed labels' {
+            $event = New-ThreadListShapeEvent; $event.$field = $label
+            if (@(Assert-PublicReadRequestEvent $event).Count -ne 0) { throw 'Thread-list validator emitted output.' }
+        }
+    }
+    foreach ($value in @($null, $false, 0, @('null'), [pscustomobject]@{ value = 'null' },
+        'PRIVATE_CANARY', 'NULL', 'null_PRIVATE_CANARY', '')) {
+        Expect-Reject 'thread-list shapes refuse values, wrong types and casing aliases' {
+            $event = New-ThreadListShapeEvent; $event.$field = $value
+            Assert-PublicReadRequestEvent $event
+        }
+    }
+    Expect-Reject 'thread-list shapes require all four fields' {
+        $event = New-ThreadListShapeEvent; $event.PSObject.Properties.Remove($field)
+        Assert-PublicReadRequestEvent $event
+    }
+    Expect-Reject 'thread-list shape field names are case sensitive' {
+        $event = New-ThreadListShapeEvent; $event.PSObject.Properties.Remove($field)
+        $event | Add-Member -NotePropertyName $field.ToUpperInvariant() -NotePropertyValue 'null'
+        Assert-PublicReadRequestEvent $event
+    }
+}
+foreach ($row in @(@('method', 'project/list'), @('method', 'thread/List'), @('direction', 'from_bridge'),
+    @('kind', 'rpc_error'), @('class', 'response'), @('class', 'notification'), @('class', 'duplicate_id'),
+    @('class', 'correlation_limit'), @('class', 'thread_list_project_id'), @('correlation', 0), @('pid', $null))) {
+    Expect-Reject 'thread-list shapes cannot escape exact client request scope' {
+        $event = New-ThreadListShapeEvent; $event.($row[0]) = $row[1]
+        Assert-PublicReadRequestEvent $event
+    }
+}
+foreach ($field in @('projectId', 'message', 'params', 'modelProviders', 'tracePresent', 'code', 'configParamsValid')) {
+    Expect-Reject 'thread-list shapes cannot carry raw values or mixed metadata families' {
+        $event = New-ThreadListShapeEvent
+        $event | Add-Member -NotePropertyName $field -NotePropertyValue 'PRIVATE_CANARY'
+        Assert-PublicReadRequestEvent $event
+    }
+}
 # Configuration fixtures contain only shape flags, never native config or result bodies.
 function New-ConfigReadRequest([int]$PidValue, [int]$Correlation, [bool]$IncludeLayers = $false) {
     return [pscustomobject]@{
@@ -1682,3 +1781,4 @@ Expect-Pass 'native runtime decision consumes capture and cleanup flags, not Des
 }
 
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
+

@@ -14,6 +14,7 @@ const ControlPlaneRouting167 = "routing-v0.167.0-alpha.3.2"
 
 const controlPlaneProvider167 = "magpie_bridge"
 const controlPlaneUnavailable167 = "bridge routing configuration unavailable"
+const controlPlaneReadPendingLimit167 = 4
 
 // The source oracle is openai/codex c40729ea5cf8e947481b130c59807273eda2f8e9,
 // protocol/v2/config.rs and its JSON schema. Config is extensible and has no
@@ -67,10 +68,16 @@ func (r *Router) controlPlaneRead167(g *request, line []byte) []Delivery {
 	if !validateControlPlaneRead167(line) {
 		return []Delivery{fail(g.id, -32602, "invalid bridge routing config request")}
 	}
+	// Count logical reads, not their transport requests. A half-completed
+	// policy pair keeps its slot until that same group completes or fails.
+	groups := make(map[*request]struct{}, controlPlaneReadPendingLimit167)
 	for _, pending := range r.pending {
-		if pending.group.method == "config/read" {
-			return []Delivery{fail(g.id, -32000, "a routing config read is already in progress")}
+		if pending.group.method == g.method {
+			groups[pending.group] = struct{}{}
 		}
+	}
+	if len(groups) >= controlPlaneReadPendingLimit167 {
+		return []Delivery{fail(g.id, -32000, "routing config read request limit reached")}
 	}
 	r.active[g.key] = true
 	r.activeBytes += g.size

@@ -178,7 +178,50 @@ function Assert-PublicAuthRequestEvent($record) {
         throw 'Invalid authentication request flag type.'
     }
 }
+# Fixed, source-reviewed thread/list labels only. Shapes do not validate a
+# request, identify a project/thread, or authorize routing any filter.
+function Get-PublicThreadListShapeFields {
+    return @('threadListProjectIdShape', 'threadListParentIdShape',
+        'threadListAncestorIdShape', 'threadListAttachedIdShape')
+}
+function Get-PublicThreadListErrorClasses {
+    return @('thread_list_project_id', 'thread_list_parent_id', 'thread_list_ancestor_id',
+        'thread_list_attached_id', 'thread_list_sort_key', 'thread_list_sort_direction',
+        'thread_list_provider_filter', 'thread_list_cursor')
+}
+function Assert-PublicThreadListEvent($record) {
+    $fields = @(Get-PublicThreadListShapeFields)
+    $hasShape = $false
+    foreach ($field in $fields) { if ($record.PSObject.Properties[$field]) { $hasShape = $true } }
+    $hasRejection = $record.PSObject.Properties['class'] -and
+        (Get-PublicThreadListErrorClasses) -ccontains $record.class
+    if (-not $hasShape -and -not $hasRejection) { return }
+    $names = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class')
+    if ($hasRejection) { $names += 'code' } else { $names += $fields }
+    Assert-PublicShape $record $names
+    foreach ($field in @('seq', 'pid', 'correlation')) { Assert-PublicInteger $record.$field 1 4294967296 }
+    foreach ($field in @('kind', 'direction', 'method', 'class')) {
+        if ($record.$field -isnot [string]) { throw 'Invalid thread-list metadata label type.' }
+    }
+    if ($record.method -cne 'thread/list') { throw 'Thread-list metadata occurred outside its method.' }
+    if ($hasRejection) {
+        Assert-PublicInteger $record.code -32602 -32602
+        if ($record.kind -cne 'rpc_error' -or $record.direction -cne 'from_bridge') {
+            throw 'Thread-list rejection occurred outside a correlated bridge error.'
+        }
+    } else {
+        if ($record.kind -cne 'rpc' -or $record.direction -cne 'to_bridge' -or $record.class -cne 'request') {
+            throw 'Thread-list shapes occurred outside a client request.'
+        }
+        foreach ($field in $fields) {
+            if ($record.$field -isnot [string] -or @('absent', 'null', 'string', 'invalid') -cnotcontains $record.$field) {
+                throw 'Invalid thread-list filter shape.'
+            }
+        }
+    }
+}
 function Assert-PublicReadRequestEvent($record) {
+    Assert-PublicThreadListEvent $record
     Assert-PublicRequestTraceEvent $record
     Assert-PublicReadTargetEvent $record
     $configFields = @('configParamsValid', 'configIncludeLayers', 'configCwdProvided')
@@ -983,12 +1026,17 @@ function Get-DesktopRPCErrorEvidence([object[]]$Records, [string[]]$PublicMethod
     $errors = 0
     $unsupported = 0
     $other = 0
+    $threadListErrors = [ordered]@{}
+    foreach ($class in @((Get-PublicThreadListErrorClasses)) + @('unknown', 'other')) {
+        $threadListErrors[$class] = 0
+    }
     $classes = @('startup_probe_unavailable', 'unsupported_authentication_capability',
         'initialization_required', 'config_requirements_disabled', 'config_requirements_failed',
         'gateway_oauth_disabled', 'unsupported_method', 'invalid_capabilities',
-        'invalid_initialization', 'already_initialized', 'unknown')
+        'invalid_initialization', 'already_initialized', 'unknown') + @(Get-PublicThreadListErrorClasses)
     foreach ($event in $Records) {
         if (-not $event.PSObject.Properties['kind'] -or $event.kind -cne 'rpc_error') { continue }
+        Assert-PublicThreadListEvent $event
         $names = @('seq', 'pid', 'kind', 'direction', 'class')
         $hasMethod = [bool]$event.PSObject.Properties['method']
         $hasCorrelation = [bool]$event.PSObject.Properties['correlation']
@@ -1010,10 +1058,15 @@ function Get-DesktopRPCErrorEvidence([object[]]$Records, [string[]]$PublicMethod
             Assert-PublicInteger $event.correlation 1 4294967296
         }
         if ($event.PSObject.Properties['code']) { Assert-PublicInteger $event.code -4294967296 4294967296 }
+        if ($hasMethod -and $event.method -ceq 'thread/list' -and $event.direction -ceq 'from_bridge') {
+            $bucket = 'other'
+            if ($threadListErrors.Contains($event.class)) { $bucket = $event.class }
+            $threadListErrors[$bucket]++
+        }
         $errors++
         if ($event.class -ceq 'unsupported_method') { $unsupported++ } else { $other++ }
     }
-    return [ordered]@{ rpcErrors = $errors; unsupportedMethodErrors = $unsupported; otherRpcErrors = $other }
+    return [ordered]@{ rpcErrors = $errors; unsupportedMethodErrors = $unsupported; otherRpcErrors = $other; threadListErrors = $threadListErrors }
 }
 
 # Only the full sanitized snapshot is evidence, never native config or response bodies.
@@ -2188,7 +2241,7 @@ requires_openai_auth = false
                 'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided',
                 'projectListParamsValid', 'projectListCursorProvided', 'projectListLimitProvided',
                 'projectListSortKey', 'projectListSortDirection', 'fsReadParamsShapeValid',
-                'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot')
+                'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot') + @(Get-PublicThreadListShapeFields)
             $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
@@ -2196,7 +2249,7 @@ requires_openai_auth = false
                 'unsupported_authentication_capability', 'initialization_required',
                 'config_requirements_disabled', 'config_requirements_failed', 'gateway_oauth_disabled',
                 'unsupported_method', 'invalid_capabilities', 'invalid_initialization', 'already_initialized',
-                'startup_probe_unavailable', 'unknown', 'eof', 'read_error', 'copy_error')
+                'startup_probe_unavailable', 'unknown', 'eof', 'read_error', 'copy_error') + @(Get-PublicThreadListErrorClasses)
             $methods = @(Get-PublicRPCMethods)
             $flags = @('app-server', '--check', '--help', '-h', '--version', '-V',
                 '--analytics-default-enabled', '--stdio', '--print-startup-config', '--startup-sign-out',
@@ -2621,6 +2674,10 @@ requires_openai_auth = false
                                 'fsReadPathForm' { Get-PublicReadTargetLabels 'fsReadPathForm' }
                                 'fsReadBasename' { Get-PublicReadTargetLabels 'fsReadBasename' }
                                 'fsReadLexicalRoot' { Get-PublicReadTargetLabels 'fsReadLexicalRoot' }
+                                'threadListProjectIdShape' { @('absent', 'null', 'string', 'invalid') }
+                                'threadListParentIdShape' { @('absent', 'null', 'string', 'invalid') }
+                                'threadListAncestorIdShape' { @('absent', 'null', 'string', 'invalid') }
+                                'threadListAttachedIdShape' { @('absent', 'null', 'string', 'invalid') }
                             }
                             if ($allowed -cnotcontains $value) { Block 'Observer emitted an unreviewed metadata label.' }
                         }
@@ -2713,7 +2770,7 @@ requires_openai_auth = false
                 $captureValidated = $true
                 $report.captureValidated = $true
                 $report.observer.rpcErrorEvidence = Get-DesktopRPCErrorEvidence $allEvents $methods
-                $report.observer.rpcErrorEvidenceLimit = 'Counts cover observed RPC errors in the full sanitized snapshot, including unsupported methods. They are not complete-lifecycle evidence; zero errors does not prove all Desktop APIs are supported.'
+                $report.observer.rpcErrorEvidenceLimit = 'Counts cover observed RPC errors in the full sanitized snapshot, including unsupported methods and fixed thread/list rejection buckets. Filter shapes in the full trace are JSON types only; null projectId means unassigned threads. They are not complete-lifecycle evidence; zero errors does not prove all Desktop APIs are supported.'
                 $report.observer.selectedCompatibilityScope = 'auth-status-feature-list-and-global-owned-config-only'
                 $report.observer.fullDesktopCompatibility = 'not-established'
                 # Full validated snapshots, not the truncated summary. No result payload is inspected or logged.
@@ -2833,3 +2890,4 @@ if ($EnableReviewedLaunchCompatibility) {
 }
 Save-Report
 exit $exitCode
+

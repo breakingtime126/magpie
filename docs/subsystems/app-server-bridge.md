@@ -1582,9 +1582,16 @@ the existing exact 0.167 validator: success requires two genuine complete
 `{"requirements":null,"supportsIndependentSpeedModes":true}` views. Non-null or
 unsupported policy, malformed envelopes, errors and disagreement fail the entire
 read with `bridge routing configuration unavailable`. Backend error text/data
-never appears in the response. A prior success is not cached. There is one
-outstanding config read at a time; ordinary active-request limits and bounded
-late-response tombstones apply.
+never appears in the response. A prior success is not cached. Up to four
+independent config reads may be outstanding, including mixed `includeLayers` values and repeated identical
+params. Each owns a fresh native pair and its own frontend ID, requested shape,
+policy results and byte budget; no reads are coalesced. A half-completed pair
+still occupies one slot. The fifth read fails locally with a bounded request-limit
+error. Completion or failure frees only that group's slot. A failed group's late
+sibling cannot complete another read, including a newer one reusing its frontend
+ID. The cap limits active bridge groups, not all native work across failed
+attempts: an abandoned native sibling may still finish. Ordinary active-request
+limits and bounded late-response tombstones apply.
 
 These internal policy reads do not enable the public requirements route. They
 also do not establish equal effective execution permissions or authorize a shared
@@ -1765,6 +1772,18 @@ copies alone to `66e39e44c2c26d23023278d1a0b8799d26f2b8bb` and must fail with
 fresh native policy replies, one coherent session layer and all 18 initial leaf
 origins with the correct content version. These are assertion-level oracles,
 not an execution record.
+
+[`control_plane_167_concurrency_test.go`](../../internal/appserverbridge/control_plane_167_concurrency_test.go)
+covers mixed layered/unlayered overlaps, independent identical reads, out-of-order
+responses, per-group policy failures and byte limits, late siblings after frontend
+ID reuse, strict requests, duplicate native IDs, the four-group cap and fresh paired calls,
+half-completed slot retention and recovery. It also checks reads completing on
+either side of a whole catalog commit, failed oversized refresh retention and
+default removal. This standalone file uses only APIs from exact base
+`09b526eb76a1f6e033c51db57eba58ed80026e86`; copying it alone there and running
+`TestControlPlane167ConcurrentReads` must fail with
+`second overlapping native-equivalent config read must reach both backends`.
+The assertion is a behavioral-red oracle, not an execution record.
 
 These source blobs were authored with connectors only. Formatting, compilation,
 unit/lifecycle tests, old-base red, race/vet/build/full-suite checks, official

@@ -62,6 +62,10 @@ type event struct {
 	ProjectListLimitProvided  *bool    `json:"projectListLimitProvided,omitempty"`
 	ProjectListSortKey        string   `json:"projectListSortKey,omitempty"`
 	ProjectListSortDirection  string   `json:"projectListSortDirection,omitempty"`
+	ThreadListProjectIDShape  string   `json:"threadListProjectIdShape,omitempty"`
+	ThreadListParentIDShape   string   `json:"threadListParentIdShape,omitempty"`
+	ThreadListAncestorIDShape string   `json:"threadListAncestorIdShape,omitempty"`
+	ThreadListAttachedIDShape string   `json:"threadListAttachedIdShape,omitempty"`
 	FSReadParamsShapeValid    *bool    `json:"fsReadParamsShapeValid,omitempty"`
 	FSReadPathForm            string   `json:"fsReadPathForm,omitempty"`
 	FSReadBasename            string   `json:"fsReadBasename,omitempty"`
@@ -279,6 +283,8 @@ func (o *observer) line(direction string, b []byte) {
 		}
 		if direction == "to_bridge" && e.Class == "request" {
 			switch method {
+			case "thread/list":
+				observedThreadList(b, &e)
 			case "project/list":
 				o.observedProjectList(b, &e)
 			case "fs/readFile":
@@ -329,6 +335,9 @@ func (o *observer) line(direction string, b []byte) {
 			if json.Unmarshal(rawError, &failureObject) == nil {
 				e.Code = failureObject.Code
 				e.Class = errorClass(failureObject.Message)
+			}
+			if direction == "from_bridge" && e.Method == "thread/list" && e.Class == "unknown" {
+				e.Class = observedThreadListRejection(b)
 			}
 			e.Kind = "rpc_error"
 		}
@@ -674,3 +683,4 @@ func main() {
 	}
 	os.Exit(code)
 }
+

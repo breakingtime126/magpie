@@ -219,7 +219,6 @@ func TestControlPlane167LayersFailuresNeverExposeNativeData(t *testing.T) {
 	if out, err := r.Client([]byte(`{"id":"owned-layer","method":"config/read","params":{"includeLayers":true}}`)); err == nil || len(out) != 0 {
 		t.Fatal("duplicate active layer request was accepted")
 	}
-	expectError(t, client(t, r, `{"id":"overlap","method":"config/read","params":{"includeLayers":false}}`))
 	message, _ := parseObject(requests[0].Message)
 	controlPlaneError(t, server(t, r, requests[0].Backend, string(raw(object{
 		"id": message["id"], "error": raw(object{"code": raw(-32000), "message": raw("PRIVATE_ERROR"), "data": raw("PRIVATE_SECRET")}),

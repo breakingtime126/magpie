@@ -11,7 +11,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
-    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'ConvertFrom-PublicRPCMethodFacts', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Assert-PublicReadRequestEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
+    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'ConvertFrom-PublicRPCMethodFacts', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Assert-PublicReadRequestEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
     'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
@@ -1419,3 +1419,4 @@ Expect-Reject 'project and fs metadata families cannot be mixed' {
 }
 
 Write-Output ('PUBLIC_CATALOG_PS_TESTS_PASSED=' + $script:passed)
+

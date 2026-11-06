@@ -1107,8 +1107,10 @@ Before strict auth, feature and config checks, `Get-DesktopRPCErrorEvidence`
 counts all observed RPC errors in the full sanitized snapshot, split into
 unsupported-method and other errors. It validates the fixed error labels,
 optional correlation metadata, bounded integers and exact metadata-only shape
-against the existing public method vocabulary. It retains no method, ID, code,
-message or result body. The report explicitly labels the selected scope as
+against the existing public method vocabulary. Its fixed `threadListErrors`
+buckets count only correlated bridge-to-client `thread/list` errors by the
+reviewed rejection classes below, plus `unknown` and `other`; existing total
+counters are unchanged. It retains no request ID, code, message or result body. The report explicitly labels the selected scope as
 auth status, feature pages and global owned config only, with
 `fullDesktopCompatibility: "not-established"`. A green selected-profile
 capture does not establish support for project, filesystem, config-write or
@@ -1261,3 +1263,74 @@ Source preparation used GitHub connectors without an available execution
 environment. PowerShell parsing/fixtures, Go tests/vet/race/build and the
 combined real Windows run were not executed during authoring. Exact-head CI
 must report those results before this change is called verified.
+
+
+
+### Thread-list filter shapes and exact rejection classes
+
+The disposable observer adds four JSON-type labels on unambiguous client
+`thread/list` requests: `threadListProjectIdShape`, `threadListParentIdShape`,
+`threadListAncestorIdShape`, and `threadListAttachedIdShape`. Each is exactly
+`absent`, `null`, `string`, or `invalid`; no string contents, identifiers,
+provider names, cursor, search term, path or arbitrary field name are retained.
+This is not whole-request validity or permission to route a filter. The
+[pinned official ThreadListParams](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1428-L1511)
+distinguishes omission of `projectId` (every project) from explicit null
+(unassigned threads), and a string selects a project. Null must not be silently
+discarded or described as a harmless default. The other three labels describe
+`parentThreadId`, `ancestorThreadId`, and `attachedToThreadId` only by JSON type,
+not valid identities or supported ownership semantics.
+
+[`thread_list_metadata.go`](../../build/desktop-rpc-observer/thread_list_metadata.go)
+reuses the existing bounded reader, rejecting duplicate top-level envelope and
+parameter keys (including JSON-escaped aliases), and checks native JSON-string
+Unicode only for the four selected fields. An ambiguous envelope or invalid trace emits no new shapes, since its
+request identity is not trustworthy. A non-object, missing, top-level-duplicate-key or
+more-than-18-field parameter object emits four `invalid` labels. The bound is
+the pinned 17 fields plus the bridge's legacy `currentAccountOnly`. Unrelated
+parameter values remain opaque; the labels do not validate the full schema.
+Malformed and oversized transport lines retain their existing fixed
+`unrecognized`/`oversized` labels. Existing 64 KiB line/trace budgets and pending
+request limits are unchanged.
+
+For correlated bridge-to-client `thread/list` errors with integer code -32602,
+strict envelope/error parsing recognizes only these exact existing bridge
+messages, with no prefix, suffix, case or arbitrary-name matches:
+
+- `unsupported thread/list field: projectId` → `thread_list_project_id`
+- `unsupported thread/list field: parentThreadId` → `thread_list_parent_id`
+- `unsupported thread/list field: ancestorThreadId` → `thread_list_ancestor_id`
+- `unsupported thread/list field: attachedToThreadId` → `thread_list_attached_id`
+- `unsupported thread sort key` → `thread_list_sort_key`
+- `unsupported thread sort direction` → `thread_list_sort_direction`
+- `unsupported logical provider filter` → `thread_list_provider_filter`
+- `invalid bridge cursor` → `thread_list_cursor`
+
+These strings come from the existing bridge's
+[`validateParams`](../../internal/appserverbridge/protocol.go) and
+[router list checks](../../internal/appserverbridge/router.go). Duplicate or
+ambiguous top-level error/envelope fields, a wrong code, unknown message, unmatched reply,
+wrong method or wrong direction cannot acquire a new rejection class. Neither
+raw errors nor error data enter the trace. The PowerShell sanitizer enforces
+exact string labels, all four shape fields together, request/error scope and
+integer error code before publication, including records beyond the preview.
+
+The error buckets are diagnostic evidence only, collected before the existing
+selected auth/feature/config gates. They do not waive those gates, establish
+full Desktop compatibility, change production routes or select a backend.
+Observer forwarding remains byte-for-byte unchanged and adds no filesystem,
+authentication, account, network or diagnostic RPC access. The next already
+required CI capture supplies evidence; this metadata change does not establish
+the cause of the earlier 21 unclassified failures or require another launch.
+
+The portable offline
+[`thread_list_metadata_red_test.go`](../../build/desktop-rpc-observer/thread_list_metadata_red_test.go)
+uses only observer APIs present at `09b526eb`. Copying that test file alone onto
+that baseline and running `TestThreadListFilterShapesObserved` must fail with
+`thread/list filter shape metadata missing or incorrect`, rather than a compile
+failure. `TestThreadListRejectionClassesObserved` covers exact-message evidence;
+neighbor tests cover prefix/suffix/case canaries, malformed and duplicate JSON,
+18/19-field bounds, null-versus-omission, string validity, method/direction scope,
+unchanged wire bytes and oversized lines. The existing CI profile fixtures cover
+fixed counters, metadata types, scope and unknown-field rejection. These test
+definitions are not a claim that the local environment executed Go or PowerShell.
