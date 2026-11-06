@@ -115,21 +115,45 @@ func TestStartupProbeProfilesRejectMixedCompatibilityVersions(t *testing.T) {
 			}
 		}
 	}
-	for _, mode := range []string{"", probe167Mode} {
-		for _, kind := range []string{"requirements", "attestation", "gateway"} {
-			cfg := base
-			cfg.StartupProbe = mode
-			switch kind {
-			case "requirements":
-				cfg.RequirementsRead = "compare-safe-v0.167.0-alpha.3.2"
-			case "attestation":
-				cfg.Attestation = "unavailable-v0.167.0-alpha.3.2"
-			case "gateway":
-				cfg.GatewayOAuth = "primary-read-only-v0.167.0-alpha.3.2"
-				cfg.GatewayOAuthProviderName = "Fixture provider"
-			}
-			if err := cfg.Validate(); err == nil {
-				t.Fatal("new startup profile widened a JSONL compatibility mode")
+	// Exact auth modes now have independent 0.167 opt-ins. The startup
+	// profile still cannot promote legacy modes or enable requirements reads.
+	for _, mode := range []string{"", StartupProbeCompareUnrestricted, probe167Mode, "compare-unrestricted-v0.167"} {
+		for _, requirements := range []string{"", ConfigRequirementsCompareSafe, "compare-safe-v0.167.0-alpha.3.2"} {
+			for _, attestation := range []string{"", AttestationUnavailable, AttestationUnavailable167, "unavailable-v0.167", "unavailable-v0.167.0-alpha.3.3"} {
+				for _, gateway := range []string{"", GatewayOAuthPrimaryRead, GatewayOAuthPrimaryRead167, "primary-read-only-v0.167", "primary-read-only-v0.167.0-alpha.3.3"} {
+					cfg := base
+					cfg.StartupProbe = mode
+					cfg.RequirementsRead = requirements
+					cfg.Attestation = attestation
+					cfg.GatewayOAuth = gateway
+					cfg.GatewayOAuthProviderName = ""
+					if gateway != "" {
+						cfg.GatewayOAuthProviderName = "Fixture provider"
+					}
+					known := (mode == "" || mode == StartupProbeCompareUnrestricted || mode == probe167Mode) &&
+						(requirements == "" || requirements == ConfigRequirementsCompareSafe) &&
+						(attestation == "" || attestation == AttestationUnavailable || attestation == AttestationUnavailable167) &&
+						(gateway == "" || gateway == GatewayOAuthPrimaryRead || gateway == GatewayOAuthPrimaryRead167)
+					legacy := mode == StartupProbeCompareUnrestricted || requirements == ConfigRequirementsCompareSafe ||
+						attestation == AttestationUnavailable || gateway == GatewayOAuthPrimaryRead
+					newer := mode == probe167Mode || attestation == AttestationUnavailable167 || gateway == GatewayOAuthPrimaryRead167
+					wantValid := known && !(legacy && newer)
+					if err := cfg.Validate(); (err == nil) != wantValid {
+						t.Fatalf("compatibility matrix: probe=%q requirements=%q attestation=%q gateway=%q wantValid=%t err=%v", mode, requirements, attestation, gateway, wantValid, err)
+					}
+					data, err := json.Marshal(cfg)
+					if err != nil {
+						t.Fatal(err)
+					}
+					loaded, err := LoadConfig(bytes.NewReader(data))
+					if (err == nil) != wantValid {
+						t.Fatalf("JSON loading bypassed matrix: probe=%q requirements=%q attestation=%q gateway=%q wantValid=%t err=%v", mode, requirements, attestation, gateway, wantValid, err)
+					}
+					if wantValid && (loaded.StartupProbe != mode || loaded.RequirementsRead != requirements ||
+						loaded.Attestation != attestation || loaded.GatewayOAuth != gateway || loaded.GatewayOAuthProviderName != cfg.GatewayOAuthProviderName) {
+						t.Fatal("JSON loading changed an explicitly selected compatibility mode")
+					}
+				}
 			}
 		}
 	}

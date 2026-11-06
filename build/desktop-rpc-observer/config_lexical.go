@@ -24,7 +24,7 @@ var observedConfigKeyClassOrder = [...]string{
 func observedUnknownConfigArgument(key, value, shape, family string) event {
 	return event{
 		Kind: "argv_config", Class: "unknown", ConfigShape: shape, ConfigFamily: family,
-		ConfigLiteral: observedConfigValue("bool", value),
+		ConfigLiteral:     observedConfigValue("bool", value),
 		ConfigLexicalRoot: observedConfigLexicalRoot(key), ConfigKeyClasses: observedConfigKeyClasses(key),
 	}
 }
