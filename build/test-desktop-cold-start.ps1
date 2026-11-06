@@ -8,6 +8,281 @@ param(
     [switch]$EnableReviewedStartupProbe,
     [switch]$InspectStaticLauncher
 )
+
+# Pure validation helpers are AST-loaded by the focused tests, without running the probe.
+function Assert-PublicShape($value, [string[]]$names) {
+    if ($null -eq $value -or $value -isnot [pscustomobject]) { throw 'Invalid public catalog object.' }
+    $actual = @($value.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($actual.Count -ne $names.Count) { throw 'Unexpected public catalog shape.' }
+    foreach ($name in $actual) {
+        if ($names -cnotcontains $name) { throw 'Unexpected public catalog field.' }
+    }
+}
+function Assert-PublicInteger($value, [long]$minimum, [long]$maximum) {
+    if (($value -isnot [int] -and $value -isnot [long]) -or
+        $value -lt $minimum -or $value -gt $maximum) { throw 'Invalid public catalog integer.' }
+}
+function Assert-PublicHash($value) {
+    if ($value -isnot [string] -or $value -cnotmatch '^[0-9a-f]{64}\z') { throw 'Invalid public catalog digest.' }
+}
+function Get-PublicDigest([byte[]]$bytes) {
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($algorithm.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
+    finally { $algorithm.Dispose() }
+}
+function Assert-PublicCanonicalJSON([string]$text, $value) {
+    # All accepted metadata strings are ASCII. Exact roundtrip also rejects duplicate JSON fields.
+    if (($value | ConvertTo-Json -Depth 16 -Compress) -cne $text) {
+        throw 'Noncanonical or duplicate metadata JSON fields.'
+    }
+}
+function ConvertTo-PublicPluginEnvironment($catalog, [string]$packageSha256) {
+    Assert-PublicShape $catalog @('schema', 'status', 'archiveSha256', 'keysSha256', 'coverage', 'sources', 'candidates')
+    Assert-PublicInteger $catalog.schema 1 1
+    Assert-PublicHash $packageSha256
+    Assert-PublicHash $catalog.archiveSha256
+    Assert-PublicHash $catalog.keysSha256
+    if ($catalog.status -isnot [string] -or @('complete', 'partial') -cnotcontains $catalog.status) { throw 'Unsupported public catalog status.' }
+    Assert-PublicShape $catalog.coverage @('jsFiles', 'jsComplete', 'jsSkipped', 'sourceBytes', 'manifestFiles')
+    foreach ($name in @('jsFiles', 'jsComplete', 'jsSkipped')) { Assert-PublicInteger $catalog.coverage.$name 0 2048 }
+    Assert-PublicInteger $catalog.coverage.sourceBytes 1 134217728
+    Assert-PublicInteger $catalog.coverage.manifestFiles 0 16
+    if ($catalog.coverage.jsComplete + $catalog.coverage.jsSkipped -ne $catalog.coverage.jsFiles -or
+        ($catalog.status -ceq 'complete' -and $catalog.coverage.jsSkipped -ne 0) -or
+        ($catalog.status -ceq 'partial' -and $catalog.coverage.jsSkipped -eq 0)) {
+        throw 'Inconsistent public catalog coverage.'
+    }
+    if ($catalog.sources -isnot [System.Array] -or $catalog.sources.Count -lt 1 -or $catalog.sources.Count -gt 64 -or
+        $catalog.candidates -isnot [System.Array] -or $catalog.candidates.Count -lt 1 -or $catalog.candidates.Count -gt 128) {
+        throw 'Public catalog is empty or exceeds its bound.'
+    }
+    $seenSources = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $jsSources = 0
+    $manifestSources = 0
+    foreach ($source in $catalog.sources) {
+        Assert-PublicShape $source @('kind', 'path', 'sha256')
+        Assert-PublicHash $source.sha256
+        if ($source.path -isnot [string] -or $source.path.Length -gt 256 -or $seenSources.Contains($source.path)) {
+            throw 'Invalid or duplicate public source path.'
+        }
+        [void]$seenSources.Add($source.path)
+        if ($source.kind -isnot [string]) { throw 'Invalid public source kind type.' }
+        if ($source.kind -ceq 'asar_js') {
+            if ($source.path -cnotmatch '^\.vite/build/[A-Za-z0-9][A-Za-z0-9_.-]{0,190}\.js\z') {
+                throw 'Unreviewed public JavaScript source path.'
+            }
+            $jsSources++
+        } elseif ($source.kind -ceq 'marketplace_manifest') {
+            if ($source.path -cnotmatch '^app/resources/plugins/[A-Za-z0-9][A-Za-z0-9_-]{0,63}/(\.agents/plugins/(api_)?marketplace\.json|\.(claude|cursor)-plugin/marketplace\.json)\z') {
+                throw 'Unreviewed public manifest source path.'
+            }
+            $manifestSources++
+        } else { throw 'Unreviewed public source kind.' }
+    }
+    if ($jsSources -gt $catalog.coverage.jsComplete -or $manifestSources -gt $catalog.coverage.manifestFiles) {
+        throw 'Public source provenance is incomplete.'
+    }
+    $keys = @()
+    $previous = $null
+    foreach ($candidate in $catalog.candidates) {
+        Assert-PublicShape $candidate @('key', 'source', 'derivation')
+        if ($candidate.key -isnot [string] -or $candidate.key.Length -gt 128 -or
+            $candidate.key -cnotmatch '^plugins\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.(enabled|auto_provision)\z' -or
+            ($null -ne $previous -and [StringComparer]::Ordinal.Compare($previous, $candidate.key) -ge 0)) {
+            throw 'Invalid, duplicate or unordered public plugin key.'
+        }
+        Assert-PublicInteger $candidate.source 0 ($catalog.sources.Count - 1)
+        if ($candidate.derivation -isnot [string]) { throw 'Invalid public derivation type.' }
+        $sourceKind = $catalog.sources[$candidate.source].kind
+        if (($sourceKind -ceq 'asar_js' -and @('id_literal', 'key_literal') -cnotcontains $candidate.derivation) -or
+            ($sourceKind -ceq 'marketplace_manifest' -and $candidate.derivation -cne 'manifest_identity')) {
+            throw 'Invalid public candidate provenance.'
+        }
+        $keys += $candidate.key
+        $previous = $candidate.key
+    }
+    $digest = Get-PublicDigest ([Text.Encoding]::UTF8.GetBytes(($keys -join "`n")))
+    if ($digest -cne $catalog.keysSha256) { throw 'Public catalog key digest mismatch.' }
+    $environment = [ordered]@{
+        schema = 1
+        packageSha256 = $packageSha256
+        archiveSha256 = $catalog.archiveSha256
+        keysSha256 = $digest
+        keys = @($keys)
+    } | ConvertTo-Json -Depth 4 -Compress
+    if ([Text.Encoding]::UTF8.GetByteCount($environment) -gt 16384) { throw 'Public catalog environment exceeds its bound.' }
+    return $environment
+}
+function Get-BoundedStreamDigest([IO.Stream]$stream, [long]$expected, [long]$maximum, [Diagnostics.Stopwatch]$watch) {
+    if ($expected -lt 1 -or $expected -gt $maximum) { throw 'Public source size is outside its bound.' }
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        $buffer = New-Object byte[] 65536
+        [long]$total = 0
+        while (($count = $stream.Read($buffer, 0, $buffer.Length)) -ne 0) {
+            $total += $count
+            if ($total -gt $expected -or $watch.ElapsedMilliseconds -gt 120000) {
+                throw 'Public source streaming bound exceeded.'
+            }
+            [void]$algorithm.TransformBlock($buffer, 0, $count, $buffer, 0)
+        }
+        if ($total -ne $expected -or $watch.ElapsedMilliseconds -gt 120000) { throw 'Public source length or time mismatch.' }
+        [void]$algorithm.TransformFinalBlock((New-Object byte[] 0), 0, 0)
+        return [BitConverter]::ToString($algorithm.Hash).Replace('-', '').ToLowerInvariant()
+    } finally { $algorithm.Dispose() }
+}
+function Assert-PublicRegularPath([string]$path) {
+    if (-not [IO.Path]::IsPathRooted($path) -or [IO.Path]::GetFullPath($path) -cne $path) {
+        throw 'Public package path is not canonical.'
+    }
+    $root = [IO.Path]::GetPathRoot($path)
+    $current = $root
+    $parts = $path.Substring($root.Length).Split([char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar),
+        [StringSplitOptions]::RemoveEmptyEntries)
+    foreach ($part in $parts) {
+        $current = Join-Path $current $part
+        $item = Get-Item -Force -LiteralPath $current -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Public package path is redirected.' }
+    }
+    if ($item.PSIsContainer) { throw 'Public package is not a regular file.' }
+}
+function Assert-PublicZipIndex($zip) {
+    if ($zip.Entries.Count -gt 100000) { throw 'Public package ZIP entry count exceeds its bound.' }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $directories = New-Object 'System.Collections.Generic.Dictionary[string,bool]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $zip.Entries) {
+        $name = $entry.FullName
+        if ([string]::IsNullOrEmpty($name) -or $name.Length -gt 1024 -or
+            $name.StartsWith('/') -or $name -match '[\\:\x00-\x1f\x7f]') {
+            throw 'Public package ZIP path is not canonical.'
+        }
+        $directory = $name.EndsWith('/')
+        $canonical = $name
+        if ($directory) { $canonical = $name.Substring(0, $name.Length - 1) }
+        foreach ($part in $canonical.Split('/')) {
+            if ($part.Length -eq 0 -or $part -ceq '.' -or $part -ceq '..' -or $part -match '[. ]\z') {
+                throw 'Public package ZIP path has an unsafe component.'
+            }
+        }
+        if (-not $seen.Add($canonical)) { throw 'Public package ZIP paths are ambiguous.' }
+        $directories.Add($canonical, $directory)
+        $unixType = ($entry.ExternalAttributes -shr 16) -band 61440
+        if (($entry.ExternalAttributes -band 1024) -ne 0 -or
+            ($directory -and $unixType -ne 0 -and $unixType -ne 16384) -or
+            (-not $directory -and $unixType -ne 0 -and $unixType -ne 32768) -or
+            (-not $directory -and ($entry.ExternalAttributes -band 16) -ne 0)) {
+            throw 'Public package ZIP contains a link or nonregular entry.'
+        }
+    }
+    foreach ($name in $directories.Keys) {
+        $parent = $name
+        while (($separator = $parent.LastIndexOf('/')) -ge 0) {
+            $parent = $parent.Substring(0, $separator)
+            if ($directories.ContainsKey($parent) -and -not $directories[$parent]) {
+                throw 'Public package ZIP file conflicts with a descendant path.'
+            }
+        }
+    }
+}
+function Get-PublicZipEntryDigest($zip, [string]$path, [long]$maximum, [Diagnostics.Stopwatch]$watch) {
+    # Exact and case-insensitive uniqueness both matter on the installed Windows filesystem.
+    $matches = @($zip.Entries | Where-Object { [StringComparer]::OrdinalIgnoreCase.Equals($_.FullName, $path) })
+    if ($matches.Count -ne 1 -or $matches[0].FullName -cne $path) { throw 'Public source ZIP entry is missing or ambiguous.' }
+    $entry = $matches[0]
+    $unixType = ($entry.ExternalAttributes -shr 16) -band 61440
+    if (($unixType -ne 0 -and $unixType -ne 32768) -or
+        ($entry.ExternalAttributes -band 1040) -ne 0 -or $entry.CompressedLength -gt $maximum) {
+        throw 'Public source ZIP entry is not a regular bounded file.'
+    }
+    if ($entry.Length -lt 1 -or $entry.Length -gt $maximum) { throw 'Public source ZIP size exceeds its bound.' }
+    $stream = $entry.Open()
+    try { return Get-BoundedStreamDigest $stream $entry.Length $maximum $watch }
+    finally { $stream.Dispose() }
+}
+function Confirm-PublicCatalogProvenance($catalog, [string]$packagePath, [string]$packageSha256) {
+    $packageStream = $null
+    $zip = $null
+    try {
+        Assert-PublicRegularPath $packagePath
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        # Hold the same original download read-only against writes through hash and ZIP inspection.
+        $packageStream = [IO.File]::Open($packagePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $actualPackage = Get-BoundedStreamDigest $packageStream $packageStream.Length 4294967296 $watch
+        if ($actualPackage -cne $packageSha256) { throw 'Original package digest changed.' }
+        $packageStream.Position = 0
+        $zip = New-Object IO.Compression.ZipArchive($packageStream, [IO.Compression.ZipArchiveMode]::Read, $true)
+        Assert-PublicZipIndex $zip
+        $actualArchive = Get-PublicZipEntryDigest $zip 'app/resources/app.asar' 2147483648 $watch
+        if ($actualArchive -cne $catalog.archiveSha256) { throw 'Installed archive does not match the original package.' }
+        foreach ($source in $catalog.sources) {
+            if ($source.kind -ceq 'marketplace_manifest') {
+                $actualManifest = Get-PublicZipEntryDigest $zip $source.path 262144 $watch
+                if ($actualManifest -cne $source.sha256) { throw 'Installed manifest does not match the original package.' }
+            }
+        }
+    } catch { throw 'Public catalog provenance could not be verified against the original signed package.' }
+    finally {
+        if ($zip) { $zip.Dispose() }
+        if ($packageStream) { $packageStream.Dispose() }
+    }
+}
+function Assert-PublicEnvironmentSize($environment) {
+    [long]$characters = 1
+    foreach ($name in $environment.Keys) {
+        $value = $environment[$name]
+        if ($name -isnot [string] -or $value -isnot [string] -or $name.Contains('=') -or
+            $name.IndexOf([char]0) -ge 0 -or $value.IndexOf([char]0) -ge 0) {
+            throw 'Invalid child environment entry.'
+        }
+        $characters += $name.Length + $value.Length + 2
+        if ($characters -gt 30000) { throw 'Child environment exceeds the Windows diagnostic bound.' }
+    }
+}
+function Assert-PublicPluginEvent($record, $catalog, $seenCatalogs) {
+    if ($null -ne $catalog) {
+        Assert-PublicInteger $record.pid 1 4294967296
+        Assert-PublicInteger $record.seq 1 4294967296
+        $startKey = 'start:' + [string]$record.pid
+        if ($record.kind -ceq 'observer_start') {
+            Assert-PublicShape $record @('seq', 'pid', 'kind', 'class')
+            if ($record.class -cne 'test_only' -or $seenCatalogs.ContainsKey($startKey)) {
+                throw 'Invalid or duplicate observer start for public catalog.'
+            }
+            $seenCatalogs[$startKey] = $true
+            return
+        }
+        if ($record.kind -ceq 'public_plugin_catalog') {
+            if (-not $seenCatalogs.ContainsKey($startKey)) { throw 'Public catalog precedes observer start.' }
+        } elseif (-not $seenCatalogs.ContainsKey([string]$record.pid)) {
+            throw 'Observer event precedes its required public catalog.'
+        }
+    }
+    $hasDigest = [bool]$record.PSObject.Properties['publicPluginCatalogSHA256']
+    $hasReference = [bool]$record.PSObject.Properties['publicPluginRef']
+    if ($record.kind -ceq 'public_plugin_catalog') {
+        Assert-PublicShape $record @('seq', 'pid', 'kind', 'publicPluginCatalogSHA256')
+        Assert-PublicInteger $record.pid 1 4294967296
+        Assert-PublicInteger $record.seq 1 4294967296
+        if ($null -eq $catalog) { throw 'Unexpected public plugin catalog event.' }
+        Assert-PublicHash $record.publicPluginCatalogSHA256
+        if ($record.publicPluginCatalogSHA256 -cne $catalog.keysSha256 -or $seenCatalogs.ContainsKey([string]$record.pid)) {
+            throw 'Duplicate or mismatched per-process public catalog digest.'
+        }
+        $seenCatalogs[[string]$record.pid] = $true
+    } elseif ($hasReference) {
+        Assert-PublicShape $record @('seq', 'pid', 'kind', 'publicPluginRef', 'configValue')
+        if ($record.kind -cne 'argv_config' -or $null -eq $catalog -or -not $seenCatalogs.ContainsKey([string]$record.pid)) {
+            throw 'Public plugin reference has no verified per-process catalog.'
+        }
+        Assert-PublicInteger $record.pid 1 4294967296
+        Assert-PublicInteger $record.seq 1 4294967296
+        Assert-PublicInteger $record.publicPluginRef 1 $catalog.candidates.Count
+        if ($record.configValue -isnot [string] -or @('bool_true', 'bool_false', 'other') -cnotcontains $record.configValue) {
+            throw 'Invalid public plugin value classification.'
+        }
+    } elseif ($hasDigest) { throw 'Public catalog digest occurred outside its own event.' }
+}
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -32,6 +307,8 @@ $activationPid = 0
 $eventSource = 'MagpieDesktopProcessStart'
 $subscription = $null
 $exitCode = 1
+$publicPluginCatalog = $null
+$publicPluginEnvironment = $null
 function Block([string]$reason) {
     $report.reason = $reason
     throw $reason
@@ -56,7 +333,8 @@ try {
     # Presence checks only. Never read, copy, print, or delete any authentication value.
     foreach ($name in @('OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'CODEX_API_KEY', 'CODEX_AUTH_JSON',
         'CODEX_HOME', 'CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG',
-        'MAGPIE_CI_REAL_BRIDGE', 'MAGPIE_CI_TRACE_FILE', 'MAGPIE_CI_OBSERVER_ACTIVE')) {
+        'MAGPIE_CI_REAL_BRIDGE', 'MAGPIE_CI_TRACE_FILE', 'MAGPIE_CI_OBSERVER_ACTIVE',
+        'MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES')) {
         if ([Environment]::GetEnvironmentVariable($name)) { Block ('Unexpected existing auth/override environment name: ' + $name) }
     }
     if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\auth.json')) { Block 'Unexpected existing Codex authentication file.' }
@@ -286,7 +564,7 @@ namespace DesktopColdProbe {
         $staticProcess = [Diagnostics.Process]::Start($readStatic)
         $staticOut = $staticProcess.StandardOutput.ReadToEndAsync()
         $staticErr = $staticProcess.StandardError.ReadToEndAsync()
-        if (-not $staticProcess.WaitForExit(30000)) {
+        if (-not $staticProcess.WaitForExit(120000)) {
             $staticProcess.Kill()
             [void]$staticProcess.WaitForExit(2000)
             Block 'Read-only static inspection timed out.'
@@ -300,8 +578,12 @@ namespace DesktopColdProbe {
             -not $staticText.StartsWith('DESKTOP_STATIC_METADATA=') -or $staticText.Contains("`n")) {
             Block 'Unexpected static-inspector output.'
         }
-        try { $staticReport = $staticText.Substring('DESKTOP_STATIC_METADATA='.Length) | ConvertFrom-Json }
-        catch { Block 'Invalid static-inspector metadata.' }
+        try {
+            $staticBody = $staticText.Substring('DESKTOP_STATIC_METADATA='.Length)
+            if ([Text.Encoding]::UTF8.GetByteCount($staticBody) -gt 65536) { throw 'Static report size exceeded.' }
+            $staticReport = $staticBody | ConvertFrom-Json
+            Assert-PublicCanonicalJSON $staticBody $staticReport
+        } catch { Block 'Invalid, noncanonical or duplicate static-inspector metadata.' }
         function Assert-StaticShape($value, [string[]]$names) {
             if ($null -eq $value -or $value -isnot [pscustomobject]) { Block 'Invalid static metadata object.' }
             $actual = @($value.PSObject.Properties | ForEach-Object { $_.Name })
@@ -324,7 +606,7 @@ namespace DesktopColdProbe {
             $report.staticLauncher = [ordered]@{ schema = 1; status = 'blocked'; reason = $staticReport.reason }
             Block ('Static inspection blocked: ' + $staticReport.reason)
         }
-        Assert-StaticShape $staticReport @('schema', 'status', 'runtimeKeyProven', 'archiveEntries', 'entries')
+        Assert-StaticShape $staticReport @('schema', 'status', 'runtimeKeyProven', 'archiveEntries', 'entries', 'publicPlugins')
         if ($staticProcess.ExitCode -ne 0 -or $staticReport.schema -ne 1 -or
             $staticReport.status -cne 'static_candidates_only' -or
             $staticReport.runtimeKeyProven -isnot [bool] -or $staticReport.runtimeKeyProven -ne $false) {
@@ -379,7 +661,33 @@ namespace DesktopColdProbe {
                 }
             }
         }
-        # Inspector emits only bounded, fixed-shape static metadata. No source/value strings are fields.
+        $publicCodes = $staticCodes + @('public_source_limit', 'public_source_not_packed',
+            'public_manifest_invalid', 'public_manifest_limit', 'public_catalog_limit',
+            'public_source_path', 'public_archive_changed')
+        if ($staticReport.publicPlugins.PSObject.Properties['status'] -and $staticReport.publicPlugins.status -ceq 'blocked') {
+            Assert-PublicShape $staticReport.publicPlugins @('schema', 'status', 'reason')
+            Assert-PublicInteger $staticReport.publicPlugins.schema 1 1
+            if ($publicCodes -cnotcontains $staticReport.publicPlugins.reason) { Block 'Unreviewed public catalog failure.' }
+            $report.publicPluginCatalog = [ordered]@{ status = 'blocked'; reason = $staticReport.publicPlugins.reason }
+            Block ('Public catalog inspection blocked: ' + $staticReport.publicPlugins.reason)
+        }
+        if ($staticReport.publicPlugins.PSObject.Properties['candidates'] -and
+            $staticReport.publicPlugins.candidates -is [System.Array] -and $staticReport.publicPlugins.candidates.Count -eq 0) {
+            $report.publicPluginCatalog = [ordered]@{ status = 'no-public-candidates'; runtimeIdentityKnown = $false }
+            Block 'No public plugin candidates were established; runtime identity remains unknown.'
+        }
+        # Do not publish candidate text or pass it to Desktop until independently bound to signed original ZIP bytes.
+        $publicPluginEnvironment = ConvertTo-PublicPluginEnvironment $staticReport.publicPlugins $report.download.packageSha256
+        Confirm-PublicCatalogProvenance $staticReport.publicPlugins $package $report.download.packageSha256
+        $publicPluginCatalog = $staticReport.publicPlugins
+        $report.publicPluginCatalog = [ordered]@{
+            status = $publicPluginCatalog.status; keysSha256 = $publicPluginCatalog.keysSha256
+            candidateCount = $publicPluginCatalog.candidates.Count
+            provenance = 'original-signed-msix-entry-sha256'
+            runtimeMatchesObserved = $false
+            limit = 'Static public source identity only. A match is not plugin authentication or authorization; a miss is not proof of absence.'
+        }
+        # Only bounded, validated public source paths, hashes and keys are now eligible for publication.
         $report.staticLauncher = $staticReport
         $staticJSON = $staticReport | ConvertTo-Json -Depth 12
         [IO.File]::WriteAllText((Join-Path $out 'static-launcher-metadata.json'), $staticJSON,
@@ -577,8 +885,12 @@ requires_openai_auth = false
         if ($Mode -eq 'observe') {
             $start.EnvironmentVariables['MAGPIE_CI_REAL_BRIDGE'] = $BridgeExecutable
             $start.EnvironmentVariables['MAGPIE_CI_TRACE_FILE'] = $tracePrefix
+            if ($null -ne $publicPluginEnvironment) {
+                $start.EnvironmentVariables['MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES'] = $publicPluginEnvironment
+            }
         }
         $start.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $bridgeConfig
+        Assert-PublicEnvironmentSize $start.EnvironmentVariables
         $started = [Diagnostics.Process]::Start($start)
         if (-not $started) { Block 'Registered alias did not return a process.' }
         $activationPid = $started.Id
@@ -673,8 +985,9 @@ requires_openai_auth = false
             $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class',
                 'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
-                'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit')
-            $kinds = @('observer_start', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
+                'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
+                'publicPluginCatalogSHA256', 'publicPluginRef')
+            $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
                 'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
                 'response', 'unmatched_response', 'unrecognized', 'oversized', 'unterminated',
@@ -1028,7 +1341,8 @@ requires_openai_auth = false
                 'ascii_control', 'non_ascii', 'other_ascii_punctuation')
             $configLiterals = @('bool_true', 'bool_false', 'other')
             $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi')
-            $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit')
+            $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit', 'publicPluginRef')
+            $seenPublicCatalogs = @{}
             $allEvents = @()
             $traceFiles = @()
             $complete = $true
@@ -1045,7 +1359,11 @@ requires_openai_auth = false
                 foreach ($line in $lines) {
                     if ($line.Length -eq 0) { continue }
                     if ($line.Length -gt 4096) { Block 'Observer metadata record is too large.' }
-                    try { $record = $line | ConvertFrom-Json } catch { Block 'Observer metadata is not valid JSON.' }
+                    try {
+                        $record = $line | ConvertFrom-Json
+                        Assert-PublicCanonicalJSON $line $record
+                    } catch { Block 'Observer metadata is not canonical valid JSON.' }
+                    Assert-PublicPluginEvent $record $publicPluginCatalog $seenPublicCatalogs
                     foreach ($property in $record.PSObject.Properties) {
                         if ($keys -cnotcontains $property.Name) { Block 'Observer emitted an unexpected metadata field.' }
                         $value = $property.Value
@@ -1056,6 +1374,8 @@ requires_openai_auth = false
                                 [Math]::Abs([double]$value) -gt 4294967296) {
                                 Block 'Observer emitted invalid numeric metadata.'
                             }
+                        } elseif ($property.Name -ceq 'publicPluginCatalogSHA256') {
+                            Assert-PublicHash $value
                         } elseif ($booleanKeys -ccontains $property.Name) {
                             if ($value -isnot [bool]) { Block 'Observer emitted invalid boolean metadata.' }
                         } elseif ($property.Name -ceq 'configKeyClasses') {
@@ -1100,9 +1420,12 @@ requires_openai_auth = false
                     $hasLexicalRoot = [bool]$record.PSObject.Properties['configLexicalRoot']
                     $hasKeyClasses = [bool]$record.PSObject.Properties['configKeyClasses']
                     $hasLiteral = [bool]$record.PSObject.Properties['configLiteral']
+                    $hasPublicReference = [bool]$record.PSObject.Properties['publicPluginRef']
                     if ($record.kind -eq 'argv_config') {
                         $unknownConfig = $record.PSObject.Properties['class'] -and $record.class -ceq 'unknown'
-                        if ($unknownConfig) {
+                        if ($hasPublicReference) {
+                            # The exact five-field shape and per-PID digest were checked above.
+                        } elseif ($unknownConfig) {
                             if (-not $hasShape -or -not $hasFamily -or -not $hasLexicalRoot -or
                                 -not $hasKeyClasses -or -not $hasLiteral -or $hasConfigKey -or $hasConfigValue) {
                                 Block 'Unknown config metadata contains raw or incomplete fields.'
@@ -1130,6 +1453,11 @@ requires_openai_auth = false
                     $previousSequence = $record.seq
                     $fileEvents += $record
                 }
+                $filePids = @($fileEvents | ForEach-Object { $_.pid } | Select-Object -Unique)
+                if ($filePids.Count -ne 1 -or ($null -ne $publicPluginCatalog -and
+                    -not $seenPublicCatalogs.ContainsKey([string]$filePids[0]))) {
+                    Block 'Observer trace has no unique verified per-process public catalog.'
+                }
                 if ($traceInfo.Length -ge 64512 -or @($fileEvents | Where-Object { $_.kind -eq 'child_exit' }).Count -eq 0 -or
                     @($fileEvents | Where-Object { $_.kind -eq 'stream_end' -and
                         $_.PSObject.Properties['direction'] -and $_.direction -eq 'from_bridge' -and
@@ -1153,6 +1481,15 @@ requires_openai_auth = false
             $report.observer.correlationLimitsObserved = @($allEvents | Where-Object {
                 $_.PSObject.Properties['class'] -and $_.class -in @('duplicate_id', 'correlation_limit')
             }).Count -gt 0
+            $report.observer.publicPluginMatches = @($allEvents | Where-Object {
+                $_.PSObject.Properties['publicPluginRef']
+            } | ForEach-Object { [ordered]@{
+                key = $publicPluginCatalog.candidates[$_.publicPluginRef - 1].key
+                configValue = $_.configValue
+            } })
+            if ($null -ne $publicPluginCatalog) {
+                $report.publicPluginCatalog.runtimeMatchesObserved = $report.observer.publicPluginMatches.Count -gt 0
+            }
             $report.observer.recordCount = $allEvents.Count
             $report.observer.records = @($allEvents | Select-Object -First 256)
             $report.observer.recordsTruncatedInSummary = $allEvents.Count -gt 256

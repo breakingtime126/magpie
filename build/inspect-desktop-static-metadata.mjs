@@ -5,6 +5,7 @@
 // https://github.com/electron/asar/tree/b48633488d28655cd8ff8ac1f420b411d411e953
 // No package code is imported, evaluated, executed, extracted, or modified.
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -48,7 +49,7 @@ function readExact(fd, count, position) {
 
 // Only the documented two-Pickle layout is accepted. This intentionally does
 // not support alternate Pickle headers, links, or reading unpacked resources.
-export function readIndex(fd, size) {
+export function readIndex(fd, size, includePublicSources = false) {
   if (!Number.isSafeInteger(size) || size < 16) fail('truncated_archive');
   if (size > LIMITS.archive) fail('archive_too_large');
   const prefix = readExact(fd, 16, 0);
@@ -74,6 +75,8 @@ export function readIndex(fd, size) {
   }
   if (!record(header) || !record(header.files)) fail('invalid_header_root');
   const selected = new Map();
+  const publicSources = new Map();
+  let publicRootBlocked = false;
   const stack = [{ node: header, relative: '', depth: 0, inheritedUnpacked: false }];
   let entries = 0;
   while (stack.length) {
@@ -85,6 +88,12 @@ export function readIndex(fd, size) {
       if (typeof node.link !== 'string' || node.link.length === 0) fail('invalid_link_entry');
       if (TARGETS.some(p => p === relative || p.startsWith(relative + '/'))) {
         selected.set(relative, { status: 'link_not_read' });
+      }
+      if (includePublicSources && (relative === '.vite' || relative === '.vite/build')) {
+        publicRootBlocked = true;
+      }
+      if (includePublicSources && publicSourcePath(relative)) {
+        publicSources.set(relative, { status: 'link_not_read' });
       }
       continue;
     }
@@ -105,6 +114,7 @@ export function readIndex(fd, size) {
     if (!Number.isSafeInteger(node.size) || node.size < 0) fail('invalid_file_size');
     if (unpacked) {
       if (TARGETS.includes(relative)) selected.set(relative, { status: 'unpacked_not_read' });
+      if (includePublicSources && publicSourcePath(relative)) publicSources.set(relative, { status: 'unpacked_not_read' });
       continue;
     }
     if (typeof node.offset !== 'string' || !/^(0|[1-9][0-9]{0,19})$/.test(node.offset)) {
@@ -116,6 +126,9 @@ export function readIndex(fd, size) {
     if (TARGETS.includes(relative)) {
       selected.set(relative, { status: 'packed', start: Number(start), size: node.size });
     }
+    if (includePublicSources && publicSourcePath(relative)) {
+      publicSources.set(relative, { status: 'packed', start: Number(start), size: node.size });
+    }
   }
   for (const target of TARGETS) {
     for (const [relative, entry] of selected) {
@@ -124,7 +137,7 @@ export function readIndex(fd, size) {
       }
     }
   }
-  return { selected, entries };
+  return { selected, entries, publicSources, publicRootBlocked };
 }
 
 // A conservative lexical reader, not a JavaScript parser. It skips comments,
@@ -142,9 +155,14 @@ class Lexer {
     while (this.i < this.end) {
       if (/\s/.test(s[this.i])) { this.i++; continue; }
       if (s.startsWith('//', this.i)) {
-        const end = s.indexOf('\n', this.i + 2);
-        this.i = end < 0 ? this.end : Math.min(end + 1, this.end); continue;
+        const end = s.slice(this.i + 2, this.end).search(/[\r\n\u2028\u2029]/);
+        this.i = end < 0 ? this.end : this.i + 3 + end; continue;
       }
+      // File mode is not proven module-only. Annex B HTML comments are not
+      // supported; their text must never become literal identity evidence.
+      const closingHTMLComment = s.startsWith('-->', this.i) && (!this.previous ||
+        /[\r\n\u2028\u2029]/.test(s.slice(this.previous.end, this.i)));
+      if (s.startsWith('<!--', this.i) || closingHTMLComment) fail('unsupported_lexical_syntax');
       if (s.startsWith('/*', this.i)) {
         const end = s.indexOf('*/', this.i + 2);
         if (end < 0 || end + 2 > this.end) fail('unterminated_comment');
@@ -195,7 +213,8 @@ class Lexer {
     } else if (/[A-Za-z_$]/.test(c) || c.charCodeAt(0) > 127 ||
                (c === '#' && /[A-Za-z_$]/.test(s[this.i + 1] ?? ''))) {
       kind = 'identifier'; this.i++;
-      while (this.i < this.end && (/[A-Za-z0-9_$]/.test(s[this.i]) || s.charCodeAt(this.i) > 127)) this.i++;
+      while (this.i < this.end && (/[A-Za-z0-9_$]/.test(s[this.i]) ||
+        (s.charCodeAt(this.i) > 127 && !/\s/.test(s[this.i])))) this.i++;
       value = s.slice(start, this.i);
     } else if (/[0-9]/.test(c)) {
       kind = 'number'; this.i++;
@@ -209,7 +228,7 @@ class Lexer {
       const expressionEnd = previous && !keyword && !previous.controlClose &&
         (['identifier', 'number', 'literal', 'template', 'regex'].includes(previous.kind) ||
          [')', ']', '++', '--'].includes(previous.value));
-      if (expressionEnd && /[\r\n]/.test(s.slice(previous.end, start))) fail('ambiguous_slash');
+      if (expressionEnd && /[\r\n\u2028\u2029]/.test(s.slice(previous.end, start))) fail('ambiguous_slash');
       if (expressionEnd) {
         this.i += s[this.i + 1] === '=' ? 2 : 1; value = '/';
       } else {
@@ -217,13 +236,18 @@ class Lexer {
         while (this.i < this.end) {
           const r = s[this.i++];
           if (r === '\\') { this.i++; continue; }
-          if (r === '\r' || r === '\n') fail('unterminated_regex');
-          if (r === '[') inClass = true;
+          if (/[\r\n\u2028\u2029]/.test(r)) fail('unterminated_regex');
+          if (r === '[') {
+            if (inClass) fail('unsupported_lexical_syntax');
+            inClass = true;
+          }
           if (r === ']') inClass = false;
           if (r === '/' && !inClass) { closed = true; break; }
         }
         if (!closed) fail('unterminated_regex');
+        const flagsStart = this.i;
         while (this.i < this.end && /[A-Za-z]/.test(s[this.i])) this.i++;
+        if (s.slice(flagsStart, this.i).includes('v')) fail('unsupported_lexical_syntax');
         value = '';
       }
     } else {
@@ -344,10 +368,233 @@ export function analyzeSource(source) {
   };
 }
 
+
+export const PUBLIC_PLUGIN_LIMITS = Object.freeze({
+  jsFiles: 2048, entry: 16 * 1024 ** 2, total: 128 * 1024 ** 2,
+  manifestFiles: 16, manifest: 256 * 1024, marketplaceDirectories: 64,
+  sources: 64, candidates: 128, key: 128,
+});
+export const PUBLIC_PLUGIN_BLOCK_CODES = Object.freeze([
+  'public_source_limit', 'public_source_not_packed', 'public_manifest_invalid',
+  'public_manifest_limit', 'public_catalog_limit', 'public_source_path',
+  'public_archive_changed',
+]);
+const MARKETPLACE_SUFFIXES = Object.freeze([
+  '.agents/plugins/marketplace.json', '.agents/plugins/api_marketplace.json',
+  '.claude-plugin/marketplace.json', '.cursor-plugin/marketplace.json',
+]);
+const PUBLIC_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const PUBLIC_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const PUBLIC_KEY = /^plugins\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.(enabled|auto_provision)$/;
+
+function publicSourcePath(entry) {
+  return /^\.vite\/build\/[A-Za-z0-9][A-Za-z0-9_.-]{0,190}\.js$/.test(entry);
+}
+function asciiOrder(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
+export function publicPluginKeysDigest(keys) { return sha256(keys.join('\n')); }
+
+function publicKeysForIdentity(identity) {
+  if (!PUBLIC_ID.test(identity)) return [];
+  const keys = ['plugins.' + identity + '.enabled', 'plugins.' + identity + '.auto_provision'];
+  if (keys.some(key => key.length > PUBLIC_PLUGIN_LIMITS.key)) fail('public_catalog_limit');
+  return keys;
+}
+
+// Names enter this dictionary only from complete literal tokens in a public
+// package source. These are source candidates, not startup or semantic proof.
+// A lexical failure discards every candidate collected from that entire file.
+export function analyzePublicPluginSource(source) {
+  const lexer = new Lexer(source);
+  const found = new Map();
+  function add(key, derivation) {
+    if (key.length > PUBLIC_PLUGIN_LIMITS.key) fail('public_catalog_limit');
+    if (!found.has(key)) found.set(key, derivation);
+    if (found.size > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
+  }
+  try {
+    for (let token; (token = lexer.next());) {
+      if (!literal(token) || token.dynamic) continue;
+      if (PUBLIC_ID.test(token.value)) {
+        for (const key of publicKeysForIdentity(token.value)) add(key, 'id_literal');
+      }
+      const equals = token.value.indexOf('=');
+      const key = equals < 0 ? token.value : token.value.slice(0, equals);
+      const rhs = equals < 0 ? '' : token.value.slice(equals + 1);
+      if (PUBLIC_KEY.test(key) && (equals < 0 || rhs === '' || rhs === 'true' || rhs === 'false')) {
+        add(key, 'key_literal');
+      }
+    }
+    return {
+      complete: true,
+      candidates: [...found].map(([key, derivation]) => ({ key, derivation })),
+    };
+  } catch (error) {
+    if (!(error instanceof InspectionError)) throw error;
+    if (error.code === 'token_limit' || PUBLIC_PLUGIN_BLOCK_CODES.includes(error.code)) {
+      if (error.code === 'token_limit') fail('public_source_limit');
+      throw error;
+    }
+    return { complete: false, candidates: [] };
+  }
+}
+
+function hashDescriptor(fd, size) {
+  const hash = createHash('sha256');
+  for (let at = 0; at < size;) {
+    const count = Math.min(1024 * 1024, size - at);
+    hash.update(readExact(fd, count, at));
+    at += count;
+  }
+  return hash.digest('hex');
+}
+function samePath(a, b) {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+function packageNode(root, relative, leafKind, optional = false) {
+  let current = root;
+  const parts = relative.split('/');
+  for (let i = 0; i < parts.length; i++) {
+    current = path.join(current, parts[i]);
+    let stat;
+    try { stat = fs.lstatSync(current); }
+    catch (error) {
+      if (optional && error.code === 'ENOENT') return null;
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !samePath(fs.realpathSync(current), current)) fail('public_source_path');
+    const kind = i === parts.length - 1 ? leafKind : 'directory';
+    if (kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) fail('public_source_path');
+  }
+  return current;
+}
+export function readPublicManifest(file, remainingSourceBytes) {
+  if (!Number.isSafeInteger(remainingSourceBytes) || remainingSourceBytes < 0) fail('public_source_limit');
+  const before = fs.lstatSync(file);
+  if (!before.isFile() || before.isSymbolicLink()) fail('public_source_path');
+  if (before.size > PUBLIC_PLUGIN_LIMITS.manifest) fail('public_manifest_limit');
+  const fd = fs.openSync(file, 'r');
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!unchanged(before, opened)) fail('public_archive_changed');
+    if (opened.size > remainingSourceBytes) fail('public_source_limit');
+    const bytes = readExact(fd, opened.size, 0);
+    if (!unchanged(opened, fs.fstatSync(fd)) || !unchanged(opened, fs.lstatSync(file))) {
+      fail('public_archive_changed');
+    }
+    let manifest;
+    try { manifest = JSON.parse(decode(bytes)); }
+    catch (error) {
+      if (error instanceof InspectionError) throw error;
+      fail('public_manifest_invalid');
+    }
+    if (!record(manifest) || !PUBLIC_SEGMENT.test(manifest.name ?? '') ||
+        typeof manifest.name !== 'string' || !Array.isArray(manifest.plugins)) {
+      fail('public_manifest_invalid');
+    }
+    if (manifest.plugins.length > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
+    const keys = [];
+    for (const plugin of manifest.plugins) {
+      if (!record(plugin) || typeof plugin.name !== 'string' || !PUBLIC_SEGMENT.test(plugin.name)) {
+        fail('public_manifest_invalid');
+      }
+      keys.push(...publicKeysForIdentity(plugin.name + '@' + manifest.name));
+    }
+    return { size: bytes.length, hash: sha256(bytes), keys };
+  } finally { fs.closeSync(fd); }
+}
+
+// The caller separately verifies each external manifest and app.asar against
+// the exact original signed MSIX entry before publishing or using this report.
+// This function only reads fixed package-relative locations and never loads
+// code, follows links, reads user state, or opens manifest-referenced resources.
+export function inspectPublicPluginPackage(packageRoot) {
+  try {
+    if (typeof packageRoot !== 'string' || !path.isAbsolute(packageRoot) ||
+        !/^OpenAI\.Codex_26\.1103\.3517\.0_x64__[a-z0-9]{13}$/i.test(path.basename(packageRoot))) {
+      fail('public_source_path');
+    }
+    const root = path.resolve(packageRoot);
+    if (!samePath(fs.realpathSync(root), root) || fs.lstatSync(root).isSymbolicLink()) {
+      fail('public_source_path');
+    }
+    const archive = packageNode(root, 'app/resources/app.asar', 'file');
+    const before = fs.lstatSync(archive), fd = fs.openSync(archive, 'r');
+    const sources = [], candidates = new Map();
+    const coverage = { jsFiles: 0, jsComplete: 0, jsSkipped: 0, sourceBytes: 0, manifestFiles: 0 };
+    function addSource(kind, sourcePath, hash, found) {
+      const fresh = found.filter(item => !candidates.has(item.key));
+      if (fresh.length === 0) return;
+      if (sources.length >= PUBLIC_PLUGIN_LIMITS.sources ||
+          candidates.size + fresh.length > PUBLIC_PLUGIN_LIMITS.candidates) fail('public_catalog_limit');
+      const sourceIndex = sources.length;
+      sources.push({ kind, path: sourcePath, sha256: hash });
+      for (const item of fresh) candidates.set(item.key, { ...item, source: sourceIndex });
+    }
+    let archiveSha256;
+    try {
+      const opened = fs.fstatSync(fd);
+      if (!unchanged(before, opened)) fail('public_archive_changed');
+      const index = readIndex(fd, opened.size, true);
+      if (index.publicRootBlocked) fail('public_source_not_packed');
+      const entries = [...index.publicSources].sort(([a], [b]) => asciiOrder(a, b));
+      coverage.jsFiles = entries.length;
+      if (entries.length > PUBLIC_PLUGIN_LIMITS.jsFiles) fail('public_source_limit');
+      archiveSha256 = hashDescriptor(fd, opened.size);
+      for (const [entry, info] of entries) {
+        if (info.status !== 'packed') fail('public_source_not_packed');
+        if (info.size > PUBLIC_PLUGIN_LIMITS.entry ||
+            coverage.sourceBytes + info.size > PUBLIC_PLUGIN_LIMITS.total) fail('public_source_limit');
+        const bytes = readExact(fd, info.size, info.start);
+        coverage.sourceBytes += bytes.length;
+        const analyzed = analyzePublicPluginSource(decode(bytes));
+        if (!analyzed.complete) { coverage.jsSkipped++; continue; }
+        coverage.jsComplete++;
+        addSource('asar_js', entry, sha256(bytes), analyzed.candidates);
+      }
+      if (!unchanged(opened, fs.fstatSync(fd)) || !unchanged(opened, fs.lstatSync(archive))) {
+        fail('public_archive_changed');
+      }
+    } finally { fs.closeSync(fd); }
+
+    const marketplacesRoot = packageNode(root, 'app/resources/plugins', 'directory', true);
+    if (marketplacesRoot) {
+      const directories = fs.readdirSync(marketplacesRoot, { withFileTypes: true })
+        .sort((a, b) => asciiOrder(a.name, b.name));
+      if (directories.length > PUBLIC_PLUGIN_LIMITS.marketplaceDirectories) fail('public_manifest_limit');
+      for (const directory of directories) {
+        if (!PUBLIC_SEGMENT.test(directory.name) || directory.isFile()) continue;
+        const marketRelative = 'app/resources/plugins/' + directory.name;
+        const marketRoot = packageNode(root, marketRelative, 'directory');
+        if (!marketRoot) fail('public_source_path');
+        for (const suffix of MARKETPLACE_SUFFIXES) {
+          const relative = marketRelative + '/' + suffix;
+          const file = packageNode(root, relative, 'file', true);
+          if (!file) continue;
+          if (++coverage.manifestFiles > PUBLIC_PLUGIN_LIMITS.manifestFiles) fail('public_manifest_limit');
+          const manifest = readPublicManifest(file, PUBLIC_PLUGIN_LIMITS.total - coverage.sourceBytes);
+          coverage.sourceBytes += manifest.size;
+          if (coverage.sourceBytes > PUBLIC_PLUGIN_LIMITS.total) fail('public_source_limit');
+          addSource('marketplace_manifest', relative, manifest.hash,
+            [...new Set(manifest.keys)].map(key => ({ key, derivation: 'manifest_identity' })));
+        }
+      }
+    }
+    const ordered = [...candidates.values()].sort((a, b) => asciiOrder(a.key, b.key));
+    return {
+      schema: 1, status: coverage.jsSkipped ? 'partial' : 'complete',
+      archiveSha256, keysSha256: publicPluginKeysDigest(ordered.map(item => item.key)),
+      coverage, sources, candidates: ordered,
+    };
+  } catch (error) {
+    return { schema: 1, status: 'blocked', reason: codeOf(error) };
+  }
+}
+
 function unchanged(a, b) {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
 }
-export function inspectArchive(archivePath) {
+export function inspectArchive(archivePath, includeSnapshot = false) {
   const before = fs.lstatSync(archivePath);
   if (before.isSymbolicLink() || !before.isFile()) fail('archive_not_regular');
   const fd = fs.openSync(archivePath, 'r');
@@ -366,10 +613,12 @@ export function inspectArchive(archivePath) {
       try { return { entry, ...analyzeSource(decode(readExact(fd, info.size, info.start))) }; }
       catch (error) { return { entry, status: codeOf(error) }; }
     });
+    const archiveSha256 = includeSnapshot ? hashDescriptor(fd, opened.size) : null;
     if (!unchanged(opened, fs.fstatSync(fd)) || !unchanged(opened, fs.lstatSync(archivePath))) {
       fail('archive_changed');
     }
-    return { schema: 1, status: 'static_candidates_only', runtimeKeyProven: false, archiveEntries: index.entries, entries };
+    const report = { schema: 1, status: 'static_candidates_only', runtimeKeyProven: false, archiveEntries: index.entries, entries };
+    return includeSnapshot ? { report, archiveSha256 } : report;
   } finally { fs.closeSync(fd); }
 }
 
@@ -398,7 +647,14 @@ export function inspectPackage(packageRoot) {
     if (stat.isSymbolicLink() || !equalPath(fs.realpathSync(current), current)) fail('package_path_redirected');
     if (part !== 'app.asar' && !stat.isDirectory()) fail('package_path_not_directory');
   }
-  return inspectArchive(current);
+  const legacy = inspectArchive(current, true);
+  const publicPlugins = inspectPublicPluginPackage(root);
+  // Only successful public reports are eligible for the harness's package-hash
+  // verification. Bind their legacy metadata to the exact same archive bytes.
+  if (publicPlugins.status !== 'blocked' && legacy.archiveSha256 !== publicPlugins.archiveSha256) {
+    fail('archive_changed');
+  }
+  return { ...legacy.report, publicPlugins };
 }
 function main() {
   try {

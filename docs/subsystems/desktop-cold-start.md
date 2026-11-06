@@ -278,8 +278,101 @@ fixed-label validator uses the same 16 additional names.
 
 Recognition is not authorization to enable a plugin. Native `enabled` changes
 installed-plugin activation and may expose skills, MCP servers, apps or hooks.
-Native `auto_provision` is provisioning metadata, not authorization and not an
-instruction that itself performs provisioning. Neither field is passed through
+Native `auto_provision` is provisioning metadata, not authorization. Creating a
+new entry can still make an installed plugin eligible for activation through
+native defaults. It must not be forwarded as an inert or harmless setting. Neither field is passed through
 by the production adapter in this diagnostic change. The actual exact match,
 official behavior, both backends and remaining initialization gates must be
 reviewed before any production compatibility change.
+
+
+### Source-bound public catalog diagnostic
+
+At `a54fd10a36483aaaf6498b3ce47682ae9f3415e9`, all three experimental
+workflows passed, including
+[the policy trace](https://github.com/breakingtime126/magpie/actions/runs/42193686360).
+The verified 26.1103.3517.0 Desktop and its bundled
+`codex-cli 0.167.0-alpha.3.2` still completed only the one-shot startup.
+Normal JSONL startup rejected the extra assignment, and none of the 16 frozen
+public plugin keys matched. A green diagnostic job did not establish a working
+bridge.
+
+The next diagnostic obtains candidates only from the same verified installed
+public package. The stdlib-only Node reader scans bounded packed JavaScript
+under `.vite/build/` and four fixed marketplace-manifest layouts under
+`app/resources/plugins/<marketdir>/`. It does not execute package code, read
+private homes or environment values, search accounts, or fetch plugin catalogs.
+The existing three-entry launcher inspection and its validation remain in place.
+
+The added `publicPlugins` report is either a fixed blocked reason or a public
+table with exact ASCII keys, source paths, SHA-256 values, derivation labels,
+and explicit scan coverage. It scans at most 2,048 JavaScript files, at most
+16 MiB each, and 16 manifests of at most 256 KiB each, with a combined source
+limit of 128 MiB. At most 64 supporting sources and 128 distinct keys fit in
+the existing 64 KiB report bound. The Node inspection has a fixed two-minute
+process deadline. Lexically unsupported JavaScript contributes
+no keys. Such a scan is marked `partial`, and the coverage records its gap.
+A complete scan still does not prove that its static candidates are runtime
+arguments.
+
+Before publishing any candidate text, PowerShell validates the complete report,
+source/derivation relationships, exact key grammar, strict ordinal sorting,
+bounds and key digest. It then opens the original downloaded MSIX read-only,
+rechecks its already signature-verified fixed package hash, and streams SHA-256
+over the unique exact `app/resources/app.asar` ZIP entry. That hash must match
+the installed archive hash reported by Node. The complete archive binding
+covers its internal JavaScript sources without executing or extracting them.
+Each external manifest source must independently match its exact original ZIP
+entry hash. Case aliases and duplicate ZIP entries, redirected package path
+components, nonregular entry attributes, missing sources, oversized entries,
+hash failures and a two-minute streaming deadline all fail closed.
+No package is extracted, repacked or changed for this verification.
+
+The handoff is the process-local `MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES` variable,
+canonical compact JSON with ordered fields `schema`, `packageSha256`,
+`archiveSha256`, `keysSha256`, and `keys`. The digest covers the ASCII-sorted
+keys joined by exactly LF, without a trailing LF. Each key is at most 128
+ASCII bytes and has only the direct `plugins.<identity>@<marketplace>.enabled`
+or `.auto_provision` form. The payload is at most 16 KiB UTF-8; the complete
+minimal Windows child environment is at most 30,000 characters including
+entry separators and terminators. Existing presence checks reject an inherited
+handoff. An empty, unsupported or invalid catalog stops before Desktop launch,
+with an explicit unknown-identity result, rather than treating failure as no
+matching plugin.
+
+The observer preserves the original fixed lookup first. Only otherwise unknown
+keys can match the validated dynamic table, by exact equality after the existing
+whole-key ASCII trimming. A matched event contains only a one-based
+`publicPluginRef` and `bool_true`, `bool_false` or `other`, never the key or a
+runtime value. An independent `public_plugin_catalog` event identifies the table
+by its key digest. PowerShell requires exactly one matching digest per observed
+PID after observer start and before any argv or child event, even if no reference
+matches. It checks the exact event shape and integer
+bounds, and resolves references only against its independently verified public
+table. Repeated argv references are allowed; duplicate catalog events, mixed
+fixed-key/unknown fields, changed digests and out-of-range references are not.
+Published match names come from the public table, never from argv. The observer
+strips this variable before launching the unchanged production bridge.
+
+This is positive-match evidence only. Partial coverage, unsupported syntax or
+no match must not be described as proof that a plugin is absent. A match
+identifies public spelling, not plugin authenticity, signature verification,
+installed-plugin safety, successful initialization, or authority to enable or
+provision anything. Neither `enabled` nor `auto_provision` is forwarded by this
+change. Authentication, organization policy, production argument acceptance
+and both private backend homes remain unchanged.
+
+Offline PowerShell fixtures load only allowlisted validator function definitions
+from the probe's AST. They use synthetic ZIPs and check field casing, unknown
+fields, duplicate keys and source paths, coverage/provenance gaps, source and
+handoff digests, source indices, per-PID catalog ordering, strict references,
+ZIP aliases, file/descendant collisions and link attributes, and environment
+bounds. A synthetic ASAR also exercises the actual Node report through the
+PowerShell JSON and catalog validators on both platforms. The policy workflow
+runs these tests, both Node suites and the observer/bridge suites on Linux and
+Windows at the exact pushed head, while preserving prior behavioral red
+fixtures. The new native-executable observer regression runs on Windows and must also
+fail behaviorally against the pre-catalog `a54fd10a` code; its explicit Linux
+skip does not count as red evidence. These tests never install Desktop or contact an
+account; the separate fresh Windows observation retains the signed-package,
+registration, GUI-session and no-account gates.

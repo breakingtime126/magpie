@@ -30,30 +30,33 @@ const (
 )
 
 // event has no field capable of containing a raw RPC payload, ID, argv value,
-// path or stderr. String fields and classification arrays contain only fixed labels.
+// path or stderr. Strings are fixed labels or the verified public dictionary's
+// digest; dynamic public key matches expose only bounded dictionary indices.
 type event struct {
-	Sequence              uint64   `json:"seq"`
-	PID                   int      `json:"pid"`
-	Kind                  string   `json:"kind"`
-	Direction             string   `json:"direction,omitempty"`
-	Method                string   `json:"method,omitempty"`
-	Correlation           uint64   `json:"correlation,omitempty"`
-	Code                  *int64   `json:"code,omitempty"`
-	Class                 string   `json:"class,omitempty"`
-	RequestAttestation    *bool    `json:"requestAttestation,omitempty"`
-	ExplicitGatewayOauth  *bool    `json:"explicitGatewayOauth,omitempty"`
-	RequiredHumanApproval *bool    `json:"requiredHumanApproval,omitempty"`
-	ExperimentalAPI       *bool    `json:"experimentalApi,omitempty"`
-	Flag                  string   `json:"flag,omitempty"`
-	ConfigKey             string   `json:"configKey,omitempty"`
-	ConfigValue           string   `json:"configValue,omitempty"`
-	ConfigShape           string   `json:"configShape,omitempty"`
-	ConfigFamily          string   `json:"configFamily,omitempty"`
-	ConfigLiteral         string   `json:"configLiteral,omitempty"`
-	ConfigLexicalRoot     string   `json:"configLexicalRoot,omitempty"`
-	ConfigKeyClasses      []string `json:"configKeyClasses,omitempty"`
-	ChildPID              int      `json:"child_pid,omitempty"`
-	Exit                  *int     `json:"exit,omitempty"`
+	Sequence                  uint64   `json:"seq"`
+	PID                       int      `json:"pid"`
+	Kind                      string   `json:"kind"`
+	Direction                 string   `json:"direction,omitempty"`
+	Method                    string   `json:"method,omitempty"`
+	Correlation               uint64   `json:"correlation,omitempty"`
+	Code                      *int64   `json:"code,omitempty"`
+	Class                     string   `json:"class,omitempty"`
+	RequestAttestation        *bool    `json:"requestAttestation,omitempty"`
+	ExplicitGatewayOauth      *bool    `json:"explicitGatewayOauth,omitempty"`
+	RequiredHumanApproval     *bool    `json:"requiredHumanApproval,omitempty"`
+	ExperimentalAPI           *bool    `json:"experimentalApi,omitempty"`
+	Flag                      string   `json:"flag,omitempty"`
+	ConfigKey                 string   `json:"configKey,omitempty"`
+	ConfigValue               string   `json:"configValue,omitempty"`
+	ConfigShape               string   `json:"configShape,omitempty"`
+	ConfigFamily              string   `json:"configFamily,omitempty"`
+	ConfigLiteral             string   `json:"configLiteral,omitempty"`
+	ConfigLexicalRoot         string   `json:"configLexicalRoot,omitempty"`
+	ConfigKeyClasses          []string `json:"configKeyClasses,omitempty"`
+	PublicPluginRef           int      `json:"publicPluginRef,omitempty"`
+	PublicPluginCatalogSHA256 string   `json:"publicPluginCatalogSHA256,omitempty"`
+	ChildPID                  int      `json:"child_pid,omitempty"`
+	Exit                      *int     `json:"exit,omitempty"`
 }
 
 type pendingKey struct {
@@ -74,6 +77,7 @@ type observer struct {
 	quarantined         map[pendingKey]bool
 	correlationDisabled bool
 	stopped             bool
+	publicPlugins       *publicPluginCatalog
 }
 
 func newObserver(w io.Writer) *observer {
@@ -384,7 +388,13 @@ func (o *observer) argv(args []string) {
 			} else {
 				_, value, _ = strings.Cut(args[i], "=")
 			}
-			o.emit(observedConfigArgument(value))
+			e := observedConfigArgument(value)
+			if e.Class == "unknown" && o.publicPlugins != nil {
+				if matched, known := o.publicPlugins.argument(value); known {
+					e = matched
+				}
+			}
+			o.emit(e)
 		default:
 			o.emit(event{Kind: "argv", Class: "unknown"})
 		}
@@ -464,7 +474,7 @@ func childEnvironment() []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if strings.EqualFold(key, activeEnv) {
+		if strings.EqualFold(key, activeEnv) || strings.EqualFold(key, publicPluginCatalogEnv) {
 			continue
 		}
 		env = append(env, value)
@@ -566,6 +576,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "desktop-rpc-observer: Windows CI only")
 		os.Exit(125)
 	}
+	var catalog *publicPluginCatalog
+	if value, present := os.LookupEnv(publicPluginCatalogEnv); present {
+		loaded, err := parsePublicPluginCatalog(value)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "desktop-rpc-observer: invalid test-only setup")
+			os.Exit(125)
+		}
+		catalog = loaded
+	}
 	real, trace, err := setup()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "desktop-rpc-observer: invalid test-only setup")
@@ -576,7 +595,11 @@ func main() {
 		sink = trace
 	}
 	o := newObserver(sink)
+	o.publicPlugins = catalog
 	o.emit(event{Kind: "observer_start", Class: "test_only"})
+	if catalog != nil {
+		o.emit(event{Kind: "public_plugin_catalog", PublicPluginCatalogSHA256: catalog.digest})
+	}
 	o.argv(os.Args[1:])
 	code := runChild(real, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, o)
 	if trace != nil {

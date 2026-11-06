@@ -9,7 +9,9 @@ on:
       - .github/workflows/experimental-desktop-policy-trace.yml
       - build/desktop-rpc-observer/**
       - build/test-desktop-cold-start.ps1
+      - build/test-desktop-public-catalog.ps1
       - build/inspect-desktop-static-metadata*.mjs
+      - build/inspect-desktop-public-plugin-metadata*.mjs
       - internal/appserverbridge/**
       - cmd/magpie-codex-bridge/**
 
@@ -127,7 +129,8 @@ jobs:
             done < <(gofmt -l build/desktop-rpc-observer internal/appserverbridge cmd/magpie-codex-bridge || true)
             exit 1
           fi
-          node --test build/inspect-desktop-static-metadata.test.mjs
+          pwsh -NoProfile -File build/test-desktop-public-catalog.ps1
+          node --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs
           go test -race -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           go vet -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
 
@@ -157,6 +160,31 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Check out exact pre-catalog observer behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: a54fd10a36483aaaf6498b3ce47682ae9f3415e9
+          path: .ci-public-catalog-baseline
+          persist-credentials: false
+      - name: Prove source-bound catalog references fail on the old Windows observer
+        run: |
+          Copy-Item build/desktop-rpc-observer/config_public_catalog_red_test.go .ci-public-catalog-baseline/build/desktop-rpc-observer/
+          Push-Location .ci-public-catalog-baseline
+          $savedPreference = $ErrorActionPreference
+          try {
+            $ErrorActionPreference = 'Continue'
+            $output = @(& go test -v -count=1 -timeout=5m -tags nogui -run '^TestPublicCatalogExecutableUsesBoundRefsWithoutMutation$' ./build/desktop-rpc-observer 2>&1)
+            $status = $LASTEXITCODE
+          } finally {
+            $ErrorActionPreference = $savedPreference
+            Pop-Location
+          }
+          $text = $output | Out-String
+          Write-Output $text
+          if ($status -eq 0 -or $text -notmatch '--- FAIL: TestPublicCatalogExecutableUsesBoundRefsWithoutMutation' -or
+              -not $text.Contains('catalog argument was not identified by the bound public index')) {
+            throw 'The old observer must fail the catalog behavior assertion, not compile or skip.'
+          }
       - name: Check probe syntax before execution
         run: |
           $errors = $null
@@ -166,7 +194,9 @@ jobs:
           if ($errors.Count -gt 0) { $errors | Format-List; throw 'Probe syntax validation failed.' }
       - name: Test startup profiles on Windows and build exact bridge
         run: |
-          node --test build/inspect-desktop-static-metadata.test.mjs
+          powershell -NoProfile -File build/test-desktop-public-catalog.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Public catalog validation tests failed.' }
+          node --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Static metadata inspector tests failed.' }
           go test -count=1 -timeout=10m -tags nogui ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
           if ($LASTEXITCODE -ne 0) { throw 'Windows observer tests failed.' }
