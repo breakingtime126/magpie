@@ -45,6 +45,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Check platform-neutral live supervisor fixtures before regression setup
+        shell: pwsh
+        run: |
+          ./build/desktop-live-welcome.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Platform-neutral live supervisor fixtures failed.' }
       - name: Set up the pinned Go version
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:

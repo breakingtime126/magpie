@@ -5,6 +5,31 @@ $ErrorActionPreference='Stop'
 $count=0
 function Pass([bool]$Condition,[string]$Name) { if (-not $Condition) { throw $Name }; $script:count++ }
 function Reject([scriptblock]$Action,[string]$Name) { $failed=$false; try { & $Action } catch { $failed=$true }; Pass $failed $Name }
+# PowerShell variables are case-insensitive. Fail early on read-only automatic
+# names in locals, parameters and foreach binders, before any process fixtures.
+# Assigning to $null is the intentional output sink and remains allowed.
+$readOnlyNames=@('HOME','Host','PID','PSHOME','PSVersionTable','PSEdition','PSCulture','PSUICulture',
+    'IsWindows','IsLinux','IsMacOS','IsCoreCLR','ShellId','ExecutionContext','Error','true','false')
+foreach ($file in @('desktop-live-welcome.ps1','desktop-live-welcome.tests.ps1',
+    'desktop-welcome-step.ps1','desktop-welcome-step.tests.ps1')) {
+    $parseTokens=$null; $parseErrors=$null
+    $scriptAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $file),[ref]$parseTokens,[ref]$parseErrors)
+    Pass ($parseErrors.Count -eq 0) 'new script parses before fixture execution'
+    $binders=@($scriptAst.FindAll({
+        param($node)
+        ($node -is [Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left -is [Management.Automation.Language.VariableExpressionAst]) -or
+        $node -is [Management.Automation.Language.ParameterAst] -or
+        $node -is [Management.Automation.Language.ForEachStatementAst]
+    },$true))
+    foreach ($binder in $binders) {
+        if ($binder -is [Management.Automation.Language.ParameterAst]) { $variable=$binder.Name }
+        elseif ($binder -is [Management.Automation.Language.ForEachStatementAst]) { $variable=$binder.Variable }
+        else { $variable=$binder.Left }
+        $variableName=($variable.VariablePath.UserPath -split ':')[-1]
+        Pass ($readOnlyNames -notcontains $variableName) 'new script must not bind read-only automatic variable'
+    }
+}
 Assert-LiveWelcomeOptions $false 'baseline' $false $false
 Assert-LiveWelcomeOptions $true 'observe' $true $true
 foreach ($mode in @('baseline','bridge')) { Reject { Assert-LiveWelcomeOptions $true $mode $true $true } 'live mode guard' }

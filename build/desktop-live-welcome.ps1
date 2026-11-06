@@ -84,14 +84,14 @@ function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex) {
     }
     $backends = @(); $i = 0
     foreach ($id in @('alpha','beta')) {
-        $b = $Value.backends[$i++]; $home = Join-Path $Scratch ($id + '-home'); $ch = Join-Path $Scratch ($id + '-codex')
+        $b = $Value.backends[$i++]; $backendHome = Join-Path $Scratch ($id + '-home'); $ch = Join-Path $Scratch ($id + '-codex')
         Assert-LiveShape $b @('id','provider','command','home','codex_home','startup_probe_sha256')
         Assert-LiveStrings $b @('id','provider','command','home','codex_home','startup_probe_sha256')
         if ($b.id -cne $id -or $b.provider -cne ($id + '_provider') -or $b.command -cne $Codex -or
-            $b.home -cne $home -or $b.codex_home -cne $ch -or
+            $b.home -cne $backendHome -or $b.codex_home -cne $ch -or
             $b.startup_probe_sha256 -cne '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39') { throw 'Invalid live backend authority.' }
         # Reconstruct, never copy command/path authority from the helper's JSON.
-        $backends += [ordered]@{ id=$id; provider=($id+'_provider'); command=$Codex; home=$home; codex_home=$ch }
+        $backends += [ordered]@{ id=$id; provider=($id+'_provider'); command=$Codex; home=$backendHome; codex_home=$ch }
     }
     return [pscustomobject]@{ Backends=$backends; Workspace=$workspace; ControlHome=$control }
 }
