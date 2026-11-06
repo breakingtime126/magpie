@@ -56,3 +56,35 @@ assert reachability, execution, successful coercion, or plugin identity. The
 unresolved count concerns recognizable plugin-prefixed compositions not mapped
 to the eight pinned native boolean shapes. Unsupported/oversized compositions
 can remain unclassified. The legacy three-entry lexical report is separate.
+
+## Fixed resource failure reasons and omitted files
+
+AST resource classification uses only these fixed codes:
+`public_ast_bytes_limit`, `public_ast_token_limit`, `public_ast_node_limit`,
+`public_ast_parse_depth_limit`, `public_ast_walk_depth_limit`,
+`public_ast_walk_node_limit`, `public_ast_deadline`, and
+`public_ast_range_error`. No source location, expression, identifier, measured
+value, exception text or stack is emitted. These labels do not change any cap or
+parser algorithm. A valid long binary chain can exceed guarded Acorn recursion,
+while a long member chain can parse iteratively and exceed AST walk depth.
+Neither example proves which bound an official package encountered.
+
+Exactly six explicit file-local guards (token, node, parse depth, walk depth,
+walk node, deadline) may omit that entire file and produce a partial catalog.
+The file contributes zero sources, candidates, method counts or construction
+rows, including work collected before the failure. Its read bytes still count
+toward the existing aggregate source budget. Only independently successful
+sources and validated marketplace manifests contribute positive evidence.
+
+Successful reports include analysis.skipped with nonzero fixed reason/count
+rows in this order: syntax_error, public_ast_token_limit, public_ast_node_limit,
+public_ast_parse_depth_limit, public_ast_walk_depth_limit,
+public_ast_walk_node_limit, public_ast_deadline. Counts sum exactly to jsSkipped;
+a complete report has no rows. Counts do not reveal file names or source data.
+
+Byte/read/UTF-8/archive/hash/provenance/global source/catalog/row/process failures
+and bare RangeError still block the entire inspection and clear all evidence.
+RangeError does not prove that a particular measured depth guard was reached.
+Unexpected parser defects remain a fixed inspection failure, not partial syntax.
+A partial catalog supports exact positive matches only; no match does not rule
+out any key in omitted files, other field shapes or dynamic construction.

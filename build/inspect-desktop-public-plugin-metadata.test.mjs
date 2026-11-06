@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { Parser } from './vendor/acorn-8.15.0/acorn.mjs';
+import { AST_BLOCK_CODES, AST_SKIP_CODES, PublicPluginASTLimit } from './inspect-desktop-public-plugin-ast.mjs';
 import {
   PUBLIC_PLUGIN_LIMITS, TARGETS, analyzePublicPluginSource,
   inspectPublicPluginPackage, publicPluginKeysDigest, inspectPackage, readPublicManifest,
@@ -352,6 +354,7 @@ test('construction-only files have bound source records without invented identit
       { name: 'startupCommand', definitions: 0, unresolved: 0 }],
     constructions: [{ source: 0, method: 'getConfigOverrides', form: 'template',
       shape: 'app_enabled', value: 'bool_true', count: 1 }],
+    skipped: [],
   });
   assert.ok(!JSON.stringify(report).includes('SYNTHETIC_PRIVATE_ID'));
   assert.deepEqual(fs.readFileSync(path.join(root, 'app/resources/app.asar')), before);
@@ -377,4 +380,134 @@ test('construction rows in different files retain separate source provenance', t
   assert.equal(report.analysis.methods[1].definitions, 2);
   assert.deepEqual(report.analysis.constructions.map(item => item.source), [0, 1]);
   assert.ok(report.analysis.constructions.every(item => item.count === 1));
+});
+
+test('non-skippable later AST failures clear all earlier public evidence', t => {
+  const root = fixture(t);
+  writeArchive(root, [[JS, 'const x="earlier-public@market";'],
+    [OTHER_JS, 'const x="later-public@market";']]);
+  const parse = Parser.prototype.parse;
+  let reason, calls = 0;
+  t.mock.method(Parser.prototype, 'parse', function (...args) {
+    if (++calls === 2) throw new PublicPluginASTLimit(reason);
+    return parse.apply(this, args);
+  });
+  for (reason of AST_BLOCK_CODES.filter(code => !AST_SKIP_CODES.includes(code))) {
+    calls = 0;
+    const report = inspectPublicPluginPackage(root);
+    assert.equal(calls, 2);
+    assert.deepEqual(report, { schema: 1, status: 'blocked', reason });
+    assert.ok(!JSON.stringify(report).includes('earlier-public'));
+    assert.ok(!JSON.stringify(report).includes('later-public'));
+  }
+});
+
+test('unexpected parser failures publish only a fixed inspection failure', t => {
+  const root = fixture(t);
+  writeArchive(root, [[JS, 'const x="public@market";']]);
+  t.mock.method(Parser.prototype, 'parse', () => { throw new Error('SYNTHETIC_PRIVATE_FAILURE'); });
+  assert.deepEqual(inspectPublicPluginPackage(root), {
+    schema: 1, status: 'blocked', reason: 'io_or_inspection_failed',
+  });
+});
+
+test('local guards before or after valid files retain only complete independent evidence', t => {
+  const root = fixture(t);
+  const paths = ['.vite/build/a-first.js', '.vite/build/b-middle.js', '.vite/build/c-last.js'];
+  const normal = [
+    'function getConfigOverrides(){return "plugins.first@market.enabled=true"}',
+    'function getConfigOverrides(){return "plugins.middle@market.enabled=true"}',
+    'function getConfigOverrides(){return "plugins.last@market.enabled=true"}',
+  ];
+  const parse = Parser.prototype.parse;
+  let failureAt = 0, reason, calls = 0;
+  t.mock.method(Parser.prototype, 'parse', function (...args) {
+    const result = parse.apply(this, args);
+    if (++calls === failureAt + 1) throw new PublicPluginASTLimit(reason);
+    return result;
+  });
+  for (reason of AST_SKIP_CODES) {
+    for (failureAt of [0, 1, 2]) {
+      calls = 0;
+      const sources = normal.map((source, i) => i === failureAt ?
+        'function getConfigOverrides(){return "plugins.SYNTHETIC_PRIVATE@market.enabled=true"}' : source);
+      writeArchive(root, paths.map((name, i) => [name, sources[i]]));
+      const report = inspectPublicPluginPackage(root);
+      assert.equal(calls, 3);
+      assert.equal(report.status, 'partial');
+      assert.equal(report.coverage.jsFiles, 3);
+      assert.equal(report.coverage.jsComplete, 2);
+      assert.equal(report.coverage.jsSkipped, 1);
+      assert.equal(report.coverage.sourceBytes, sources.reduce((sum, value) => sum + Buffer.byteLength(value), 0));
+      assert.deepEqual(report.analysis.skipped, [{ reason, count: 1 }]);
+      assert.equal(report.analysis.methods[0].definitions, 2);
+      assert.equal(report.analysis.methods[0].unresolved, 0);
+      assert.equal(report.candidates.length, 2);
+      assert.equal(report.sources.length, 2);
+      assert.deepEqual(report.sources.map(item => item.path), paths.filter((_, i) => i !== failureAt));
+      assert.equal(report.analysis.constructions.length, 2);
+      assert.ok(report.analysis.constructions.every(item => item.count === 1));
+      assert.ok(report.candidates.every(item => item.source >= 0 && item.source < 2));
+      assert.ok(!JSON.stringify(report).includes('SYNTHETIC_PRIVATE'));
+    }
+  }
+});
+
+test('actual late walk-depth guard discards earlier local candidates and method rows', t => {
+  const root = fixture(t);
+  const limited = 'function getConfigOverrides(){return "plugins.SYNTHETIC_PRIVATE@market.enabled=true"}' +
+    'const x=root' + '.member'.repeat(600) + ';';
+  writeArchive(root, [[JS, limited], [OTHER_JS, 'const p="good@market";']]);
+  const report = inspectPublicPluginPackage(root);
+  assert.equal(report.status, 'partial');
+  assert.deepEqual(report.analysis.skipped, [{ reason: 'public_ast_walk_depth_limit', count: 1 }]);
+  assert.ok(report.analysis.methods.every(item => item.definitions === 0 && item.unresolved === 0));
+  assert.deepEqual(report.analysis.constructions, []);
+  assert.deepEqual(report.sources.map(item => item.path), [OTHER_JS]);
+  assert.deepEqual(report.candidates.map(item => item.key), [
+    'plugins.good@market.auto_provision', 'plugins.good@market.enabled',
+  ]);
+  assert.ok(!JSON.stringify(report).includes('SYNTHETIC_PRIVATE'));
+});
+
+test('skip counts are canonical, aggregate, and equal the omitted file count', t => {
+  const root = fixture(t);
+  writeArchive(root, [
+    ['.vite/build/a-depth.js', 'const x=root' + '.x'.repeat(600) + ';'],
+    ['.vite/build/b-syntax.js', '???'],
+    ['.vite/build/c-depth.js', 'const x=root' + '.x'.repeat(600) + ';'],
+  ]);
+  manifest(root, 'market', { name: 'market', plugins: [{ name: 'public' }] });
+  const report = inspectPublicPluginPackage(root);
+  assert.equal(report.status, 'partial');
+  assert.deepEqual(report.analysis.skipped, [
+    { reason: 'syntax_error', count: 1 }, { reason: 'public_ast_walk_depth_limit', count: 2 },
+  ]);
+  assert.equal(report.coverage.jsSkipped, report.analysis.skipped.reduce((sum, item) => sum + item.count, 0));
+  assert.equal(report.candidates.length, 2);
+  assert.ok(report.candidates.every(item => item.derivation === 'manifest_identity'));
+});
+
+test('bare RangeError after a valid file still blocks the entire package', t => {
+  const root = fixture(t);
+  writeArchive(root, [[JS, 'const p="earlier@market";'], [OTHER_JS, 'const q=1;']]);
+  const parse = Parser.prototype.parse;
+  let calls = 0;
+  t.mock.method(Parser.prototype, 'parse', function (...args) {
+    if (++calls === 2) throw new RangeError('SYNTHETIC_PRIVATE_STACK');
+    return parse.apply(this, args);
+  });
+  assert.deepEqual(inspectPublicPluginPackage(root), {
+    schema: 1, status: 'blocked', reason: 'public_ast_range_error',
+  });
+  assert.equal(calls, 2);
+});
+
+test('complete public analysis has no skip reasons', t => {
+  const root = fixture(t);
+  writeArchive(root, [[JS, 'const p="public@market";']]);
+  const report = inspectPublicPluginPackage(root);
+  assert.equal(report.status, 'complete');
+  assert.equal(report.coverage.jsSkipped, 0);
+  assert.deepEqual(report.analysis.skipped, []);
 });

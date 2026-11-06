@@ -11,7 +11,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
-    'Assert-PublicCanonicalJSON', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Assert-PublicAnalysis', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
+    'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
     'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
@@ -56,6 +56,7 @@ function New-Catalog {
                 [pscustomobject]@{ name='startupCommand'; definitions=0; unresolved=0 }
             )
             constructions = @()
+            skipped = @()
         }
         candidates = @($keys | ForEach-Object { [pscustomobject]@{ key = $_; source = 0; derivation = 'id_literal' } })
     }
@@ -70,6 +71,41 @@ function New-Reference([int]$pidValue = 100) {
     return [pscustomobject]@{ seq = 3; pid = $pidValue; kind = 'argv_config'; publicPluginRef = 1; configValue = 'bool_true' }
 }
 $packageHash = 'c' * 64
+$publicFailureCodes = @('public_source_limit', 'public_source_not_packed', 'public_manifest_invalid',
+    'public_manifest_limit', 'public_catalog_limit', 'public_source_path', 'public_archive_changed',
+    'public_ast_bytes_limit', 'public_ast_token_limit', 'public_ast_node_limit',
+    'public_ast_parse_depth_limit', 'public_ast_walk_depth_limit', 'public_ast_walk_node_limit',
+    'public_ast_deadline', 'public_ast_range_error')
+Expect-Pass 'fixed public failure reasons retain only blocked metadata' {
+    if ((@(Get-PublicCatalogFailureCodes) -join '|') -cne ($publicFailureCodes -join '|')) {
+        throw 'Public failure whitelist changed.'
+    }
+    foreach ($reason in $publicFailureCodes + @('invalid_utf8')) {
+        $failure = [pscustomobject]@{ schema=1; status='blocked'; reason=$reason }
+        $output = @(Assert-PublicCatalogFailure $failure @('invalid_utf8'))
+        if ($output.Count -ne 0) { throw 'Failure validation published data.' }
+    }
+}
+$invalidFailures = [ordered]@{
+    'syntax error is not a blocked reason' = { param($f) $f.reason = 'syntax_error' }
+    'unknown public failure' = { param($f) $f.reason = 'PRIVATE_CANARY' }
+    'case changed public failure' = { param($f) $f.reason = 'PUBLIC_AST_TOKEN_LIMIT' }
+    'nonstring public failure' = { param($f) $f.reason = @('public_ast_token_limit') }
+    'failure with candidate data' = { param($f) $f | Add-Member -NotePropertyName candidates -NotePropertyValue @('PRIVATE_CANARY') }
+    'failure with raw exception' = { param($f) $f | Add-Member -NotePropertyName message -NotePropertyValue PRIVATE_CANARY }
+    'failure with source position' = { param($f) $f | Add-Member -NotePropertyName position -NotePropertyValue 123 }
+    'failure with nonblocked status' = { param($f) $f.status = 'partial' }
+    'failure with string schema' = { param($f) $f.schema = '1' }
+    'failure missing reason' = { param($f) $f.PSObject.Properties.Remove('reason') }
+}
+foreach ($name in $invalidFailures.Keys) {
+    $mutation = $invalidFailures[$name]
+    Expect-Reject $name {
+        $f = [pscustomobject]@{ schema=1; status='blocked'; reason='public_ast_token_limit' }
+        & $mutation $f
+        Assert-PublicCatalogFailure $f @('invalid_utf8')
+    }
+}
 Expect-Pass 'SHA256 known vector' {
     if ((Get-PublicDigest ([Text.Encoding]::UTF8.GetBytes('abc'))) -cne
         'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') { throw 'digest' }
@@ -85,6 +121,7 @@ Expect-Pass 'canonical ordered handoff and shared source index' {
 Expect-Pass 'partial coverage remains explicit' {
     $catalog = New-Catalog
     $catalog.status = 'partial'; $catalog.coverage.jsFiles = 2; $catalog.coverage.jsSkipped = 1
+    $catalog.analysis.skipped = @([pscustomobject]@{ reason='syntax_error'; count=1 })
     ConvertTo-PublicPluginEnvironment $catalog $packageHash
 }
 Expect-Pass 'manifest identity candidates preserve source relationship' {
@@ -172,6 +209,75 @@ Expect-Pass 'analysis aggregate bounds are independent and inclusive' {
     $second = New-Construction; $second.form='concat'; $second.count=2000000
     $c.analysis.constructions = @($first, $second)
     ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+Expect-Pass 'local parser skips retain independent catalog bytes and explicit coverage' {
+    $expected = @('syntax_error', 'public_ast_token_limit', 'public_ast_node_limit',
+        'public_ast_parse_depth_limit', 'public_ast_walk_depth_limit',
+        'public_ast_walk_node_limit', 'public_ast_deadline')
+    if ((@(Get-PublicASTSkipReasons) -join '|') -cne ($expected -join '|')) { throw 'Skip reason whitelist changed.' }
+    $c = New-Catalog
+    $c.status='partial'; $c.coverage.jsFiles=8; $c.coverage.jsSkipped=7
+    $c.analysis.skipped = @($expected | ForEach-Object { [pscustomobject]@{ reason=$_; count=1 } })
+    $before = ConvertTo-PublicPluginEnvironment (New-Catalog) $packageHash
+    $after = ConvertTo-PublicPluginEnvironment $c $packageHash
+    if ($before -cne $after) { throw 'Skipped sources changed the independently retained catalog.' }
+}
+Expect-Pass 'all JavaScript skipped still permits independently verified manifest candidates' {
+    $c = New-Catalog
+    $c.status='partial'; $c.coverage.jsFiles=2048; $c.coverage.jsComplete=0; $c.coverage.jsSkipped=2048
+    $c.coverage.manifestFiles=1; $c.coverage.sourceBytes=65536
+    $c.sources[0].kind='marketplace_manifest'
+    $c.sources[0].path='app/resources/plugins/public-market/.agents/plugins/marketplace.json'
+    foreach ($candidate in $c.candidates) { $candidate.derivation='manifest_identity' }
+    $c.analysis.skipped = @([pscustomobject]@{ reason='syntax_error'; count=2048 })
+    ConvertTo-PublicPluginEnvironment $c $packageHash
+}
+$invalidSkips = [ordered]@{
+    'missing skipped diagnostics' = { param($c) $c.analysis.PSObject.Properties.Remove('skipped') }
+    'scalar skipped diagnostics' = { param($c) $c.analysis.skipped=$c.analysis.skipped[0] }
+    'empty skips with incomplete coverage' = { param($c) $c.analysis.skipped=@() }
+    'nonempty skips with complete coverage' = {
+        param($c) $c.status='complete'; $c.coverage.jsFiles=1; $c.coverage.jsSkipped=0
+    }
+    'unknown skip reason' = { param($c) $c.analysis.skipped[0].reason='PRIVATE_CANARY' }
+    'case skip reason' = { param($c) $c.analysis.skipped[0].reason='SYNTAX_ERROR' }
+    'array skip reason' = { param($c) $c.analysis.skipped[0].reason=@('syntax_error') }
+    'bytes failure cannot be skipped' = { param($c) $c.analysis.skipped[0].reason='public_ast_bytes_limit' }
+    'range failure cannot be skipped' = { param($c) $c.analysis.skipped[0].reason='public_ast_range_error' }
+    'source failure cannot be skipped' = { param($c) $c.analysis.skipped[0].reason='public_source_limit' }
+    'UTF8 failure cannot be skipped' = { param($c) $c.analysis.skipped[0].reason='invalid_utf8' }
+    'archive failure cannot be skipped' = { param($c) $c.analysis.skipped[0].reason='archive_changed' }
+    'zero skipped count' = { param($c) $c.analysis.skipped[0].count=0 }
+    'string skipped count' = { param($c) $c.analysis.skipped[0].count='1' }
+    'floating skipped count' = { param($c) $c.analysis.skipped[0].count=1.0 }
+    'skipped count bound' = { param($c) $c.analysis.skipped[0].count=2049 }
+    'skipped total differs from coverage' = { param($c) $c.analysis.skipped[0].count=2 }
+    'duplicate skipped reasons' = { param($c) $c.analysis.skipped += $c.analysis.skipped[0] }
+    'unordered skipped reasons' = {
+        param($c)
+        $c.analysis.skipped=@([pscustomobject]@{reason='public_ast_token_limit';count=1},[pscustomobject]@{reason='syntax_error';count=1})
+    }
+    'skipped aggregate bound' = {
+        param($c)
+        $c.analysis.skipped=@([pscustomobject]@{reason='syntax_error';count=2048},[pscustomobject]@{reason='public_ast_token_limit';count=1})
+    }
+    'skipped row bound' = { param($c) $c.analysis.skipped=@(1..8 | ForEach-Object {[pscustomobject]@{reason='syntax_error';count=1}}) }
+    'skip cannot carry source names' = {
+        param($c) $c.analysis.skipped[0] | Add-Member -NotePropertyName source -NotePropertyValue PRIVATE_CANARY
+    }
+    'skip cannot carry candidates' = {
+        param($c) $c.analysis.skipped[0] | Add-Member -NotePropertyName candidates -NotePropertyValue @('PRIVATE_CANARY')
+    }
+}
+foreach ($name in $invalidSkips.Keys) {
+    $mutation = $invalidSkips[$name]
+    Expect-Reject $name {
+        $c = New-Catalog
+        $c.status='partial'; $c.coverage.jsFiles=2; $c.coverage.jsSkipped=1
+        $c.analysis.skipped=@([pscustomobject]@{reason='syntax_error';count=1})
+        & $mutation $c
+        ConvertTo-PublicPluginEnvironment $c $packageHash
+    }
 }
 $invalidAnalysis = [ordered]@{
     'definitions aggregate bound' = { param($c) foreach ($m in $c.analysis.methods) { $m.definitions=2000001 } }

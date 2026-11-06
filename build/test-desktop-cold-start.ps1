@@ -36,6 +36,22 @@ function Assert-PublicCanonicalJSON([string]$text, $value) {
         throw 'Noncanonical or duplicate metadata JSON fields.'
     }
 }
+function Get-PublicCatalogFailureCodes {
+    return @('public_source_limit', 'public_source_not_packed', 'public_manifest_invalid',
+        'public_manifest_limit', 'public_catalog_limit', 'public_source_path', 'public_archive_changed',
+        'public_ast_bytes_limit', 'public_ast_token_limit', 'public_ast_node_limit',
+        'public_ast_parse_depth_limit', 'public_ast_walk_depth_limit', 'public_ast_walk_node_limit',
+        'public_ast_deadline', 'public_ast_range_error')
+}
+function Assert-PublicCatalogFailure($failure, [string[]]$legacyCodes) {
+    Assert-PublicShape $failure @('schema', 'status', 'reason')
+    Assert-PublicInteger $failure.schema 1 1
+    if ($failure.status -isnot [string] -or $failure.status -cne 'blocked' -or
+        $failure.reason -isnot [string] -or
+        ($legacyCodes + @(Get-PublicCatalogFailureCodes)) -cnotcontains $failure.reason) {
+        throw 'Unreviewed public catalog failure.'
+    }
+}
 function Get-PublicPluginShapes {
     return @('direct_enabled', 'direct_auto_provision', 'mcp_server_enabled', 'app_enabled',
         'app_destructive_enabled', 'app_open_world_enabled', 'app_default_tools_enabled', 'app_tool_enabled')
@@ -68,8 +84,31 @@ function Assert-PublicPluginShapeEvent($record) {
         $previous = $index
     }
 }
-function Assert-PublicAnalysis($analysis, $sources) {
-    Assert-PublicShape $analysis @('parser', 'methods', 'constructions')
+function Get-PublicASTSkipReasons {
+    return @('syntax_error', 'public_ast_token_limit', 'public_ast_node_limit',
+        'public_ast_parse_depth_limit', 'public_ast_walk_depth_limit',
+        'public_ast_walk_node_limit', 'public_ast_deadline')
+}
+function Assert-PublicAnalysis($analysis, $sources, $skippedFiles) {
+    Assert-PublicShape $analysis @('parser', 'methods', 'constructions', 'skipped')
+    Assert-PublicInteger $skippedFiles 0 2048
+    if ($analysis.skipped -isnot [System.Array] -or $analysis.skipped.Count -gt 7) {
+        throw 'Invalid public skipped-file diagnostic count.'
+    }
+    $skipReasons = @(Get-PublicASTSkipReasons)
+    $previousSkip = -1
+    [long]$skipTotal = 0
+    foreach ($skipped in $analysis.skipped) {
+        Assert-PublicShape $skipped @('reason', 'count')
+        if ($skipped.reason -isnot [string]) { throw 'Invalid public skipped-file reason type.' }
+        $reasonIndex = [Array]::IndexOf($skipReasons, $skipped.reason)
+        if ($reasonIndex -le $previousSkip) { throw 'Unknown, unordered or duplicate public skipped-file reason.' }
+        Assert-PublicInteger $skipped.count 1 2048
+        $skipTotal += $skipped.count
+        if ($skipTotal -gt 2048) { throw 'Public skipped-file aggregate bound exceeded.' }
+        $previousSkip = $reasonIndex
+    }
+    if ($skipTotal -ne $skippedFiles) { throw 'Public skipped-file counts do not match scan coverage.' }
     if ($analysis.parser -isnot [string] -or $analysis.parser -cne 'acorn_8_15_0') {
         throw 'Unreviewed public JavaScript parser.'
     }
@@ -171,7 +210,7 @@ function ConvertTo-PublicPluginEnvironment($catalog, [string]$packageSha256) {
     if ($jsSources -gt $catalog.coverage.jsComplete -or $manifestSources -gt $catalog.coverage.manifestFiles) {
         throw 'Public source provenance is incomplete.'
     }
-    Assert-PublicAnalysis $catalog.analysis $catalog.sources
+    Assert-PublicAnalysis $catalog.analysis $catalog.sources $catalog.coverage.jsSkipped
     $keys = @()
     $previous = $null
     foreach ($candidate in $catalog.candidates) {
@@ -751,13 +790,8 @@ namespace DesktopColdProbe {
                 }
             }
         }
-        $publicCodes = $staticCodes + @('public_source_limit', 'public_source_not_packed',
-            'public_manifest_invalid', 'public_manifest_limit', 'public_catalog_limit',
-            'public_source_path', 'public_archive_changed')
         if ($staticReport.publicPlugins.PSObject.Properties['status'] -and $staticReport.publicPlugins.status -ceq 'blocked') {
-            Assert-PublicShape $staticReport.publicPlugins @('schema', 'status', 'reason')
-            Assert-PublicInteger $staticReport.publicPlugins.schema 1 1
-            if ($publicCodes -cnotcontains $staticReport.publicPlugins.reason) { Block 'Unreviewed public catalog failure.' }
+            Assert-PublicCatalogFailure $staticReport.publicPlugins $staticCodes
             $report.publicPluginCatalog = [ordered]@{ status = 'blocked'; reason = $staticReport.publicPlugins.reason }
             Block ('Public catalog inspection blocked: ' + $staticReport.publicPlugins.reason)
         }

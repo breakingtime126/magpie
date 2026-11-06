@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import { AST_LIMITS, PLUGIN_SHAPES, PublicPluginASTLimit, analyzePublicPluginAST } from './inspect-desktop-public-plugin-ast.mjs';
+import { Parser } from './vendor/acorn-8.15.0/acorn.mjs';
+import { AST_BLOCK_CODES, AST_SKIP_CODES, AST_LIMITS, PLUGIN_SHAPES, PublicPluginASTLimit, analyzePublicPluginAST } from './inspect-desktop-public-plugin-ast.mjs';
 
 const BT = String.fromCharCode(96);
 const template = contents => BT + contents + BT;
-const limits = error => error instanceof PublicPluginASTLimit && error.code === 'public_source_limit';
+const limits = code => error => error instanceof PublicPluginASTLimit && error.code === code;
 
 test('vendored parser and license match pinned official bytes offline', () => {
   for (const [file, git, sha256] of [
@@ -114,7 +115,7 @@ test('late syntax failure discards candidates, definitions and construction coun
 });
 
 test('source, candidate and recursive grammar limits fail closed', () => {
-  assert.throws(() => analyzePublicPluginAST(' '.repeat(AST_LIMITS.bytes + 1)), limits);
+  assert.throws(() => analyzePublicPluginAST(' '.repeat(AST_LIMITS.bytes + 1)), limits('public_ast_bytes_limit'));
   assert.throws(() => analyzePublicPluginAST(Array.from({ length: 65 },
     (_, i) => 'const p' + i + '="p' + i + '@market";').join('')),
     error => error instanceof PublicPluginASTLimit && error.code === 'public_catalog_limit');
@@ -123,19 +124,19 @@ test('source, candidate and recursive grammar limits fail closed', () => {
     'const x=' + '!'.repeat(600) + 'true;',
     'const x=' + 'x?1:'.repeat(600) + '0;',
     'let x; x=' + 'x='.repeat(600) + '0;',
-  ]) assert.throws(() => analyzePublicPluginAST(source), limits);
+  ]) assert.throws(() => analyzePublicPluginAST(source), limits('public_ast_parse_depth_limit'));
 });
 
 test('allocation and token budgets are enforced during parsing', () => {
-  assert.throws(() => analyzePublicPluginAST('const a=[' + '0,'.repeat(AST_LIMITS.nodes + 1) + '];'), limits);
+  assert.throws(() => analyzePublicPluginAST('const a=[' + '0,'.repeat(AST_LIMITS.nodes + 1) + '];'), limits('public_ast_node_limit'));
   // Elisions allocate no literal nodes, so this reaches the separate token guard.
-  assert.throws(() => analyzePublicPluginAST('const a=[' + ','.repeat(AST_LIMITS.tokens + 1) + '];'), limits);
+  assert.throws(() => analyzePublicPluginAST('const a=[' + ','.repeat(AST_LIMITS.tokens + 1) + '];'), limits('public_ast_token_limit'));
 });
 
 test('parser checks the elapsed deadline inside its work', t => {
   let tick = 0;
   t.mock.method(Date, 'now', () => tick++ * AST_LIMITS.milliseconds);
-  assert.throws(() => analyzePublicPluginAST('const id="public@market";'), limits);
+  assert.throws(() => analyzePublicPluginAST('const id="public@market";'), limits('public_ast_deadline'));
 });
 
 test('prototype-like unknown fields and literal NULs are never shape labels', () => {
@@ -148,4 +149,73 @@ test('prototype-like unknown fields and literal NULs are never shape labels', ()
   assert.deepEqual(report.constructions, []);
   assert.deepEqual(report.candidates, []);
   assert.equal(report.methods[0].unresolved, 2);
+});
+
+test('valid long chains distinguish guarded parse depth from iterative AST depth', () => {
+  const cases = [
+    ['const x=' + Array(600).fill('1').join('+') + ';', 'public_ast_parse_depth_limit'],
+    ['const x=root' + '.x'.repeat(600) + ';', 'public_ast_walk_depth_limit'],
+  ];
+  for (const [source, reason] of cases) {
+    // The unmodified pinned parser accepts both; local fixed bounds still stop them.
+    assert.equal(Parser.parse(source, { ecmaVersion: 2025, sourceType: 'script' }).type, 'Program');
+    assert.throws(() => analyzePublicPluginAST(source), limits(reason));
+  }
+});
+
+test('explicit allocation errors are not collapsed or retried as syntax failures', t => {
+  let calls = 0;
+  t.mock.method(Parser.prototype, 'parse', function () {
+    calls++;
+    throw new PublicPluginASTLimit('public_ast_node_limit');
+  });
+  assert.throws(() => analyzePublicPluginAST('const x=1;'), limits('public_ast_node_limit'));
+  assert.equal(calls, 1);
+});
+
+test('native RangeError stays separate from measured parse depth', t => {
+  let calls = 0;
+  t.mock.method(Parser.prototype, 'parse', function () {
+    calls++;
+    throw new RangeError('SYNTHETIC_PRIVATE_STACK');
+  });
+  assert.throws(() => analyzePublicPluginAST('const x=1;'), limits('public_ast_range_error'));
+  assert.equal(calls, 1);
+});
+
+test('unexpected parser defects are not partial syntax or a measured bound', t => {
+  const failure = new Error('SYNTHETIC_PRIVATE_FAILURE');
+  let calls = 0;
+  t.mock.method(Parser.prototype, 'parse', function () { calls++; throw failure; });
+  assert.throws(() => analyzePublicPluginAST('const x=1;'), error => error === failure);
+  assert.equal(calls, 1);
+  assert.throws(() => analyzePublicPluginAST(null),
+    error => !(error instanceof PublicPluginASTLimit));
+});
+
+test('iterative traversal has its own exact visit-count bound', t => {
+  // Controlled AST injection isolates the walk budget from parser allocation.
+  const empty = { type: 'EmptyStatement', start: 0, end: 0 };
+  t.mock.method(Parser.prototype, 'parse', function () {
+    return { type: 'Program', start: 0, end: 0, body: Array(AST_LIMITS.nodes).fill(empty) };
+  });
+  assert.throws(() => analyzePublicPluginAST(''), limits('public_ast_walk_node_limit'));
+});
+
+test('AST blocked reasons form a closed fixed set distinct from package limits', () => {
+  assert.deepEqual(AST_BLOCK_CODES, [
+    'public_ast_bytes_limit', 'public_ast_token_limit', 'public_ast_node_limit',
+    'public_ast_parse_depth_limit', 'public_ast_walk_depth_limit',
+    'public_ast_walk_node_limit', 'public_ast_deadline', 'public_ast_range_error',
+  ]);
+  assert.ok(!AST_BLOCK_CODES.includes('public_source_limit'));
+});
+
+test('only measured file-local guards are eligible to omit a file', () => {
+  assert.deepEqual(AST_SKIP_CODES, [
+    'public_ast_token_limit', 'public_ast_node_limit', 'public_ast_parse_depth_limit',
+    'public_ast_walk_depth_limit', 'public_ast_walk_node_limit', 'public_ast_deadline',
+  ]);
+  assert.ok(!AST_SKIP_CODES.includes('public_ast_bytes_limit'));
+  assert.ok(!AST_SKIP_CODES.includes('public_ast_range_error'));
 });

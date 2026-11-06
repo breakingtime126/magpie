@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { analyzePublicPluginAST, PublicPluginASTLimit, PLUGIN_METHODS } from './inspect-desktop-public-plugin-ast.mjs';
+import { analyzePublicPluginAST, PublicPluginASTLimit, PLUGIN_METHODS, AST_BLOCK_CODES, AST_SKIP_CODES } from './inspect-desktop-public-plugin-ast.mjs';
 
 export const TARGETS = Object.freeze([
   '.vite/build/early-bootstrap-339-fe39e0119f57b81e.js',
@@ -378,7 +378,7 @@ export const PUBLIC_PLUGIN_LIMITS = Object.freeze({
 export const PUBLIC_PLUGIN_BLOCK_CODES = Object.freeze([
   'public_source_limit', 'public_source_not_packed', 'public_manifest_invalid',
   'public_manifest_limit', 'public_catalog_limit', 'public_source_path',
-  'public_archive_changed',
+  'public_archive_changed', ...AST_BLOCK_CODES,
 ]);
 const MARKETPLACE_SUFFIXES = Object.freeze([
   '.agents/plugins/marketplace.json', '.agents/plugins/api_marketplace.json',
@@ -500,9 +500,14 @@ export function inspectPublicPluginPackage(packageRoot) {
     const analysis = {
       parser: 'acorn_8_15_0',
       methods: PLUGIN_METHODS.map(name => ({ name, definitions: 0, unresolved: 0 })),
-      constructions: [],
+      constructions: [], skipped: [],
     };
+    const skipped = new Map();
     const coverage = { jsFiles: 0, jsComplete: 0, jsSkipped: 0, sourceBytes: 0, manifestFiles: 0 };
+    function skipFile(reason) {
+      coverage.jsSkipped++;
+      skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
+    }
     function addSource(kind, sourcePath, hash, found, constructions = []) {
       const fresh = found.filter(item => !candidates.has(item.key));
       if (fresh.length === 0 && constructions.length === 0) return;
@@ -530,8 +535,18 @@ export function inspectPublicPluginPackage(packageRoot) {
             coverage.sourceBytes + info.size > PUBLIC_PLUGIN_LIMITS.total) fail('public_source_limit');
         const bytes = readExact(fd, info.size, info.start);
         coverage.sourceBytes += bytes.length;
-        const analyzed = analyzePublicPluginMetadata(decode(bytes));
-        if (!analyzed.complete) { coverage.jsSkipped++; continue; }
+        let analyzed;
+        try { analyzed = analyzePublicPluginMetadata(decode(bytes)); }
+        catch (error) {
+          // Only measured file-local guards may omit a file. No contribution
+          // has been committed yet; all I/O, global and unknown errors block.
+          if (error instanceof InspectionError && AST_SKIP_CODES.includes(error.code)) {
+            skipFile(error.code);
+            continue;
+          }
+          throw error;
+        }
+        if (!analyzed.complete) { skipFile('syntax_error'); continue; }
         coverage.jsComplete++;
         for (let i = 0; i < analysis.methods.length; i++) {
           analysis.methods[i].definitions += analyzed.methods[i].definitions;
@@ -572,6 +587,9 @@ export function inspectPublicPluginPackage(packageRoot) {
         }
       }
     }
+    analysis.skipped = ['syntax_error', ...AST_SKIP_CODES]
+      .filter(reason => skipped.has(reason))
+      .map(reason => ({ reason, count: skipped.get(reason) }));
     const ordered = [...candidates.values()].sort((a, b) => asciiOrder(a.key, b.key));
     return {
       schema: 1, status: coverage.jsSkipped ? 'partial' : 'complete',

@@ -6,6 +6,15 @@ export const AST_LIMITS = Object.freeze({
   bytes: 16 * 1024 ** 2, tokens: 4000000, nodes: 1000000,
   depth: 512, milliseconds: 15000, candidates: 128, constructions: 128,
 });
+export const AST_BLOCK_CODES = Object.freeze([
+  'public_ast_bytes_limit', 'public_ast_token_limit', 'public_ast_node_limit',
+  'public_ast_parse_depth_limit', 'public_ast_walk_depth_limit',
+  'public_ast_walk_node_limit', 'public_ast_deadline', 'public_ast_range_error',
+]);
+export const AST_SKIP_CODES = Object.freeze([
+  'public_ast_token_limit', 'public_ast_node_limit', 'public_ast_parse_depth_limit',
+  'public_ast_walk_depth_limit', 'public_ast_walk_node_limit', 'public_ast_deadline',
+]);
 export const PLUGIN_METHODS = Object.freeze(['getConfigOverrides', 'startupCommand']);
 export const PLUGIN_SHAPES = Object.freeze([
   'direct_enabled', 'direct_auto_provision', 'mcp_server_enabled',
@@ -18,9 +27,9 @@ const KEY = new RegExp('^plugins\\.' + SEGMENT + '@' + SEGMENT + '\\.(enabled|au
 const HOLE = '\0';
 
 export class PublicPluginASTLimit extends Error {
-  constructor(code = 'public_source_limit') { super(code); this.code = code; }
+  constructor(code) { super(code); this.code = code; }
 }
-function limit() { throw new PublicPluginASTLimit(); }
+function limit(code) { throw new PublicPluginASTLimit(code); }
 function freshMethods() {
   return PLUGIN_METHODS.map(name => ({ name, definitions: 0, unresolved: 0 }));
 }
@@ -28,13 +37,13 @@ function freshMethods() {
 // Counters and the deadline cover both parse attempts. Hooks bound work while
 // Acorn is building the tree; traversal limits alone would be too late.
 function parseComplete(source) {
-  if (version !== '8.15.0' || typeof source !== 'string' ||
-      Buffer.byteLength(source, 'utf8') > AST_LIMITS.bytes) limit();
+  if (version !== '8.15.0' || typeof source !== 'string') throw new Error('invalid_parser_input');
+  if (Buffer.byteLength(source, 'utf8') > AST_LIMITS.bytes) limit('public_ast_bytes_limit');
   let nodes = 0, tokens = 0, depth = 0, delimiters = 0;
   const deadline = Date.now() + AST_LIMITS.milliseconds;
-  function check() { if (Date.now() > deadline) limit(); }
-  function node() { if (++nodes > AST_LIMITS.nodes) limit(); check(); }
-  function enter() { if (++depth > AST_LIMITS.depth) limit(); check(); }
+  function check() { if (Date.now() > deadline) limit('public_ast_deadline'); }
+  function node() { if (++nodes > AST_LIMITS.nodes) limit('public_ast_node_limit'); check(); }
+  function enter() { if (++depth > AST_LIMITS.depth) limit('public_ast_parse_depth_limit'); check(); }
   class BoundedParser extends Parser {
     copyNode(...args) { node(); return super.copyNode(...args); }
     startNode() { node(); return super.startNode(); }
@@ -52,17 +61,18 @@ function parseComplete(source) {
       const ast = BoundedParser.parse(source, {
         ecmaVersion: 2025, sourceType,
         onToken(token) {
-          if (++tokens > AST_LIMITS.tokens) limit();
+          if (++tokens > AST_LIMITS.tokens) limit('public_ast_token_limit');
           check();
           const label = token.type.label;
-          if (['(', '[', '{', '$' + '{'].includes(label) && ++delimiters > AST_LIMITS.depth) limit();
+          if (['(', '[', '{', '$' + '{'].includes(label) && ++delimiters > AST_LIMITS.depth) limit('public_ast_parse_depth_limit');
           if ([')', ']', '}'].includes(label)) delimiters--;
         },
       });
       check();
       return { ast, check };
     } catch (error) {
-      if (error instanceof PublicPluginASTLimit || error instanceof RangeError) limit();
+      if (error instanceof PublicPluginASTLimit) throw error;
+      if (error instanceof RangeError) limit('public_ast_range_error');
       if (!(error instanceof SyntaxError)) throw error;
     }
   }
@@ -197,7 +207,8 @@ export function analyzePublicPluginAST(source) {
   while (stack.length) {
     check();
     const { node, parent, method: inherited, depth, composed } = stack.pop();
-    if (++visited > AST_LIMITS.nodes || depth > AST_LIMITS.depth) limit();
+    if (++visited > AST_LIMITS.nodes) limit('public_ast_walk_node_limit');
+    if (depth > AST_LIMITS.depth) limit('public_ast_walk_depth_limit');
     const definition = namedDefinition(node);
     if (definition && PLUGIN_METHODS.includes(definition.name)) {
       functionNames.set(definition.fn, definition.name);

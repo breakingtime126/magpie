@@ -413,8 +413,10 @@ depth and deadline guards supplement the existing file and source-byte limits.
 The inspector process also has a 512 MiB V8 old-space limit and the existing
 120-second wall timeout; that heap setting is not a claim to bound total
 process memory. Parser exceptions and stderr are captured and never published
-as source excerpts or raw error messages. Resource exhaustion blocks the
-diagnostic rather than being interpreted as an empty catalog.
+as source excerpts or raw error messages. Source-reading, provenance, global resource and process failures block the
+diagnostic rather than being interpreted as an empty catalog. The narrowly
+classified file-local AST skips below discard all evidence from the affected
+file and explicitly reduce coverage.
 
 The additive `publicPlugins.analysis` object identifies the parser as
 `acorn_8_15_0`. Its two ordered method rows describe `getConfigOverrides`
@@ -466,3 +468,60 @@ there without adding duplicate package installation to the separate baseline
 cold-start workflow. All prior signature, archive/source binding, account-free
 session, minimal-environment, per-PID catalog and production-policy boundaries
 remain in force.
+
+
+### Bounded partial parser coverage
+
+The `af097bf4336559cb468ffb72b7458458845f2a9b`
+[Windows diagnostic](https://github.com/breakingtime126/magpie/actions/runs/42204661575)
+passed its 143 PowerShell and 52 Node checks, then stopped before Desktop launch
+with the generic `public_source_limit` reason. The signed package was unchanged.
+That observation does not identify which parser or package-reader bound was hit,
+and it does not establish a runtime key.
+
+The following diagnostic keeps every limit, but distinguishes six explicitly
+identified file-local AST guards: token, allocated-node, parse-depth, walk-depth,
+walk-node and per-file deadline. Like syntax errors, these discard the entire
+file's analysis atomically. No candidate, source record, method count or
+construction row from that file survives. Bytes already read still count toward
+the unchanged aggregate source-byte budget.
+
+The successful public analysis adds `skipped` rows containing only a fixed
+`reason` and positive integer `count`. Nonzero rows appear once each, in this
+exact order: `syntax_error`, `public_ast_token_limit`,
+`public_ast_node_limit`, `public_ast_parse_depth_limit`,
+`public_ast_walk_depth_limit`, `public_ast_walk_node_limit` and
+`public_ast_deadline`. There are at most seven rows; their counts sum exactly
+to `coverage.jsSkipped` and cannot exceed 2,048. A complete report has no skip
+rows. Any skipped file requires `partial` status.
+
+Source-byte limits, read or UTF-8 failures, archive/hash/provenance failures,
+global source/catalog/construction-row caps, unclassified `RangeError` and
+whole-process failures still block the entire diagnostic. In particular,
+`public_ast_bytes_limit` and `public_ast_range_error` are never skip reasons.
+The bounds remain 16 MiB per source, four million tokens, one million allocated
+or walked nodes, depth 512 for guarded parsing or AST walking, and one shared
+15-second deadline per source, in addition to the process heap and wall limits
+above. Nothing is retried with larger limits or a less restrictive parser.
+
+Independently completed JavaScript and marketplace-manifest evidence may remain
+in a partial catalog. It still needs the same complete schema, digest and
+original signed-MSIX source verification before publication or injection into
+Desktop. An empty catalog still stops; a valid nonempty partial catalog can
+support positive runtime matches and the fixed unknown-path-shape diagnostic.
+Incomplete coverage and an unmatched runtime argument remain unknown, never
+proof that a plugin or key is absent.
+
+PowerShell validates skip ordering, uniqueness, exact field types and counts,
+coverage arithmetic and the complete/partial relationship. Its fixtures reject
+global failures disguised as skips, extra source/candidate fields, duplicates,
+unknown or differently cased reasons and inconsistent totals. Blocked reports
+retain the exact three-field shape with fixed reason labels and no retained
+catalog, source excerpts or exception messages.
+
+An additional offline regression file exercises the existing AST/package APIs
+against exact `af097bf4` code. Both the typed parse-depth reason and retention
+of independent complete evidence must fail with their intended assertions on
+the old implementation. The current Linux and Windows suites run that same file;
+the policy workflow explicitly watches its path and preserves every earlier
+behavioral red check.
