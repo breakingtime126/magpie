@@ -9,7 +9,12 @@ It downloads the current x64 Store-signed package and offline license from the
 [official Windows deployment page](https://learn.chatgpt.com/docs/enterprise/windows-deployment),
 verifies trust with the Windows SDK signature tool, records SHA-256 and manifest
 identity/version, and checks the existing runner's interactive desktop. The URL
-is floating: this is not a reproduction of historical Desktop 26.1029.7803.0.
+is floating. The first run verified 26.1103.3517.0, SHA-256
+`ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643`.
+Subsequent runs stop if those bytes change. This is not a reproduction of
+historical Desktop 26.1029.7803.0. The verified manifest has three applications;
+the Desktop entry is selected by its exact `app/ChatGPT.exe` executable, and its
+AUMID still comes from actual registration plus manifest application ID.
 
 Only the documented licensed provisioning command is used. No unsigned-package
 switch, license bypass, manifest change, certificate installation, security or
@@ -30,6 +35,10 @@ in PowerShell does not prove that Desktop receives it. A later bridge phase need
 both a verified supported launch path and actual uniquely identified bridge-child
 evidence. Do not substitute naked extracted EXEs, global environment changes or
 debug injection to make this test appear to pass.
+
+A screenshot of at most 1 MiB is also emitted as base64 in workflow logs for
+remote visual review where supported. Workflow-log retention is independent of
+the seven-day artifact retention; no successful image retrieval is assumed.
 
 Artifacts contain only public package/signature metadata, sanitized test-process
 facts and the fresh unauthenticated window image. They do not contain the MSIX,

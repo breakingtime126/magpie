@@ -160,6 +160,9 @@ namespace DesktopColdProbe {
         signerThumbprint = $(if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { $null })
     }
     if ($signatureExit -ne 0) { Block 'Official package trust verification failed; package will not be installed or run.' }
+    if ($report.download.packageSha256 -ne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
+        Block 'Official floating download changed since reviewed baseline; inspect new package before running.'
+    }
     $zip = [IO.Compression.ZipFile]::OpenRead($package)
     try {
         $entry = $zip.GetEntry('AppxManifest.xml')
@@ -175,6 +178,7 @@ namespace DesktopColdProbe {
         version = $identity.GetAttribute('Version'); architecture = $identity.GetAttribute('ProcessorArchitecture')
         applications = @($apps | ForEach-Object { [ordered]@{
             id = $_.GetAttribute('Id'); executable = $_.GetAttribute('Executable'); entryPoint = $_.GetAttribute('EntryPoint')
+            aliases = @($_.SelectNodes(".//*[local-name()='ExecutionAlias']") | ForEach-Object { $_.GetAttribute('Alias') })
         } })
         aliases = $aliases
         dependencies = @($manifest.SelectNodes("//*[local-name()='Dependencies']/*") | ForEach-Object { $_.OuterXml })
@@ -182,7 +186,16 @@ namespace DesktopColdProbe {
     if ($report.manifest.name -ne 'OpenAI.Codex' -or $report.manifest.architecture -ne 'x64') {
         Block 'Unexpected official package identity or architecture; inspect evidence before proceeding.'
     }
-    if ($apps.Count -ne 1) { Block 'Application selection is ambiguous; no AUMID will be guessed.' }
+    # Exact Desktop executable observed in the verified 26.1103.3517.0 package.
+    # The two other applications are native Chrome host and command runner, not Desktop.
+    $desktopApps = @($apps | Where-Object {
+        $_.GetAttribute('Executable').Replace('\', '/') -eq 'app/ChatGPT.exe' -and
+        $_.GetAttribute('EntryPoint') -eq 'Windows.FullTrustApplication'
+    })
+    if ($desktopApps.Count -ne 1) { Block 'Verified Desktop application selection is not unique.' }
+    $desktopApp = $desktopApps[0]
+    $report.selectedApplication = $desktopApp.GetAttribute('Id')
+    $report.stage = 'interactive-session-gate'
     if (-not $hasInput -or -not [Environment]::UserInteractive -or
         $report.session.activeConsoleSessionId -ne $processSession -or
         $report.session.screenWidth -le 0 -or $report.session.screenHeight -le 0) {
@@ -209,7 +222,7 @@ namespace DesktopColdProbe {
         $app.Publisher -ne $report.manifest.publisher -or [string]$app.Status -ne 'Ok') {
         Block 'Registered package does not match the verified download.'
     }
-    $aumid = $app.PackageFamilyName + '!' + $apps[0].GetAttribute('Id')
+    $aumid = $app.PackageFamilyName + '!' + $desktopApp.GetAttribute('Id')
     $report.aumid = $aumid
     $report.stage = 'normal-package-activation'
     $subscription = Register-CimIndicationEvent -Query 'SELECT * FROM Win32_ProcessStartTrace' -SourceIdentifier $eventSource
@@ -265,6 +278,10 @@ namespace DesktopColdProbe {
         $graphics.CopyFromScreen($left, $top, 0, 0, $bitmap.Size)
         $bitmap.Save((Join-Path $out 'official-window.png'), [Drawing.Imaging.ImageFormat]::Png)
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    $capturePath = Join-Path $out 'official-window.png'
+    if ((Get-Item -LiteralPath $capturePath).Length -le 1048576) {
+        Write-Output ('DESKTOP_SCREENSHOT_PNG=' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($capturePath)))
+    }
     $report.capture = 'official-window.png; screen pixels may contain occlusion and require visual review'
     $report.status = 'observed'
     $report.stage = 'baseline-window-observed'
