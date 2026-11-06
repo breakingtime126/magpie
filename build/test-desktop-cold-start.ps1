@@ -966,7 +966,23 @@ requires_openai_auth = false
                 'tui.show_tooltips', 'tui.status_line', 'tui.status_line_use_colors',
                 'tui.terminal_resize_reflow_max_rows', 'tui.terminal_title', 'tui.theme',
                 'tui.vim_mode_default', 'web_search', 'windows',
-                'windows.allow_mxc', 'windows.sandbox'
+                'windows.allow_mxc', 'windows.sandbox',
+                'plugins.browser@openai-bundled.auto_provision',
+                'plugins.browser@openai-bundled.enabled',
+                'plugins.chrome-dev@openai-bundled.auto_provision',
+                'plugins.chrome-dev@openai-bundled.enabled',
+                'plugins.chrome-internal@openai-bundled.auto_provision',
+                'plugins.chrome-internal@openai-bundled.enabled',
+                'plugins.chrome@openai-bundled.auto_provision',
+                'plugins.chrome@openai-bundled.enabled',
+                'plugins.computer-use@openai-bundled.auto_provision',
+                'plugins.computer-use@openai-bundled.enabled',
+                'plugins.sites@openai-bundled.auto_provision',
+                'plugins.sites@openai-bundled.enabled',
+                'plugins.unified-computer-use@openai-bundled.auto_provision',
+                'plugins.unified-computer-use@openai-bundled.enabled',
+                'plugins.visualize@openai-bundled.auto_provision',
+                'plugins.visualize@openai-bundled.enabled'
             )
             $configFamilies = @(
                 'agents', 'allow_login_shell', 'allow_symlinked_codex_home',

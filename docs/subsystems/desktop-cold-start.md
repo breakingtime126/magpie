@@ -246,3 +246,40 @@ All argument bytes remain unchanged. The production adapter still rejects
 unsupported arguments, and authentication, permissions and organization policy
 are not altered by this diagnostic. A recognized root or candidate remains an
 investigation clue, not permission to apply a setting to either backend.
+
+## Public bundled-plugin key identification
+
+The actual `eed7071a22cc9fef22fdf1dc4def78d085f59cc0` Windows observation
+identified the extra assignment as a `plugins.` key containing an at-sign and
+the complete right-hand side `true`. The lifecycle trace was complete, but the
+normal invocation still exited 2 before a successful initialize response.
+[Observed run](https://github.com/breakingtime126/magpie/actions/runs/42190963869).
+This rules out treating the earlier forced-login static candidate as the actual
+parameter. It does not yet identify a plugin or the particular boolean field.
+
+A further metadata-only lookup freezes the exact public identities named in
+the same reviewed official source:
+[bundled hook selection](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/plugin/src/bundled_hooks.rs#L28-L88)
+and [plugin loader](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/core-plugins/src/loader.rs#L260-L274).
+The identities are browser, chrome, chrome-dev, chrome-internal, computer-use,
+unified-computer-use, sites and visualize, each at the openai-bundled marketplace.
+Only their exact direct `enabled` and `auto_provision` property paths are
+eligible. This is a 16-name investigation dictionary, not a claim to enumerate
+every plugin shipped in Desktop. These source occurrences do not authenticate a
+plugin or verify its signature. A different plugin, marketplace, nested field
+or spelling remains redacted.
+
+The lookup runs before the conservative bare-key reader because native plugin
+identities contain an at-sign. It performs only whole-key ASCII whitespace
+trimming and exact equality against frozen names, and emits only a matched
+constant plus literal true/false/other. It never unquotes, extracts an arbitrary
+identity, interprets a value, or changes the forwarded assignment. PowerShell's
+fixed-label validator uses the same 16 additional names.
+
+Recognition is not authorization to enable a plugin. Native `enabled` changes
+installed-plugin activation and may expose skills, MCP servers, apps or hooks.
+Native `auto_provision` is provisioning metadata, not authorization and not an
+instruction that itself performs provisioning. Neither field is passed through
+by the production adapter in this diagnostic change. The actual exact match,
+official behavior, both backends and remaining initialization gates must be
+reviewed before any production compatibility change.

@@ -299,6 +299,9 @@ func observedConfigArgument(argument string) event {
 	if strings.Trim(key, observedConfigASCIIWhitespace) == "" {
 		return observedUnknownConfigArgument(key, value, "empty_key", "other")
 	}
+	if fixed, known := observedPublicPluginConfigKey(key); known {
+		return event{Kind: "argv_config", ConfigKey: fixed, ConfigValue: observedConfigValue("bool", value)}
+	}
 	normalized, valid := observedConfigKey(key)
 	if valid {
 		if kind, known := observedConfigTypes[normalized]; known {

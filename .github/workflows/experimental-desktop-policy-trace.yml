@@ -95,6 +95,23 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestExactAuth167LiteralModesNegotiateNativeChildren'
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestConfigMetadataPreservesNativeLiteralKeys'
           echo 'The old code fails both behavior assertions; compilation failures do not qualify.'
+      - name: Check out exact pre-bundled-plugin recognition behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: eed7071a22cc9fef22fdf1dc4def78d085f59cc0
+          path: .ci-public-plugin-baseline
+          persist-credentials: false
+      - name: Prove public plugin identification fails behaviorally on the old observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/desktop-rpc-observer/config_public_plugin_red_test.go .ci-public-plugin-baseline/build/desktop-rpc-observer/
+          status=0
+          output="$(cd .ci-public-plugin-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestPublicPluginOverridesRecognizedWithoutMutation$' ./build/desktop-rpc-observer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestPublicPluginOverridesRecognizedWithoutMutation'
+          echo 'The old observer does not recognize these fixed public keys; the current code must pass next.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |
