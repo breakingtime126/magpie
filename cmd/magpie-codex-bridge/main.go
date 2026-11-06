@@ -54,7 +54,7 @@ const maxArgumentCount = 32
 const maxArgumentBytes = 4096
 
 var (
-	errUnsupportedArguments     = errors.New("unsupported arguments; use --help")
+	errUnsupportedArguments      = errors.New("unsupported arguments; use --help")
 	errUnsupportedStartupSignOut = errors.New("unsupported startup sign-out; no configuration read or children started")
 )
 
