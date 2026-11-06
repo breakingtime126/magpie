@@ -18,6 +18,12 @@ import (
 type Config struct {
 	Backends []Backend `json:"backends"`
 
+	// Auth compatibility modes are independent, explicit and disabled by default.
+	// They never authorize generating proof tokens or starting an OAuth login.
+	Attestation              string `json:"attestation,omitempty"`
+	GatewayOAuth             string `json:"gateway_oauth,omitempty"`
+	GatewayOAuthProviderName string `json:"gateway_oauth_provider_name,omitempty"`
+
 	// RequirementsRead permits both reviewed backends to refresh policy state.
 	// It is separate from the one-shot startup inspection opt-in.
 	RequirementsRead string `json:"config_requirements_read,omitempty"`
@@ -44,7 +50,7 @@ type Backend struct {
 	InheritEnv []string          `json:"inherit_env,omitempty"`
 
 	// StartupProbeSHA256 pins the reviewed executable for startup inspection
-	// and the separately enabled config requirements read mode.
+	// and the separately enabled requirements/auth compatibility modes.
 	StartupProbeSHA256 string `json:"startup_probe_sha256,omitempty"`
 }
 
@@ -78,6 +84,19 @@ func LoadConfig(input io.Reader) (Config, error) {
 // Validate checks isolation before any subprocess starts. All paths must exist;
 // symlinks are resolved so aliases cannot silently share account state.
 func (cfg Config) Validate() error {
+	if cfg.Attestation != "" && cfg.Attestation != AttestationUnavailable {
+		return errors.New("unsupported attestation mode")
+	}
+	if cfg.GatewayOAuth != "" && cfg.GatewayOAuth != GatewayOAuthPrimaryRead {
+		return errors.New("unsupported gateway_oauth mode")
+	}
+	if cfg.GatewayOAuth != "" {
+		if len(cfg.GatewayOAuthProviderName) == 0 || len(cfg.GatewayOAuthProviderName) > 128 || !startupText(cfg.GatewayOAuthProviderName) {
+			return errors.New("gateway OAuth inspection requires a reviewed provider display name")
+		}
+	} else if cfg.GatewayOAuthProviderName != "" {
+		return errors.New("gateway OAuth provider display name requires the read-only mode")
+	}
 	if cfg.RequirementsRead != "" && cfg.RequirementsRead != ConfigRequirementsCompareSafe {
 		return errors.New("unsupported config_requirements_read mode")
 	}
@@ -98,10 +117,10 @@ func (cfg Config) Validate() error {
 	ids := map[string]bool{}
 	var homes []string
 	for i, b := range cfg.Backends {
-		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" {
+		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" {
 			digest, err := hex.DecodeString(b.StartupProbeSHA256)
 			if err != nil || len(digest) != 32 {
-				return errors.New("policy inspection requires a SHA256 pin for each backend")
+				return errors.New("reviewed compatibility requires a SHA256 pin for each backend")
 			}
 		}
 		if !backendName.MatchString(b.ID) || ids[b.ID] {

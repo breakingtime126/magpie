@@ -85,12 +85,14 @@ $env:MAGPIE_BRIDGE_ADAPTER_TEST_EXE = $adapter
 # These synthetic tests do not start official Codex or contact model services.
 & go test -v -count=1 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge
 Assert-NativeExit 'Native stdio adapter unit and lifecycle tests'
-& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapter(Stdio|DesktopArguments|StartupProbe|ConfigRequirements)$'
+& go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^TestBuiltAdapter(Stdio|DesktopArguments|StartupProbe|ConfigRequirements|AuthCompat.*)$'
 Assert-NativeExit 'Repeated compiled adapter stdio, Desktop arguments, policy reads, startup probe and EOF tests'
 & go test -v -count=1 -timeout=10m -tags nogui ./internal/appserverbridge
 Assert-NativeExit 'Native bridge tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestRunConfigRequirements'
 Assert-NativeExit 'Repeated native complete config requirements reads'
+& go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestRunAuthCompat'
+Assert-NativeExit 'Repeated native attestation failure and primary gateway readiness tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestStartupProbeNative'
 Assert-NativeExit 'Repeated native startup probe and owned cleanup tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./internal/appserverbridge -run '^TestRun(WindowsReapsStartedBackendFamilies|InterruptPreservesOtherBackendAndAllowsFollowup)$'
@@ -224,6 +226,35 @@ try {
     if ($mixedExit -eq 0 -or ($mixedLog -join "`n") -notmatch '--- FAIL: TestConfigRequirementsRejectsMixedBackendMessages') {
         throw 'Mixed-envelope mutation did not produce the expected behavioral failure.'
     }
+    # Auth compatibility mutations use a fresh original router and their own
+    # source copy. A compile error is not an acceptable regression result.
+    [IO.File]::WriteAllText($routerFile, $routerSource)
+    $authFile = Join-Path $mutationRoot 'internal/appserverbridge/auth_compat.go'
+    $authSource = [IO.File]::ReadAllText($authFile)
+    $originRoute = 'd.Backend = backend'
+    if ([regex]::Matches($authSource, [regex]::Escape($originRoute)).Count -ne 1) {
+        throw 'Attestation origin-routing mutation target is not unique.'
+    }
+    [IO.File]::WriteAllText($authFile, $authSource.Replace($originRoute, 'd.Backend = r.backends[0].ID'))
+    $originLog = & go test -v -count=1 -timeout=2m -tags nogui ./internal/appserverbridge -run '^TestAuthCompatRoutesTypedIDsWithoutState$' 2>&1
+    $originExit = $LASTEXITCODE
+    $originLog | Write-Output
+    if ($originExit -eq 0 -or ($originLog -join "`n") -notmatch '--- FAIL: TestAuthCompatRoutesTypedIDsWithoutState') {
+        throw 'Attestation origin-routing mutation did not produce the expected behavioral failure.'
+    }
+
+    [IO.File]::WriteAllText($authFile, $authSource)
+    $gatewayErrorGuard = '!requirementsNull(result["error"])'
+    if ([regex]::Matches($authSource, [regex]::Escape($gatewayErrorGuard)).Count -ne 1) {
+        throw 'Gateway opaque-error mutation target is not unique.'
+    }
+    [IO.File]::WriteAllText($authFile, $authSource.Replace($gatewayErrorGuard, 'false'))
+    $gatewayErrorLog = & go test -v -count=1 -timeout=2m -tags nogui ./internal/appserverbridge -run '^TestGatewayOAuthReadCompleteAndStrict$' 2>&1
+    $gatewayErrorExit = $LASTEXITCODE
+    $gatewayErrorLog | Write-Output
+    if ($gatewayErrorExit -eq 0 -or ($gatewayErrorLog -join "`n") -notmatch '--- FAIL: TestGatewayOAuthReadCompleteAndStrict') {
+        throw 'Gateway opaque-error mutation did not produce the expected behavioral failure.'
+    }
 } finally {
     Set-Location -LiteralPath $env:GITHUB_WORKSPACE
     Remove-Item -LiteralPath $mutationRoot -Recurse -Force
@@ -233,6 +264,7 @@ Write-Output 'Strict startup regression failed with CREATE_SUSPENDED removed, as
 Write-Output 'Desktop argument-policy regression failed with granular code-mode toggle replaced, as required.'
 Write-Output 'Startup probe regression rejected allowing non-null requirements, as required.'
 Write-Output 'Requirements comparison, opaque-policy and mixed-envelope mutations each failed behaviorally, as required.'
+Write-Output 'Attestation origin-routing and gateway opaque-error mutations each failed behaviorally, as required.'
 
 $binary = Join-Path $package 'magpie-app-server-bridge-windows-amd64.exe'
 & go build -tags nogui -trimpath -buildvcs=true -ldflags "-s -w -X main.version=$version" -o $binary .
@@ -279,7 +311,7 @@ $manifest = [ordered]@{
     nativeAdapterSHA256 = (Get-FileHash -LiteralPath $adapter -Algorithm SHA256).Hash.ToLowerInvariant()
     nativeAdapterBuildFlags = '-tags nogui -trimpath -buildvcs=true -ldflags=-s -w -X main.buildVersion=<version>'
     signing = 'unsigned'
-    checks = @('Linux focused bridge, proc and adapter race tests', 'Native stdio adapter unit and lifecycle tests', 'Repeated compiled adapter initialize and EOF tests', 'Repeated compiled adapter observed Desktop argument tests', 'Granular code-mode policy mutation rejected by regression', 'Repeated compiled startup probes with pinned synthetic backends', 'Repeated native startup probe and owned cleanup tests', 'Non-null startup requirements mutation rejected by regression', 'Complete non-null public requirements validation and fanout tests', 'Repeated native and compiled requirements-only read tests', 'Requirements comparison, opaque-policy and mixed-envelope mutations rejected', 'Desktop bootstrap auth/config local rejection tests', 'Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help', 'Built native adapter truthful help and version')
+    checks = @('Linux focused bridge, proc and adapter race tests', 'Native stdio adapter unit and lifecycle tests', 'Repeated compiled adapter initialize and EOF tests', 'Repeated compiled adapter observed Desktop argument tests', 'Granular code-mode policy mutation rejected by regression', 'Repeated compiled startup probes with pinned synthetic backends', 'Repeated native startup probe and owned cleanup tests', 'Non-null startup requirements mutation rejected by regression', 'Complete non-null public requirements validation and fanout tests', 'Repeated native and compiled requirements-only read tests', 'Requirements comparison, opaque-policy and mixed-envelope mutations rejected', 'Repeated native and compiled auth compatibility fixtures', 'Attestation origin-routing and gateway opaque-error mutations rejected', 'Desktop bootstrap auth/config local rejection tests', 'Native synthetic bridge tests', 'Native bridge CLI isolation test', 'Repeated Windows process-family and interruption tests', 'Repeated strict process startup tests', 'CREATE_SUSPENDED mutation rejected by regression', 'Windows and Linux-target go vet -tags nogui ./...', 'Built executable bridge help', 'Built native adapter truthful help and version')
     notValidated = @('Full repository test suite', 'Managed Windows policy and external injection scenarios', 'Official Codex runtime and tools', 'Codex Desktop integration and exact launcher arguments', 'Full Desktop handshake and authentication control-plane support', 'Real official startup inspection and credential/policy side effects', 'Restricted or different-version startup configuration (unsupported)', 'Startup sign-out (explicitly unsupported)', 'Real official backend granular feature merge', 'Native adapter OS-signal handling', 'Real OpenAI or AIHub inference', 'Corporate deployment approval')
 }
 [IO.File]::WriteAllText((Join-Path $package 'BUILD.json'), ($manifest | ConvertTo-Json -Depth 5) + "`n", $utf8)
@@ -311,15 +343,20 @@ A separate, default-off JSONL config_requirements_read mode can compare complete
 reviewed public policy views, including supported non-null restrictions, from
 both pinned backends. It rejects differences and opaque or credential-bearing
 policy branches rather than dropping them. It can refresh policy/account state.
-The real Desktop attestation/gateway capability flags remain unsupported; they
-are not lowered or silently removed. See DESIGN.md for the exact scope.
+Two other default-off pinned modes preserve the true Desktop capabilities but
+provide only genuine attestation-unavailable errors and primary gateway readiness
+reads. No proof tokens or OAuth login are implemented. Provider ID and an explicit
+reviewed provider display name must match. Private errors and login URLs are not
+forwarded, and second-provider status is not presented as primary status. These
+modes do not prove full Desktop compatibility. See DESIGN.md for the exact scope.
 
 CI runs synthetic bridge/CLI/process tests, static checks, a startup mutation,
 compiled adapter initialize/EOF and observed Desktop-argument tests, pinned
 synthetic startup probes and cleanup checks, a granular code-mode policy mutation,
 a non-null startup requirements mutation, complete-policy comparison and secrecy
-mutations, native and compiled JSONL policy reads, Linux focused race tests, and truthful
-help/version smoke tests. No real official startup command is executed by tests.
+mutations, native and compiled JSONL policy reads, repeated synthetic attestation
+failure and primary gateway readiness flows, auth isolation mutations, Linux
+focused race tests, and truthful help/version smoke tests. No real official startup command is executed by tests.
 It does not establish working Desktop integration, real tools/model inference,
 full-suite correctness or complete Windows process-tree containment.
 

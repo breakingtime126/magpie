@@ -43,6 +43,8 @@ type page struct {
 type Router struct {
 	configRequirementsRead bool
 
+	auth authCompatibility
+
 	backends           []Backend
 	byID               map[string]Backend
 	phase              string
@@ -169,16 +171,14 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		if e != nil {
 			return []Delivery{fail(g.id, -32602, "invalid capabilities")}, nil
 		}
-		for _, field := range []string{"requestAttestation", "explicitGatewayOauth"} {
-			if exists(caps, field) {
-				var enabled bool
-				if json.Unmarshal(caps[field], &enabled) != nil || enabled {
-					return []Delivery{fail(g.id, -32602, field+" is not supported by this bridge")}, nil
-				}
-			}
-		}
 		if r.phase != "cold" {
 			return []Delivery{fail(g.id, -32600, "already initialized")}, nil
+		}
+		if (r.auth.attestationUnavailable || r.auth.gatewayRead) && validateRequirementsJSON(line) != nil {
+			return []Delivery{fail(g.id, -32602, "invalid initialization message")}, nil
+		}
+		if err := r.auth.negotiate(caps); err != nil {
+			return []Delivery{fail(g.id, -32602, "unsupported authentication capability")}, nil
 		}
 		r.phase = "initializing"
 		r.active[key] = true
@@ -194,6 +194,16 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return []Delivery{fail(g.id, -32600, "initialize and initialized are required")}, nil
 	}
 	switch method {
+	case "account/gatewayOAuth/read":
+		if !r.auth.gatewayRead || !r.auth.gatewayNegotiated {
+			return []Delivery{fail(g.id, -32601, "primary gateway OAuth inspection is disabled")}, nil
+		}
+		if validateRequirementsJSON(line) != nil {
+			return []Delivery{fail(g.id, -32602, "invalid gateway OAuth request")}, nil
+		}
+		r.active[key] = true
+		r.activeBytes += g.size
+		return []Delivery{r.send(g, r.backends[0].ID, nil)}, nil
 	case "configRequirements/read":
 		if !r.configRequirementsRead {
 			return []Delivery{fail(g.id, -32601, "config requirements inspection is disabled")}, nil
@@ -404,6 +414,13 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	if e != nil {
 		return nil, e
 	}
+	if _, present := m["method"]; present {
+		// Inspect raw keys before dispatch: a duplicate method must not hide
+		// an authentication request behind a different final method value.
+		if validateServerEnvelopeKeys(line) != nil || text(m, "method") == "" {
+			return nil, errAuthCompatibility
+		}
+	}
 	if method := text(m, "method"); method != "" {
 		// A response must not masquerade as a request/notification and bypass
 		// method-specific payload validation or sanitized error handling.
@@ -412,6 +429,12 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		}
 		if _, present := m["error"]; present {
 			return nil, errors.New("backend message mixes request and response fields")
+		}
+		if method == "attestation/generate" {
+			return r.attestationMessage(backend, line)
+		}
+		if method == "account/gatewayOAuth/changed" {
+			return r.gatewayNotification(backend, line)
 		}
 		return r.serverMessage(backend, method, m)
 	}
@@ -434,6 +457,13 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	g := pending.group
 	if g.failed {
 		return nil, nil
+	}
+	if g.method == "account/gatewayOAuth/read" {
+		result, err := validateGatewayRead(line, r.backends[0], r.auth.gatewayProviderName)
+		if err != nil {
+			return r.reject(g, -32000, "primary gateway OAuth readiness unavailable"), nil
+		}
+		return r.finish(g, result), nil
 	}
 	if g.method == "configRequirements/read" {
 		// Validate the original envelope before a permissive map decoder can

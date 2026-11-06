@@ -55,6 +55,12 @@ func fixtureServer() {
 	if os.WriteFile(filepath.Join(home, "fixture-report"), report, 0600) != nil {
 		os.Exit(3)
 	}
+	if handled, code := authCompatFixture(); handled {
+		if code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
 	fmt.Fprintln(os.Stderr, "secret stderr must never reach the client")
 	switch string(mode) {
 	case "eof":

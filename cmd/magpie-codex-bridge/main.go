@@ -38,7 +38,9 @@ It may refresh authentication, fetch policy and update backend caches. Sign-out 
 Startup inspection cannot be combined with --stdio or --listen.
 JSONL configRequirements/read is independently disabled unless config_requirements_read is enabled.
 That mode verifies both backend pins and returns only matching complete reviewed public policy views.
-It may refresh policy/authentication state. Desktop attestation/gateway capabilities remain unsupported.
+It may refresh policy/authentication state.
+Independent pinned auth modes can report attestation unavailable and read only the primary gateway status.
+They preserve true capability flags; no proof token, OAuth login or full Desktop compatibility is provided.
 --check validates configuration without starting children or changing state.
 This is not the official Codex CLI. Desktop launcher compatibility is unverified.
 `

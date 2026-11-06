@@ -69,6 +69,9 @@ func fixtureServer() int {
 			return fixtureStartupProbe(os.Args[1:])
 		}
 	}
+	if handled, code := authCompatFixture(); handled {
+		return code
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var request struct {

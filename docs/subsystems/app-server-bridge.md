@@ -46,8 +46,9 @@ Schema compatibility does not certify a Desktop/backend runtime combination.
 
 1. `initialize` is sent independently to both children. The primary child's
    result is returned only after both succeed. Client `initialized` then goes
-   to both. Unsupported attestation and explicit gateway OAuth capability
-   opt-ins are rejected before initialization.
+   to both. Attestation and explicit gateway OAuth opt-ins are rejected by
+   default. Separately configured pinned modes can preserve the true flags
+   with the limited behavior documented below; neither grants login authority.
 2. `model/list` exhausts each child's pages, or uses that backend's explicitly
    supplied `models` descriptors. It preserves unknown metadata, prefixes both
    `id` and `model` as `magpie/<backend>/<model>`, labels display names, and
@@ -140,7 +141,8 @@ legitimately report `local` without transferring ownership of any thread.
 The runner starts no existing GUI, changes no global agent settings, imports
 no current credentials, and neither chooses nor installs a desktop backend
 hook. The first backend owns account display; account mutations, sign-in,
-external token refresh and unscoped backend requests are unsupported.
+external token refresh and unscoped backend requests are unsupported except
+for the explicitly enabled terminal attestation-error response described below.
 
 Each child gets explicit `HOME`, `USERPROFILE`, `CODEX_HOME`, private XDG/app
 paths and a minimal system PATH. Ambient tokens, proxy variables and runtime
@@ -614,24 +616,112 @@ and exit the application. Account updates trigger another requirements read.
 These are source-code construction and control-flow observations, not a runtime
 trace or successful bridge/GUI acceptance.
 
-**The bridge still rejects those two true capability flags.** They are not
-silently removed or changed to false:
+**Default behavior still rejects those two true capability flags.** Two
+independent, default-off modes provide deliberately limited behavior while
+preserving the client's true values. They do not silently lower capabilities,
+add invented acceptance fields, start login, or claim working Desktop access.
+Both modes require reviewed `startup_probe_sha256` pins for both children,
+verified before either starts. A client must actually declare the corresponding
+true capability; configuration alone does not synthesize it.
 
-- `explicitGatewayOauth:true` prevents automatic gateway browser authorization.
-  It does not disable existing-credential refresh. Supporting it honestly also
-  needs an explicit gateway/account control-plane authority and real read/login/
-  cancellation ownership; these flows are not implemented here.
-- `requestAttestation:true` enables an unscoped `attestation/generate` request
-  with a 100 ms deadline, including before a thread-start response. Its lifecycle
-  does not emit `serverRequest/resolved`. Generic approval forwarding is not a
-  sufficient relay. Critically, the official provider's attestation eligibility
-  checks cached ChatGPT authentication, not the destination URL, so a custom
-  provider may request a Desktop proof token too. No such token is forwarded
-  without a reviewed recipient policy and dedicated bounded request handling.
+#### Explicit attestation-unavailable mode
 
-See the [capability implementation](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/request_processors/initialize_processor.rs),
-[attestation protocol](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/attestation.rs)
-and [provider eligibility](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/model-provider/src/provider.rs#L621-L625).
+Set `attestation` to `unavailable-v0.166` only when deliberately choosing to
+continue with attestation unavailable. This is not an implementation of proof
+generation. For a valid child `attestation/generate` request the bridge returns
+a real JSON-RPC `-32601` error, with its original typed ID, only to that child.
+It never sends the request to Desktop, generates or parses a proof, returns a
+successful token result, constructs an HTTP header, or redirects a request to
+the other provider.
+
+The pinned official protocol treats `requestAttestation:true` as a client
+declaration permitting requests, not a guarantee every request succeeds. Its
+[error handling](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/attestation.rs)
+converts a genuine JSON-RPC error into its own token-free status-2 failure
+envelope and locally continues the model transport. The upstream service can
+still reject or restrict failed attestation. This mode must not be used to
+evade an upstream denial, and synthetic success says nothing about upstream
+acceptance.
+
+Only the reviewed JSONL envelope `id`, `method`, `params:{}` is accepted,
+without a `jsonrpc` field. Raw duplicate keys, null/missing IDs or params,
+extra payload, malformed Unicode, fractional/exponent IDs and mixed
+request/response fields fail closed. Integer IDs must fit signed 64-bit;
+decoded string IDs are at most 256 bytes; the envelope is at most 4 KiB.
+The connection must be initialized and ready, but no thread binding is needed:
+official prewarming can precede the thread-start response. Live ordinary
+server-call ID collisions are rejected.
+
+The response is terminal and uses no long-lived server-call mapping; there is
+no `serverRequest/resolved` event to wait for. Identical IDs on separate
+backends remain independent and completed IDs may be reused. A per-backend
+token bucket limits bursts to 64 and refills at 32 requests per second;
+sustained excess closes the connection instead of queuing. The official
+deadline is 100 ms, which the bridge cannot guarantee under pipe backpressure.
+Write failure or shutdown never triggers a different-provider retry.
+
+Normal proof forwarding remains unsupported. Empty attestation params carry
+no endpoint, audience, account, challenge or request digest. The app-server
+treats the returned token as opaque, and its
+[official integration test](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/tests/suite/v2/attestation.rs)
+demonstrates forwarding a supplied test token to a custom provider URL.
+This proves transport does not enforce an OpenAI recipient. It does not prove
+whether the real Desktop generator cryptographically binds its tokens.
+Reviewed generator, audience/account binding, replay and recipient evidence
+would be required before implementing real forwarding.
+
+#### Explicit primary gateway-read mode
+
+Set `gateway_oauth` to `primary-read-only-v0.166` and
+`gateway_oauth_provider_name` to the separately reviewed exact display name of
+the first backend's provider. The name is bounded to 128 UTF-8 bytes and checked
+against the response; free-text names are not assumed safe merely because they
+came from a backend. The first backend remains the sole account authority,
+matching `account/read`. This is not a dual-provider readiness view.
+
+The mode preserves `explicitGatewayOauth:true` in both children. In the pinned
+[initialize implementation](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/request_processors/initialize_processor.rs)
+this is a sticky policy suppressing automatic gateway browser authorization.
+It does not disable existing credential use or refresh. The flag is never
+treated as permission to start a login.
+
+Only `account/gatewayOAuth/read` is routed, exclusively to the primary
+backend. Omitted/null/empty-object client params become `params:null`;
+selectors or additional fields are rejected. Every read is fresh. The result
+must contain exactly `providerId`, `providerName`, `required`, `status`,
+and `error`, matching the configured provider and reviewed name.
+`required:false,status:null` means OAuth is not configured, not authenticated.
+When required is true, status is the actual `notReady`, `started`,
+`succeeded` or `failed` value. Non-null error text, raw RPC errors, duplicate
+keys, unknown fields, wrong types or oversized responses become a fixed bridge
+error, never a fabricated success or a redacted replacement status.
+
+Safe primary `account/gatewayOAuth/changed` notifications preserve their
+actual status and require the exact reviewed shape with `authUrl:null` and
+`error:null`. Secondary notifications are not shown as primary state.
+Authorization URLs and opaque errors are never forwarded. Unsupported
+notification content fails closed; the bridge does not act on it.
+
+Both `account/gatewayOAuth/login` and `account/gatewayOAuth/cancel` remain
+unsupported and send no request to either child. A complete login
+implementation would need the official connection ownership, long-running
+response, cancellation, credential persistence and private URL handoff
+semantics. The second provider must not acquire login authority from the
+currently selected model or the primary account display.
+
+The readiness [handler](https://github.com/openai/codex/blob/4f093f2748667f3b0e6a07e3d4055121cbd3ce64/codex-rs/app-server/src/request_processors/account_processor/gateway_oauth.rs)
+reloads configuration, obtains/stores its manager and reads credential
+readiness. It can read the credential store, update caches and publish readiness
+changes. That specific status operation does not itself refresh credentials or
+open a browser, but it is not a pure or side-effect-free read. Other official
+initialization/turn paths can still refresh credentials. Enabling these modes
+for real accounts needs the applicable authorization and policy review.
+
+All implementation and fixture assumptions are pinned to official source
+`4f093f2748667f3b0e6a07e3d4055121cbd3ce64`, Codex `0.166.0-alpha.6`.
+Tests use synthetic processes and synthetic statuses/errors only. They do not
+run a real Desktop proof generator or validate OAuth, proof headers, accounts,
+model inference or service acceptance.
 
 `getAuthStatus` remains unsupported. The inspected local main connection
 defaults to `ensureAuth:false`; remote connections may enable it. It is therefore
@@ -644,8 +734,10 @@ main initialization function. Returning only one backend's full configuration
 would misrepresent the other backend's provider and permission context.
 
 The new read-mode tests use synthetic peers with an ordinary fixture initialize;
-they do not remove the real Desktop capability blocker. Further acceptance needs
-reviewed attestation destination/binding evidence, an account authority design,
+they do not establish real Desktop compatibility. The default-off auth modes
+are limited to unavailable-proof errors and primary readiness inspection.
+Further acceptance needs reviewed attestation destination/binding evidence,
+complete OAuth account ownership and handoff design,
 any remaining sanitized request/notification dependency trace, and separately
 authorized real Desktop testing. No cloud artifact is a workaround for a denied
 local software, installation or network policy.
@@ -661,5 +753,8 @@ pins, complete result validation, disabled mode and pre-config sign-out rejectio
 These checks do not test Desktop's launch hook, official startup effects, model traffic, or native
 OS-signal delivery to the adapter. Unsupported authentication/configuration flows remain covered by local-rejection
 regressions. The explicitly enabled requirements mode adds complete-policy
-validation, fresh dual-backend comparisons and native/compiled transport tests;
+validation, fresh dual-backend comparisons and native/compiled transport tests.
+Independent auth compatibility fixtures cover capability preservation, terminal
+same-backend attestation errors, primary-only gateway status and rejection of
+login, private URLs, unsafe errors and cross-provider response IDs;
 none of these are represented as actual Desktop startup acceptance.

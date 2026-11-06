@@ -47,12 +47,12 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if cfg.RequirementsRead != "" {
+	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" {
 		// Check both reviewed executables before either process can read or
 		// refresh account/policy state. This is not an OS security boundary.
 		for _, backend := range cfg.Backends {
 			if !startupProbeDigestMatches(parent, backend) {
-				return errors.New("config requirements backend digest verification failed")
+				return errors.New("reviewed backend digest verification failed")
 			}
 		}
 	}
@@ -69,6 +69,11 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 		return err
 	}
 	router.configRequirementsRead = cfg.RequirementsRead == ConfigRequirementsCompareSafe
+	router.auth = authCompatibility{
+		attestationUnavailable: cfg.Attestation == AttestationUnavailable,
+		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead,
+		gatewayProviderName:    cfg.GatewayOAuthProviderName,
+	}
 	ctx, cancel := context.WithCancel(parent)
 	processContext, stopProcesses := context.WithCancel(context.WithoutCancel(parent))
 	defer stopProcesses()
