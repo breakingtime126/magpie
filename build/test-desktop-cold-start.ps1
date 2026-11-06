@@ -331,9 +331,9 @@ namespace DesktopColdProbe {
         $report.officialBackendVersion = $versionText
         $backends = @()
         foreach ($id in @('alpha', 'beta')) {
-            $home = Join-Path $work ($id + '-home')
+            $backendHome = Join-Path $work ($id + '-home')
             $codexHome = Join-Path $work ($id + '-codex')
-            New-Item -ItemType Directory -Path $home, $codexHome | Out-Null
+            New-Item -ItemType Directory -Path $backendHome, $codexHome | Out-Null
             # Fail-local endpoint only, no API keys and no authorization to infer or sign in.
             $toml = @"
 model_provider = "$($id)_provider"
@@ -350,7 +350,7 @@ requires_openai_auth = false
             [IO.File]::WriteAllText((Join-Path $codexHome 'config.toml'), $toml, (New-Object Text.UTF8Encoding($false)))
             $backends += [ordered]@{
                 id = $id; provider = ($id + '_provider'); command = $officialBackend.FullName
-                home = $home; codex_home = $codexHome
+                home = $backendHome; codex_home = $codexHome
             }
         }
         $bridgeConfig = Join-Path $work 'launch-only-bridge.json'

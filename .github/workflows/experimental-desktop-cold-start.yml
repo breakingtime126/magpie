@@ -36,9 +36,20 @@ jobs:
         run: |
           $errors = $null
           $tokens = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
             (Join-Path $env:GITHUB_WORKSPACE 'build/test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
           if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell syntax validation failed.' }
+          $reserved = @('HOME', 'PID', 'Host', 'PSHOME', 'PSVersionTable', 'PSEdition', 'ShellId', 'ExecutionContext')
+          $assignments = $ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.AssignmentStatementAst]
+          }, $true)
+          foreach ($assignment in $assignments) {
+            if ($assignment.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $reserved -contains $assignment.Left.VariablePath.UserPath) {
+              throw ('Assignment to a protected PowerShell automatic variable: ' + $assignment.Left.VariablePath.UserPath)
+            }
+          }
       - name: Verify official package and attempt licensed cold start
         run: ./build/test-desktop-cold-start.ps1
       - name: Upload only public identity and sanitized startup evidence
