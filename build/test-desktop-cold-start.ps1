@@ -2,8 +2,9 @@
 # Run solely in the disposable, branch-guarded GitHub hosted job.
 [CmdletBinding()]
 param(
-    [ValidateSet('baseline', 'bridge')][string]$Mode = 'baseline',
-    [string]$BridgeExecutable = ''
+    [ValidateSet('baseline', 'bridge', 'observe')][string]$Mode = 'baseline',
+    [string]$BridgeExecutable = '',
+    [string]$ObserverExecutable = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -49,7 +50,8 @@ See the report artifact for public package, session, and process evidence.
 try {
     # Presence checks only. Never read, copy, print, or delete any authentication value.
     foreach ($name in @('OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'CODEX_API_KEY', 'CODEX_AUTH_JSON',
-        'CODEX_HOME', 'CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG')) {
+        'CODEX_HOME', 'CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG',
+        'MAGPIE_CI_REAL_BRIDGE', 'MAGPIE_CI_TRACE_FILE', 'MAGPIE_CI_OBSERVER_ACTIVE')) {
         if ([Environment]::GetEnvironmentVariable($name)) { Block ('Unexpected existing auth/override environment name: ' + $name) }
     }
     if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\auth.json')) { Block 'Unexpected existing Codex authentication file.' }
@@ -229,7 +231,7 @@ namespace DesktopColdProbe {
         $aliasesBefore = @(Get-ChildItem -LiteralPath $aliasRoot -Filter 'chatgpt-desktop.exe' -Force -Recurse -Depth 1)
     }
     $report.aliasEntriesBeforeInstall = $aliasesBefore.Count
-    if ($Mode -eq 'bridge' -and $aliasesBefore.Count -ne 0) {
+    if ($Mode -ne 'baseline' -and $aliasesBefore.Count -ne 0) {
         Block 'A Desktop alias already exists before installation; ownership would be ambiguous.'
     }
     $report.stage = 'licensed-install'
@@ -253,7 +255,7 @@ namespace DesktopColdProbe {
         Block 'Registered package does not match the verified download.'
     }
     $bridgeName = $null
-    if ($Mode -eq 'bridge') {
+    if ($Mode -ne 'baseline') {
         $report.stage = 'registered-alias-and-bridge-configuration'
         $expectedBridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
         if ($BridgeExecutable -ne $expectedBridge -or -not (Test-Path -LiteralPath $BridgeExecutable -PathType Leaf)) {
@@ -379,6 +381,22 @@ requires_openai_auth = false
         if (-not $checker.WaitForExit(10000)) { $checker.Kill(); Block 'Bridge configuration validation timed out.' }
         if ($checker.ExitCode -ne 0) { Block 'Launch-only bridge configuration did not validate.' }
         $report.bridge.configurationValidated = $true
+        $launchExecutable = $BridgeExecutable
+        $launchName = $bridgeName
+        if ($Mode -eq 'observe') {
+            $expectedObserver = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+            if ($ObserverExecutable -ne $expectedObserver -or -not (Test-Path -LiteralPath $ObserverExecutable -PathType Leaf)) {
+                Block 'The exact commit-built test observer is unavailable.'
+            }
+            $launchExecutable = $ObserverExecutable
+            $launchName = [IO.Path]::GetFileName($ObserverExecutable)
+            $tracePrefix = Join-Path $work 'rpc-metadata'
+            $report.observer = [ordered]@{
+                fileName = $launchName
+                sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $ObserverExecutable).Hash.ToLowerInvariant()
+                scope = 'Instrumented launch only; argv and wire bytes are forwarded to the unchanged production bridge.'
+            }
+        }
     }
     $aumid = $app.PackageFamilyName + '!' + $desktopApp.GetAttribute('Id')
     $report.aumid = $aumid
@@ -406,7 +424,11 @@ requires_openai_auth = false
         }
         $start.EnvironmentVariables['PATH'] = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot +
             ';' + (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
-        $start.EnvironmentVariables['CODEX_CLI_PATH'] = $BridgeExecutable
+        $start.EnvironmentVariables['CODEX_CLI_PATH'] = $launchExecutable
+        if ($Mode -eq 'observe') {
+            $start.EnvironmentVariables['MAGPIE_CI_REAL_BRIDGE'] = $BridgeExecutable
+            $start.EnvironmentVariables['MAGPIE_CI_TRACE_FILE'] = $tracePrefix
+        }
         $start.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $bridgeConfig
         $started = [Diagnostics.Process]::Start($start)
         if (-not $started) { Block 'Registered alias did not return a process.' }
@@ -465,11 +487,14 @@ requires_openai_auth = false
         Write-Output ('DESKTOP_SCREENSHOT_PNG=' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($capturePath)))
     }
     $report.capture = 'official-window.png; screen pixels may contain occlusion and require visual review'
-    if ($Mode -eq 'bridge') {
+    if ($Mode -ne 'baseline') {
         $bridgeStarts = @($report.processStarts | Where-Object {
-            $_.name -eq $bridgeName -and $observed.ContainsKey([string]$_.parentProcessId)
+            $_.name -eq $launchName -and $observed.ContainsKey([string]$_.parentProcessId)
         })
-        $report.bridge.startEvents = $bridgeStarts
+        if ($Mode -eq 'observe') {
+            $report.observer.startEvents = $bridgeStarts
+            $report.bridge.startEvents = @()
+        } else { $report.bridge.startEvents = $bridgeStarts }
         $report.bridge.sha256After = (Get-FileHash -Algorithm SHA256 -LiteralPath $BridgeExecutable).Hash.ToLowerInvariant()
         if ($report.bridge.sha256After -ne $report.bridge.sha256) { Block 'Bridge bytes changed during the probe.' }
         $report.bridge.diagnosticMarkers = @()
@@ -490,11 +515,117 @@ requires_openai_auth = false
             }
         }
         $report.bridge.diagnosticMarkers = @($report.bridge.diagnosticMarkers | Select-Object -Unique)
-        if ($bridgeStarts.Count -eq 0) { Block 'No uniquely named bridge child start event was observed under the verified Desktop package.' }
+        if ($bridgeStarts.Count -eq 0) { Block 'No uniquely named configured child start event was observed under the verified Desktop package.' }
+        if ($Mode -eq 'observe') {
+            $report.observer.sha256After = (Get-FileHash -Algorithm SHA256 -LiteralPath $ObserverExecutable).Hash.ToLowerInvariant()
+            if ($report.observer.sha256After -ne $report.observer.sha256) { Block 'Observer bytes changed during the diagnostic.' }
+            # Only the observer's fixed metadata schema is eligible for publication.
+            # Unknown fields or values fail closed without copying or printing the record.
+            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class',
+                'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
+                'flag', 'configKey', 'child_pid', 'exit')
+            $kinds = @('observer_start', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
+                'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
+            $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
+                'response', 'unmatched_response', 'unrecognized', 'oversized', 'unterminated',
+                'unsupported_authentication_capability', 'initialization_required',
+                'config_requirements_disabled', 'config_requirements_failed', 'gateway_oauth_disabled',
+                'unsupported_method', 'invalid_capabilities', 'invalid_initialization', 'already_initialized',
+                'startup_probe_unavailable', 'unknown', 'eof', 'read_error', 'copy_error')
+            $methods = @('initialize', 'initialized', 'configRequirements/read', 'account/read',
+                'account/rateLimits/read', 'account/gatewayOAuth/read', 'attestation/generate', 'model/list',
+                'config/read', 'environment/info', 'environment/status', 'thread/list', 'thread/loaded/list',
+                'thread/start', 'thread/read', 'turn/start', 'unknown')
+            $flags = @('app-server', '--check', '--help', '-h', '--version', '-V',
+                '--analytics-default-enabled', '--stdio', '--print-startup-config', '--startup-sign-out',
+                '--listen', '--startup-client-info', '-c', '--config')
+            $configKeys = @('features.code_mode_host', 'features.prefer_mxc',
+                'features.windows_sandbox_service', 'cli_auth_credentials_store')
+            $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi')
+            $numericKeys = @('seq', 'pid', 'correlation', 'code', 'child_pid', 'exit')
+            $allEvents = @()
+            $traceFiles = @()
+            $complete = $true
+            for ($slot = 1; $slot -le 16; $slot++) {
+                $tracePath = $tracePrefix + ('.{0:D2}.jsonl' -f $slot)
+                if (-not (Test-Path -LiteralPath $tracePath)) { continue }
+                $traceInfo = Get-Item -LiteralPath $tracePath
+                if ($traceInfo.Length -gt 65536 -or ($traceInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                    Block 'Unexpected observer trace file size or type.'
+                }
+                $lines = @(Get-Content -LiteralPath $tracePath -Encoding UTF8)
+                $fileEvents = @()
+                $previousSequence = 0
+                foreach ($line in $lines) {
+                    if ($line.Length -eq 0) { continue }
+                    if ($line.Length -gt 4096) { Block 'Observer metadata record is too large.' }
+                    try { $record = $line | ConvertFrom-Json } catch { Block 'Observer metadata is not valid JSON.' }
+                    foreach ($property in $record.PSObject.Properties) {
+                        if ($keys -cnotcontains $property.Name) { Block 'Observer emitted an unexpected metadata field.' }
+                        $value = $property.Value
+                        if ($numericKeys -ccontains $property.Name) {
+                            $isNumber = $value -is [int] -or $value -is [long] -or $value -is [uint32] -or
+                                $value -is [uint64] -or $value -is [double] -or $value -is [decimal]
+                            if (-not $isNumber -or [double]$value -ne [Math]::Truncate([double]$value) -or
+                                [Math]::Abs([double]$value) -gt 4294967296) {
+                                Block 'Observer emitted invalid numeric metadata.'
+                            }
+                        } elseif ($booleanKeys -ccontains $property.Name) {
+                            if ($value -isnot [bool]) { Block 'Observer emitted invalid boolean metadata.' }
+                        } else {
+                            $allowed = switch ($property.Name) {
+                                'kind' { $kinds }
+                                'class' { $classes }
+                                'method' { $methods }
+                                'direction' { @('to_bridge', 'from_bridge', 'stderr') }
+                                'flag' { $flags }
+                                'configKey' { $configKeys }
+                            }
+                            if ($allowed -cnotcontains $value) { Block 'Observer emitted an unreviewed metadata label.' }
+                        }
+                    }
+                    if (-not $record.PSObject.Properties['seq'] -or -not $record.PSObject.Properties['pid'] -or
+                        -not $record.PSObject.Properties['kind'] -or $record.seq -le $previousSequence -or $record.pid -le 0) {
+                        Block 'Observer metadata ordering or identity is invalid.'
+                    }
+                    if (@($bridgeStarts | ForEach-Object { $_.processId }) -notcontains $record.pid) {
+                        Block 'Observer metadata is not tied to an observed test child.'
+                    }
+                    $previousSequence = $record.seq
+                    $fileEvents += $record
+                }
+                if ($traceInfo.Length -ge 64512 -or @($fileEvents | Where-Object { $_.kind -eq 'child_exit' }).Count -eq 0 -or
+                    @($fileEvents | Where-Object { $_.kind -eq 'stream_end' -and
+                        $_.PSObject.Properties['direction'] -and $_.direction -eq 'from_bridge' -and
+                        $_.PSObject.Properties['class'] -and $_.class -eq 'eof' }).Count -eq 0 -or
+                    @($fileEvents | Where-Object { $_.kind -eq 'stream_end' -and
+                        $_.PSObject.Properties['direction'] -and $_.direction -eq 'stderr' -and
+                        $_.PSObject.Properties['class'] -and $_.class -eq 'eof' }).Count -eq 0) {
+                    $complete = $false
+                }
+                $allEvents += $fileEvents
+                $traceName = [IO.Path]::GetFileName($tracePath)
+                # Publish only the validated snapshot, never recopy a file that can still grow.
+                $validatedLines = @($fileEvents | ForEach-Object { $_ | ConvertTo-Json -Depth 4 -Compress })
+                [IO.File]::WriteAllLines((Join-Path $out $traceName), [string[]]$validatedLines, (New-Object Text.UTF8Encoding($false)))
+                $traceFiles += [ordered]@{ fileName = $traceName; bytes = $traceInfo.Length; records = $fileEvents.Count }
+            }
+            if ($traceFiles.Count -eq 0 -or $allEvents.Count -eq 0) { Block 'Instrumented launch produced no readable metadata trace.' }
+            if ($traceFiles.Count -eq 16) { $complete = $false }
+            $report.observer.traceFiles = $traceFiles
+            $report.observer.completeLifecycleEvidence = $complete
+            $report.observer.correlationLimitsObserved = @($allEvents | Where-Object {
+                $_.PSObject.Properties['class'] -and $_.class -in @('duplicate_id', 'correlation_limit')
+            }).Count -gt 0
+            $report.observer.recordCount = $allEvents.Count
+            $report.observer.records = @($allEvents | Select-Object -First 256)
+            $report.observer.recordsTruncatedInSummary = $allEvents.Count -gt 256
+            $report.observer.limit = 'Missing child exit or output EOF, saturated slots or truncated summary preclude claims that no failure occurred. Read validated artifact records for remaining evidence.'
+        }
     }
     $report.status = 'observed'
-    $report.stage = $(if ($Mode -eq 'baseline') { 'baseline-window-observed' } else { 'bridge-child-start-observed' })
-    $report.reason = 'Verified package process and window observed. In bridge mode, the configured uniquely named bridge start event is required. Screenshot and startup-blocker review remain required; no successful protocol, login, or model behavior is claimed.'
+    $report.stage = $(if ($Mode -eq 'baseline') { 'baseline-window-observed' } elseif ($Mode -eq 'observe') { 'instrumented-policy-trace-captured' } else { 'bridge-child-start-observed' })
+    $report.reason = 'Verified package process and window observed. Direct mode requires the bridge child; observe mode requires the separately identified observer and validated metadata. Review screenshot and first failing exchange; no policy, login, model or production acceptance is claimed.'
     $exitCode = 0
 } catch {
     if (-not $report.Contains('reason')) { $report.reason = $_.Exception.Message }

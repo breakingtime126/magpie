@@ -1,0 +1,112 @@
+name: Experimental Desktop policy trace
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experiment/app-server-bridge-v0.1.3035
+    paths:
+      - .github/workflows/experimental-desktop-policy-trace.yml
+      - build/desktop-rpc-observer/**
+      - build/test-desktop-cold-start.ps1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-desktop-policy-trace-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  observer-unit:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
+    steps:
+      - name: Check out the exact experimental commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up the pinned Go version
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test metadata redaction and unchanged transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          diff="$(gofmt -d build/desktop-rpc-observer)"
+          if [[ -n "$diff" ]]; then
+            printf '%s\n' "$diff"
+            for file in main.go main_test.go; do
+              printf 'OBSERVER_FORMAT_%s=' "$file"
+              gofmt "build/desktop-rpc-observer/$file" | base64 -w0
+              printf '\n'
+            done
+            exit 1
+          fi
+          go test -race -count=1 -timeout=5m ./build/desktop-rpc-observer
+          go vet ./build/desktop-rpc-observer
+
+  observed-policy-read:
+    needs: observer-unit
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    runs-on: windows-2025
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: '0'
+      GOOS: windows
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Check out the exact experimental commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up the pinned Go version
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check probe syntax before execution
+        run: |
+          $errors = $null
+          $tokens = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $env:GITHUB_WORKSPACE 'build/test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { $errors | Format-List; throw 'Probe syntax validation failed.' }
+      - name: Test observer on Windows and build unchanged bridge
+        run: |
+          go test -count=1 -timeout=5m ./build/desktop-rpc-observer
+          if ($LASTEXITCODE -ne 0) { throw 'Windows observer tests failed.' }
+          $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          go build -trimpath -tags nogui -o $bridge ./cmd/magpie-codex-bridge
+          if ($LASTEXITCODE -ne 0) { throw 'Production bridge build failed.' }
+          go build -trimpath -o $observer ./build/desktop-rpc-observer
+          if ($LASTEXITCODE -ne 0) { throw 'Test observer build failed.' }
+      - name: Observe metadata without changing policy responses
+        run: |
+          $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
+          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer
+      - name: Upload only sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: official-desktop-policy-trace-${{ github.sha }}
+          path: ${{ runner.temp }}/desktop-cold-start-report
+          if-no-files-found: error
+          retention-days: 7

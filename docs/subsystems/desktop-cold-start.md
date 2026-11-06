@@ -73,3 +73,42 @@ facts and the fresh unauthenticated window image. They do not contain the MSIX,
 offline license, app data, credentials, raw process command lines, or environment
 values. Test-created activation is closed when possible; the disposable VM is
 the final process and filesystem lifetime boundary.
+
+## Policy-read diagnostic
+
+The direct launch at commit `56c7e8b6a55be2374f8fdced2a47962e095af078`
+reached the original login screen in the baseline job. The override job logged
+`source=override`, started the uniquely named bridge child, and then displayed
+“Organization settings could not be loaded.” The Desktop log classified the
+failure as `phase=policy-read reason=rpc`. This does not identify an exact method,
+error origin, successful handshake, or a network denial.
+[Observed run](https://github.com/breakingtime126/magpie/actions/runs/42169742564).
+
+The separate `Experimental Desktop policy trace` workflow adds an explicitly
+instrumented `observe` mode. Its Windows-only test observer launches the unchanged
+production bridge and forwards arguments and stdio bytes without issuing extra
+requests, retries, invented results, changed capabilities or policy overrides.
+It is not installed or included in the production package.
+
+Only fixed method/flag/config-key names, generated correlation numbers, error
+codes and fixed classifications, four initialization booleans, and process/EOF
+metadata can enter the trace. Raw IDs or their hashes, parameters, results,
+messages, argument values, paths, arbitrary stderr, credentials and proof tokens
+are never trace fields. Unknown values are classified without their text.
+PowerShell validates the fixed metadata schema and publishes a validated snapshot,
+not a recopy of a still-growing file.
+
+One fresh directory and prefix allow at most 16 exclusive 64 KiB trace files.
+Duplicate request IDs remain uncorrelatable, and exhausting correlation capacity
+disables further matching. Missing child exit, exhausted trace slots or truncated
+summaries mean incomplete evidence, not proof that no failure occurred.
+The helper forwards ordinary Windows exit codes and output EOF. Its blocked
+stdin reader is released by immediate process exit after the child ends; it is
+not a reusable in-process proxy and does not claim Unix signal transparency.
+
+Race/redaction/forwarding tests and a real Windows helper-process test must pass
+before the instrumented Desktop launch. The latter holds inherited stdin open
+while the native fixture exits, checking byte-exact output, EOF and exit status.
+No old 0.166 compatibility mode is enabled simply because the packaged backend
+reports 0.167.0-alpha.3.2. The first correlated failure must be established before
+considering a separately reviewed compatibility change.
