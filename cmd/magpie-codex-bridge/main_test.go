@@ -87,10 +87,26 @@ func fixtureServer() int {
 			}
 		}
 		if request.Method == "initialize" {
+			if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "fixture-hold-initialize")); err == nil {
+				// The error-path test releases this sibling only after observing
+				// the other child's error, forcing the otherwise racy ordering.
+				if os.WriteFile(filepath.Join(os.Getenv("HOME"), "fixture-initialize-held"), nil, 0600) != nil {
+					return 15
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				err := waitAdapterFixtureFile(ctx, filepath.Join(os.Getenv("HOME"), "fixture-initialize-release"))
+				cancel()
+				if err != nil {
+					return 16
+				}
+			}
 			if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "synthetic-plugin-error")); err == nil {
 				response := map[string]any{"id": request.ID, "error": json.RawMessage(desktopPluginFixtureError)}
 				if json.NewEncoder(os.Stdout).Encode(response) != nil {
 					return 4
+				}
+				if os.WriteFile(filepath.Join(os.Getenv("HOME"), "fixture-initialize-written"), nil, 0600) != nil {
+					return 17
 				}
 				continue
 			}
@@ -105,6 +121,9 @@ func fixtureServer() int {
 			if json.NewEncoder(os.Stdout).Encode(response) != nil {
 				return 4
 			}
+			if os.WriteFile(filepath.Join(os.Getenv("HOME"), "fixture-initialize-written"), nil, 0600) != nil {
+				return 17
+			}
 		}
 	}
 	if scanner.Err() != nil {
@@ -114,6 +133,25 @@ func fixtureServer() int {
 		return 6
 	}
 	return 0
+}
+
+// waitAdapterFixtureFile waits for an explicit process/test acknowledgement, not an
+// elapsed-time assumption. The context is only a last-resort failure bound.
+func waitAdapterFixtureFile(ctx context.Context, path string) error {
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // The one-shot fixture never opens credentials or a service. Its controlled
@@ -1084,6 +1122,27 @@ func testAdapterLifecycleCase(t *testing.T, adapter string, args, wantChildPrefi
 		t.Fatal("adapter exited before its initialization response")
 	case <-ctx.Done():
 		t.Fatal("adapter initialization timed out")
+	}
+	if initializeError {
+		// A failed fanout may reach the client before its sibling has written
+		// a response. Client EOF closes child stdout immediately, so establish
+		// successful writes before asserting that both fixtures take EOF.
+		held := filepath.Join(cfg.Backends[0].Home, "fixture-initialize-held")
+		if err := waitAdapterFixtureFile(ctx, held); err != nil {
+			t.Fatalf("sibling did not reach the held initialize response: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(cfg.Backends[0].Home, "fixture-initialize-written")); !os.IsNotExist(err) {
+			t.Fatal("sibling response was not held until the native error reached the client")
+		}
+		release := filepath.Join(cfg.Backends[0].Home, "fixture-initialize-release")
+		if err := os.WriteFile(release, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, backend := range cfg.Backends {
+			if err := waitAdapterFixtureFile(ctx, filepath.Join(backend.Home, "fixture-initialize-written")); err != nil {
+				t.Fatalf("backend %s did not finish its initialize response before client EOF: %v", backend.ID, err)
+			}
+		}
 	}
 	if !initializeError {
 		if _, err := fmt.Fprintln(inputWriter, `{"method":"initialized"}`); err != nil {

@@ -155,6 +155,9 @@ func testDesktopPluginLifecycle(t *testing.T, adapter string) {
 				}
 				cfg.Backends[i].StartupProbeSHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
 			}
+			if err := os.WriteFile(filepath.Join(cfg.Backends[0].Home, "fixture-hold-initialize"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.WriteFile(filepath.Join(cfg.Backends[1].Home, "synthetic-plugin-error"), []byte("synthetic"), 0600); err != nil {
 				t.Fatal(err)
 			}
