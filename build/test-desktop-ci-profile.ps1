@@ -1271,7 +1271,8 @@ Expect-Pass 'runtime root construction has one explicit harness provenance seam'
         $node.GetCommandName() -ceq 'New-DesktopReadTargetEnvironment'
     }, $true))
     $expected = @('New-DesktopReadTargetEnvironment', '-Backends', '$backends', '-Workspace',
-        '$work', '-VerifiedPackage', '$app.InstallLocation', '-ControlHome', '$controlHome')
+        '$(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work })',
+        '-VerifiedPackage', '$app.InstallLocation', '-ControlHome', '$controlHome')
     if ($calls.Count -ne 1 -or $calls[0].CommandElements.Count -ne $expected.Count) {
         throw 'Runtime root references lost their explicit provenance.'
     }
@@ -1279,6 +1280,53 @@ Expect-Pass 'runtime root construction has one explicit harness provenance seam'
         if ($calls[0].CommandElements[$i].Extent.Text -cne $expected[$i]) {
             throw 'Runtime root references lost their explicit provenance.'
         }
+    }
+}
+Expect-Pass 'runtime workspace alternatives retain their exact owned provenance' {
+    # The argument above is exact syntax, not an arbitrary expression allowance.
+    # Exercise it without invoking the harness, provider, filesystem or a process.
+    $call = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -ceq 'New-DesktopReadTargetEnvironment'
+    }, $true))[0]
+    $selectWorkspace = [scriptblock]::Create($call.CommandElements[4].Extent.Text)
+    $work = 'C:\fixture\original-owned-work'
+    $liveWorkspace = 'C:\fixture\live-owned-workspace'
+    foreach ($enabled in @($false, $true)) {
+        $EnableReviewedLiveWelcome = $enabled
+        $selected = @(& $selectWorkspace)
+        $expectedRoot = $(if ($enabled) { $liveWorkspace } else { $work })
+        if ($selected.Count -ne 1 -or $selected[0] -cne $expectedRoot) {
+            throw 'Opt-in changed the wrong workspace provenance branch.'
+        }
+    }
+    # One validator-owned assignment, only inside the explicit opt-in branch,
+    # before the one declaration seam. JSON cannot supply arbitrary path authority.
+    $lastEnd = -1
+    foreach ($spec in @(
+        @('$liveOwned', 'ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName'),
+        @('$liveWorkspace', '$liveOwned.Workspace')
+    )) {
+        $assignments = @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -ceq $spec[0]
+        }, $true))
+        if ($assignments.Count -ne 1 -or $assignments[0].Right.Extent.Text -cne $spec[1] -or
+            $assignments[0].Extent.StartOffset -le $lastEnd -or
+            $assignments[0].Extent.EndOffset -ge $call.Extent.StartOffset) {
+            throw 'Live workspace bypassed its unique validated provenance assignment.'
+        }
+        $guard = $assignments[0].Parent
+        while ($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]) { $guard = $guard.Parent }
+        if ($null -eq $guard -or $guard.Clauses.Count -ne 1 -or
+            $guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLiveWelcome' -or
+            $guard.Clauses[0].Item2.Extent.StartOffset -gt $assignments[0].Extent.StartOffset -or
+            $guard.Clauses[0].Item2.Extent.EndOffset -lt $assignments[0].Extent.EndOffset) {
+            throw 'Live workspace provenance is outside the explicit opt-in branch.'
+        }
+        $lastEnd = $assignments[0].Extent.EndOffset
     }
 }
 Expect-Pass 'uninformative optional caller scan is not executed again' {
