@@ -118,6 +118,9 @@ func authCompatConfig(t *testing.T) Config {
 	cfg.GatewayOAuthProviderName = "Reviewed Fixture"
 	for i := range cfg.Backends {
 		b := &cfg.Backends[i]
+		// Separate synthetic providers also give their thread IDs distinct
+		// namespaces; real cross-backend thread collisions must stay fatal.
+		b.Provider = "fixture-" + b.ID
 		b.Models = []json.RawMessage{fixtureModel(b.ID+"_model", true)}
 		data, _ := json.Marshal(map[string]string{"Provider": b.Provider})
 		if err := os.WriteFile(filepath.Join(b.Home, "fixture-auth.json"), data, 0600); err != nil {
