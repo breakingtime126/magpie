@@ -248,7 +248,7 @@ func TestReadRequestCorrelationAndRepliesRemainOpaque(t *testing.T) {
 		} {
 			var log bytes.Buffer
 			o := newObserver(&log)
-			raw := []byte(`{"id":1,"method":"`+method+`","params":{}}`)
+			raw := []byte(`{"id":1,"method":"` + method + `","params":{}}`)
 			o.line("to_bridge", raw)
 			o.line("from_bridge", []byte(reply))
 			records := readMetadataRecords(t, log.Bytes())

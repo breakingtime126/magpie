@@ -358,17 +358,17 @@ func TestAuthStatus167ExactConfigAndVersionGates(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(*Config){
-		"partial": func(c *Config) { c.AuthStatus = "primary-no-auth" },
-		"future": func(c *Config) { c.AuthStatus = "primary-no-auth-v0.167.0-alpha.3.3" },
+		"partial":         func(c *Config) { c.AuthStatus = "primary-no-auth" },
+		"future":          func(c *Config) { c.AuthStatus = "primary-no-auth-v0.167.0-alpha.3.3" },
 		"old attestation": func(c *Config) { c.Attestation = AttestationUnavailable },
 		"old gateway": func(c *Config) {
 			c.GatewayOAuth = GatewayOAuthPrimaryRead
 			c.GatewayOAuthProviderName = "OpenAI"
 		},
 		"old requirements": func(c *Config) { c.RequirementsRead = ConfigRequirementsCompareSafe },
-		"old startup": func(c *Config) { c.StartupProbe = StartupProbeCompareUnrestricted },
-		"first pin": func(c *Config) { c.Backends[0].StartupProbeSHA256 = "" },
-		"second pin": func(c *Config) { c.Backends[1].StartupProbeSHA256 = "" },
+		"old startup":      func(c *Config) { c.StartupProbe = StartupProbeCompareUnrestricted },
+		"first pin":        func(c *Config) { c.Backends[0].StartupProbeSHA256 = "" },
+		"second pin":       func(c *Config) { c.Backends[1].StartupProbeSHA256 = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := base
