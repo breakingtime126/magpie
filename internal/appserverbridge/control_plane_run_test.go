@@ -35,7 +35,7 @@ func controlPlaneFixture() (bool, int) {
 	if provider != "openai" {
 		model = "deepseek-flash-ft"
 	}
-	thread := object{"id": raw(provider+"-thread"), "modelProvider": raw(provider), "model": raw(model), "turns": raw([]any{})}
+	thread := object{"id": raw(provider + "-thread"), "modelProvider": raw(provider), "model": raw(model), "turns": raw([]any{})}
 	turn := 0
 	decoder := json.NewDecoder(os.Stdin)
 	for {
@@ -93,7 +93,7 @@ func controlPlaneFixture() (bool, int) {
 		if method == "turn/start" {
 			id := fmt.Sprintf("%s-turn-%d", provider, turn)
 			fmt.Println(string(raw(object{"method": raw("item/agentMessage/delta"), "params": raw(object{
-				"threadId": thread["id"], "turnId": raw(id), "itemId": raw(id+"-message"), "delta": raw("synthetic "+provider),
+				"threadId": thread["id"], "turnId": raw(id), "itemId": raw(id + "-message"), "delta": raw("synthetic " + provider),
 			})})))
 			fmt.Println(string(raw(object{"method": raw("turn/completed"), "params": raw(object{
 				"threadId": thread["id"], "turn": raw(object{"id": raw(id), "items": raw([]any{}), "status": raw("completed"), "error": raw(nil)}),
@@ -177,7 +177,7 @@ func TestRunControlPlane167TwoNativePeersAndFreshReads(t *testing.T) {
 		if b.ID != "openai" {
 			model = "deepseek-flash-ft"
 		}
-		started := stream.ask(t, bridge, string(raw(object{"id": raw("start-"+b.ID), "method": raw("thread/start"), "params": raw(object{
+		started := stream.ask(t, bridge, string(raw(object{"id": raw("start-" + b.ID), "method": raw("thread/start"), "params": raw(object{
 			"model": raw(alias(b.ID, model)), "modelProvider": raw(controlPlaneProvider167),
 			"approvalPolicy": raw("on-request"), "permissions": raw("native-profile"),
 		})})))
@@ -201,7 +201,7 @@ func TestRunControlPlane167TwoNativePeersAndFreshReads(t *testing.T) {
 				}
 			}
 		}
-		read := stream.ask(t, bridge, string(raw(object{"id": raw("read-"+b.ID), "method": raw("thread/read"), "params": raw(object{"threadId": thread["id"]})})))
+		read := stream.ask(t, bridge, string(raw(object{"id": raw("read-" + b.ID), "method": raw("thread/read"), "params": raw(object{"threadId": thread["id"]})})))
 		value, _ = child(read, "result")
 		thread, _ = child(value, "thread")
 		if text(thread, "modelProvider") != controlPlaneProvider167 {

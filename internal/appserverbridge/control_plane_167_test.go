@@ -262,7 +262,7 @@ func TestControlPlane167ProviderProjectionAndPayloadPreservation(t *testing.T) {
 			"permissions": raw("backend-owned-profile"), "approvalPolicy": raw("on-request"),
 			"approvalsReviewer": raw("user"), "runtimeWorkspaceRoots": raw([]string{"/fixture/root"}),
 		}
-		out := client(t, r, string(raw(object{"id": raw("start-"+b.ID), "method": raw("thread/start"), "params": raw(params)})))
+		out := client(t, r, string(raw(object{"id": raw("start-" + b.ID), "method": raw("thread/start"), "params": raw(params)})))
 		if len(out) != 1 || out[0].Backend != b.ID {
 			t.Fatal("logical provider overrode the model's fixed owner")
 		}
@@ -276,7 +276,7 @@ func TestControlPlane167ProviderProjectionAndPayloadPreservation(t *testing.T) {
 		if text(actual, "modelProvider") != b.Provider || text(actual, "model") != model {
 			t.Fatal("logical model/provider reached native child")
 		}
-		thread := object{"id": raw(b.ID+"-thread"), "modelProvider": raw(b.Provider), "model": raw(model), "turns": raw([]any{}),
+		thread := object{"id": raw(b.ID + "-thread"), "modelProvider": raw(b.Provider), "model": raw(model), "turns": raw([]any{}),
 			"preview": raw(`literal {"modelProvider":"openai","model":"gpt"}`)}
 		policy := json.RawMessage(`{"type":"workspaceWrite","writableRoots":["/fixture/root"],"networkAccess":false,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true}`)
 		result := reply(t, r, out[0], string(raw(object{"thread": raw(thread), "model": raw(model), "modelProvider": raw(b.Provider),
@@ -289,8 +289,8 @@ func TestControlPlane167ProviderProjectionAndPayloadPreservation(t *testing.T) {
 			t.Fatal("provider projection changed payloads or permissions")
 		}
 		for _, method := range []string{"thread/resume", "thread/fork"} {
-			p := object{"threadId": raw(b.ID+"-thread"), "modelProvider": raw(controlPlaneProvider167)}
-			out := client(t, r, string(raw(object{"id": raw(method+b.ID), "method": raw(method), "params": raw(p)})))
+			p := object{"threadId": raw(b.ID + "-thread"), "modelProvider": raw(controlPlaneProvider167)}
+			out := client(t, r, string(raw(object{"id": raw(method + b.ID), "method": raw(method), "params": raw(p)})))
 			msg, _ := parseObject(out[0].Message)
 			p, _ = child(msg, "params")
 			if text(p, "modelProvider") != b.Provider || out[0].Backend != b.ID {
@@ -299,8 +299,8 @@ func TestControlPlane167ProviderProjectionAndPayloadPreservation(t *testing.T) {
 			reply(t, r, out[0], string(raw(object{"thread": raw(thread), "model": raw(model), "modelProvider": raw(b.Provider)})))
 		}
 		schema := json.RawMessage(`{"modelProvider":"literal-provider","nested":{"model":"literal-model"},"same":1,"same":2}`)
-		out = client(t, r, string(raw(object{"id": raw("turn-"+b.ID), "method": raw("turn/start"), "params": raw(object{
-			"threadId": raw(b.ID+"-thread"), "input": raw([]object{{"type": raw("text"), "text": raw("literal "+controlPlaneProvider167), "text_elements": raw([]any{})}}),
+		out = client(t, r, string(raw(object{"id": raw("turn-" + b.ID), "method": raw("turn/start"), "params": raw(object{
+			"threadId": raw(b.ID + "-thread"), "input": raw([]object{{"type": raw("text"), "text": raw("literal " + controlPlaneProvider167), "text_elements": raw([]any{})}}),
 			"outputSchema": schema, "permissions": raw("backend-owned-profile"),
 		})})))
 		msg, _ := parseObject(out[0].Message)
@@ -311,7 +311,7 @@ func TestControlPlane167ProviderProjectionAndPayloadPreservation(t *testing.T) {
 		reply(t, r, out[0], `{"turn":{"id":"turn-`+b.ID+`","items":[],"status":"inProgress","error":null}}`)
 		settings := object{"model": raw(model), "modelProvider": raw(b.Provider), "sandboxPolicy": policy}
 		out = server(t, r, b.ID, string(raw(object{"method": raw("thread/settings/updated"), "params": raw(object{
-			"threadId": raw(b.ID+"-thread"), "threadSettings": raw(settings),
+			"threadId": raw(b.ID + "-thread"), "threadSettings": raw(settings),
 		})})))
 		msg, _ = parseObject(out[0].Message)
 		p, _ = child(msg, "params")
@@ -391,12 +391,12 @@ func TestControlPlane167NativeProviderAndDuplicateChecks(t *testing.T) {
 		controlPlaneCatalog(t, r, true)
 		out := client(t, r, `{"id":"start","method":"thread/start","params":{"model":"magpie/openai/gpt"}}`)
 		msg, _ := parseObject(out[0].Message)
-		payload := `{"id":`+string(msg["id"])+`,"result":{"thread":{"id":"a","modelProvider":"openai","model":"gpt","turns":[]},"model":"gpt","modelProvider":`+bad+`}}`
+		payload := `{"id":` + string(msg["id"]) + `,"result":{"thread":{"id":"a","modelProvider":"openai","model":"gpt","turns":[]},"model":"gpt","modelProvider":` + bad + `}}`
 		if result, err := r.Server("openai", []byte(payload)); err == nil || len(result) != 0 {
 			t.Fatal("unexpected native top-level provider accepted")
 		}
 		r.threads["a"] = "openai"
-		payload = `{"method":"thread/settings/updated","params":{"threadId":"a","threadSettings":{"model":"gpt","modelProvider":`+bad+`}}}`
+		payload = `{"method":"thread/settings/updated","params":{"threadId":"a","threadSettings":{"model":"gpt","modelProvider":` + bad + `}}}`
 		if result, err := r.Server("openai", []byte(payload)); err == nil || len(result) != 0 {
 			t.Fatal("unexpected native settings provider accepted")
 		}
@@ -467,18 +467,18 @@ func TestControlPlane167ExactConfigAndVersionGates(t *testing.T) {
 		t.Fatal("sole routing mode rejected", err)
 	}
 	for name, change := range map[string]func(*Config){
-		"missing control home": func(c *Config) { c.ControlHome = "" },
-		"relative control home": func(c *Config) { c.ControlHome = "relative-control" },
+		"missing control home":     func(c *Config) { c.ControlHome = "" },
+		"relative control home":    func(c *Config) { c.ControlHome = "relative-control" },
 		"overlapping control home": func(c *Config) { c.ControlHome = c.Backends[1].CodexHome },
-		"orphan control home": func(c *Config) { c.ControlPlane = "" },
-		"partial": func(c *Config) { c.ControlPlane = "routing-v0.167" },
-		"future": func(c *Config) { c.ControlPlane = "routing-v0.167.0-alpha.3.3" },
-		"legacy requirements": func(c *Config) { c.RequirementsRead = ConfigRequirementsCompareSafe },
-		"legacy startup": func(c *Config) { c.StartupProbe = StartupProbeCompareUnrestricted },
-		"legacy attestation": func(c *Config) { c.Attestation = AttestationUnavailable },
-		"legacy gateway": func(c *Config) { c.GatewayOAuth = GatewayOAuthPrimaryRead; c.GatewayOAuthProviderName = "Fixture" },
-		"first pin": func(c *Config) { c.Backends[0].StartupProbeSHA256 = "" },
-		"second pin": func(c *Config) { c.Backends[1].StartupProbeSHA256 = "" },
+		"orphan control home":      func(c *Config) { c.ControlPlane = "" },
+		"partial":                  func(c *Config) { c.ControlPlane = "routing-v0.167" },
+		"future":                   func(c *Config) { c.ControlPlane = "routing-v0.167.0-alpha.3.3" },
+		"legacy requirements":      func(c *Config) { c.RequirementsRead = ConfigRequirementsCompareSafe },
+		"legacy startup":           func(c *Config) { c.StartupProbe = StartupProbeCompareUnrestricted },
+		"legacy attestation":       func(c *Config) { c.Attestation = AttestationUnavailable },
+		"legacy gateway":           func(c *Config) { c.GatewayOAuth = GatewayOAuthPrimaryRead; c.GatewayOAuthProviderName = "Fixture" },
+		"first pin":                func(c *Config) { c.Backends[0].StartupProbeSHA256 = "" },
+		"second pin":               func(c *Config) { c.Backends[1].StartupProbeSHA256 = "" },
 		"reserved native provider": func(c *Config) { c.Backends[1].Provider = controlPlaneProvider167 },
 	} {
 		t.Run(name, func(t *testing.T) {

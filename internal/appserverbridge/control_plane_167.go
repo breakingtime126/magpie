@@ -120,7 +120,7 @@ func (r *Router) controlPlaneConfig167() object {
 		"version": raw(1), "view": raw("routing-defaults"),
 		"provider_routing": raw("fixed-per-thread"),
 		"execution_policy": raw("backend-owned-per-thread"),
-		"model_catalog": raw("model/list"),
+		"model_catalog":    raw("model/list"),
 		"supports": raw(object{
 			"config_writes": raw(false), "layer_reads": raw(false), "cwd_reads": raw(false),
 		}),
