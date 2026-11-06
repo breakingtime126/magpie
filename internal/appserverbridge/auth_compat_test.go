@@ -222,7 +222,7 @@ func TestGatewayOAuthReadCompleteAndStrict(t *testing.T) {
 		`{"id":"read","result":{},"error":null}`,
 		`{"id":"read","id":"other","result":{}}`,
 		`{"id":null,"result":{}}`,
-		string(envelope(base))+strings.Repeat(" ", 16<<10),
+		string(envelope(base)) + strings.Repeat(" ", 16<<10),
 	} {
 		if _, err := validateGatewayRead([]byte(line), b, "OpenAI"); err == nil || err.Error() != "gateway OAuth status unavailable" {
 			t.Fatal("untrusted read error escaped")
@@ -243,7 +243,9 @@ func TestGatewayOAuthNotificationsPrimaryOnly(t *testing.T) {
 	}
 	for _, mode := range []string{"off", "unnegotiated"} {
 		r := authCompatRouter(t)
-		if mode == "off" { r.auth.gatewayRead = false } else {
+		if mode == "off" {
+			r.auth.gatewayRead = false
+		} else {
 			r.auth.gatewayNegotiated = false
 		}
 		if out, err := r.gatewayNotification("openai", line); err != nil || len(out) != 0 {
@@ -407,7 +409,7 @@ func TestAuthCompatServerEnvelopeRoutingKeys(t *testing.T) {
 		for _, methods := range [][]string{{authMethod, "account/updated"}, {"account/updated", authMethod}} {
 			for _, secondKey := range []string{"method", "meth\\u006fd"} {
 				r := authCompatRouter(t)
-				line := []byte(`{"method":"`+methods[0]+`","`+secondKey+`":"`+methods[1]+`","params":{}}`)
+				line := []byte(`{"method":"` + methods[0] + `","` + secondKey + `":"` + methods[1] + `","params":{}}`)
 				out, err := r.Server("openai", line)
 				if err == nil || len(out) != 0 {
 					t.Fatal("duplicate routing keys bypassed authentication validation")
@@ -474,8 +476,8 @@ func TestAuthCompatServerEnvelopeKeysBoundedAndShallow(t *testing.T) {
 
 	// The routing-key guard must not apply the auth helpers' 4/16/64 KiB
 	// limits, depth limit, or nested duplicate rules to unrelated tool data.
-	nested := strings.Repeat("[", 32)+`{"x":1,"x":2}`+strings.Repeat("]", 32)
-	line := []byte(`{"method":"fixture/tool","params":{"text":"`+strings.Repeat("x", 128<<10)+`","nested":`+nested+`}}`)
+	nested := strings.Repeat("[", 32) + `{"x":1,"x":2}` + strings.Repeat("]", 32)
+	line := []byte(`{"method":"fixture/tool","params":{"text":"` + strings.Repeat("x", 128<<10) + `","nested":` + nested + `}}`)
 	if validateServerEnvelopeKeys(line) != nil {
 		t.Fatal("unrelated payload was narrowed")
 	}
