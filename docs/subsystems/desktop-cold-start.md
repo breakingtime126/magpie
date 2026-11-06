@@ -37,7 +37,10 @@ It launches only the newly registered `chatgpt-desktop.exe` alias declared under
 that manifest's Desktop application. An identically named alias existing before
 installation is a blocker. Directory-entry enumeration checks the documented
 root alias location as well as the family-qualified location; the initial `Test-Path` check failed to discover the latter, while subsequent
-directory enumeration found both. The selected entry must have the documented
+directory enumeration found both. A separate fresh runner returned no entries
+immediately after provisioning, so enumeration now waits approximately 60 seconds for
+registration to materialize. It does not trigger activation, rewrite registration,
+or retry access errors. Continued absence is a reported launcher blocker. The selected entry must have the documented
 CreateProcess alias reparse tag `0x8000001B`. The probe never parses undocumented
 APPEXECLINK payload strings or fabricates an alias. Actual runtime package identity
 remains a separate mandatory check. Non-shell process

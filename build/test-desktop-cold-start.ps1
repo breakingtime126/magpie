@@ -265,7 +265,14 @@ namespace DesktopColdProbe {
         if ($desktopAliases -notcontains 'chatgpt-desktop.exe') { Block 'No reviewed official Desktop execution alias exists.' }
         # APPEXECLINK is not a regular file/symlink. Enumerate directory entries rather than
         # treating Test-Path on a guessed family-qualified path as the registration contract.
-        $aliasEntries = @(Get-ChildItem -LiteralPath $aliasRoot -Filter 'chatgpt-desktop.exe' -Force -Recurse -Depth 1)
+        $aliasEntries = @()
+        $aliasWait = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            $aliasEntries = @(Get-ChildItem -LiteralPath $aliasRoot -Filter 'chatgpt-desktop.exe' -Force -Recurse -Depth 1)
+            if ($aliasEntries.Count -gt 0) { break }
+            Start-Sleep -Seconds 1
+        } while ($aliasWait.Elapsed.TotalSeconds -lt 60)
+        $report.aliasObservationSeconds = [Math]::Round($aliasWait.Elapsed.TotalSeconds, 2)
         $report.aliasEntriesAfterInstall = @($aliasEntries | ForEach-Object {
             [ordered]@{ relativePath = $_.FullName.Substring($aliasRoot.Length).TrimStart('\'); attributes = [string]$_.Attributes }
         })
