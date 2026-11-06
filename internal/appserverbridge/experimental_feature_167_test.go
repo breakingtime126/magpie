@@ -210,9 +210,8 @@ func TestExperimentalFeature167CompleteComparisonAndCleanup(t *testing.T) {
 	if len(r.staleResponses) > 256 || len(r.staleResponseOrder) > 256 {
 		t.Fatal("late-response tombstones are unbounded")
 	}
-	// Reject overlap, but an abandoned read must not prevent a fresh recovery.
+	// An abandoned read must not prevent a fresh recovery.
 	out := experimentalFeatureAsk(t, r, "{}")
-	expectError(t, client(t, r, `{"id":"overlap","method":"experimentalFeature/list","params":{}}`))
 	reply(t, r, out[0], experimentalFeatureTestLast)
 	result := reply(t, r, out[1], experimentalFeatureTestLast)
 	if !strings.Contains(string(result[0].Message), `"result"`) {

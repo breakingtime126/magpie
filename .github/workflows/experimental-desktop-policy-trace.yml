@@ -424,6 +424,24 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestControlPlane167OptionalParamsBehavioralRed'
           printf '%s\n' "$output" | grep -F -- 'native defaulted config/read params must be accepted'
           echo 'Native omitted defaults and null optional cwd fail the old shape assertion; compilation failures do not qualify.'
+      - name: Check out exact pre-concurrent-feature-page behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ace340842ea5d61818e8e416df1b5017bf7847ae
+          path: .ci-feature-concurrency-baseline
+          persist-credentials: false
+      - name: Prove concurrent native feature pages fail behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp internal/appserverbridge/experimental_feature_167_concurrency_test.go .ci-feature-concurrency-baseline/internal/appserverbridge/
+          status=0
+          output="$(cd .ci-feature-concurrency-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestExperimentalFeature167ConcurrentPages$' ./internal/appserverbridge 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F -- '--- FAIL: TestExperimentalFeature167ConcurrentPages'
+          printf '%s\n' "$output" | grep -F -- 'concurrent native feature pages must each reach both children'
+          echo 'The old bridge rejects independent concurrent page reads; compilation or setup failures do not qualify.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |

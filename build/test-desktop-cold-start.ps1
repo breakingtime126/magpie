@@ -1079,6 +1079,62 @@ function Complete-DesktopActivationProcess(
     }
 }
 
+# Eligibility is capture safety, not successful Desktop compatibility. A valid
+# bounded snapshot is not a claim of complete observer/process lifecycle.
+function Get-DesktopNativeRunDecision(
+    [bool]$Reviewed, [bool]$CaptureValidated, [bool]$ActivationExited, [bool]$CleanupError
+) {
+    if (-not $Reviewed) { return [ordered]@{ run = $false; reason = 'profile_not_enabled' } }
+    if (-not $CaptureValidated) { return [ordered]@{ run = $false; reason = 'desktop_capture_not_validated' } }
+    if (-not $ActivationExited -or $CleanupError) {
+        return [ordered]@{ run = $false; reason = 'desktop_activation_exit_not_confirmed' }
+    }
+    return [ordered]@{ run = $true; reason = '' }
+}
+
+# Combine only already-classified outcomes. Original Desktop failures are copied
+# unchanged, even when the separate native slice succeeds or fails differently.
+function Get-DesktopCombinedOutcome($DesktopOutcome, [string]$NativeStatus, [string]$NotRunReason = '') {
+    Assert-PublicShape $DesktopOutcome @('status', 'stage', 'reason', 'exitCode')
+    Assert-PublicInteger $DesktopOutcome.exitCode 0 255
+    foreach ($field in @('status', 'stage', 'reason')) {
+        if ($DesktopOutcome.$field -isnot [string]) { throw 'Invalid Desktop outcome.' }
+    }
+    if (@('observed', 'blocked') -cnotcontains $DesktopOutcome.status -or
+        (($DesktopOutcome.exitCode -eq 0) -ne ($DesktopOutcome.status -ceq 'observed')) -or
+        @('passed', 'failed', 'not-run') -cnotcontains $NativeStatus) {
+        throw 'Invalid combined diagnostic outcome.'
+    }
+    if ($NativeStatus -ceq 'not-run') {
+        if (@('desktop_capture_not_validated', 'desktop_activation_exit_not_confirmed') -cnotcontains $NotRunReason) {
+            throw 'Invalid native diagnostic eligibility reason.'
+        }
+    } elseif ($NotRunReason -cne '') { throw 'Unexpected native diagnostic eligibility reason.' }
+    $combined = [ordered]@{
+        status = $DesktopOutcome.status; stage = $DesktopOutcome.stage
+        reason = $DesktopOutcome.reason; exitCode = $DesktopOutcome.exitCode
+    }
+    if ($DesktopOutcome.exitCode -ne 0) { return $combined }
+    if ($NativeStatus -ceq 'passed') {
+        $combined.stage = 'desktop-capture-and-synthetic-native-control-completed'
+    } elseif ($NativeStatus -ceq 'failed') {
+        $combined.status = 'blocked'
+        $combined.stage = 'synthetic-native-control-plane'
+        $combined.reason = 'The isolated native control-plane check did not produce complete validated success.'
+        $combined.exitCode = 1
+    } else {
+        $combined.status = 'blocked'
+        $combined.stage = 'desktop-capture'
+        $combined.reason = 'The Desktop capture was not fully validated; the separate native check was not started.'
+        if ($NotRunReason -ceq 'desktop_activation_exit_not_confirmed') {
+            $combined.stage = 'desktop-cleanup'
+            $combined.reason = 'The observed Desktop activation process exit was not confirmed; the separate native check was not started.'
+        }
+        $combined.exitCode = 1
+    }
+    return $combined
+}
+
 # A passing native slice is separate synthetic-loopback evidence, never Desktop,
 # real-service or account proof. Retain only the exact reviewed success schema.
 function ConvertTo-DesktopNativeControlEvidence($value) {
@@ -1320,6 +1376,7 @@ $report = [ordered]@{
 }
 $activationPid = 0
 $activationExitConfirmed = $false
+$captureValidated = $false
 $ownedActivationProcess = $null
 $ownedActivationCreatedUtc = ''
 $observed = @{}
@@ -1350,6 +1407,8 @@ See the report artifact for public package, session, and process evidence.
 }
 try {
     if ($EnableReviewedLaunchCompatibility) {
+        $report.captureValidated = $false
+        $report.captureValidationLimit = 'This flag covers the full bounded, sanitized metadata snapshots and preceding package/window/child identity checks. It does not mean Desktop compatibility succeeded or the complete process lifecycle was observed.'
         $report.desktopActivationExited = $false
         $report.desktopActivationExitLimit = 'This confirms only the exact observed activation process exited. It does not establish that every Desktop package descendant exited.'
         $report.nativeControlPlane = [ordered]@{
@@ -2594,6 +2653,11 @@ requires_openai_auth = false
             $report.observer.recordsTruncatedInSummary = $allEvents.Count -gt 256
             $report.observer.limit = 'Missing child exit or output EOF, saturated slots or truncated summary preclude claims that no failure occurred. Read validated artifact records for remaining evidence.'
             if ($EnableReviewedLaunchCompatibility) {
+                # Every collected trace snapshot passed the full schema, ordering,
+                # process/catalog identity and artifact checks above. This is not
+                # the 256-record preview or the completeLifecycleEvidence flag.
+                $captureValidated = $true
+                $report.captureValidated = $true
                 # Full validated snapshots, not the truncated summary. No result payload is inspected or logged.
                 $report.observer.noAuthStatusEvidence = Get-DesktopNoAuthStatusEvidence $allEvents
                 $report.observer.noAuthStatusEvidenceLimit = 'Correlated success relies on the exact bridge no-auth result validator. It proves only this credential-free fixture, not login, token support or full Desktop compatibility.'
@@ -2650,20 +2714,23 @@ requires_openai_auth = false
     }
 }
 
-# Same Windows job, after actual Desktop capture and confirmed activation-process exit.
-# A failed Desktop view never falls back to synthetic evidence or another launch.
-if ($EnableReviewedLaunchCompatibility -and $exitCode -eq 0) {
-    if (-not $activationExitConfirmed -or $report.Contains('cleanupErrorType')) {
-        $report.status = 'blocked'
-        $report.stage = 'desktop-cleanup'
-        $report.reason = 'The observed Desktop activation process exit was not confirmed; the separate native check was not started.'
-        $report.nativeControlPlane.reason = 'desktop_cleanup_not_completed'
-        $exitCode = 1
-    } else {
+# Same Windows job, after safe Desktop capture and exact activation-process exit.
+# Native evidence stays separate: a later Desktop compatibility failure remains
+# the original failure even when the isolated native slice can still be exercised.
+if ($EnableReviewedLaunchCompatibility) {
+    $desktopOutcome = [pscustomobject][ordered]@{
+        status = $report.status; stage = $report.stage; reason = $report.reason; exitCode = $exitCode
+    }
+    $report.desktopOutcome = $desktopOutcome
+    $nativeRunDecision = Get-DesktopNativeRunDecision -Reviewed $EnableReviewedLaunchCompatibility `
+        -CaptureValidated $captureValidated -ActivationExited $activationExitConfirmed `
+        -CleanupError $report.Contains('cleanupErrorType')
+    $nativeStatus = 'not-run'
+    $nativeNotRunReason = $nativeRunDecision.reason
+    if ($nativeRunDecision.run) {
         $nativeFailureStage = 'wrapper'
         $nativeSummaryValidated = $false
         try {
-            $report.stage = 'synthetic-native-control-plane'
             $nativeScratch = Join-Path $env:RUNNER_TEMP ('native-control-scratch-' + [guid]::NewGuid().ToString('N'))
             $nativeHelperHome = Join-Path $env:RUNNER_TEMP ('native-control-helper-' + [guid]::NewGuid().ToString('N'))
             New-Item -ItemType Directory -Path $nativeScratch, $nativeHelperHome | Out-Null
@@ -2680,13 +2747,12 @@ if ($EnableReviewedLaunchCompatibility -and $exitCode -eq 0) {
                 $nativeFailureStage = $nativeEvidence.stage
             }
             $report.nativeControlPlane = ConvertTo-DesktopNativeControlEvidence $nativeEvidence
-            $report.nativeControlPlaneLimit = 'The same compiled adapter and verified official native executable completed two projectless native threads with two text turns each against isolated loopback synthetic Responses fixtures. This is separate from actual Desktop evidence, not a real-service, account, tool, corporate-policy, GUI-usability or zero-egress claim.'
-            $report.stage = 'desktop-capture-and-synthetic-native-control-completed'
+            $nativeStatus = 'passed'
+            $report.nativeControlPlaneLimit = 'The same compiled adapter and verified official native executable completed two projectless native threads with two text turns each against isolated loopback synthetic Responses fixtures. This is separate from actual Desktop evidence and cannot clear a Desktop failure. It is not a real-service, account, tool, corporate-policy, GUI-usability or zero-egress claim.'
         } catch {
-            $report.status = 'blocked'
-            $report.reason = 'The isolated native control-plane check did not produce complete validated success.'
+            $nativeStatus = 'failed'
             if ($nativeSummaryValidated -and $nativeEvidence.status -ceq 'failed') {
-                # The wrapper's exact schema includes only bounded counts, fixed enums and the public pin.
+                # Exact schema: bounded counts, fixed enums and the public pin.
                 $report.nativeControlPlane = $nativeEvidence
             } else {
                 $report.nativeControlPlane = [ordered]@{
@@ -2694,9 +2760,18 @@ if ($EnableReviewedLaunchCompatibility -and $exitCode -eq 0) {
                     stage = $nativeFailureStage; reason = 'native_control_validation_failed'
                 }
             }
-            $exitCode = 1
+        }
+    } else {
+        $report.nativeControlPlane = [ordered]@{
+            schema = 1; scope = 'synthetic-loopback-only'; status = 'not-run'; reason = $nativeNotRunReason
         }
     }
+    $combinedOutcome = Get-DesktopCombinedOutcome -DesktopOutcome $desktopOutcome `
+        -NativeStatus $nativeStatus -NotRunReason $nativeNotRunReason
+    $report.status = $combinedOutcome.status
+    $report.stage = $combinedOutcome.stage
+    $report.reason = $combinedOutcome.reason
+    $exitCode = $combinedOutcome.exitCode
 }
 Save-Report
 exit $exitCode

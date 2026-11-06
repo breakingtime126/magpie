@@ -11,7 +11,7 @@ if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'New-DesktopBridgeSettings',
     'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopConfigReadEvidence',
-    'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
+    'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
     $definitions = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
@@ -1114,15 +1114,13 @@ Expect-Pass 'native slice has one explicit guarded invocation after Desktop clea
     if ($calls.Count -ne 1) { throw 'Native slice must be invoked exactly once.' }
     $guard = $calls[0].Parent
     while ($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]) { $guard = $guard.Parent }
-    # The closest if rejects missing activation-exit confirmation or any cleanup error.
-    if ($null -eq $guard -or $guard.Clauses[0].Item1.Extent.Text -cne
-        '-not $activationExitConfirmed -or $report.Contains(''cleanupErrorType'')') {
-        throw 'Native slice bypassed confirmed activation-process exit.'
+    if ($null -eq $guard -or $guard.Clauses[0].Item1.Extent.Text -cne '$nativeRunDecision.run') {
+        throw 'Native slice bypassed the independent capture/cleanup eligibility decision.'
     }
     $outer = $guard.Parent
     while ($null -ne $outer -and $outer -isnot [Management.Automation.Language.IfStatementAst]) { $outer = $outer.Parent }
-    if ($null -eq $outer -or $outer.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLaunchCompatibility -and $exitCode -eq 0') {
-        throw 'Native slice bypassed explicit profile or Desktop success.'
+    if ($null -eq $outer -or $outer.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLaunchCompatibility') {
+        throw 'Native slice bypassed the explicit profile gate.'
     }
     $cleanup = @($ast.FindAll({
         param($node)
@@ -1332,6 +1330,202 @@ Expect-Pass 'reviewed activation cleanup uses the original retained process iden
         $retained[0].Extent.EndOffset -ge $timestamps[0].Extent.StartOffset -or
         $timestamps[0].Extent.EndOffset -ge $calls[0].Extent.StartOffset) {
         throw 'Activation cleanup does not retain the original exact creation time.'
+    }
+}
+
+
+# Native eligibility depends on validated capture and exact activation exit, not
+# whether later Desktop compatibility requests succeeded.
+foreach ($reviewed in @($false, $true)) {
+    foreach ($captureState in @($false, $true)) {
+        foreach ($activationState in @($false, $true)) {
+            foreach ($cleanupError in @($false, $true)) {
+                Expect-Pass 'native eligibility preserves every capture and cleanup boundary' {
+                    $decision = Get-DesktopNativeRunDecision $reviewed $captureState $activationState $cleanupError
+                    Assert-Keys ([pscustomobject]$decision) @('run', 'reason')
+                    $expectedRun = $reviewed -and $captureState -and $activationState -and -not $cleanupError
+                    if ($decision.run -isnot [bool] -or $decision.run -ne $expectedRun) { throw 'Wrong native eligibility.' }
+                    $expectedReason = ''
+                    if (-not $reviewed) { $expectedReason = 'profile_not_enabled' }
+                    elseif (-not $captureState) { $expectedReason = 'desktop_capture_not_validated' }
+                    elseif (-not $activationState -or $cleanupError) { $expectedReason = 'desktop_activation_exit_not_confirmed' }
+                    if ($decision.reason -cne $expectedReason) { throw 'Wrong native eligibility reason.' }
+                }
+            }
+        }
+    }
+}
+function New-DesktopOutcomeFixture([bool]$Failed = $false) {
+    if ($Failed) {
+        return [pscustomobject]@{
+            status = 'blocked'; stage = 'original-desktop-gate'
+            reason = 'The actual Desktop request remains unsupported.'; exitCode = 13
+        }
+    }
+    return [pscustomobject]@{
+        status = 'observed'; stage = 'instrumented-policy-trace-captured'
+        reason = 'Desktop capture and its strict gates passed.'; exitCode = 0
+    }
+}
+foreach ($nativeState in @('passed', 'failed', 'not-run')) {
+    $notRunReasons = @('')
+    if ($nativeState -ceq 'not-run') {
+        $notRunReasons = @('desktop_capture_not_validated', 'desktop_activation_exit_not_confirmed')
+    }
+    foreach ($notRunReason in $notRunReasons) {
+        Expect-Pass ('original Desktop failure is unchanged by native outcome: ' + $nativeState) {
+            $desktopState = New-DesktopOutcomeFixture $true
+            $before = $desktopState | ConvertTo-Json -Compress
+            $combined = Get-DesktopCombinedOutcome $desktopState $nativeState $notRunReason
+            Assert-Keys ([pscustomobject]$combined) @('status', 'stage', 'reason', 'exitCode')
+            foreach ($field in @('status', 'stage', 'reason', 'exitCode')) {
+                if ($combined[$field] -cne $desktopState.$field) { throw 'A native result replaced the original Desktop failure.' }
+            }
+            if (($desktopState | ConvertTo-Json -Compress) -cne $before) { throw 'Original Desktop evidence was mutated.' }
+        }
+    }
+}
+Expect-Pass 'validated capture allows independent native proof after Desktop compatibility fails' {
+    $decision = Get-DesktopNativeRunDecision $true $true $true $false
+    if (-not $decision.run) { throw 'Desktop failure incorrectly suppressed independent native execution.' }
+    $combined = Get-DesktopCombinedOutcome (New-DesktopOutcomeFixture $true) 'passed'
+    if ($combined.exitCode -ne 13 -or $combined.status -cne 'blocked') { throw 'Native success cleared a Desktop failure.' }
+}
+Expect-Pass 'both Desktop and native success keep a zero combined exit' {
+    $combined = Get-DesktopCombinedOutcome (New-DesktopOutcomeFixture) 'passed'
+    if ($combined.status -cne 'observed' -or $combined.exitCode -ne 0 -or
+        $combined.stage -cne 'desktop-capture-and-synthetic-native-control-completed') { throw 'Wrong combined success.' }
+}
+Expect-Pass 'native failure after Desktop success remains a failed combined job' {
+    $combined = Get-DesktopCombinedOutcome (New-DesktopOutcomeFixture) 'failed'
+    if ($combined.status -cne 'blocked' -or $combined.exitCode -ne 1 -or
+        $combined.stage -cne 'synthetic-native-control-plane') { throw 'Native failure was hidden.' }
+}
+foreach ($pair in @(@('desktop_capture_not_validated', 'desktop-capture'),
+    @('desktop_activation_exit_not_confirmed', 'desktop-cleanup'))) {
+    Expect-Pass ('missing safe precondition keeps native not-run and job failed: ' + $pair[0]) {
+        $combined = Get-DesktopCombinedOutcome (New-DesktopOutcomeFixture) 'not-run' $pair[0]
+        if ($combined.status -cne 'blocked' -or $combined.exitCode -ne 1 -or $combined.stage -cne $pair[1]) {
+            throw 'A missing native precondition was silently accepted.'
+        }
+    }
+}
+foreach ($nativeState in @('PRIVATE_CANARY', 'Passed', 'observed', '')) {
+    Expect-Reject 'unknown native outcome cannot change the combined status' {
+        Get-DesktopCombinedOutcome (New-DesktopOutcomeFixture) $nativeState
+    }
+}
+foreach ($badReason in @('', 'PRIVATE_CANARY', 'profile_not_enabled')) {
+    Expect-Reject 'native not-run reason is explicit and bounded' {
+        Get-DesktopCombinedOutcome (New-DesktopOutcomeFixture) 'not-run' $badReason
+    }
+}
+Expect-Reject 'executed native outcome cannot carry a not-run reason' {
+    Get-DesktopCombinedOutcome (New-DesktopOutcomeFixture) 'passed' 'desktop_capture_not_validated'
+}
+foreach ($field in @('status', 'stage', 'reason', 'exitCode')) {
+    Expect-Reject ('Desktop outcome cannot omit its original field: ' + $field) {
+        $desktopState = New-DesktopOutcomeFixture; $desktopState.PSObject.Properties.Remove($field)
+        Get-DesktopCombinedOutcome $desktopState 'passed'
+    }
+}
+foreach ($badCode in @(-1, 256, 1.5, 'PRIVATE_CANARY', $null)) {
+    Expect-Reject 'combined outcome requires a valid original exit code' {
+        $desktopState = New-DesktopOutcomeFixture; $desktopState.exitCode = $badCode
+        Get-DesktopCombinedOutcome $desktopState 'passed'
+    }
+}
+Expect-Reject 'an inconsistent Desktop success cannot hide its nonzero exit' {
+    $desktopState = New-DesktopOutcomeFixture; $desktopState.exitCode = 1
+    Get-DesktopCombinedOutcome $desktopState 'passed'
+}
+Expect-Reject 'an inconsistent Desktop failure cannot claim zero exit' {
+    $desktopState = New-DesktopOutcomeFixture $true; $desktopState.exitCode = 0
+    Get-DesktopCombinedOutcome $desktopState 'passed'
+}
+Expect-Pass 'capture validity is assigned only after full trace validation and before strict compatibility gates' {
+    $assignments = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -ceq '$captureValidated' -and $node.Right.Extent.Text -ceq '$true'
+    }, $true))
+    $initializers = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -ceq '$captureValidated' -and $node.Right.Extent.Text -ceq '$false'
+    }, $true))
+    $loops = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.ForStatementAst] -and
+        $node.Extent.Text -match '^for \(\$slot = 1;'
+    }, $true))
+    if ($assignments.Count -ne 1 -or $initializers.Count -ne 1 -or $loops.Count -ne 1 -or
+        $initializers[0].Extent.EndOffset -ge $loops[0].Extent.StartOffset -or
+        $loops[0].Extent.EndOffset -ge $assignments[0].Extent.StartOffset) {
+        throw 'Capture validity was set before the complete bounded trace-validation loop.'
+    }
+    foreach ($name in @('Assert-PublicCanonicalJSON', 'Assert-PublicReadRequestEvent', 'Assert-PublicPluginEvent')) {
+        $validators = @($loops[0].FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq $name
+        }, $true))
+        if ($validators.Count -ne 1) { throw 'Full snapshot validation lost a required sanitizer.' }
+    }
+    foreach ($name in @('Get-DesktopNoAuthStatusEvidence', 'Get-DesktopFeatureListEvidence', 'Get-DesktopConfigReadEvidence')) {
+        $strictCalls = @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq $name
+        }, $true))
+        if ($strictCalls.Count -ne 1 -or $assignments[0].Extent.EndOffset -ge $strictCalls[0].Extent.StartOffset) {
+            throw 'Capture validity depends on a later Desktop compatibility result.'
+        }
+    }
+    foreach ($message in @('No visible window belonging to the verified package appeared.',
+        'No uniquely named configured child start event was observed under the verified Desktop package.',
+        'Instrumented launch produced no readable metadata trace.')) {
+        $gates = @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Block' -and
+            $node.CommandElements.Count -eq 2 -and
+            $node.CommandElements[1] -is [Management.Automation.Language.StringConstantExpressionAst] -and
+            $node.CommandElements[1].Value -ceq $message
+        }, $true))
+        if ($gates.Count -ne 1 -or $gates[0].Extent.EndOffset -ge $assignments[0].Extent.StartOffset) {
+            throw 'Capture validity bypasses a required GUI/identity/snapshot gate.'
+        }
+    }
+}
+Expect-Pass 'native runtime decision consumes capture and cleanup flags, not Desktop success' {
+    $decisions = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -ceq 'Get-DesktopNativeRunDecision'
+    }, $true))
+    $expected = @('Get-DesktopNativeRunDecision', '-Reviewed', '$EnableReviewedLaunchCompatibility',
+        '-CaptureValidated', '$captureValidated', '-ActivationExited', '$activationExitConfirmed',
+        '-CleanupError', '$report.Contains(''cleanupErrorType'')')
+    if ($decisions.Count -ne 1 -or $decisions[0].CommandElements.Count -ne $expected.Count) {
+        throw 'Native eligibility lost its explicit runtime seam.'
+    }
+    for ($i = 0; $i -lt $expected.Count; $i++) {
+        if ($decisions[0].CommandElements[$i].Extent.Text -cne $expected[$i]) {
+            throw 'Native eligibility was coupled to Desktop compatibility.'
+        }
+    }
+    $combines = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -ceq 'Get-DesktopCombinedOutcome'
+    }, $true))
+    $nativeCalls = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -ceq 'Invoke-ControlPlaneNative'
+    }, $true))
+    if ($combines.Count -ne 1 -or $nativeCalls.Count -ne 1 -or
+        $decisions[0].Extent.EndOffset -ge $nativeCalls[0].Extent.StartOffset -or
+        $nativeCalls[0].Extent.EndOffset -ge $combines[0].Extent.StartOffset) {
+        throw 'Combined status was not derived after the independent native result.'
     }
 }
 

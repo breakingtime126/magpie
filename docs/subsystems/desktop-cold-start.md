@@ -1121,19 +1121,33 @@ are not a claim that execution passed.
 
 ### Separate native end-to-end slice, one Windows job
 
-After actual Desktop capture succeeds and the exact observed activation process
-is confirmed exited, the same job invokes
+The same job can invoke
 [`build/control-plane-native/invoke.ps1`](../../build/control-plane-native/invoke.ps1)
-once. If Desktop's owned config view fails, this stage remains explicitly
-not-run. There is no fallback to a synthetic Desktop result and no extra Desktop
+once after a safely validated Desktop capture and confirmed activation-process
+exit. A later strict Desktop auth, feature or config compatibility failure does
+not suppress this independent native slice. It still remains a Desktop failure;
+there is no synthetic replacement for Desktop evidence and no extra Desktop
 launch.
+
+The explicit `captureValidated` flag starts false. It becomes true only after
+the signed-package, visible-window and identified-child checks and the complete
+bounded trace-validation loop have succeeded: every collected snapshot is
+canonical, sanitized, ordered, tied to its observed process/public catalog and
+published from the validated in-memory records. The flag is set before the
+strict compatibility evidence helpers. It does not derive from the 256-record
+preview or from mere presence of `$allEvents`, and it does not imply
+`completeLifecycleEvidence` or successful Desktop compatibility. Missing GUI
+or child identity, invalid trace metadata or failed snapshot validation leave
+the native stage not-run. Existing trace budgets and payload/redaction
+boundaries are unchanged.
 
 The reviewed profile retains the original process object and OS handle returned
 by the activation launch, recording its exact full-precision creation time at
 that point. Cleanup uses that same object and rechecks its PID, captured creation
 time and verified package identity, including the recorded package observation,
 before signaling it. WMI CreationDate remains report metadata and is never used
-as a cleanup equality key; no timestamp tolerance is introduced. It requests window close and waits up to five seconds, then, if
+as a cleanup equality key; no timestamp tolerance is introduced. It requests
+window close and waits up to five seconds, then, if
 needed, terminates only that same handle-pinned process and waits another five
 seconds. Missing or mismatched identity, process-operation errors without a
 confirmed exit, or an unconfirmed survivor keep the native stage not-run. The
@@ -1142,6 +1156,26 @@ of the cleanup-error report. No reused PID, executable name or unverified
 process is targeted. This is activation-process exit evidence only, not a claim
 that all Desktop package descendants exited. Baseline and startup-only cleanup
 behavior is unchanged.
+
+`Get-DesktopNativeRunDecision` requires the existing explicit profile,
+`captureValidated`, confirmed activation exit and no cleanup error. It does not
+test the Desktop compatibility exit code. Before native execution the report
+copies the original Desktop status, stage, reason and exit code into
+`desktopOutcome`. `Get-DesktopCombinedOutcome` preserves all four original
+fields exactly whenever Desktop already failed, including its nonzero exit
+code. A native pass cannot turn that job green, and a native failure cannot
+replace the original Desktop failure. The separately validated
+`nativeControlPlane` summary reports the native result in either case. When
+Desktop passed, native failure or a missing safety precondition still fails
+the combined job. Only both completed successes produce a successful combined
+result.
+
+Synthetic PowerShell fixtures cover the eligibility truth table, both-success,
+Desktop-failure/native-success, two distinct failures, invalid capture and
+unknown cleanup not-run cases, immutable original outcomes, and the runtime
+AST seams. They also verify that capture validity is set after full snapshot
+sanitization and before strict compatibility helpers. These changes do not
+broaden any auth, feature, config or filesystem route.
 
 The workflow passes the exact commit-built adapter/helper and the already
 verified official resource `codex.exe`, plus the official pinned model catalog.

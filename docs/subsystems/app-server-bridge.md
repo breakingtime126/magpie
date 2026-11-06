@@ -1433,17 +1433,26 @@ serialization, without field reconstruction, flag replacement, union/intersectio
 or a prior cached result. Any child error, malformed result or disagreement
 returns only `-32000` and `shared experimental features unavailable`.
 Native error message/data are not relayed. Correlation violations can end the
-connection. Failures release the entire pending group immediately and retain
-only the existing bounded transport-ID tombstones for late siblings. One
-feature read may be pending at a time; readiness and active-input caps remain
-unchanged. Native numeric ID aliases `-0` and `0` cannot overlap a live
-feature request, including through another route.
+connection. Failures release only that pending group immediately and retain
+the existing bounded transport-ID tombstones for its late siblings. Up to four
+active bridge request groups may be pending concurrently for feature reads,
+each with fresh paired native requests and independent result comparison. A half-completed pair still occupies one
+slot. The fifth read fails locally with `-32000` and
+`experimental feature list request limit reached`, without sending child
+requests or disturbing active reads. Completion or group failure frees the slot;
+an abandoned native sibling may still finish later and is discarded through its
+tombstone. This cap bounds active bridge groups, not outstanding native work
+across failed attempts. Identical params are not coalesced, and different pages may complete out of
+order. Readiness and global active-input caps remain unchanged. Duplicate active
+client IDs, including native numeric aliases `-0` and `0`, remain invalid,
+including through another route.
 
 These are local conservative budgets, not limits promised by the native
 schema: 64 KiB per request, 256 decoded bytes per input cursor, 128 bytes per
 feature name, 4,096 bytes per metadata string, 256 rows/container entries,
 depth 12, and 128 KiB per complete child response envelope and separately
-validated result. The two retained results are capped at 256 KiB. A result at
+validated result. The two retained results for each read are capped at 256 KiB;
+the four-read cap bounds their combined budget to 1 MiB. A result at
 its standalone limit still needs envelope overhead when routed. No next-page
 responses are automatically requested or retained. The pinned registry has
 201 rows, a 39-byte longest key and a 90-byte longest literal; the source-derived
@@ -1472,6 +1481,13 @@ existing configuration/router/runner.
 covers native pagination inputs, source-byte preservation, full comparison,
 strict requests/responses, large pages, malformed Unicode, ID aliases,
 cleanup/tombstone caps, default-off and version/capability gates.
+[`experimental_feature_167_concurrency_test.go`](../../internal/appserverbridge/experimental_feature_167_concurrency_test.go)
+covers overlapping native pages, out-of-order completion, fresh identical reads,
+isolated failures, duplicate IDs, half-completed pair counting and cap recovery.
+It uses only APIs present at
+`ace340842ea5d61818e8e416df1b5017bf7847ae`; copying that file alone and running
+`TestExperimentalFeature167ConcurrentPages` gives an assertion-level behavioral
+red for the old singleton guard.
 [`experimental_feature_167_red_test.go`](../../internal/appserverbridge/experimental_feature_167_red_test.go)
 uses only APIs from base `2ab7bcd946dba06d9467b9db2dfa5b799a24d87d`;
 copying that file alone supports an assertion-level unknown-mode red.

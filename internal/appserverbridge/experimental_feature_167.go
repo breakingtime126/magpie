@@ -12,6 +12,7 @@ const ExperimentalFeatureListCompare167 = "compare-v0.167.0-alpha.3.2"
 const experimentalFeatureUnavailable = "shared experimental features unavailable"
 const experimentalFeatureTextLimit = 4096
 const experimentalFeatureCursorLimit = 256
+const experimentalFeaturePendingLimit = 4
 
 // The pinned registry has 201 entries (39-byte longest key and 90-byte longest
 // metadata literal). Its full Windows default page is 30 KiB. Leave bounded
@@ -78,10 +79,16 @@ func (r *Router) experimentalFeatureListRequest167(g *request, line []byte, para
 	if !validateExperimentalFeatureRequest167(line) {
 		return []Delivery{fail(g.id, -32602, "invalid experimental feature list request")}
 	}
+	// Count logical reads, not their transport requests. A group still owns
+	// its slot after one child replies, until the other completes or fails.
+	groups := make(map[*request]struct{}, experimentalFeaturePendingLimit)
 	for _, pending := range r.pending {
 		if pending.group.method == g.method {
-			return []Delivery{fail(g.id, -32000, "a list refresh is already in progress")}
+			groups[pending.group] = struct{}{}
 		}
+	}
+	if len(groups) >= experimentalFeaturePendingLimit {
+		return []Delivery{fail(g.id, -32000, "experimental feature list request limit reached")}
 	}
 	r.active[g.key] = true
 	r.activeBytes += g.size
