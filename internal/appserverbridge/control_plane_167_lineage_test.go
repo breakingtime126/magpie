@@ -90,7 +90,7 @@ func TestControlPlane167LineagePreservesEveryNativePage(t *testing.T) {
 			params := object{
 				"modelProviders": raw([]string{"magpie_bridge"}), "limit": raw(1),
 				"excludedThreadIds": raw([]string{"openai-excluded", "aihub-excluded", "unknown-excluded"}),
-				"archived": raw(false), "sectionId": raw(nil), "cwd": raw(`C:\native\workspace`),
+				"archived":          raw(false), "sectionId": raw(nil), "cwd": raw(`C:\native\workspace`),
 				"sourceKinds": raw([]string{"vscode"}), "currentAccountOnly": raw(false),
 			}
 			for i, key := range keys {
