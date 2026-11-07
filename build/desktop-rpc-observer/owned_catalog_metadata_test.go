@@ -21,7 +21,7 @@ func ownedCatalogConfigFixture() map[string]any {
 	return map[string]any{"id": 1, "result": map[string]any{"config": map[string]any{
 		"model_catalog_json": `C:\fixture\control\bridge-model-catalog.json`,
 		"magpie_bridge": map[string]any{
-			"catalog": map[string]any{"version": 1, "source": "bridge-owned-alias-catalog", "sha256": strings.Repeat("a", 64), "validation": "complete-native-model-list"},
+			"catalog":    map[string]any{"version": 1, "source": "bridge-owned-alias-catalog", "sha256": strings.Repeat("a", 64), "validation": "complete-native-model-list"},
 			"provenance": map[string]any{"model_catalog_json": "bridge-owned-alias-catalog"},
 		},
 	}, "origins": map[string]any{}}}

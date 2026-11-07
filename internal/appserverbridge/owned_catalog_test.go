@@ -14,9 +14,9 @@ func ownedTestModel(owner, model string, priority int) object {
 		"slug": raw(alias(owner, model)), "display_name": raw("Local " + model + " [" + owner + "]"),
 		"description": raw("Independent text-only test definition."), "default_reasoning_level": raw("none"),
 		"supported_reasoning_levels": raw([]object{{"effort": raw("none"), "description": raw("No reasoning in this test.")}}),
-		"shell_type": raw("disabled"), "visibility": raw("list"), "supported_in_api": raw(true), "priority": raw(priority),
+		"shell_type":                 raw("disabled"), "visibility": raw("list"), "supported_in_api": raw(true), "priority": raw(priority),
 		"support_verbosity": raw(false), "default_verbosity": raw(nil),
-		"truncation_policy": raw(object{"mode": raw("tokens"), "limit": raw(1024)}),
+		"truncation_policy":            raw(object{"mode": raw("tokens"), "limit": raw(1024)}),
 		"experimental_supported_tools": raw([]any{}), "input_modalities": raw([]string{"text"}),
 		"include_apps_usage_instructions": raw(false), "include_skills_usage_instructions": raw(false),
 		"include_plugin_usage_instructions": raw(false), "supports_reasoning_summary_parameter": raw(false),
@@ -185,7 +185,7 @@ func TestOwnedCatalogRefreshBlocksRequestsAndFailureIsSticky(t *testing.T) {
 		t.Fatal("refresh retained stale public state")
 	}
 	for _, method := range []string{"config/read", "model/list", "thread/start", "turn/start"} {
-		done, err := r.Client(raw(object{"id": raw("blocked-"+method), "method": raw(method), "params": raw(object{})}))
+		done, err := r.Client(raw(object{"id": raw("blocked-" + method), "method": raw(method), "params": raw(object{})}))
 		if err != nil || len(done) != 1 || done[0].Backend != "" || !strings.Contains(string(done[0].Message), `"error"`) {
 			t.Fatal("request used an in-progress catalog")
 		}

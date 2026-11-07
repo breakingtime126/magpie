@@ -21,9 +21,9 @@ const ownedCatalogLimit = 64 << 10
 // model/list. Instructions and non-public capabilities remain authored data.
 type ownedAliasCatalog struct {
 	path, home, digest, defaultModel string
-	identity                        os.FileInfo
-	projection                      map[string]object
-	refreshing, failed              bool
+	identity                         os.FileInfo
+	projection                       map[string]object
+	refreshing, failed               bool
 }
 
 func ownedCatalogPath(home, path string) (string, error) {
@@ -284,7 +284,7 @@ func ownedCatalogJSON(data []byte) bool {
 				}
 				seen[s] = true
 			}
-			if !value(depth+1) {
+			if !value(depth + 1) {
 				return false
 			}
 		}
