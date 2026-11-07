@@ -1372,7 +1372,7 @@ $runtimeWorkspaceContract = {
     # before the one declaration seam. JSON cannot supply arbitrary path authority.
     $lastEnd = -1
     foreach ($spec in @(
-        @('$liveOwned', 'ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239'),
+        @('$liveOwned', 'ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness'),
         @('$liveWorkspace', '$liveOwned.Workspace')
     )) {
         $assignments = @($ast.FindAll({
@@ -1407,8 +1407,16 @@ foreach ($mutation in @(
         '$(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work })'),
     @('        if ($useLiveFixtures) {', '        if ($EnableReviewedLiveWelcome) {'),
     @('$liveWorkspace = $liveOwned.Workspace', '$liveWorkspace = $liveConfig.workspace'),
-    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239',
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
         '$liveOwned = $liveConfig'),
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
+        '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -Readiness $liveFixtureReport.readiness'),
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
+        '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'),
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
+        '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $liveConfig.profile -Readiness $liveFixtureReport.readiness'),
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
+        '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveConfig.readiness'),
     @('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection',
         ('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection' + "`n" + '$useLiveFixtures = $true')),
     @('New-DesktopReadTargetEnvironment `', 'New-DesktopReadTargetEnvironment; New-DesktopReadTargetEnvironment `')
