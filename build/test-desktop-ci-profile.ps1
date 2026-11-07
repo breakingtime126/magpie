@@ -8,7 +8,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
-foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'New-DesktopBridgeSettings',
+foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
@@ -2082,5 +2082,89 @@ Expect-Pass 'runtime registration has one read-only readiness seam after provisi
     }
 }
 
+Expect-Pass 'package-only mode is explicit and does not change ordinary defaults' {
+    Assert-DesktopPackageIdentityOptions $false 'baseline' $false $false $false $false '' ''
+    Assert-DesktopPackageIdentityOptions $true 'observe' $true $true $false $false '' 'package-identity-only-v1'
+}
+foreach ($options in @(
+    @($true,'baseline',$true,$true,$false,$false,'','package-identity-only-v1'),
+    @($true,'observe',$false,$true,$false,$false,'','package-identity-only-v1'),
+    @($true,'observe',$true,$false,$false,$false,'','package-identity-only-v1'),
+    @($true,'observe',$true,$true,$true,$false,'','package-identity-only-v1'),
+    @($true,'observe',$true,$true,$false,$true,'','package-identity-only-v1'),
+    @($true,'observe',$true,$true,$false,$false,'baseline','package-identity-only-v1'),
+    @($true,'observe',$true,$true,$false,$false,'','')
+)) {
+    Expect-Reject 'package-only mode rejects missing or conflicting opt-ins' { Assert-DesktopPackageIdentityOptions @options }
+}
+Expect-Pass 'package identity always stops before the unchanged pin and installation gates' {
+    $reads = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Get-DesktopPackageIdentityEvidence'}, $true))
+    if ($reads.Count -ne 1) { throw 'Package identity runtime seam is not unique.' }
+    $expected = @('Get-DesktopPackageIdentityEvidence','$package','$report.download.packageSha256',
+        '$signatureExit','$report.signature.authenticodeStatus','$report.signature.signerSubject')
+    if ($reads[0].CommandElements.Count -ne $expected.Count) { throw 'Package identity authority changed.' }
+    for ($i=0; $i -lt $expected.Count; $i++) {
+        if ($reads[0].CommandElements[$i].Extent.Text -cne $expected[$i]) { throw 'Package identity authority changed.' }
+    }
+    $gate = $reads[0].Parent
+    while ($null -ne $gate -and $gate -isnot [Management.Automation.Language.IfStatementAst]) { $gate=$gate.Parent }
+    if ($null -eq $gate -or $gate.Clauses.Count -ne 1 -or
+        $gate.Clauses[0].Item1.Extent.Text -cne '$InspectPackageIdentityOnly') { throw 'Package identity lost its explicit mode.' }
+    $last = $gate.Clauses[0].Item2.Statements[-1]
+    if ($last.Extent.Text -cne "Block 'Read-only package identity mode stops before installation or execution; package remains unapproved.'") {
+        throw 'Package identity could fall through after success or failure.'
+    }
+    $pins = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+        $n.Clauses[0].Item1.Extent.Text -ceq '$report.download.packageSha256 -ne ''ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643'''}, $true))
+    $trust = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Block' -and $n.CommandElements.Count -eq 2 -and
+        $n.CommandElements[1].Extent.Text -ceq "'Official package trust verification failed; package will not be installed or run.'"}, $true))
+    $installs = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Add-AppxProvisionedPackage'}, $true))
+    if ($pins.Count -ne 1 -or $trust.Count -ne 1 -or $installs.Count -ne 1 -or
+        $trust[0].Extent.EndOffset -ge $gate.Extent.StartOffset -or
+        $gate.Extent.EndOffset -ge $pins[0].Extent.StartOffset -or
+        $pins[0].Extent.EndOffset -ge $installs[0].Extent.StartOffset) { throw 'Package read/pin/install ordering changed.' }
+    $exits = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+        $n.Clauses[0].Item1.Extent.Text -ceq '$InspectPackageIdentityOnly' -and
+        $n.Clauses[0].Item2.Statements[-1].Extent.Text -ceq 'exit 1'}, $true))
+    $native = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Invoke-ControlPlaneNative'}, $true))
+    if ($exits.Count -ne 1 -or $native.Count -ne 1 -or
+        $exits[0].Extent.StartOffset -le $gate.Extent.EndOffset -or
+        $exits[0].Extent.EndOffset -ge $native[0].Extent.StartOffset) { throw 'Static-only outcome can reach native turns.' }
+}
+Expect-Pass 'package-only not-started evidence cannot manufacture activation exit' {
+    $proofs = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$report.desktopActivationCleanup'}, $true))
+    if ($proofs.Count -ne 1 -or $proofs[0].Right.Extent.Text -cne "'not-started'") { throw 'Not-started evidence changed.' }
+    $guard=$proofs[0].Parent
+    while ($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]) { $guard=$guard.Parent }
+    $expected = '$InspectPackageIdentityOnly -and $activationPid -eq 0 -and $null -eq $ownedActivationProcess -and ' +
+        '$null -eq $subscription -and $observed.Count -eq 0 -and -not $report.Contains(''registration'') -and ' +
+        '$null -eq $liveFixture -and $null -eq $winAppTool'
+    $actual = $guard.Clauses[0].Item1.Extent.Text -replace '\s+', ' '
+    if ($actual -cne $expected) { throw 'Not-started evidence lost a pre-launch proof.' }
+    $condition=[scriptblock]::Create($actual)
+    foreach ($change in @('none','disabled','pid','process','subscription','observed','registration','fixture','tool')) {
+        $InspectPackageIdentityOnly=$true; $activationPid=0; $ownedActivationProcess=$null
+        $subscription=$null; $observed=@{}; $report=[ordered]@{}; $liveFixture=$null; $winAppTool=$null
+        switch ($change) {
+            'disabled' { $InspectPackageIdentityOnly=$false }
+            'pid' { $activationPid=1 }
+            'process' { $ownedActivationProcess=[pscustomobject]@{} }
+            'subscription' { $subscription=[pscustomobject]@{} }
+            'observed' { $observed['1']=$true }
+            'registration' { $report.registration=[pscustomobject]@{} }
+            'fixture' { $liveFixture=[pscustomobject]@{} }
+            'tool' { $winAppTool=[pscustomobject]@{} }
+        }
+        if ((& $condition) -ne ($change -ceq 'none')) { throw 'Uncertain activation was labeled not-started.' }
+    }
+    $fabricated = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$activationExitConfirmed' -and $n.Right.Extent.Text -ceq '$true'}, $true))
+    if ($fabricated.Count -ne 0) { throw 'Activation exit was fabricated.' }
+}
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
 

@@ -11,6 +11,7 @@ param(
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
     [switch]$EnableReadOnlyWinAppInspection,
+    [switch]$InspectPackageIdentityOnly,
     [switch]$InspectStaticLauncher,
     [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
 )
@@ -714,6 +715,77 @@ function Confirm-PublicCatalogProvenance($catalog, [string]$packagePath, [string
             }
         }
     } catch { throw 'Public catalog provenance could not be verified against the original signed package.' }
+    finally {
+        if ($zip) { $zip.Dispose() }
+        if ($packageStream) { $packageStream.Dispose() }
+    }
+}
+function Assert-DesktopPackageIdentityOptions([bool]$Enabled, [string]$Mode, [bool]$Startup,
+    [bool]$Compatibility, [bool]$Welcome, [bool]$Inspection, [string]$EntryCase, [string]$Marker) {
+    if ($Enabled -and ($Mode -cne 'observe' -or -not $Startup -or -not $Compatibility -or
+        $Welcome -or $Inspection -or $EntryCase -or $Marker -cne 'package-identity-only-v1')) {
+        throw 'Package identity inspection requires its exclusive read-only CI mode.'
+    }
+}
+function Get-DesktopPackageIdentityEvidence([string]$PackagePath, [string]$PackageSha256,
+    [int]$SignatureExitCode, [string]$SignatureStatus, [string]$SignerSubject) {
+    # Data only. No extraction, installed-package discovery, executable invocation
+    # or ASAR source parsing. Keep the same read-locked file through hash and ZIP reads.
+    $packageStream = $null; $zip = $null
+    try {
+        if ($SignatureExitCode -ne 0 -or $SignatureStatus -cne 'Valid' -or
+            $SignerSubject -cne 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B') {
+            throw 'Package identity signature gate failed.'
+        }
+        Assert-PublicHash $PackageSha256
+        Assert-PublicRegularPath $PackagePath
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $packageStream = [IO.File]::Open($PackagePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $actualPackage = Get-BoundedStreamDigest $packageStream $packageStream.Length 4294967296 $watch
+        if ($actualPackage -cne $PackageSha256) { throw 'Package identity input changed.' }
+        $packageStream.Position = 0
+        $zip = New-Object IO.Compression.ZipArchive($packageStream, [IO.Compression.ZipArchiveMode]::Read, $true)
+        Assert-PublicZipIndex $zip
+        $manifestHash = Get-PublicZipEntryDigest $zip 'AppxManifest.xml' 262144 $watch
+        $manifestEntry = $zip.GetEntry('AppxManifest.xml')
+        $settings = New-Object Xml.XmlReaderSettings
+        $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+        $settings.XmlResolver = $null
+        $settings.MaxCharactersInDocument = 262144
+        $manifestStream = $manifestEntry.Open()
+        $reader = $null
+        try {
+            $reader = [Xml.XmlReader]::Create($manifestStream, $settings)
+            $document = New-Object Xml.XmlDocument
+            $document.XmlResolver = $null
+            $document.Load($reader)
+        } finally {
+            if ($reader) { $reader.Dispose() }
+            $manifestStream.Dispose()
+        }
+        $identities = @($document.SelectNodes("/*[local-name()='Package' and namespace-uri()='http://schemas.microsoft.com/appx/manifest/foundation/windows10']/*[local-name()='Identity' and namespace-uri()='http://schemas.microsoft.com/appx/manifest/foundation/windows10']"))
+        if ($identities.Count -ne 1) { throw 'Package identity is missing or ambiguous.' }
+        $identity = $identities[0]
+        $name = $identity.GetAttribute('Name'); $publisher = $identity.GetAttribute('Publisher')
+        $version = $identity.GetAttribute('Version'); $architecture = $identity.GetAttribute('ProcessorArchitecture')
+        if ($name -cne 'OpenAI.Codex' -or $publisher -cne $SignerSubject -or $architecture -cne 'x64' -or
+            $version -cnotmatch '^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}\z') {
+            throw 'Package identity fields are outside the public contract.'
+        }
+        foreach ($component in $version.Split('.')) {
+            if ([int]$component -gt 65535) { throw 'Package identity version is out of range.' }
+        }
+        $backendHash = Get-PublicZipEntryDigest $zip 'app/resources/codex.exe' 536870912 $watch
+        $archiveHash = Get-PublicZipEntryDigest $zip 'app/resources/app.asar' 2147483648 $watch
+        if ($watch.ElapsedMilliseconds -gt 120000) { throw 'Package identity time limit exceeded.' }
+        return [ordered]@{
+            schema=1; status='observed'; scope='signed-package-static-identity-only'; runtimeAccepted=$false
+            packageSha256=$actualPackage; packageBytes=$packageStream.Length
+            manifest=[ordered]@{name=$name;publisher=$publisher;version=$version;architecture=$architecture;sha256=$manifestHash}
+            backend=[ordered]@{path='app/resources/codex.exe';bytes=$zip.GetEntry('app/resources/codex.exe').Length;sha256=$backendHash}
+            archive=[ordered]@{path='app/resources/app.asar';bytes=$zip.GetEntry('app/resources/app.asar').Length;sha256=$archiveHash}
+        }
+    } catch { throw 'Read-only signed package identity is unavailable.' }
     finally {
         if ($zip) { $zip.Dispose() }
         if ($packageStream) { $packageStream.Dispose() }
@@ -1559,6 +1631,9 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
     -Actions $env:GITHUB_ACTIONS -RunnerEnvironment $env:RUNNER_ENVIRONMENT `
     -Repository $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
+Assert-DesktopPackageIdentityOptions $InspectPackageIdentityOnly $Mode $EnableReviewedStartupProbe `
+    $EnableReviewedLaunchCompatibility $EnableReviewedLiveWelcome $EnableReadOnlyWinAppInspection `
+    $NativeEntryCase $env:MAGPIE_PACKAGE_IDENTITY_ONLY
 if ($EnableReadOnlyWinAppInspection) {
     . (Join-Path $PSScriptRoot 'desktop-winapp-inspect.ps1')
     Assert-WinAppOptions $true $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
@@ -1830,6 +1905,16 @@ namespace DesktopColdProbe {
         signerThumbprint = $(if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { $null })
     }
     if ($signatureExit -ne 0) { Block 'Official package trust verification failed; package will not be installed or run.' }
+    if ($InspectPackageIdentityOnly) {
+        $report.stage = 'read-only-package-identity'
+        $report.packageIdentity = [ordered]@{status='unavailable';reason='signed_package_identity_unavailable';runtimeAccepted=$false}
+        try {
+            $report.packageIdentity = Get-DesktopPackageIdentityEvidence $package $report.download.packageSha256 `
+                $signatureExit $report.signature.authenticodeStatus $report.signature.signerSubject
+        } catch { }
+        # Unconditional, including when the URL returns the old reviewed hash.
+        Block 'Read-only package identity mode stops before installation or execution; package remains unapproved.'
+    }
     if ($report.download.packageSha256 -ne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
         if ($EnableReviewedLaunchCompatibility) {
             Block 'Reviewed launch compatibility package hash mismatch; inspect the changed floating download before running.'
@@ -3270,7 +3355,13 @@ requires_openai_auth = false
         }
         if ($subscription) { Unregister-Event -SourceIdentifier $eventSource -ErrorAction SilentlyContinue }
         Get-Event -SourceIdentifier $eventSource -ErrorAction SilentlyContinue | Remove-Event -ErrorAction SilentlyContinue
-        if (($EnableReviewedLaunchCompatibility -or $NativeEntryCase) -and
+        if ($InspectPackageIdentityOnly -and $activationPid -eq 0 -and $null -eq $ownedActivationProcess -and
+            $null -eq $subscription -and $observed.Count -eq 0 -and -not $report.Contains('registration') -and
+            $null -eq $liveFixture -and $null -eq $winAppTool) {
+            # This proves only that this harness did not start Desktop. It is not
+            # successful process cleanup and never sets activationExitConfirmed.
+            $report.desktopActivationCleanup = 'not-started'
+        } elseif (($EnableReviewedLaunchCompatibility -or $NativeEntryCase) -and
             (-not $NativeEntryCase -or $activationPid -gt 0 -or $null -ne $ownedActivationProcess)) {
             try {
                 if ($null -eq $ownedActivationProcess -or [string]::IsNullOrWhiteSpace($ownedActivationCreatedUtc) -or
@@ -3319,6 +3410,11 @@ requires_openai_auth = false
 }
 
 # Same Windows job, after safe Desktop capture and exact activation-process exit.
+if ($InspectPackageIdentityOnly) {
+    $report.nativeControlPlane = [ordered]@{status='not-run';reason='package_identity_only'}
+    Save-Report
+    exit 1
+}
 # Native evidence stays separate: a later Desktop compatibility failure remains
 # the original failure even when the isolated native slice can still be exercised.
 if ($EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection) {

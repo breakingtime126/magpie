@@ -12,7 +12,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tok
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
     'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'ConvertFrom-PublicRPCMethodFacts', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Assert-PublicReadRequestEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
-    'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance',
+    'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance', 'Get-DesktopPackageIdentityEvidence',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
     $definitions = @($ast.FindAll({
@@ -1072,6 +1072,41 @@ function New-PackageFixture([string]$variant) {
     if ($variant -eq 'package-hash') { $hash = '0' * 64 }
     return [pscustomobject]@{ catalog=$c; path=$zipPath; sha256=$hash }
 }
+function New-PackageIdentityFixture([string]$Variant = 'valid') {
+    # Synthetic MSIX-shaped ZIP, not a signed or executable official package.
+    $path = Join-Path $temporary ([guid]::NewGuid().ToString('N') + '.zip')
+    $publisher = 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'
+    $identity = '<Identity Name="OpenAI.Codex" Publisher="' + $publisher + '" Version="26.1103.3517.0" ProcessorArchitecture="x64" />'
+    if ($Variant -ceq 'version') { $identity = $identity.Replace('26.1103.3517.0', '99999.1.1.1') }
+    if ($Variant -ceq 'publisher') { $identity = $identity.Replace($publisher, 'PRIVATE_CANARY') }
+    if ($Variant -ceq 'architecture') { $identity = $identity.Replace('x64', 'arm64') }
+    if ($Variant -ceq 'name') { $identity = $identity.Replace('OpenAI.Codex', 'PRIVATE_CANARY') }
+    if ($Variant -ceq 'duplicate-identity') { $identity += $identity }
+    $manifest = '<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10">' + $identity + '<Properties><Description>PRIVATE_CANARY</Description></Properties></Package>'
+    if ($Variant -ceq 'dtd') { $manifest = '<!DOCTYPE Package [<!ENTITY x SYSTEM "file:///PRIVATE_CANARY">]>' + $manifest }
+    if ($Variant -ceq 'malformed') { $manifest = '<Package' }
+    if ($Variant -ceq 'manifest-size') { $manifest = 'x' * 262145 }
+    $contents = New-Object 'System.Collections.Generic.Dictionary[string,byte[]]' ([StringComparer]::Ordinal)
+    $contents['AppxManifest.xml'] = [Text.Encoding]::UTF8.GetBytes($manifest)
+    $contents['app/resources/codex.exe'] = [Text.Encoding]::UTF8.GetBytes('not an executable; PRIVATE_CANARY')
+    $contents['app/resources/app.asar'] = [Text.Encoding]::UTF8.GetBytes('not parsed; PRIVATE_CANARY')
+    if ($Variant -ceq 'missing-backend') { [void]$contents.Remove('app/resources/codex.exe') }
+    if ($Variant -ceq 'missing-archive') { [void]$contents.Remove('app/resources/app.asar') }
+    if ($Variant -ceq 'case-alias') { $contents['app/resources/CODEX.EXE'] = [byte[]]@(1) }
+    if ($Variant -ceq 'traversal') { $contents['app/../PRIVATE_CANARY'] = [byte[]]@(1) }
+    $zip = [IO.Compression.ZipFile]::Open($path, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($name in $contents.Keys) {
+            $entry = $zip.CreateEntry($name)
+            if ($Variant -ceq 'symlink' -and $name -ceq 'app/resources/codex.exe') { $entry.ExternalAttributes = -1610612736 }
+            $stream = $entry.Open()
+            try { $stream.Write($contents[$name], 0, $contents[$name].Length) } finally { $stream.Dispose() }
+        }
+    } finally { $zip.Dispose() }
+    $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($Variant -ceq 'package-hash') { $hash = '0' * 64 }
+    return [pscustomobject]@{path=$path;sha256=$hash;contents=$contents}
+}
 function New-MCPPackageFixture([string]$derivation, [string]$variant = 'valid') {
     $c=New-MCPCatalog $derivation
     $archiveBytes=[Text.Encoding]::UTF8.GetBytes('synthetic archive fixture only')
@@ -1251,6 +1286,31 @@ process.stdout.write(JSON.stringify(inspectPackage(root)));
         $stream = New-Object IO.MemoryStream
         try { Get-BoundedStreamDigest $stream 17 16 ([Diagnostics.Stopwatch]::StartNew()) }
         finally { $stream.Dispose() }
+    }
+    Expect-Pass 'package identity is a bounded projection without executing or parsing payload entries' {
+        $fixture = New-PackageIdentityFixture
+        $evidence = Get-DesktopPackageIdentityEvidence $fixture.path $fixture.sha256 0 'Valid' 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'
+        Assert-PublicShape ([pscustomobject]$evidence) @('schema','status','scope','runtimeAccepted','packageSha256','packageBytes','manifest','backend','archive')
+        if ($evidence.runtimeAccepted -ne $false -or $evidence.status -cne 'observed' -or
+            $evidence.manifest.version -cne '26.1103.3517.0' -or
+            $evidence.backend.sha256 -cne (Fixture-Digest $fixture.contents['app/resources/codex.exe']) -or
+            $evidence.archive.sha256 -cne (Fixture-Digest $fixture.contents['app/resources/app.asar']) -or
+            ($evidence | ConvertTo-Json -Depth 5 -Compress) -match 'PRIVATE_CANARY') {
+            throw 'Static package evidence changed or exposed content.'
+        }
+    }
+    foreach ($variant in @('version','publisher','architecture','name','duplicate-identity','dtd','malformed',
+        'manifest-size','missing-backend','missing-archive','case-alias','traversal','symlink','package-hash')) {
+        Expect-Reject ('package identity rejects ' + $variant) {
+            $fixture = New-PackageIdentityFixture $variant
+            Get-DesktopPackageIdentityEvidence $fixture.path $fixture.sha256 0 'Valid' 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'
+        }
+    }
+    foreach ($signature in @(@(1,'Valid','CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'),
+        @(0,'UnknownError','CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'), @(0,'Valid','PRIVATE_CANARY'))) {
+        Expect-Reject 'package identity rejects unavailable or different signature before reading a path' {
+            Get-DesktopPackageIdentityEvidence 'PRIVATE_CANARY' ('a' * 64) $signature[0] $signature[1] $signature[2]
+        }
     }
 } finally { Remove-Item -LiteralPath $temporary -Force -Recurse }
 

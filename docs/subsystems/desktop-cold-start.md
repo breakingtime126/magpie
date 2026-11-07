@@ -11,7 +11,10 @@ verifies trust with the Windows SDK signature tool, records SHA-256 and manifest
 identity/version, and checks the existing runner's interactive desktop. The URL
 is floating. The first run verified 26.1103.3517.0, SHA-256
 `ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643`.
-Subsequent runs stop if those bytes change. This is not a reproduction of
+Subsequent runs stop if those bytes change. An explicitly selected
+`InspectPackageIdentityOnly` diagnostic can inspect signed ZIP metadata before
+that unchanged pin gate. It always stops before installation or package execution,
+including if the floating URL returns the old reviewed bytes again. This is not a reproduction of
 historical Desktop 26.1029.7803.0. The verified manifest has three applications;
 the Desktop entry is selected by its exact `app/ChatGPT.exe` executable, and its
 AUMID still comes from actual registration plus manifest application ID.
@@ -1622,6 +1625,40 @@ rather than repeating diagnostics or expanding onboarding behavior.
 
 
 ## One-off official winapp read-only comparison
+
+### Separate package identity diagnostic
+
+`package-identity-only-v1` is a distinct static diagnostic, not a UI inspection.
+For a push, the commit message must contain both `[package-identity-only-v1]`
+and the existing `[winapp-inspection-v0.7.1]` exclusion marker, which keeps the
+older cold-start/native-entry runtime jobs skipped. A package marker without
+the exclusion marker fails the policy workflow's pre-checkout gate. An explicit
+dispatch can instead select `package-identity-only-v1` with the exact expected
+commit SHA. Disabled/default dispatch still fails before checkout.
+
+The workflow selects only the package switch, never welcome or winapp mode.
+There is no winapp download/setup, package installation, backend version call,
+Desktop activation, UIA read or native-turn slice. The existing download/signature
+gate is reused. Static reads additionally require valid Authenticode status and
+the expected publisher subject, then rehash the original package while holding
+it read-only against writes. Existing canonical ZIP-index and bounded stream
+helpers read only `AppxManifest.xml`, `app/resources/codex.exe` and
+`app/resources/app.asar`; nothing is extracted or executed.
+
+Published metadata is limited to fixed identity/version/architecture/publisher
+fields, sizes and SHA-256 digests. XML DTDs and external resolution are prohibited.
+Bounds are 4 GiB for the input, 256 KiB for the manifest, 512 MiB for the backend
+and 2 GiB for ASAR, with the existing shared 120-second cooperative streaming
+budget. No manifest body, ASAR source or executable bytes are published.
+
+`packageIdentity.status=observed` means only those static fields were read.
+`runtimeAccepted` remains false, the overall job stops with exit 1, and the trusted
+package/native pins stay unchanged. If the harness can prove no activation,
+registration, observer, fixture or tool was started, its Desktop cleanup label is
+`not-started`; this never sets activation-exit confirmation to true. The ordinary
+activation cleanup path and existing winapp mode remain unchanged.
+
+### HWND-requested UI diagnostic
 
 A push to the existing experimental branch whose head commit message contains
 `[winapp-inspection-v0.7.1]` selects `EnableReadOnlyWinAppInspection` in the
