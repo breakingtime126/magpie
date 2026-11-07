@@ -162,7 +162,7 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
     return Read-WinAppWelcomeResolvedTarget $text $node $binding
 }
 function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha')][string]$Operation,[string]$Selector='') {
     $directory=Join-Path $Tool.Directory ('welcome-'+[guid]::NewGuid().ToString('N'))
     if (Test-Path -LiteralPath $directory) { throw 'Welcome tool scratch not fresh.' }
     [void][IO.Directory]::CreateDirectory($directory)
@@ -170,7 +170,10 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
     $start=New-WinAppStart $localTool $WindowHandle -RenderedDepth 16
     if ($Operation -cne 'read') {
         $arguments=@('ui')
-        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link','resolve-confirm-button','resolve-confirm-link','resolve-model-short','resolve-model-effort','resolve-submodel-button','resolve-submodel-menuitem')) {
+        if ($Operation -ceq 'search-alpha') {
+            if ($Selector) { throw 'Model evidence search does not accept a selector.' }
+            $arguments+=@('search','[alpha]','--max','4')
+        } elseif ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link','resolve-confirm-button','resolve-confirm-link','resolve-model-short','resolve-model-effort','resolve-submodel-button','resolve-submodel-menuitem')) {
             if ($Selector) { throw 'Readonly target resolution does not accept a selector.' }
             $spec=@{'resolve-engineering'=@('Engineering','RadioButton');
                 'resolve-suggestions'=@('Suggest personalized tasks','CheckBox');'resolve-continue'=@('Continue','Button');
@@ -195,7 +198,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
 }
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha')][string]$Operation,[string]$Selector='') {
     $remaining=30000-[int]$Deadline.ElapsedMilliseconds
     if ($remaining -le 0) { throw 'Welcome deadline exceeded.' }
     $record=[ordered]@{operation=$Operation;status='stopped';reason='identity_unavailable';exitCode=$null;
@@ -543,11 +546,47 @@ function Get-WinAppModelSubmenuObservation($Page) {
     }
     return $observation
 }
+function Read-WinAppModelSearchEvidence([string]$Text,[ValidateRange(0,4)][int]$NameLimit=4) {
+    # Pinned UiSearchResult/UiElement JSON. This is evidence, never a target source.
+    $value=ConvertFrom-LiveJSON $Text 262144
+    Assert-WinAppFields $value @('matchCount','hasMore','matches')
+    Assert-LiveInteger $value.matchCount 0 4
+    if ($value.hasMore -isnot [bool] -or $value.matches -isnot [array] -or
+        $value.matches.Count -ne $value.matchCount -or ($value.hasMore -and $value.matchCount -ne 4)) { throw 'Invalid model search result.' }
+    $evidence=[Collections.Generic.List[object]]::new();$related=0;$visible=0;$limited=$value.hasMore;$protected=$false
+    foreach ($node in $value.matches) {
+        Assert-WinAppFields $node @('type','isEnabled','isOffscreen','isInvokable','x','y','width','height') @(
+            'name','automationId','className','selector','value','toggleState','expandState','scrollDir','invokableAncestor')
+        Assert-LiveStrings $node @('type')
+        foreach ($key in @('isEnabled','isOffscreen','isInvokable')) {
+            if ($node.$key -isnot [bool]) { throw 'Invalid model search state.' }
+        }
+        foreach ($key in @('name','expandState')) {
+            if ($node.PSObject.Properties[$key] -and $node.$key -isnot [string]) { throw 'Invalid model search string.' }
+        }
+        # Never follow, return, or interpret invokableAncestor, selectors or values.
+        if (-not $node.PSObject.Properties['name']) { continue }
+        if ($node.name -match '(?i)\b(sign\s*in|log\s*in|password|verification code|sign up|payment|subscribe|terms of|privacy policy|authorize|permission|connect your|allow access|access denied|administrator|security warning|certificate|captcha|error|something went wrong|failed to|could not start|unable to start|unexpected failure)\b') { $protected=$true }
+        if (-not $node.name.Contains('[alpha]')) { continue }
+        $related++;if (-not $node.isOffscreen) { $visible++ }
+        if ($evidence.Count -ge $NameLimit -or $node.name.Length -gt 120 -or $node.name -match '\A[A-Za-z]:|[\\/\x00-\x08\x0b\x0c\x0e-\x1f]') { $limited=$true;continue }
+        $type=$(if ($node.type -cin @('Button','MenuItem','Hyperlink','Text','Group','Pane','Custom','ComboBox','RadioButton')) { $node.type } else { 'other' })
+        $state='unavailable'
+        if ($node.PSObject.Properties['expandState'] -and $node.expandState -cin @('collapsed','expanded')) { $state=$node.expandState }
+        $evidence.Add([pscustomobject]@{name=$node.name;controlType=$type;isOffscreen=$node.isOffscreen;
+            enabled=$node.isEnabled;directInvokable=$node.isInvokable;expandState=$state})
+    }
+    if ($protected) { $evidence.Clear() }
+    $reason=$(if ($protected) { 'protected_screen' } elseif ($related -eq 0) { 'no_related_names' }
+        elseif ($visible -eq 0) { 'offscreen_only' } else { 'visible_related_names' })
+    return [ordered]@{status='observed';reason=$reason;matchCount=$value.matchCount;hasMore=$value.hasMore;
+        alphaNameCount=$related;alphaVisibleCount=$visible;nameEvidenceLimited=$limited;nameEvidence=$evidence.ToArray()}
+}
 function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,[Diagnostics.Stopwatch]$Deadline,
     $PriorConfirmation,[System.Collections.IDictionary]$Diagnostic) {
     $result=[ordered]@{schema=1;scope='synthetic-model-menu-only';status='stopped';reason='prior_confirmation_unavailable';
         actions=0;expansionInvoked=$false;nextScreen='not_observed';lastObservation=$null;labels=$null;initialLabels=$null;
-        submenu=[ordered]@{status='not-run';reason='not-required';actions=0;expansionInvoked=$false;observation=$null}}
+        submenu=[ordered]@{status='not-run';reason='not-required';actions=0;expansionInvoked=$false;observation=$null;search=$null}}
     $Diagnostic.commands=@();$Diagnostic.bindings=@();$Diagnostic.partialActionUncertain=$false
     $Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
     try {
@@ -596,6 +635,14 @@ function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIde
                 $after=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
                 $labels=Get-WinAppModelMenuLabels $after
                 $result.submenu.status='observed';$result.submenu.reason='single_submenu_expansion_attempted'
+            } else {
+                # One different readonly query, only after the confirmed expansion and
+                # complete safe inspect could not bind this submenu. Never use it to act.
+                $result.reason='submenu_search_unavailable'
+                $result.submenu.search=[ordered]@{status='stopped';reason='search_unavailable'}
+                $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'search-alpha'
+                $result.submenu.search=Read-WinAppModelSearchEvidence $text (4-$observation.nameEvidence.Count)
+                $result.submenu.reason=$result.submenu.search.reason
             }
         }
         $next=$(if ($labels.protectedScreen) { 'protected_screen' }
@@ -603,6 +650,10 @@ function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIde
         Assert-WinAppFiles $Tool; & $CheckIdentity
         if ($Deadline.ElapsedMilliseconds -ge 30000) { throw 'Model menu deadline exhausted.' }
         $result.labels=$labels;$result.nextScreen=$next;$result.status='observed';$result.reason=$(if ($result.submenu.expansionInvoked) { 'menu_and_submenu_expansion_attempted' } else { 'single_menu_expansion_attempted' })
+        if ($null -ne $result.submenu.search) {
+            $result.status='stopped';$result.reason='submenu_search_evidence_only'
+            if ($result.submenu.search.reason -ceq 'protected_screen') { $result.nextScreen='protected_screen' }
+        }
     } catch { $Diagnostic.partialActionUncertain=$Diagnostic.partialActionUncertain -or $result.actions -gt 0 }
     foreach ($command in $Diagnostic.commands) {
         $Diagnostic.stdoutBytes+=$command.stdoutBytes

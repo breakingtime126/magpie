@@ -3088,3 +3088,51 @@ evidence, protected evidence suppression, and uncertainty without retries. These
 are contract tests, not claims about the live second-level UIA tree. PowerShell
 and live Windows verification remain CI work; production Go/readiness behavior
 and every other runtime marker are unchanged by this patch.
+
+### One bounded native search when the inspected submenu cannot be bound
+
+Actual `a3127aa8` restored the `5.5 [alpha] Medium` entry after the initial-catalog
+barrier fix and completed the first Expand. Its following inspect exposed only
+`5.5 [alpha] Standard, 2 of 4.` as Text, offscreen and not directly invokable.
+The screenshot still showed the model entry. This is missing UIA binding
+evidence, not evidence that the bridge cannot supply two models.
+
+Only after that confirmed first Expand and a complete, unprotected inspect that
+cannot admit the second-level target, the existing menu function now performs
+one `ui search "[alpha]" -w <held HWND> --max 4 --json`, without `--type` or
+`--root`. Pinned Microsoft v0.7.1
+[SearchAsync](https://github.com/microsoft/winappCli/blob/e3cd0b94f3e7b776ac51ba0564f4908094e979b5/src/winapp-CLI/WinApp.UIAutomation/Services/UiAutomationService.cs#L471-L569)
+uses an exact AutomationId preference, then a case-insensitive Name/AutomationId
+substring condition through bulk `FindAll(Descendants, condition)`, with no
+ControlView condition, before supplementing through ControlView. This differs
+from inspect's ControlViewWalker. It is not an exposed RawView switch or a
+point-hit-test command. No type, name candidate or action permission is added.
+
+Search's `{matchCount,hasMore,matches}` output is validated separately; it has no
+returned HWND proof. The existing explicit-window root fallback limitation,
+parent-held process/window/foreground checks, clean signed CLI environment,
+shared 30-second budget and 256-KiB output cap remain. `--max 4` caps returned
+matches, not provider traversal. A failed, timed-out or malformed read stops;
+there is no retry, follow-up inspect or input after this search. The existing
+command diagnostic retains fixed exit/timeout/cleanup metadata. An empty search
+returns CLI exit 1 and remains a failed read, not fabricated successful evidence.
+
+`submenu.search` retains only fixed counts/status and the existing tiny synthetic
+`[alpha]` name exception. The inspect and search evidence together contain at
+most four names, each at most 120 UTF-16 units. Only names containing the literal
+marker qualify; an AutomationId-only match cannot expose an unrelated name.
+Paths, oversized/control-data names and protected/error match batches are
+suppressed. Type is a fixed enum, alongside offscreen, enabled, direct capability
+and collapsed/expanded/unavailable hints. Selectors, AutomationIds, values and
+`invokableAncestor` are never returned or used. Even a visible, enabled,
+expandable search result is evidence only: the menu remains stopped for review,
+and the existing screenshot captures the resulting screen. No model selection,
+message or Windows setup action is introduced. Prior onboarding/Expand evidence
+is retained; failed final identity/cleanup retains the existing conservative
+uncertainty reporting.
+
+Pure schema-derived fixtures cover bounded/omitted/protected names, malformed
+counts/types, exact fixed argv, and no input or further read after visible,
+offscreen, failed or malformed search results. These are not live search output.
+PowerShell/Windows execution remains CI verification; no production Go, marker,
+harness or workflow changes are required.

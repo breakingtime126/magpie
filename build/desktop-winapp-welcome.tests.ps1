@@ -216,6 +216,9 @@ try {
         $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
         Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'submenu has only fixed typed alpha reads and explicit Expand'
     }
+    $start=New-WinAppWelcomeStart $tool 123 'search-alpha'
+    Pass (($start.ArgumentList -join ' ') -ceq 'ui search [alpha] --max 4 -w 123 --json') 'one fixed unconstrained native search, not type/root filtering or input'
+    Reject { New-WinAppWelcomeStart $tool 123 'search-alpha' 'PRIVATE_CANARY' } 'search never accepts an arbitrary selector'
     Reject { New-WinAppWelcomeStart $tool 123 'open-model-menu' '5.5 [alpha]' } 'model menu cannot invoke a text query'
     Reject { New-WinAppWelcomeStart $tool 123 'resolve-model-effort' 'Try again' } 'model menu resolver cannot target setup'
     Reject { New-WinAppWelcomeStart $tool 123 'confirm-skip' 'Go to ChatGPT' } 'confirmation never invokes text or promoted selectors'
@@ -497,6 +500,51 @@ function SubmenuPage([string]$Variant='normal') {
     if($Variant -ceq 'duplicate'){$page.windows[0].elements+=@(Node 'GPT-5.5 [alpha]' 'MenuItem' 'mnu-gpt55alpha-cccc');$page.windows[0].elementCount++}
     return $page
 }
+# Schema-derived search fixtures, not recorded output from a live search.
+# The Text name/offscreen state below reproduces the a312 inspect evidence only.
+function SearchResult([string]$Variant='offscreen') {
+    $node=Node '5.5 [alpha] Standard, 2 of 4.' 'Text';$node.isOffscreen=$true
+    $node.invokableAncestor=Node 'PRIVATE_ANCESTOR' 'Button' 'btn-private-abcd'
+    $node.value='PRIVATE_VALUE';$node.automationId='PRIVATE_ID';$node.selector='txt-private-abcd'
+    if ($Variant -ceq 'visible') { $node=Node '5.5 [alpha]' 'Button' 'btn-55alpha-abcd';$node.expandState='collapsed' }
+    if ($Variant -ceq 'protected') { $node.name='Permission required [alpha]' }
+    return [ordered]@{matchCount=1;hasMore=$false;matches=@($node)}
+}
+$evidence=Read-WinAppModelSearchEvidence (Json (SearchResult))
+Pass ($evidence.reason -ceq 'offscreen_only' -and $evidence.nameEvidence.Count -eq 1 -and $evidence.nameEvidence[0].isOffscreen -and
+    -not $evidence.nameEvidence[0].directInvokable -and (Json $evidence) -notmatch 'PRIVATE_|txt-|btn-|selector|Ancestor') 'search preserves only bounded related evidence, never IDs values or ancestor hints'
+$visible=Read-WinAppModelSearchEvidence (Json (SearchResult 'visible'))
+Pass ($visible.reason -ceq 'visible_related_names' -and $visible.nameEvidence[0].expandState -ceq 'collapsed') 'visible directly expandable search result is evidence only'
+$blocked=Read-WinAppModelSearchEvidence (Json (SearchResult 'protected'))
+Pass ($blocked.reason -ceq 'protected_screen' -and $blocked.nameEvidence.Count -eq 0) 'protected offscreen search match suppresses evidence'
+foreach ($name in @('C:\private\[alpha]','/private/[alpha]',('x'*121+'[alpha]'),("Private`0[alpha]"))) {
+    $bad=SearchResult;$bad.matches[0].name=$name
+    $evidence=Read-WinAppModelSearchEvidence (Json $bad)
+    Pass ($evidence.nameEvidenceLimited -and $evidence.nameEvidence.Count -eq 0) 'paths oversized and control-data names are not published'
+}
+$bounded=SearchResult;$bounded.matches=@(1..4 | ForEach-Object { Node ('Related '+$_+' [alpha]') 'Text' });$bounded.matchCount=4;$bounded.hasMore=$true
+$evidence=Read-WinAppModelSearchEvidence (Json $bounded) 3
+Pass ($evidence.nameEvidence.Count -eq 3 -and $evidence.nameEvidenceLimited -and $evidence.hasMore) 'search shares four-name allowance with existing inspect evidence'
+Pass ((Read-WinAppModelSearchEvidence (Json $bounded) 0).nameEvidence.Count -eq 0) 'exhausted name allowance still retains fixed counts only'
+$unrelated=SearchResult;$unrelated.matches[0].name='PRIVATE_UNRELATED'
+Pass ((Read-WinAppModelSearchEvidence (Json $unrelated)).nameEvidence.Count -eq 0) 'an AutomationId-only match cannot publish unrelated Name'
+foreach ($variant in @('count','too-many','has-more-type','has-more-count','matches-type','boolean','name-type','expand-type','unknown-field','children')) {
+    $bad=SearchResult
+    switch($variant) {
+        'count' { $bad.matchCount=0 }
+        'too-many' { $bad.matchCount=5 }
+        'has-more-type' { $bad.hasMore='false' }
+        'has-more-count' { $bad.hasMore=$true }
+        'matches-type' { $bad.matches=$bad.matches[0] }
+        'boolean' { $bad.matches[0].isInvokable='true' }
+        'name-type' { $bad.matches[0].name=@('5.5 [alpha]') }
+        'expand-type' { $bad.matches[0].expandState=$true }
+        'unknown-field' { $bad.foreign='PRIVATE_CANARY' }
+        'children' { $bad.matches[0].children=@(Node 'PRIVATE_CHILD' 'Button') }
+    }
+    Reject { Read-WinAppModelSearchEvidence (Json $bad) } 'malformed search contract cannot become trusted evidence'
+}
+Reject { Read-WinAppModelSearchEvidence '{"matchCount":0,"matchCount":1,"hasMore":false,"matches":[]}' } 'duplicate search fields rejected'
 foreach ($variant in @('normal','combo','menuitem','offscreen','othername','disabled','expanded','wrong-type','duplicate')) {
     $page=ConvertTo-WinAppWelcomeSnapshot (Json (SubmenuPage $variant)) 123
     $observation=Get-WinAppModelSubmenuObservation $page
@@ -560,6 +608,13 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,[string]$Operation,[string]$Selector='') {
     Pass ([object]::ReferenceEquals($Deadline,$script:menuWatch)) 'menu commands retain the original total budget'
     & $CheckIdentity;$script:menuOperations+=,$Operation
+    if ($Operation -ceq 'search-alpha') {
+        $script:menuSearchRead=$true
+        if ($script:menuMode -ceq 'search-failure') { throw 'Synthetic readonly failure.' }
+        if ($script:menuMode -ceq 'search-malformed') { return '{}' }
+        $variant=$(if($script:menuMode -ceq 'search-visible'){'visible'}elseif($script:menuMode -ceq 'search-protected'){'protected'}else{'offscreen'})
+        return Json (SearchResult $variant)
+    }
     if ($Operation -ceq 'open-model-menu') {
         $script:menuActions++
         if ($script:menuMode -ceq 'uncertain') { throw 'Synthetic uncertain menu action.' }
@@ -584,6 +639,7 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     if ($Operation -cne 'read') { throw 'No selection send or setup operation allowed.' }
     if ($script:menuActions -gt 0) {
         $script:menuPostRead=$true
+        if ($script:menuActions -eq 1 -and $script:menuMode -like 'search-*') { return Json (SubmenuPage 'offscreen') }
         if ($script:menuActions -eq 1 -and $script:menuMode -like 'submenu-*') {
             return Json (SubmenuPage ($script:menuMode.Substring(8)))
         }
@@ -596,15 +652,21 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     if ($script:menuMode -ceq 'disabled') { $page.windows[0].elements[1].isEnabled=$false }
     return Json $page
 }
-foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wrong-pattern','resolution-missing-state','resolution-expanded','missing-beta','next-protected','final-identity','submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted','submenu-offscreen','submenu-othername','submenu-uncertain')) {
-    $script:menuMode=$menuMode;$script:menuActions=0;$script:menuOperations=@();$script:menuPostRead=$false
+foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wrong-pattern','resolution-missing-state','resolution-expanded','missing-beta','next-protected','final-identity','submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted','submenu-offscreen','submenu-othername','submenu-uncertain','search-visible','search-protected','search-failure','search-malformed','search-final-identity')) {
+    $script:menuMode=$menuMode;$script:menuActions=0;$script:menuOperations=@();$script:menuPostRead=$false;$script:menuSearchRead=$false
     $script:menuWatch=[Diagnostics.Stopwatch]::StartNew();$diagnostic=[ordered]@{}
-    $identity={if ($script:menuMode -ceq 'final-identity' -and $script:menuPostRead) { throw 'Synthetic identity change.' }}
+    $identity={if (($script:menuMode -ceq 'final-identity' -and $script:menuPostRead) -or ($script:menuMode -ceq 'search-final-identity' -and $script:menuSearchRead)) { throw 'Synthetic identity change.' }}
     $menu=Invoke-WinAppModelMenu $null 123 $identity $menuWatch $confirmedConfirmation $diagnostic
     Pass ($menuActions -le 2 -and @($menuOperations | Where-Object { $_ -ceq 'open-model-menu' }).Count -le 1 -and
         @($menuOperations | Where-Object { $_ -ceq 'open-model-submenu' }).Count -le 1) 'each menu level expands at most once and never selects an item'
     Pass ((Json $menu) -notmatch 'btn-|mnu-|Try again|Sign in|What should') 'menu evidence never exposes selectors or unrelated UI text'
-    if ($menuMode -like 'submenu-*') {
+    Pass (@($menuOperations | Where-Object { $_ -ceq 'search-alpha' }).Count -le 1) 'search never repeats'
+    if ($menuMode -like 'search-*') {
+        Pass ($menu.status -ceq 'stopped' -and $menu.actions -eq 1 -and $menu.submenu.actions -eq 0 -and
+            ($menuOperations -join ',') -ceq 'read,open-model-menu,read,search-alpha') 'even an actionable search match, malformed response, read failure or final identity failure cannot cause input or another read'
+        if ($menuMode -ceq 'search-visible') { Pass ($menu.submenu.search.reason -ceq 'visible_related_names' -and -not $diagnostic.partialActionUncertain) 'visible search evidence does not become an action target or menu success' }
+        if ($menuMode -ceq 'search-protected') { Pass ($menu.nextScreen -ceq 'protected_screen' -and $menu.submenu.search.nameEvidence.Count -eq 0) 'protected search stops without names or actions' }
+    } elseif ($menuMode -like 'submenu-*') {
         Pass ($menu.initialLabels.betaVisibleCount -eq 0 -and $menu.submenu.observation.nameEvidence.Count -le 4) 'first panel evidence remains distinct and bounded'
         if ($menuMode -cin @('submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted')) {
             $expected=$(if($menuMode -ceq 'submenu-promoted'){'read,open-model-menu,read,resolve-submodel-button,open-model-submenu,read'}else{'read,open-model-menu,read,open-model-submenu,read'})
@@ -615,11 +677,13 @@ foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wron
                 ($menuOperations -join ',') -ceq 'read,open-model-menu,read,open-model-submenu') 'uncertain submenu stops without another action or read'
         } else {
             Pass ($menu.actions -eq 1 -and $menu.submenu.actions -eq 0 -and -not $diagnostic.partialActionUncertain -and
-                ($menuOperations -join ',') -ceq 'read,open-model-menu,read') 'unknown name or offscreen target gives evidence without a guessed action'
+                ($menuOperations -join ',') -ceq 'read,open-model-menu,read,search-alpha' -and $menu.status -ceq 'stopped' -and
+                $menu.submenu.search.reason -ceq 'offscreen_only') 'unknown name or offscreen target permits only one distinct search with no guessed action'
         }
     } elseif ($menuMode -cin @('normal','short','promoted','missing-beta','next-protected')) {
-        $expected=$(if($menuMode -ceq 'promoted'){'read,resolve-model-effort,open-model-menu,read'}else{'read,open-model-menu,read'})
-        Pass ($menu.status -ceq 'observed' -and $menu.actions -eq 1 -and $menu.expansionInvoked -and -not $diagnostic.partialActionUncertain -and
+        $expected=$(if($menuMode -ceq 'promoted'){'read,resolve-model-effort,open-model-menu,read'}elseif($menuMode -ceq 'missing-beta'){'read,open-model-menu,read,search-alpha'}else{'read,open-model-menu,read'})
+        $expectedStatus=$(if($menuMode -ceq 'missing-beta'){'stopped'}else{'observed'})
+        Pass ($menu.status -ceq $expectedStatus -and $menu.actions -eq 1 -and $menu.expansionInvoked -and -not $diagnostic.partialActionUncertain -and
             ($menuOperations -join ',') -ceq $expected) 'one bounded explicit expansion followed only by a read'
         if ($menuMode -ceq 'missing-beta') { Pass ($menu.labels.betaVisibleCount -eq 0) 'alpha entry alone is not beta evidence' }
     } elseif ($menuMode -cin @('resolution-missing-state','resolution-expanded')) {
