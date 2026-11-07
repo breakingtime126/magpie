@@ -2006,3 +2006,36 @@ bridge joins its stream readers before returning. This removes a confirmed
 ordering hazard; it is not proof of the unique cause of the historical Windows
 malformed-output CI hang. The deterministic owned-child close-gate regression
 and original malformed/family cases require actual Windows execution.
+
+### Explicit self-authored Desktop model-menu fixture
+
+The test-only Desktop path can separately select
+`-fixture-profile synthetic-models-4239` with the exact reviewed 4239 build.
+It reuses the native acceptance's wholly self-authored `test-alpha`/`test-beta`
+records without a catalog input, old catalog download or frontend file broker.
+Every explicit `-catalog`/`NativeControlCatalog` occurrence is rejected in this
+mode, including an empty value. Native approval, sandbox, auth, owned homes and
+loopback limits are unchanged. Production bridge code is not involved in the
+fixture-profile choice.
+
+The existing policy-trace workflow requires its prior 4239 welcome/official-tool
+opt-ins plus `[desktop-synthetic-models-v1]`. Readiness and final fixture audit
+use `desktop-self-authored-fixtures-only`; readiness identifies the source as
+`self-authored-test-models-v1` rather than claiming the old catalog digest.
+The old profile remains unchanged but is not a fallback for a new-profile
+failure. The post-Desktop legacy acceptance stays unrun in this welcome mode.
+
+This is only a model-menu observation experiment through the existing owned
+window and bounded official-tool path. Exact profile-specific labels are
+`Synthetic Alpha [alpha]` and `Synthetic Beta [beta]`; the profile does not
+activate model items or send chat messages, and successful fixture audit requires
+zero model requests at both endpoints. Identity, visible/enabled/unique
+control checks and protected-screen stop conditions remain required. The RPC
+observer separately counts only complete known self-authored model tuples,
+without publishing names, IDs or payloads or changing forwarded bytes.
+
+A successful native two-thread/four-turn test is not a Desktop verdict; a
+received two-model response is not proof that both menu items are visible.
+Distinct original slugs are the next minimal experiment, not a diagnosis of
+the earlier beta visibility issue. The [fixture documentation](../../build/control-plane-native/README.md)
+records the profile contract and evidence limits.

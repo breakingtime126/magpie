@@ -8,7 +8,7 @@ import (
 )
 
 // This is a bounded TEST-ONLY observation, not a protocol validator or routing
-// decision. Only the two exact synthetic CI tuples are recognized. No model
+// decision. Only the exact legacy and self-authored CI tuples are recognized. No model
 // name, ID, description, cursor, parameter, or raw body can enter this struct.
 type modelCatalogObservation struct {
 	Schema int                 `json:"schema"`
@@ -90,7 +90,8 @@ func observedModelCatalog(raw []byte) *modelCatalogObservation {
 			return out
 		}
 		switch {
-		case values[0] == "magpie/alpha/gpt-5.5" && values[1] == values[0] && values[2] == "GPT-5.5 [alpha]":
+		case values[0] == "magpie/alpha/gpt-5.5" && values[1] == values[0] && values[2] == "GPT-5.5 [alpha]" ||
+			values[0] == "magpie/alpha/test-alpha" && values[1] == values[0] && values[2] == "Synthetic Alpha [alpha]":
 			counts.Alpha++
 			if *hidden {
 				counts.AlphaHidden++
@@ -98,7 +99,8 @@ func observedModelCatalog(raw []byte) *modelCatalogObservation {
 			if *def {
 				counts.AlphaDefault++
 			}
-		case values[0] == "magpie/beta/gpt-5.5" && values[1] == values[0] && values[2] == "GPT-5.5 [beta]":
+		case values[0] == "magpie/beta/gpt-5.5" && values[1] == values[0] && values[2] == "GPT-5.5 [beta]" ||
+			values[0] == "magpie/beta/test-beta" && values[1] == values[0] && values[2] == "Synthetic Beta [beta]":
 			counts.Beta++
 			if *hidden {
 				counts.BetaHidden++

@@ -66,6 +66,7 @@ jobs:
           TRIGGER_SHA: ${{ github.sha }}
           PUSH_PACKAGE_IDENTITY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
           PUSH_WINAPP_MARKER: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') }}
+          PUSH_SYNTHETIC_MODELS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[desktop-synthetic-models-v1]') }}
           PUSH_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') }}
           PUSH_NATIVE_ENTRY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]') }}
           PUSH_BUILD_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') }}
@@ -80,6 +81,12 @@ jobs:
               echo 'Explicit inspection mode and matching full expected SHA are required.' >&2
               exit 1
             fi
+          fi
+          if [[ "$PUSH_SYNTHETIC_MODELS" == 'true' && ( "$PUSH_WELCOME_4239" != 'true' ||
+                  "$PUSH_BUILD_4239" != 'true' || "$PUSH_WINAPP_MARKER" != 'true' ||
+                  "$PUSH_PACKAGE_IDENTITY" == 'true' || "$PUSH_OTHER_DIAGNOSTIC" == 'true' || "$PUSH_NATIVE_ENTRY" == 'true' ) ]]; then
+            echo 'Self-authored models require the exact existing 4239 welcome/menu-only slice.' >&2
+            exit 1
           fi
           if [[ "$PUSH_WELCOME_4239" == 'true' && ( "$PUSH_BUILD_4239" != 'true' ||
                   "$PUSH_WINAPP_MARKER" != 'true' || "$PUSH_PACKAGE_IDENTITY" == 'true' ||
@@ -587,6 +594,38 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestThreadListSortSectionObserved'
           printf '%s\n' "$output" | grep -F -- 'thread/list sort and section metadata missing or incorrect'
           echo 'The old observer lacks these fixed labels; compile failures do not qualify.'
+      - name: Check out exact pre-self-authored Desktop fixture behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 14fe3ee10734267be78212ef8cfc41488bf313fc
+          path: .ci-self-authored-desktop-baseline
+          persist-credentials: false
+      - name: Prove Desktop profile and exact tuple regressions behaviorally
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .ci-self-authored-desktop-baseline rev-parse HEAD)" = 14fe3ee10734267be78212ef8cfc41488bf313fc
+          export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
+          isolated="$(mktemp -d "$RUNNER_TEMP/self-authored-desktop-red.XXXXXX")"
+          trap 'chmod -R u+w "$isolated"; rm -rf "$isolated" .ci-self-authored-desktop-baseline' EXIT
+          export HOME="$isolated/home" CODEX_HOME="$isolated/codex"
+          export XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache"
+          export XDG_DATA_HOME="$isolated/data" XDG_STATE_HOME="$isolated/state" TMPDIR="$isolated/tmp"
+          mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR"
+          cp build/control-plane-native/desktop_synthetic_red_test.go .ci-self-authored-desktop-baseline/build/control-plane-native/
+          cp build/desktop-rpc-observer/model_catalog_synthetic_test.go .ci-self-authored-desktop-baseline/build/desktop-rpc-observer/
+          status=0
+          (cd .ci-self-authored-desktop-baseline && go test -v -count=1 -timeout=3m -tags nogui \
+            -run '^(TestDesktopSelfAuthoredProfileWithoutCatalog|TestSelfAuthoredModelCatalogCountsOnlyExactTuples)$' \
+            ./build/control-plane-native ./build/desktop-rpc-observer) >"$isolated/red.log" 2>&1 || status=$?
+          cat "$isolated/red.log"
+          test "$status" -eq 1
+          grep -F -- '--- FAIL: TestDesktopSelfAuthoredProfileWithoutCatalog' "$isolated/red.log"
+          grep -F -- 'explicit self-authored Desktop profile was rejected before the platform guard' "$isolated/red.log"
+          grep -F -- '--- FAIL: TestSelfAuthoredModelCatalogCountsOnlyExactTuples' "$isolated/red.log"
+          grep -F -- 'self-authored model tuples were not recognized as exact counted metadata' "$isolated/red.log"
+          if grep -E 'panic:|DATA RACE|\[build failed\]' "$isolated/red.log"; then exit 1; fi
+          echo 'Exact old source failed both behavior assertions; no Desktop or native execution occurred.'
       - name: Test startup profiles and metadata redaction
         shell: bash
         run: |
@@ -604,6 +643,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 25
     env:
+      MAGPIE_DESKTOP_SYNTHETIC_MODELS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[desktop-synthetic-models-v1]') && 'desktop-synthetic-models-v1' || '' }}
       MAGPIE_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && 'bridge-welcome-4239-v1' || '' }}
       CGO_ENABLED: '0'
       GOOS: windows
@@ -684,6 +724,7 @@ jobs:
           go build -trimpath -o $native ./build/control-plane-native
           if ($LASTEXITCODE -ne 0) { throw 'Native control-plane acceptance helper build failed.' }
       - name: Materialize the pinned public native model fixture
+        if: env.MAGPIE_DESKTOP_SYNTHETIC_MODELS == ''
         run: |
           $catalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
           if (Test-Path -LiteralPath $catalog) { throw 'Native model fixture target already exists.' }
@@ -747,12 +788,16 @@ jobs:
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $native = Join-Path $env:RUNNER_TEMP ('magpie-control-native-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
-          $catalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
           $inspection = $env:MAGPIE_WINAPP_INSPECTION -ceq 'winapp-inspection-v0.7.1'
           $packageIdentity = $env:MAGPIE_PACKAGE_IDENTITY_ONLY -ceq 'package-identity-only-v1'
           $build4239 = $env:MAGPIE_REVIEWED_BUILD -ceq 'bridge-ui-4239-v1'
           $welcome4239 = $env:MAGPIE_WELCOME_4239 -ceq 'bridge-welcome-4239-v1'
-          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
+          if ($env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq 'desktop-synthetic-models-v1') {
+              ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile synthetic-models-4239 -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
+          } elseif ([string]$env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq '') {
+              $catalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
+              ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
+          } else { throw 'Unreviewed Desktop fixture selector.' }
       - name: Upload only sanitized diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

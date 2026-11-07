@@ -52,7 +52,23 @@ function Get-LiveNativeSHA([bool]$Build4239=$false) {
     if ($Build4239) { return '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' }
     return '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
 }
-function Assert-LiveReady($Value,[bool]$Build4239=$false) {
+function Get-LiveFixtureScope([string]$FixtureProfile='') {
+    if ($FixtureProfile -ceq '') { return 'desktop-loopback-fixtures-only' }
+    if ($FixtureProfile -ceq 'synthetic-models-4239') { return 'desktop-self-authored-fixtures-only' }
+    throw 'Unreviewed live fixture profile.'
+}
+function Assert-LiveReady($Value,[bool]$Build4239=$false,[string]$FixtureProfile='') {
+    $scope=Get-LiveFixtureScope $FixtureProfile
+    if ($FixtureProfile -ceq 'synthetic-models-4239') {
+        Assert-LiveShape $Value @('schema','scope','status','lifetime_seconds','native_sha256','catalog_source')
+        Assert-LiveInteger $Value.schema 1 1
+        Assert-LiveInteger $Value.lifetime_seconds 180 180
+        Assert-LiveStrings $Value @('scope','status','native_sha256','catalog_source')
+        if (-not $Build4239 -or $Value.scope -cne $scope -or $Value.status -cne 'ready' -or
+            $Value.native_sha256 -cne (Get-LiveNativeSHA $true) -or
+            $Value.catalog_source -cne 'self-authored-test-models-v1') { throw 'Invalid self-authored readiness.' }
+        return
+    }
     Assert-LiveShape $Value @('schema','scope','status','lifetime_seconds','native_sha256','catalog_blob')
     Assert-LiveInteger $Value.schema 1 1
     Assert-LiveInteger $Value.lifetime_seconds 180 180
@@ -61,7 +77,8 @@ function Assert-LiveReady($Value,[bool]$Build4239=$false) {
         $Value.native_sha256 -cne (Get-LiveNativeSHA $Build4239) -or
         $Value.catalog_blob -cne '489ebe3f2483348641a16160ce8491dd077eabca') { throw 'Invalid live readiness.' }
 }
-function Assert-LiveAudit($Value, [int]$ExitCode) {
+function Assert-LiveAudit($Value, [int]$ExitCode,[string]$FixtureProfile='') {
+    $scope=Get-LiveFixtureScope $FixtureProfile
     Assert-LiveShape $Value @('schema','scope','status','failure','alpha_requests','beta_requests','fixture_errors')
     Assert-LiveInteger $Value.schema 1 1
     Assert-LiveInteger $Value.alpha_requests 0 16
@@ -71,8 +88,11 @@ function Assert-LiveAudit($Value, [int]$ExitCode) {
     $failures = @('input_invalid','platform_rejected','environment_rejected','scratch_invalid','scratch_not_empty',
         'native_hash_mismatch','catalog_hash_mismatch','catalog_invalid','native_version_mismatch',
         'native_version_failed','fixture_invalid','fixture_rejected_request','output_failed','stop_invalid','fixture_timeout','internal_failure')
-    if ($Value.scope -cne 'desktop-loopback-fixtures-only' -or $Value.failure -isnot [string]) { throw 'Invalid live audit.' }
+    if ($Value.scope -cne $scope -or $Value.failure -isnot [string]) { throw 'Invalid live audit.' }
     if ($Value.status -ceq 'stopped') {
+        if ($FixtureProfile -ceq 'synthetic-models-4239' -and ($Value.alpha_requests -ne 0 -or $Value.beta_requests -ne 0)) {
+            throw 'Menu-only fixtures received an unauthorized model request.'
+        }
         if ($ExitCode -ne 0 -or $Value.failure -cne '' -or $Value.fixture_errors -ne 0) { throw 'Invalid stopped audit.' }
     } elseif ($Value.status -ceq 'failed') {
         if ($ExitCode -ne 1 -or $failures -cnotcontains $Value.failure) { throw 'Invalid failed audit.' }
@@ -279,14 +299,14 @@ function New-LiveStart([string]$Executable, [string[]]$Arguments, [string]$Direc
     else { foreach ($key in @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','CODEX_HOME')) { $start.Environment[$key]=$Directory } }
     return $start
 }
-function Wait-LiveReady($Process,[bool]$Build4239=$false) {
+function Wait-LiveReady($Process,[bool]$Build4239=$false,[string]$FixtureProfile='') {
     $watch=[Diagnostics.Stopwatch]::StartNew()
     while ($watch.Elapsed.TotalSeconds -lt 25 -and -not $Process.TimedOut -and -not $Process.Overflow) {
         $text=$Process.Output
         if ($text.Contains("`n")) {
             $lines=@($text.TrimEnd("`r","`n") -split "`r?`n")
             if ($lines.Count -ne 1 -or $Process.Exited) { throw 'Live fixture did not remain ready.' }
-            $ready=ConvertFrom-LiveJSON $lines[0]; Assert-LiveReady $ready -Build4239 $Build4239
+            $ready=ConvertFrom-LiveJSON $lines[0]; Assert-LiveReady $ready -Build4239 $Build4239 -FixtureProfile $FixtureProfile
             $Process.Deadline(180000)
             return $ready
         }
@@ -294,7 +314,7 @@ function Wait-LiveReady($Process,[bool]$Build4239=$false) {
     }
     throw 'Live fixture readiness unavailable.'
 }
-function Complete-LiveFixture($Process,[bool]$Build4239=$false) {
+function Complete-LiveFixture($Process,[bool]$Build4239=$false,[string]$FixtureProfile='') {
     $Process.CloseInput()
     if (-not $Process.Wait(10000)) { $Process.Stop(); if (-not $Process.Wait(5000)) { throw 'Live helper exit unconfirmed.' } }
     $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -302,8 +322,8 @@ function Complete-LiveFixture($Process,[bool]$Build4239=$false) {
     if ($Process.TimedOut -or $Process.Overflow -or -not $Process.Drained) { throw 'Live fixture supervision failed.' }
     $lines=@($Process.Output.TrimEnd("`r","`n") -split "`r?`n")
     if ($lines.Count -ne 2) { throw 'Invalid live fixture records.' }
-    Assert-LiveReady (ConvertFrom-LiveJSON $lines[0]) -Build4239 $Build4239
-    $audit=ConvertFrom-LiveJSON $lines[1]; Assert-LiveAudit $audit $Process.ExitCode
+    Assert-LiveReady (ConvertFrom-LiveJSON $lines[0]) -Build4239 $Build4239 -FixtureProfile $FixtureProfile
+    $audit=ConvertFrom-LiveJSON $lines[1]; Assert-LiveAudit $audit $Process.ExitCode -FixtureProfile $FixtureProfile
     return $audit
 }
 function Get-LiveDesktopExecutable([string]$InstallLocation, [string]$ManifestExecutable) {

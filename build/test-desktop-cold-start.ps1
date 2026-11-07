@@ -7,6 +7,7 @@ param(
     [string]$ObserverExecutable = '',
     [string]$NativeControlExecutable = '',
     [string]$NativeControlCatalog = '',
+    [string]$DesktopFixtureProfile = '',
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
@@ -21,6 +22,21 @@ param(
     [switch]$InspectStaticLauncher,
     [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
 )
+
+# An explicit self-authored menu-only profile cannot inherit or accept a catalog path.
+function Assert-DesktopFixtureProfile([string]$Profile,[bool]$CatalogSupplied,[string]$Mode,
+    [bool]$Build4239,[bool]$Welcome4239,[bool]$LiveWelcome,[bool]$ReadOnlyInspection,
+    [bool]$NativeInspection,[bool]$PackageIdentity,[string]$EntryCase,[string]$Marker) {
+    if ($Profile -ceq '') {
+        if ($Marker) { throw 'Self-authored marker requires its explicit fixture profile.' }
+        return
+    }
+    if ($Profile -cne 'synthetic-models-4239' -or $CatalogSupplied -or $Mode -cne 'observe' -or
+        -not $Build4239 -or -not $Welcome4239 -or -not $LiveWelcome -or $ReadOnlyInspection -or
+        $NativeInspection -or $PackageIdentity -or $EntryCase -or $Marker -cne 'desktop-synthetic-models-v1') {
+        throw 'Explicit self-authored 4239 menu-only profile required without a catalog argument.'
+    }
+}
 
 # Pure validation helpers are AST-loaded by the focused tests, without running the probe.
 function Assert-PublicShape($value, [string[]]$names) {
@@ -1759,6 +1775,9 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
 Assert-Desktop4239Options $EnableReviewedBuild4239 $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
     $EnableReadOnlyWinAppInspection $EnableReviewedLiveWelcome $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly `
     $NativeEntryCase $env:MAGPIE_REVIEWED_BUILD $EnableReviewedWelcome4239 $env:MAGPIE_WELCOME_4239 $EnableRendererAccessibility
+Assert-DesktopFixtureProfile $DesktopFixtureProfile ($PSBoundParameters.ContainsKey('NativeControlCatalog')) $Mode `
+    $EnableReviewedBuild4239 $EnableReviewedWelcome4239 $EnableReviewedLiveWelcome $EnableReadOnlyWinAppInspection `
+    $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly $NativeEntryCase $env:MAGPIE_DESKTOP_SYNTHETIC_MODELS
 $desktopAccessibilityArguments = Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239
 $winAppRenderedDepth = $(if ($EnableRendererAccessibility) { 16 } else { 8 })
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
@@ -1935,12 +1954,13 @@ try {
         }
         $expectedNativeControl = Join-Path $env:RUNNER_TEMP ('magpie-control-native-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
         $expectedNativeCatalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
-        if ($NativeControlExecutable -cne $expectedNativeControl -or $NativeControlCatalog -cne $expectedNativeCatalog) {
+        if ($NativeControlExecutable -cne $expectedNativeControl -or
+            ($DesktopFixtureProfile -ceq '' -and $NativeControlCatalog -cne $expectedNativeCatalog)) {
             Block 'The exact commit-built native control-plane helper and pinned catalog are required.'
         }
         try {
             Assert-PublicRegularPath $NativeControlExecutable
-            Assert-PublicRegularPath $NativeControlCatalog
+            if ($DesktopFixtureProfile -ceq '') { Assert-PublicRegularPath $NativeControlCatalog }
         } catch { Block 'The native control-plane helper or catalog is not an intact regular file.' }
     } elseif (-not [string]::IsNullOrEmpty($NativeControlExecutable) -or -not [string]::IsNullOrEmpty($NativeControlCatalog)) {
         Block 'Native control-plane checks require the existing explicit reviewed compatibility profile.'
@@ -2545,11 +2565,19 @@ requires_openai_auth = false
                 Initialize-LiveSupervisor
                 $liveScratch = Join-Path $env:RUNNER_TEMP ('desktop-live-fixture-' + [guid]::NewGuid().ToString('N'))
                 New-Item -ItemType Directory -Path $liveScratch | Out-Null
+                if ($DesktopFixtureProfile -ceq 'synthetic-models-4239') {
+                    $liveArguments = @('-desktop-fixtures','-codex',$officialBackend.FullName,'-scratch-parent',$liveScratch,
+                        '-fixture-profile','synthetic-models-4239')
+                    $liveFixtureReport.fixtureProfile='synthetic-models-4239'
+                    $liveFixtureReport.catalogSource='self-authored-test-models-v1'
+                    $liveFixtureReport.scope='self-authored-model-menu-only'
+                } else {
                 $liveArguments = @('-desktop-fixtures','-codex',$officialBackend.FullName,'-catalog',$NativeControlCatalog,'-scratch-parent',$liveScratch)
+                }
                 if ($EnableReviewedBuild4239) { $liveArguments += @('-reviewed-build','desktop-4239') }
                 $liveStart = New-LiveStart -Executable $NativeControlExecutable -Directory $liveScratch -Arguments $liveArguments
                 $liveFixture = [DesktopLive.BoundedProcess]::new($liveStart,16384,30000)
-                $liveFixtureReport.readiness = Wait-LiveReady $liveFixture -Build4239 $EnableReviewedBuild4239
+                $liveFixtureReport.readiness = Wait-LiveReady $liveFixture -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile
                 # Bounded private input, then exact fields and reconstructed owned paths.
                 $liveConfigPath = Join-Path $liveScratch 'bridge.json'
                 Assert-PublicRegularPath $liveConfigPath
@@ -3065,7 +3093,7 @@ requires_openai_auth = false
             if ($null -ne $liveSkipConfirmation -and $liveSkipConfirmation.status -ceq 'observed' -and
                 $liveSkipConfirmation.nextScreen -ceq 'unreviewed_screen' -and $confirmationAfterCaptured -and
                 -not $liveFixtureReport.partialActionUncertain) {
-                $liveModelMenu=Invoke-WinAppModelMenu $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveSkipConfirmation $modelMenuDiagnostic
+                $liveModelMenu=Invoke-WinAppModelMenu $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveSkipConfirmation $modelMenuDiagnostic -FixtureProfile $DesktopFixtureProfile
                 $liveFixtureReport.modelMenu=[ordered]@{status=$liveModelMenu.status;reason=$liveModelMenu.reason;result=$liveModelMenu;parentDiagnostic=$modelMenuDiagnostic}
                 $liveFixtureReport.partialActionUncertain=$liveFixtureReport.partialActionUncertain -or $modelMenuDiagnostic.partialActionUncertain
                 try {
@@ -3763,7 +3791,7 @@ requires_openai_auth = false
             # Normally EOF follows exact activation exit. If cleanup failed, stop
             # the held fixture anyway, report failure, and retain private scratch.
             if (-not $activationExitConfirmed) { $liveFixture.Stop() }
-            $audit = Complete-LiveFixture $liveFixture -Build4239 $EnableReviewedBuild4239
+            $audit = Complete-LiveFixture $liveFixture -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile
             $liveFixtureReport.fixtureAudit = $audit
             $liveFixtureStopped = $activationExitConfirmed -and $audit.status -ceq 'stopped'
         } catch { $liveFixtureReport.fixtureAudit = [ordered]@{status='unavailable';reason='fixture_supervision_failed'} }

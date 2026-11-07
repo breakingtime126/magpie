@@ -624,7 +624,7 @@ $protected=SubmenuPage;$protected.windows[0].elements+=@(Node 'Permission requir
 $observation=Get-WinAppModelSubmenuObservation (ConvertTo-WinAppWelcomeSnapshot (Json $protected) 123)
 Pass ($observation.decision -ceq 'protected_screen' -and $observation.nameEvidence.Count -eq 0) 'protected scene does not expose related names or authorize submenu'
 $menuCalls=@($harness.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-WinAppModelMenu'},$true))
-Pass ($menuCalls.Count -eq 1 -and $menuCalls[0].Extent.Text -ceq 'Invoke-WinAppModelMenu $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveSkipConfirmation $modelMenuDiagnostic') 'model menu shares original window guard and deadline once'
+Pass ($menuCalls.Count -eq 1 -and $menuCalls[0].Extent.Text -ceq 'Invoke-WinAppModelMenu $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveSkipConfirmation $modelMenuDiagnostic -FixtureProfile $DesktopFixtureProfile') 'model menu shares original window guard and deadline once'
 $menuGuard=$menuCalls[0].Parent
 while ($null -ne $menuGuard -and $menuGuard -isnot [Management.Automation.Language.IfStatementAst]) { $menuGuard=$menuGuard.Parent }
 Pass ($menuGuard.Clauses[0].Item1.Extent.Text.Contains('$confirmationAfterCaptured') -and
@@ -799,4 +799,45 @@ $stopped=Invoke-WinAppModelMenu $null 123 {} $menuWatch $null $diagnostic
 Pass ($stopped.actions -eq 0 -and $menuOperations.Count -eq 0) 'missing confirmed onboarding never starts menu commands'
 $prior=[pscustomobject]@{status='blocked';stage='earlier-failure';reason='fixed';exitCode=1}
 Pass ((Get-WinAppModelMenuOutcome $prior $null $false $true).stage -ceq 'earlier-failure') 'menu never hides earlier failure'
+# Self-authored labels are profile-local and never authorize a model choice.
+$selfProfile='synthetic-models-4239'
+Reject { Get-WinAppModelNames 'SYNTHETIC-MODELS-4239' } 'unknown model profile is rejected'
+foreach ($label in @('Synthetic Alpha [alpha]','Synthetic Beta [beta]')) {
+    $focus=Read-WinAppModelFocus (Json (Focused $label 'RadioButton')) -FixtureProfile $selfProfile
+    Pass ($focus.Observation.kind -ceq 'model' -and -not $focus.Observation.activationAllowed) 'self-authored model selection is forbidden'
+    Pass (-not (Read-WinAppModelFocus (Json (Focused $label))).Observation.activationAllowed) 'legacy focus does not admit new labels'
+}
+foreach ($label in @('Select model','Choose model')) {
+    Pass ((Read-WinAppModelFocus (Json (Focused $label)) -FixtureProfile $selfProfile).Observation.activationAllowed) 'only existing menu focus may be activated'
+}
+foreach ($label in @('Sign in','Continue','Windows setup',"Couldn't check Windows setup",'Try again','Permission required')) {
+    Pass (-not (Read-WinAppModelFocus (Json (Focused $label)) -FixtureProfile $selfProfile).Observation.activationAllowed) 'self-authored mode retains protected focus stops'
+}
+$selfPage=ModelPage
+$selfPage.windows[0].elements[1].name='Synthetic Alpha [alpha]'
+$selfPage.windows[0].elements[1].automationId='selfmodel'
+$selfPage.windows[0].elements[1].selector='btn-selfmodel-abcd'
+$selfSnapshot=ConvertTo-WinAppWelcomeSnapshot (Json $selfPage) 123 -FixtureProfile $selfProfile
+Pass (@($selfSnapshot.Nodes | Where-Object { $_.Name -cin @("Couldn't check Windows setup",'Try again') }).Count -eq 2) 'real informational setup region remains in the synthetic page'
+Pass ((Get-WinAppModelMenuObservation $selfSnapshot -FixtureProfile $selfProfile).decision -ceq 'ready') 'known informational Windows setup nodes do not block separate model-menu observation'
+Pass ((Get-WinAppModelMenuObservation $selfSnapshot).decision -cne 'ready') 'legacy current-model menu rejects new label'
+$selfSnapshot.Decision='model_menu_ready'
+$target=Get-WinAppWelcomeTarget $selfSnapshot 'Synthetic Alpha [alpha]' 'Button' -FixtureProfile $selfProfile
+Pass ($target.Name -ceq 'Synthetic Alpha [alpha]') 'existing expand target bound without model selection'
+Reject { Get-WinAppWelcomeTarget $selfSnapshot 'Synthetic Beta [beta]' 'RadioButton' -FixtureProfile $selfProfile } 'beta selection is not a menu target'
+Reject { Get-WinAppWelcomeTarget $selfSnapshot 'Try again' 'Button' -FixtureProfile $selfProfile } 'informational setup retry is never an action target'
+$selfPage.windows[0].elements+=@(Node 'Synthetic Beta [beta]' 'RadioButton')
+$selfPage.windows[0].elementCount++
+$labels=Get-WinAppModelMenuLabels (ConvertTo-WinAppWelcomeSnapshot (Json $selfPage) 123 -FixtureProfile $selfProfile) -FixtureProfile $selfProfile
+Pass ($labels.alphaVisibleCount -eq 1 -and $labels.betaVisibleCount -eq 1 -and -not $labels.protectedScreen) 'both exact self-authored labels are observed'
+Pass ((Get-WinAppModelMenuLabels (ConvertTo-WinAppWelcomeSnapshot (Json $selfPage) 123)).alphaVisibleCount -eq 0) 'legacy label evidence excludes self-authored rows'
+foreach ($variant in @('hidden','disabled','duplicate','protected')) {
+    $bad=Json $selfPage | ConvertFrom-Json
+    if ($variant -ceq 'hidden') { $bad.windows[0].elements[1].isOffscreen=$true }
+    elseif ($variant -ceq 'disabled') { $bad.windows[0].elements[1].isEnabled=$false }
+    elseif ($variant -ceq 'protected') { $bad.windows[0].elements+=@(Node 'Sign in' 'Button');$bad.windows[0].elementCount++ }
+    else { $bad.windows[0].elements+=@($bad.windows[0].elements[1]);$bad.windows[0].elementCount++ }
+    $labels=Get-WinAppModelMenuLabels (ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123 -FixtureProfile $selfProfile) -FixtureProfile $selfProfile
+    Pass $labels.protectedScreen 'hidden disabled or duplicate synthetic labels stop the observation'
+}
 Write-Output ('WINAPP_WELCOME_OFFLINE_CHECKS='+$checks)

@@ -19,6 +19,8 @@ import (
 
 // Desktop owns the app-server conversation. This mode only serves synthetic
 // Responses and prepares isolated native configuration, never authentication.
+const desktopSelfAuthoredScope = "desktop-self-authored-fixtures-only"
+
 type desktopAudit struct {
 	Schema        int    `json:"schema"`
 	Scope         string `json:"scope"`
@@ -60,15 +62,28 @@ func desktopFixturesMain(args []string) {
 }
 
 func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report *desktopAudit) (runErr error) {
-	var codex, catalogPath, scratch, reviewedBuild string
+	var codex, catalogPath, scratch, reviewedBuild, profile string
 	flags := flag.NewFlagSet("desktop-fixtures", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&codex, "codex", "", "")
 	flags.StringVar(&catalogPath, "catalog", "", "")
 	flags.StringVar(&scratch, "scratch-parent", "", "")
 	flags.StringVar(&reviewedBuild, "reviewed-build", "", "")
+	flags.StringVar(&profile, "fixture-profile", "", "")
 	if flags.Parse(args) != nil || flags.NArg() != 0 {
 		return failure("input_invalid")
+	}
+	catalogSupplied := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "catalog" {
+			catalogSupplied = true
+		}
+	})
+	if err := validateDesktopFixtureProfile(profile, reviewedBuild, catalogSupplied); err != nil {
+		return err
+	}
+	if profile == acceptanceSynthetic4239 {
+		report.Scope = desktopSelfAuthoredScope
 	}
 	pinnedSHA, err := desktopFixtureSHA(reviewedBuild)
 	if err != nil {
@@ -80,7 +95,11 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	if err := checkEnvironment(os.Environ()); err != nil {
 		return err
 	}
-	for _, p := range []string{codex, catalogPath, scratch, os.Getenv("SystemRoot")} {
+	paths := []string{codex, scratch, os.Getenv("SystemRoot")}
+	if profile == "" {
+		paths = append(paths, catalogPath)
+	}
+	for _, p := range paths {
 		if !filepath.IsAbs(p) {
 			return failure("input_invalid")
 		}
@@ -91,13 +110,16 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	if err := verifyBinaryHash(codex, pinnedSHA); err != nil {
 		return err
 	}
-	data, err := readBounded(catalogPath, 10<<20)
-	if err != nil {
-		return err
-	}
-	catalog, err := selectedCatalog(data)
-	if err != nil {
-		return err
+	var catalog []byte
+	if profile == "" {
+		data, err := readBounded(catalogPath, 10<<20)
+		if err != nil {
+			return err
+		}
+		catalog, err = selectedCatalog(data)
+		if err != nil {
+			return err
+		}
 	}
 	// The external owner must stop Desktop and its bridge tree before deleting
 	// scratch. We deliberately leave no cleanup claim in this helper's audit.
@@ -124,10 +146,17 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 		return err
 	}
 	selected := filepath.Join(root, "models.json")
-	if err := writeNew(selected, catalog); err != nil {
-		return err
+	var alpha, beta *fixture
+	if profile == acceptanceSynthetic4239 {
+		selected = ""
+		alpha = newDesktopFixtureForModel("alpha", "test-alpha", syntheticInstructions("alpha"))
+		beta = newDesktopFixtureForModel("beta", "test-beta", syntheticInstructions("beta"))
+	} else {
+		if err := writeNew(selected, catalog); err != nil {
+			return err
+		}
+		alpha, beta = newDesktopFixture("alpha"), newDesktopFixture("beta")
 	}
-	alpha, beta := newDesktopFixture("alpha"), newDesktopFixture("beta")
 	defer func() {
 		alpha.close()
 		beta.close()
@@ -138,11 +167,11 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 			runErr = failure("fixture_rejected_request")
 		}
 	}()
-	if err := writeDesktopFixtureConfig(root, codex, selected, pinnedSHA, alpha, beta); err != nil {
+	if err := writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, profile, alpha, beta); err != nil {
 		return err
 	}
 	// No paths, payloads, URLs, or IDs are emitted into public diagnostics.
-	if err := writeDesktopFixtureReady(out, pinnedSHA); err != nil {
+	if err := writeDesktopFixtureReadyForProfile(out, pinnedSHA, profile); err != nil {
 		return err
 	}
 	done := make(chan error, 1)
@@ -175,7 +204,29 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	return nil
 }
 
+func validateDesktopFixtureProfile(profile, build string, catalogSupplied bool) error {
+	switch profile {
+	case "":
+		return nil
+	case acceptanceSynthetic4239:
+		if build == "desktop-4239" && !catalogSupplied {
+			return nil
+		}
+	}
+	return failure("input_invalid")
+}
+
 func writeDesktopFixtureConfig(root, codex, selected, pinnedSHA string, fixtures ...*fixture) error {
+	return writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, "", fixtures...)
+}
+
+func writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, profile string, fixtures ...*fixture) error {
+	if profile != "" && profile != acceptanceSynthetic4239 {
+		return failure("input_invalid")
+	}
+	if profile == acceptanceSynthetic4239 && (selected != "" || pinnedSHA != native4239SHA) {
+		return failure("input_invalid")
+	}
 	backends := []map[string]any{}
 	for _, f := range fixtures {
 		home, err := mkdir(root, f.name+"-home")
@@ -186,7 +237,22 @@ func writeDesktopFixtureConfig(root, codex, selected, pinnedSHA string, fixtures
 		if err != nil {
 			return err
 		}
-		config, err := nativeConfig(f.name+"_provider", f.server.URL, selected)
+		catalogPath, model := selected, modelName
+		if profile == acceptanceSynthetic4239 {
+			if f.model != "test-"+f.name || f.instructions != syntheticInstructions(f.name) {
+				return failure("fixture_invalid")
+			}
+			data, err := selfAuthoredCatalog(f.name)
+			if err != nil {
+				return err
+			}
+			catalogPath = filepath.Join(root, f.name+"-self-authored-catalog.json")
+			if err := writeNew(catalogPath, data); err != nil {
+				return err
+			}
+			model = f.model
+		}
+		config, err := nativeConfigForModel(f.name+"_provider", f.server.URL, catalogPath, model)
 		if err != nil {
 			return err
 		}
@@ -206,8 +272,25 @@ func writeDesktopFixtureReady(out io.Writer, pinnedSHA string) error {
 	return nil
 }
 
+func writeDesktopFixtureReadyForProfile(out io.Writer, pinnedSHA, profile string) error {
+	if profile == "" {
+		return writeDesktopFixtureReady(out, pinnedSHA)
+	}
+	if profile != acceptanceSynthetic4239 || pinnedSHA != native4239SHA {
+		return failure("input_invalid")
+	}
+	if _, err := fmt.Fprintf(out, "{\"schema\":1,\"scope\":%q,\"status\":\"ready\",\"lifetime_seconds\":180,\"native_sha256\":%q,\"catalog_source\":\"self-authored-test-models-v1\"}\n", desktopSelfAuthoredScope, pinnedSHA); err != nil {
+		return failure("output_failed")
+	}
+	return nil
+}
+
 func newDesktopFixture(name string) *fixture {
-	f := &fixture{name: name}
+	return newDesktopFixtureForModel(name, modelName, "")
+}
+
+func newDesktopFixtureForModel(name, model, instructions string) *fixture {
+	f := &fixture{name: name, model: model, instructions: instructions}
 	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serveDesktopFixture(f, w, r)
 	}))
@@ -347,7 +430,11 @@ func serveDesktopFixture(f *fixture, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req map[string]json.RawMessage
-	if json.Unmarshal(data, &req) != nil || stringField(req, "model") != modelName || string(req["stream"]) != "true" || !desktopInputAllowed(req["input"], f.name) {
+	if json.Unmarshal(data, &req) != nil || stringField(req, "model") != f.model || string(req["stream"]) != "true" || !desktopInputAllowed(req["input"], f.name) {
+		f.fail(w)
+		return
+	}
+	if f.instructions != "" && !selfAuthoredRequest(req, f.name) {
 		f.fail(w)
 		return
 	}

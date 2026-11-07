@@ -8,7 +8,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
-foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
+foreach ($name in @('Assert-DesktopFixtureProfile', 'Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicModelCatalogEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
@@ -2365,8 +2365,8 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
     $selectedCalls=@{
         'New-DesktopBridgeSettings'='-Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239 -EntryCompatibility $EnableReviewedEntryCompatibility'
         'Assert-DesktopCompatibilityPackage'='-Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)'
-        'Wait-LiveReady'='-Build4239 $EnableReviewedBuild4239'
-        'Complete-LiveFixture'='-Build4239 $EnableReviewedBuild4239'
+        'Wait-LiveReady'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'
+        'Complete-LiveFixture'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'
         'ConvertTo-LiveConfiguration'='-Build4239 $EnableReviewedBuild4239'
     }
     foreach($name in $selectedCalls.Keys) {
@@ -2486,5 +2486,28 @@ Expect-Pass 'normal-entry compatibility remains default-off and settings-only' {
         -not $ast.Extent.Text.Contains("'magpie-codex-bridge: app-server bridge failed'")) { throw 'Startup result lost its honest review limit or existing fixed failure marker.' }
 }
 
+# Pure option checks: no supplied catalog, not even an empty one, in self-authored mode.
+Assert-DesktopFixtureProfile 'synthetic-models-4239' $false 'observe' $true $true $true $false $false $false '' 'desktop-synthetic-models-v1'
+foreach ($argsBad in @(
+    @('synthetic-models-4239',$true,'observe',$true,$true,$true,$false,$false,$false,'','desktop-synthetic-models-v1'),
+    @('synthetic-models-4239',$false,'observe',$false,$true,$true,$false,$false,$false,'','desktop-synthetic-models-v1'),
+    @('synthetic-models-4239',$false,'observe',$true,$false,$true,$false,$false,$false,'','desktop-synthetic-models-v1'),
+    @('synthetic-models-4239',$false,'observe',$true,$true,$true,$false,$false,$false,'',''),
+    @('',$false,'observe',$true,$true,$true,$false,$false,$false,'','desktop-synthetic-models-v1'))) {
+    $rejected=$false
+    try { Assert-DesktopFixtureProfile @argsBad } catch { $rejected=$true }
+    if (-not $rejected) { throw 'Self-authored Desktop mixed-profile/catalog input accepted.' }
+}
+$profileCall=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+    $n.GetCommandName() -ceq 'Assert-DesktopFixtureProfile'},$true))
+if ($profileCall.Count -ne 1 -or -not $profileCall[0].Extent.Text.Contains("`$PSBoundParameters.ContainsKey('NativeControlCatalog')")) {
+    throw 'Desktop fixture profile must reject argument presence before setup.'
+}
+$workflow=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '../.github/workflows/experimental-desktop-policy-trace.yml'))
+if (-not $workflow.Contains("if: env.MAGPIE_DESKTOP_SYNTHETIC_MODELS == ''") -or
+    -not $workflow.Contains('-DesktopFixtureProfile synthetic-models-4239') -or
+    -not $ast.Extent.Text.Contains("'-fixture-profile','synthetic-models-4239'")) {
+    throw 'Self-authored Desktop must bypass legacy download and select its exact helper mode.'
+}
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
 

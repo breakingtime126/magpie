@@ -457,3 +457,55 @@ catalog_blob pins. No command/path authority is emitted in readiness. Stop the
 helper only after verified Desktop activation exit; that event alone does not
 prove all native descendants exited. The external process owner must supervise
 its complete tree and report locked-file cleanup failures rather than mask them.
+
+### Self-authored Desktop model-menu experiment
+
+The preceding independent native acceptance passed at exact commit
+`25a7517ef35495ea8d5549f854e2ecbed1cda9e0` in
+[run 42411936151](https://github.com/breakingtime126/magpie/actions/runs/42411936151),
+artifact `13589902596`. Its scope is `self-authored-models-loopback-only`:
+2 models, 2 threads, 4 turns, alpha/beta requests 2/2, 2 owner-switch rejections,
+0 fixture errors, and `adapter_clean_exit`/`cleanup_complete` true. This is
+native synthetic evidence only. The new Desktop profile below has not yet
+been executed or verified; no GUI visibility or chat result follows from it.
+
+The separate Desktop fixture flag `-fixture-profile synthetic-models-4239`
+requires `-reviewed-build desktop-4239` and rejects any `-catalog` occurrence,
+including an explicit empty value. It reuses `selfAuthoredCatalog` verbatim for
+independent `test-alpha` and `test-beta` records. Each native child receives only
+its own fresh catalog path and model slug. No legacy catalog is read/downloaded,
+no frontend catalog or config file is invented, and native permission/auth
+configuration is unchanged. The old Desktop profile remains separately opt-in.
+
+Readiness uses scope `desktop-self-authored-fixtures-only` and
+`catalog_source: self-authored-test-models-v1`, not a legacy catalog digest.
+The final fixture audit uses the same distinct scope. The self-authored
+Responses oracle also requires the route's actual model, self-written
+instructions in the reviewed developer/input-text position and only supported
+`none` effort through the same `selfAuthoredRequest` helper. Existing Desktop
+plaintext, no-auth-header and request-count bounds remain. Successful menu-only
+audit additionally requires zero Responses requests at both endpoints.
+
+The existing policy-trace workflow selects this mode only with the additional
+`[desktop-synthetic-models-v1]` marker and the existing 4239 welcome/official-tool
+markers. The mode skips the legacy catalog download, rejects a supplied
+`NativeControlCatalog`, and does not run the separate legacy native acceptance
+at the end. Native four-turn evidence and actual Desktop evidence remain
+separate.
+
+This experiment retains the existing owned-window welcome and model-menu
+observation path. Its new profile recognizes only `Synthetic Alpha [alpha]`
+and `Synthetic Beta [beta]` labels; only the existing menu-control keyboard
+activation is permitted. It does not select a model, submit a message, complete
+additional setup, change security settings or prove real-provider access.
+Hidden, disabled, ambiguous, login/protected or unreviewed UI remains a stop,
+not permission to guess another action. Screenshots and exact bounded counts
+must be reviewed before any next action is proposed.
+
+The test-only RPC observer recognizes the two exact self-authored
+id/model/display-name tuples and emits only existing fixed counts. Other
+identities remain unknown and every forwarded byte remains unchanged. These
+counts describe a received `model/list` response, not visible or usable UI.
+Distinct source slugs are a minimal follow-up experiment, not a proven cause
+of the earlier missing beta menu item. No Desktop run is authorized merely by
+preparing this source; first require the separate new-model native acceptance.

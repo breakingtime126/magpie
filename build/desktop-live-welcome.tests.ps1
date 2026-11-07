@@ -295,5 +295,34 @@ try {
         } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_separate_helper_check' }
     } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_non_windows' }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
+# Separate provenance; self-authored readiness cannot be read as a pinned external catalog.
+$selfReady=ConvertFrom-LiveJSON '{"schema":1,"scope":"desktop-self-authored-fixtures-only","status":"ready","lifetime_seconds":180,"native_sha256":"4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382","catalog_source":"self-authored-test-models-v1"}'
+Assert-LiveReady $selfReady -Build4239 $true -FixtureProfile 'synthetic-models-4239'
+Reject { Assert-LiveReady $selfReady -Build4239 $true } 'self-authored readiness is not legacy'
+Reject { Assert-LiveReady $selfReady -FixtureProfile 'synthetic-models-4239' } 'self-authored requires exact 4239'
+foreach ($field in @('scope','catalog_source','native_sha256')) {
+    $bad=ConvertFrom-LiveJSON ($selfReady | ConvertTo-Json -Compress)
+    $bad.$field='unreviewed'
+    Reject { Assert-LiveReady $bad -Build4239 $true -FixtureProfile 'synthetic-models-4239' } 'self-authored readiness fixed identity'
+}
+$bad=ConvertFrom-LiveJSON ($selfReady | ConvertTo-Json -Compress)
+$bad | Add-Member -NotePropertyName catalog_blob -NotePropertyValue ('0'*40)
+Reject { Assert-LiveReady $bad -Build4239 $true -FixtureProfile 'synthetic-models-4239' } 'no mixed catalog provenance'
+$selfAudit=ConvertFrom-LiveJSON '{"schema":1,"scope":"desktop-self-authored-fixtures-only","status":"stopped","failure":"","alpha_requests":0,"beta_requests":0,"fixture_errors":0}'
+Assert-LiveAudit $selfAudit 0 -FixtureProfile 'synthetic-models-4239'
+Reject { Assert-LiveAudit $selfAudit 0 } 'self-authored audit not accepted as legacy'
+$selfFinal=New-LiveFinalizationFixture $newNativeSHA
+$selfFinal.Output=($selfReady | ConvertTo-Json -Compress)+"`n"+($selfAudit | ConvertTo-Json -Compress)+"`n"
+Pass ((Complete-LiveFixture $selfFinal -Build4239 $true -FixtureProfile 'synthetic-models-4239').status -ceq 'stopped') 'self-authored finalization validates both independent records'
+Reject { Complete-LiveFixture $selfFinal -Build4239 $true } 'legacy finalization rejects self-authored records'
+
+foreach ($field in @('alpha_requests','beta_requests')) {
+    $selfAudit.$field=1
+    Reject { Assert-LiveAudit $selfAudit 0 -FixtureProfile 'synthetic-models-4239' } 'menu-only acceptance requires zero model requests'
+    $selfAudit.$field=0
+}
+$selfAudit.fixture_errors=1
+Reject { Assert-LiveAudit $selfAudit 0 -FixtureProfile 'synthetic-models-4239' } 'self-authored fixture errors remain errors'
+Reject { Get-LiveFixtureScope 'SYNTHETIC-MODELS-4239' } 'profile remains case-sensitive'
 Write-Output "LIVE_WELCOME_OFFLINE_CHECKS=$count"
 exit 0
