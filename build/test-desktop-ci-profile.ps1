@@ -2100,6 +2100,12 @@ foreach ($options in @(
 Expect-Pass 'package identity always stops before the unchanged pin and installation gates' {
     $reads = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
         $n.GetCommandName() -ceq 'Get-DesktopPackageIdentityEvidence'}, $true))
+    if ($reads.Count -ne 2) { throw 'Package identity modes lost their two explicit trust reads.' }
+    $reads = @($reads | Where-Object {
+        $branch=$_.Parent
+        while ($null -ne $branch -and $branch -isnot [Management.Automation.Language.IfStatementAst]) { $branch=$branch.Parent }
+        $null -ne $branch -and $branch.Clauses[0].Item1.Extent.Text -ceq '$InspectPackageIdentityOnly'
+    })
     if ($reads.Count -ne 1) { throw 'Package identity runtime seam is not unique.' }
     $expected = @('Get-DesktopPackageIdentityEvidence','$package','$report.download.packageSha256',
         '$signatureExit','$report.signature.authenticodeStatus','$report.signature.signerSubject')

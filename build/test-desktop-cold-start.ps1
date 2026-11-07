@@ -11,6 +11,7 @@ param(
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
     [switch]$EnableReadOnlyWinAppInspection,
+    [switch]$EnableNativeReadOnlyInspection,
     [switch]$InspectPackageIdentityOnly,
     [switch]$InspectStaticLauncher,
     [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
@@ -1631,6 +1632,27 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
     -Actions $env:GITHUB_ACTIONS -RunnerEnvironment $env:RUNNER_ENVIRONMENT `
     -Repository $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
+$useWinAppInspection = $EnableReadOnlyWinAppInspection -or $EnableNativeReadOnlyInspection
+if ($EnableNativeReadOnlyInspection) {
+    . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
+    . (Join-Path $PSScriptRoot 'desktop-winapp-inspect.ps1')
+    Assert-NativeUIOptions $true $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
+        $EnableReviewedLiveWelcome $EnableReadOnlyWinAppInspection $InspectPackageIdentityOnly `
+        $InspectStaticLauncher $NativeEntryCase $env:MAGPIE_NATIVE_UI_INSPECTION
+    # No inherited process/user/machine bridge routing and no existing account state.
+    foreach ($name in @('CODEX_CLI_PATH','CODEX_HOME','MAGPIE_APP_SERVER_BRIDGE_CONFIG','MAGPIE_CI_REAL_BRIDGE')) {
+        foreach ($target in @('Process','User','Machine')) {
+            if ([Environment]::GetEnvironmentVariable($name,$target)) { throw 'Native original routing is not clean.' }
+        }
+    }
+    foreach ($name in @('OPENAI_API_KEY','AZURE_OPENAI_API_KEY','OPENAI_ACCESS_TOKEN','CODEX_AUTH_JSON')) {
+        if ([Environment]::GetEnvironmentVariable($name)) { throw 'Native original account environment is not empty.' }
+    }
+    if (($env:HOME -and $env:HOME -ine $env:USERPROFILE) -or
+        (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\config.toml'))) {
+        throw 'Native original profile is not empty.'
+    }
+}
 Assert-DesktopPackageIdentityOptions $InspectPackageIdentityOnly $Mode $EnableReviewedStartupProbe `
     $EnableReviewedLaunchCompatibility $EnableReviewedLiveWelcome $EnableReadOnlyWinAppInspection `
     $NativeEntryCase $env:MAGPIE_PACKAGE_IDENTITY_ONLY
@@ -1703,7 +1725,7 @@ See the report artifact for public package, session, and process evidence.
 "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
 }
 try {
-    if ($EnableReadOnlyWinAppInspection) {
+    if ($useWinAppInspection) {
         $report.nativeInspection=[ordered]@{
             scope='hwnd-requested-read-only';status='not-run';reason='tool_provenance_pending';actions=0
             limits=@('The CLI may fall back to a same-PID root; HWND reuse remains a race. No strict root or PID exclusion proof.',
@@ -1712,7 +1734,12 @@ try {
                 'Upload-tagged telemetry disabled; local ETW and named session-event bookkeeping remain.',
                 'Tool coordination and cache use fresh private scratch. No input action or acceptance of onboarding, models or chat.')
         }
-
+        if ($EnableNativeReadOnlyInspection) {
+            $report.nativeInspection.origin='official-native-original'
+            $report.nativeInspection.bridgeAccepted=$false
+            $report.nativeInspection.nativeProtocolAccepted=$false
+            $report.nativeInspection.limits += 'Original AUMID activation only. No bridge override, synthetic login or service turn; not a literal Start/taskbar click or persistence proof.'
+        }
     }
     if ($NativeEntryCase) {
         $report.nativeEntry = [ordered]@{
@@ -1766,7 +1793,8 @@ try {
     if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\auth.json')) { Block 'Unexpected existing Codex authentication file.' }
     $existing = @(Get-AppxPackage -Name 'OpenAI.Codex')
     if ($existing.Count -ne 0) { Block 'Unexpected existing OpenAI.Codex registration; baseline must be fresh.' }
-    if ($EnableReadOnlyWinAppInspection) {
+    if ($useWinAppInspection) {
+        if ($EnableNativeReadOnlyInspection) { Initialize-LiveSupervisor }
         $report.reason='tool_provenance_unavailable'
         $winAppTool=Initialize-WinAppTool (Join-Path $work 'winapp-inspection')
         $report.nativeInspection.provenance=$winAppTool.Provenance
@@ -1915,11 +1943,17 @@ namespace DesktopColdProbe {
         # Unconditional, including when the URL returns the old reviewed hash.
         Block 'Read-only package identity mode stops before installation or execution; package remains unapproved.'
     }
-    if ($report.download.packageSha256 -ne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
-        if ($EnableReviewedLaunchCompatibility) {
-            Block 'Reviewed launch compatibility package hash mismatch; inspect the changed floating download before running.'
+    if ($EnableNativeReadOnlyInspection) {
+        $report.nativePackageIdentity = Get-DesktopPackageIdentityEvidence $package $report.download.packageSha256 `
+            $signatureExit $report.signature.authenticodeStatus $report.signature.signerSubject
+        $report.nativePackageIdentityLimit = 'Actual signed package identity only; no bridge protocol or compatibility acceptance.'
+    } else {
+        if ($report.download.packageSha256 -ne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
+            if ($EnableReviewedLaunchCompatibility) {
+                Block 'Reviewed launch compatibility package hash mismatch; inspect the changed floating download before running.'
+            }
+            Block 'Official floating download changed since reviewed baseline; inspect new package before running.'
         }
-        Block 'Official floating download changed since reviewed baseline; inspect new package before running.'
     }
     $zip = [IO.Compression.ZipFile]::OpenRead($package)
     try {
@@ -1931,15 +1965,22 @@ namespace DesktopColdProbe {
     $identity = $manifest.Package.Identity
     $apps = @($manifest.SelectNodes("//*[local-name()='Applications']/*[local-name()='Application']"))
     $aliases = @($manifest.SelectNodes("//*[local-name()='ExecutionAlias']") | ForEach-Object { $_.GetAttribute('Alias') })
-    $report.manifest = [ordered]@{
-        name = $identity.GetAttribute('Name'); publisher = $identity.GetAttribute('Publisher')
-        version = $identity.GetAttribute('Version'); architecture = $identity.GetAttribute('ProcessorArchitecture')
-        applications = @($apps | ForEach-Object { [ordered]@{
-            id = $_.GetAttribute('Id'); executable = $_.GetAttribute('Executable'); entryPoint = $_.GetAttribute('EntryPoint')
-            aliases = @($_.SelectNodes(".//*[local-name()='ExecutionAlias']") | ForEach-Object { $_.GetAttribute('Alias') })
-        } })
-        aliases = $aliases
-        dependencies = @($manifest.SelectNodes("//*[local-name()='Dependencies']/*") | ForEach-Object { $_.OuterXml })
+    if ($EnableNativeReadOnlyInspection) {
+        $report.manifest = [ordered]@{
+            name=$report.nativePackageIdentity.manifest.name; publisher=$report.nativePackageIdentity.manifest.publisher
+            version=$report.nativePackageIdentity.manifest.version; architecture=$report.nativePackageIdentity.manifest.architecture
+        }
+    } else {
+        $report.manifest = [ordered]@{
+            name = $identity.GetAttribute('Name'); publisher = $identity.GetAttribute('Publisher')
+            version = $identity.GetAttribute('Version'); architecture = $identity.GetAttribute('ProcessorArchitecture')
+            applications = @($apps | ForEach-Object { [ordered]@{
+                id = $_.GetAttribute('Id'); executable = $_.GetAttribute('Executable'); entryPoint = $_.GetAttribute('EntryPoint')
+                aliases = @($_.SelectNodes(".//*[local-name()='ExecutionAlias']") | ForEach-Object { $_.GetAttribute('Alias') })
+            } })
+            aliases = $aliases
+            dependencies = @($manifest.SelectNodes("//*[local-name()='Dependencies']/*") | ForEach-Object { $_.OuterXml })
+        }
     }
     if ($report.manifest.name -ne 'OpenAI.Codex' -or $report.manifest.architecture -ne 'x64') {
         Block 'Unexpected official package identity or architecture; inspect evidence before proceeding.'
@@ -1955,6 +1996,9 @@ namespace DesktopColdProbe {
     if ($desktopApps.Count -ne 1) { Block 'Verified Desktop application selection is not unique.' }
     $desktopApp = $desktopApps[0]
     $report.selectedApplication = $desktopApp.GetAttribute('Id')
+    if ($EnableNativeReadOnlyInspection -and $report.selectedApplication -cnotmatch '^[A-Za-z0-9._-]{1,64}\z') {
+        Block 'Native Desktop application identity is outside its bounded contract.'
+    }
     $report.stage = 'interactive-session-gate'
     if (-not $hasInput -or -not [Environment]::UserInteractive -or
         $report.session.activeConsoleSessionId -ne $processSession -or
@@ -2526,7 +2570,7 @@ requires_openai_auth = false
         }
         $report.activation = [ordered]@{ method = 'newly-registered-application-alias'; processId = $activationPid }
     }
-    if ($NativeEntryCase) {
+    if ($NativeEntryCase -or $EnableNativeReadOnlyInspection) {
         $ownedActivationProcess = Get-Process -Id $activationPid -ErrorAction Stop
         $null = $ownedActivationProcess.Handle
         $entryActivationStartTime = $ownedActivationProcess.StartTime.ToUniversalTime()
@@ -2620,7 +2664,7 @@ requires_openai_auth = false
     if ([DesktopColdProbe.Native]::PackageFor([uint32]$window.ProcessId) -ne $app.PackageFullName) {
         Block 'Window owner changed before capture.'
     }
-    if ($EnableReadOnlyWinAppInspection) {
+    if ($useWinAppInspection) {
         $checkInspectionIdentity={
             if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
                 $ownedActivationProcess.Id -ne $activationPid -or $window.ProcessId -ne $activationPid -or
@@ -2652,13 +2696,13 @@ requires_openai_auth = false
         Write-Output ('DESKTOP_SCREENSHOT_PNG=' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($capturePath)))
     }
     $report.capture = 'official-window.png; screen pixels may contain occlusion and require visual review'
-    if ($EnableReadOnlyWinAppInspection) {
+    if ($useWinAppInspection) {
         $report.nativeInspection.reason='inspection_setup_unavailable'
         try {
-            if ($liveFixture.Exited -or $liveFixture.TimedOut -or $liveFixture.Overflow) { throw 'Fixture unavailable.' }
+            if (-not $EnableNativeReadOnlyInspection -and ($liveFixture.Exited -or $liveFixture.TimedOut -or $liveFixture.Overflow)) { throw 'Fixture unavailable.' }
             Assert-WinAppFiles $winAppTool
             $inspectionStart=New-WinAppStart $winAppTool $window.Handle
-            $inspection=Invoke-WinAppInspection $inspectionStart $window.Handle $checkInspectionIdentity
+            $inspection=Invoke-WinAppInspection $inspectionStart $window.Handle $checkInspectionIdentity -NativeOriginal:$EnableNativeReadOnlyInspection
             $report.nativeInspection.result=$inspection
             $report.nativeInspection.status=$inspection.status;$report.nativeInspection.reason=$inspection.reason
             if ($inspection.status -cne 'observed') { Block 'The one read-only native inspection stopped; no retry or UI action.' }
@@ -3361,7 +3405,7 @@ requires_openai_auth = false
             # This proves only that this harness did not start Desktop. It is not
             # successful process cleanup and never sets activationExitConfirmed.
             $report.desktopActivationCleanup = 'not-started'
-        } elseif (($EnableReviewedLaunchCompatibility -or $NativeEntryCase) -and
+        } elseif (($EnableReviewedLaunchCompatibility -or $NativeEntryCase -or $EnableNativeReadOnlyInspection) -and
             (-not $NativeEntryCase -or $activationPid -gt 0 -or $null -ne $ownedActivationProcess)) {
             try {
                 if ($null -eq $ownedActivationProcess -or [string]::IsNullOrWhiteSpace($ownedActivationCreatedUtc) -or
@@ -3391,7 +3435,7 @@ requires_openai_auth = false
             }
         }
     } catch { $report.cleanupErrorType = $_.Exception.GetType().FullName }
-    if ($EnableReviewedLaunchCompatibility -or $NativeEntryCase) {
+    if ($EnableReviewedLaunchCompatibility -or $NativeEntryCase -or $EnableNativeReadOnlyInspection) {
         $report.desktopActivationExited = [bool]$activationExitConfirmed
     }
     if ($useLiveFixtures -and $null -ne $liveFixture) {
@@ -3414,6 +3458,17 @@ if ($InspectPackageIdentityOnly) {
     $report.nativeControlPlane = [ordered]@{status='not-run';reason='package_identity_only'}
     Save-Report
     exit 1
+}
+if ($EnableNativeReadOnlyInspection) {
+    $report.nativeControlPlane = [ordered]@{status='not-run';reason='native_original_ui_only'}
+    $report.bridgeAcceptance = 'not-tested'
+    if ($exitCode -eq 0 -and $activationExitConfirmed -and -not $report.Contains('cleanupErrorType') -and
+        $report.nativeInspection.status -ceq 'observed' -and $report.nativeInspection.Contains('afterCapture')) {
+        $report.status='observed'; $report.stage='native-original-read-only-ui'
+        $report.reason='One official native AUMID activation and bounded read-only window observation; no input, account, bridge, protocol or persistence acceptance.'
+    } else { $report.status='blocked'; $exitCode=1 }
+    Save-Report
+    exit $exitCode
 }
 # Native evidence stays separate: a later Desktop compatibility failure remains
 # the original failure even when the isolated native slice can still be exercised.

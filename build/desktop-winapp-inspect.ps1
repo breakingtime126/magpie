@@ -14,6 +14,13 @@ function Assert-WinAppSignature($Signature) {
         throw 'Official tool embedded Microsoft signature unavailable.'
     }
 }
+function Assert-NativeUIOptions([bool]$Enabled,[string]$Mode,[bool]$Startup,[bool]$Compatibility,
+    [bool]$Welcome,[bool]$BridgeInspection,[bool]$PackageOnly,[bool]$StaticLauncher,[string]$EntryCase,[string]$Marker) {
+    if ($Enabled -and ($Mode -cne 'baseline' -or $Startup -or $Compatibility -or $Welcome -or
+        $BridgeInspection -or $PackageOnly -or $StaticLauncher -or $EntryCase -or $Marker -cne 'native-ui-inspection-v1')) {
+        throw 'Native UI observation requires its exclusive original-Desktop mode.'
+    }
+}
 function Get-WinAppPins {
     return [ordered]@{
         version='0.7.1'; sourceCommit='e3cd0b94f3e7b776ac51ba0564f4908094e979b5'
@@ -123,7 +130,7 @@ function ConvertTo-WinAppSummary([string]$Text,[long]$RequestedWindow) {
     $summary=[ordered]@{windowCount=1;nodeCount=0;truncatedNodeCount=0;maxRenderedDepth=0;
         headingExactCount=0;headingWhitespaceNormalizedCount=0;engineeringCount=0;suggestionsCount=0;continueCount=0;
         headingVisibleCount=0;engineeringVisibleCount=0;suggestionsVisibleCount=0;continueVisibleCount=0;
-        engineeringInvokableCount=0;suggestionsInvokableCount=0;continueInvokableCount=0;loginMarkerCount=0;protectedMarkerCount=0;
+        engineeringInvokableCount=0;suggestionsInvokableCount=0;continueInvokableCount=0;loginMarkerCount=0;protectedMarkerCount=0;errorMarkerCount=0;
         requiredTargetStatus='missing';requiredTargetVisibility='missing-or-offscreen'}
     $pending=[Collections.Generic.Stack[object]]::new()
     foreach ($node in $win.elements) { $pending.Push(@($node,0)) }
@@ -167,6 +174,7 @@ function ConvertTo-WinAppSummary([string]$Text,[long]$RequestedWindow) {
             }
         }
         if ($name -match '(?i)\b(sign\s*in|log\s*in|password|verification code)\b') { $summary.loginMarkerCount++ }
+        if ($name -match '(?i)\b(error|something went wrong|failed to|could not start|unable to start|unexpected failure)\b') { $summary.errorMarkerCount++ }
         if ($name -match '(?i)\b(sign\s*in|log\s*in|password|verification code|sign up|payment|subscribe|terms of|privacy policy|authorize|permission|connect your|allow access|access denied|administrator|security warning|certificate|captcha)\b') {
             $summary.protectedMarkerCount++
         }
@@ -190,7 +198,7 @@ function Complete-WinAppProcess($Child,[System.Collections.IDictionary]$Result) 
     } catch { $Result.status='stopped';$Result.reason='tool_exit_unconfirmed' }
     try { $Child.Dispose() } catch { $Result.status='stopped';$Result.reason='tool_cleanup_unconfirmed' }
 }
-function Invoke-WinAppInspection($Start,[long]$WindowHandle,[scriptblock]$CheckIdentity) {
+function Invoke-WinAppInspection($Start,[long]$WindowHandle,[scriptblock]$CheckIdentity,[switch]$NativeOriginal) {
     $result=[ordered]@{status='stopped';reason='identity_unavailable';actions=0;attempts=0;
         beforeIdentity=$false;afterIdentity=$false;exitCode=$null;stdoutBytes=0;summary=$null;processExitConfirmed=$null}
     $child=$null
@@ -214,9 +222,11 @@ function Invoke-WinAppInspection($Start,[long]$WindowHandle,[scriptblock]$CheckI
         $result.summary=ConvertTo-WinAppSummary $child.Output $WindowHandle
         if ($result.summary.loginMarkerCount -gt 0) { $result.reason='login_marker_observed';return $result }
         if ($result.summary.protectedMarkerCount -gt 0) { $result.reason='protected_marker_observed';return $result }
-        if ($result.summary.requiredTargetStatus -cne 'present') { $result.reason='required_targets_missing';return $result }
-        if ($result.summary.requiredTargetVisibility -cne 'visible') { $result.reason='required_targets_offscreen';return $result }
-        $result.status='observed';$result.reason='read_only_target_labels_observed'
+        if ($NativeOriginal -and $result.summary.errorMarkerCount -gt 0) { $result.reason='error_marker_observed';return $result }
+        if (-not $NativeOriginal -and $result.summary.requiredTargetStatus -cne 'present') { $result.reason='required_targets_missing';return $result }
+        if (-not $NativeOriginal -and $result.summary.requiredTargetVisibility -cne 'visible') { $result.reason='required_targets_offscreen';return $result }
+        $result.status='observed'
+        $result.reason=$(if ($NativeOriginal) { 'native_original_tree_observed' } else { 'read_only_target_labels_observed' })
     } catch {
         # Do not publish exceptions, raw output, values, paths or stderr.
     } finally {

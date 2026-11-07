@@ -1661,7 +1661,8 @@ activation cleanup path and existing winapp mode remain unchanged.
 ### HWND-requested UI diagnostic
 
 A push to the existing experimental branch whose head commit message contains
-`[winapp-inspection-v0.7.1]` selects `EnableReadOnlyWinAppInspection` in the
+`[winapp-inspection-v0.7.1]`, without either independent native-job marker below,
+selects `EnableReadOnlyWinAppInspection` in the
 policy-trace job. It is mutually exclusive with the welcome action helper and
 native-entry cases. The older cold-start/native-entry jobs are skipped for that
 marked push, not reported as passed. Existing policy-trace unit, profile,
@@ -1752,3 +1753,126 @@ real bounded child stdout/stderr/timeout behavior without downloading or
 activating Desktop. Actual CLI serialization/signature/runtime compatibility
 remains to be checked by the single marked Windows job. Focused checks never
 replace the retained repository checks or actual Windows run.
+
+### Independent original-native UI observation
+
+A push with both `[native-ui-inspection-v1]` and
+`[winapp-inspection-v0.7.1]` selects the independent `native-original-ui`
+Windows job. It has no bridge-regression job dependency and runs only relevant
+reader, package, registration, process-cleanup and mode-safety fixtures first.
+The old observed-policy runtime job is skipped for either this marker or
+`[native-contract-review-v1]`; the common winapp marker also keeps the other
+old Desktop runtime lanes skipped. The native-contract evidence job may run
+alongside this one, but neither job's success implies success of the other.
+Package-only and native-UI selection cannot be combined.
+
+`EnableNativeReadOnlyInspection` requires `Mode=baseline` and rejects every
+bridge/startup/welcome/static-launcher/package-only/native-entry opt-in. It
+checks for routing overrides and account environment/configuration, retains
+the ordinary no-auth/no-existing-registration preflight, and never sets a
+bridge override, starts synthetic fixtures or sends a service turn.
+
+This original-app lane accepts the latest package only after the existing
+signtool gate and `Valid` Authenticode with the expected Store publisher,
+bounded `OpenAI.Codex`/x64 manifest identity, and one expected
+`app/ChatGPT.exe` full-trust application entry. It records the actual package,
+native payload and ASAR identities before installation. It does not add a
+bridge-approved version or native hash: every existing bridge compatibility
+pin remains unchanged. Package updates are observations, not protocol approval.
+
+The existing licensed install, bounded registration wait and interactive-session
+checks precede one AUMID activation. Its newly created Process object is held
+and checked for creation time, package and session before the original owned
+window is inspected. AUMID activation is not evidence of a literal Start/taskbar
+click, persistent routing or bridge usability.
+
+The same pinned Microsoft winapp executable gets one HWND-requested read-only
+call, with the existing 30-second and 256-KiB-per-stream bounds, output-depth
+limit, private raw output, and disclosed fallback/HWND races. A nonempty valid
+native tree may be observed even when old welcome labels are absent. The fixed
+counts and `requiredTargetStatus` remain explicit; this proves neither usable
+controls nor clickability. Login, permission/protected and error labels stop
+without any input. The initial screenshot can still document such a stop.
+
+Only the exact retained activation process is closed/terminated during bounded
+cleanup. Unknown exit or identity never becomes success, and whole-family exit
+is not claimed. The native-only footer exits before independent synthetic turns,
+reports bridge acceptance as `not-tested`, and accepts observation only with
+confirmed activation exit and the validated after-capture. Offline fixtures are
+synthetic safety tests, not evidence that the actual window read succeeded.
+
+
+### Separate exact-package contract review
+
+`build/review-desktop-contract.ps1` is a disposable, credential-free review lane,
+independent of Desktop activation and the bridge regression lanes. It requires
+`[native-contract-review-v1]` and the existing `[winapp-inspection-v0.7.1]` push
+marker on this experimental branch. The combined workflow excludes the old
+observed-policy runtime lane when this marker or the native-only UI marker is
+present. The existing disabled dispatch default is unchanged.
+
+This review alone admits the signed public 26.1103.4239.0 package SHA
+`9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c`, backend SHA
+`4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382`, and ASAR SHA
+`fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa`. These are
+review-input identities, not a change to any accepted bridge/runtime pin.
+Package SHA, exact size, Windows signature, manifest identity and both entry
+hashes must pass before the two exact entries are extracted into fresh scratch.
+The existing bounded ZIP validators are imported as function definitions, never
+by executing the cold-start harness. Nothing is installed or activated.
+
+After shared trust and extraction, two independent evidence legs preserve
+successful artifacts even if the other leg fails. The native leg runs only
+`--version`, `app-server --help`, `app-server generate-json-schema --help`, then
+`app-server generate-json-schema --experimental --out <new directory>`. The
+actual help must expose both generation flags before generation. It does not
+initialize app-server, inspect startup configuration, authenticate, or infer.
+Each process has a different empty HOME/CODEX_HOME and cleared inherited
+environment, using the existing `New-LiveStart` and `BoundedProcess` helpers.
+A held child has a 30-second deadline, 256 KiB per stream, and explicit exit
+confirmation. Fixed command labels, exit codes, timeout/overflow flags and
+retained stdout byte counts are recorded; stderr is bounded/discarded by the
+shared supervisor, which does not expose its byte count. The static Node readers have the same deadline and 1 MiB output
+cap. An uncertain child exit stops the other leg. No command is retried.
+
+Generated JSON is limited to 2048 files, 8 MiB each and 64 MiB total; directory
+sizes are sampled while generation runs, not enforced by a filesystem quota.
+All files are parsed, safe references must resolve within the generated root,
+and the complete generated set including definitions is hashed and staged
+before artifact publication. Safe `../` references are normalized and accepted
+only when their resolved path remains inside that root. No remote schema is
+fetched. Source command syntax was cross-checked against public OpenAI CLI blob
+`a1462ee2a36535fba971389bf8ef8bda8ad9b8d5`; actual bundled help/schema remains
+the version-specific evidence. Current public initialize/config/model/thread
+schema samples were used to test reference validation, not presented as this
+package's generated protocol.
+
+The static leg uses the existing ASAR index reader without evaluating package
+code. It hashes the full exact ASAR, scans only packed `.vite/build/*.js` sources
+(16 MiB per file, 128 MiB total, at most 4096 files), and reports literal source
+excerpts around fixed launch, startup probe, initialize-capability, auth,
+config, model, thread and environment anchors. At most eight excerpts per
+anchor and 1600 UTF-16 code units on each side are retained; all match counts
+and truncation flags are explicit. Artifact size is capped at 1 MiB. Every
+source has a path/hash and every excerpt has offsets. Missing anchors are not
+success, and snippets are implementation evidence rather than proof that a
+selection path ran or is a supported public configuration interface.
+
+Only the fixed report, public help/version, validated generated schemas and
+bounded public source excerpts are uploaded. Extracted executables/ASAR, raw
+profiles, stderr and the downloaded MSIX stay private in the disposable VM.
+`observed` means both evidence legs completed; `partial` preserves successful
+artifacts without claiming full review. Neither means UI, login, model,
+bridge, normal-entry or same-window success. Held-child exit does not prove
+an entire descendant family exited.
+
+Focused checks: `node --test build/review-desktop-contract.test.mjs` and
+`pwsh -NoProfile -File build/review-desktop-contract.tests.ps1`. The Node fixtures
+exercise preserved excerpt bytes/offsets, pin mismatch, missing/truncated
+anchors, malformed/unpacked/link ASAR sources, complete local definitions,
+root-contained relative references, missing/remote/escaping references,
+malformed/oversized output and links. The PowerShell fixtures check exact CI
+admission/identities, generated size bounds, unchanged trust-before-execute
+ordering and no activation/startup probe. Synthetic checks are not runtime
+evidence. Authoring local Node checks passed; PowerShell, Windows and actual
+package/backend execution remain for CI at the reviewed commit.

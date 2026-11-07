@@ -25,6 +25,7 @@ on:
       - build/control-plane-native/**
       - build/desktop-live-welcome*.ps1
       - build/desktop-winapp-inspect*.ps1
+      - build/review-desktop-contract*
       - build/desktop-welcome-step*.ps1
       - build/test-desktop-cold-start.ps1
       - build/test-desktop-public-catalog.ps1
@@ -583,7 +584,7 @@ jobs:
 
   observed-policy-read:
     needs: observer-unit
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]')))
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -733,3 +734,97 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  native-original-ui:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]')
+    runs-on: windows-2025
+    timeout-minutes: 25
+    env:
+      MAGPIE_NATIVE_UI_INSPECTION: native-ui-inspection-v1
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Reject mixed package-only selection before checkout
+        shell: bash
+        env:
+          PACKAGE_ONLY: ${{ contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
+        run: |
+          set -euo pipefail
+          test "$PACKAGE_ONLY" = false
+      - name: Check out the exact native UI experiment
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check bounded reader and native-only safety fixtures
+        run: |
+          $global:LASTEXITCODE=0
+          ./build/desktop-winapp-inspect.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only tool safety fixtures failed.' }
+          $global:LASTEXITCODE=0
+          ./build/desktop-winapp-inspect.native.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Native original safety fixtures failed.' }
+      - name: Observe one original native Desktop window without input
+        run: |
+          ./build/test-desktop-cold-start.ps1 -Mode baseline -EnableNativeReadOnlyInspection
+      - name: Upload original native observation only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: official-native-ui-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/desktop-cold-start-report/report.json
+            ${{ runner.temp }}/desktop-cold-start-report/official-window.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-after-inspection.png
+          if-no-files-found: error
+          retention-days: 7
+
+
+
+  native-contract-review:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]')
+    runs-on: windows-2025
+    timeout-minutes: 12
+    env:
+      MAGPIE_NATIVE_CONTRACT_REVIEW: native-contract-review-v1
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Reject mixed package-only selection before checkout
+        shell: bash
+        env:
+          PACKAGE_ONLY: ${{ contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
+        run: |
+          set -euo pipefail
+          test "$PACKAGE_ONLY" = false
+      - name: Check out the exact experimental commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check bounded contract readers offline
+        run: |
+          $errors=$null; $tokens=$null
+          $null=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'build/review-desktop-contract.ps1'),[ref]$tokens,[ref]$errors)
+          if ($errors.Count) { throw 'Contract reader syntax failed.' }
+          ./build/review-desktop-contract.tests.ps1
+          node --max-old-space-size=512 --test build/review-desktop-contract.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Contract reader offline fixtures failed.' }
+      - name: Review exact signed package backend and public frontend contracts
+        run: ./build/review-desktop-contract.ps1 -Run
+      - name: Upload only reviewed public contract artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: official-desktop-contract-review-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/desktop-contract-review/report.json
+            ${{ runner.temp }}/desktop-contract-review/version.txt
+            ${{ runner.temp }}/desktop-contract-review/app-server-help.txt
+            ${{ runner.temp }}/desktop-contract-review/schema-help.txt
+            ${{ runner.temp }}/desktop-contract-review/schema-manifest.json
+            ${{ runner.temp }}/desktop-contract-review/schema/**/*.json
+            ${{ runner.temp }}/desktop-contract-review/frontend-contract.json
+          if-no-files-found: error
+          retention-days: 7
