@@ -367,7 +367,9 @@ func TestSelfAuthoredRequestNativeDeveloperWire(t *testing.T) {
 		func(item map[string]any) { item["internal_chat_message_metadata_passthrough"] = map[string]any{} },
 		func(item map[string]any) { item["content"].([]any)[0].(map[string]any)["type"] = "output_text" },
 		func(item map[string]any) { item["content"].([]any)[0].(map[string]any)["annotations"] = []any{} },
-		func(item map[string]any) { item["content"] = append(item["content"].([]any), map[string]any{"type": "input_text", "text": "extra"}) },
+		func(item map[string]any) {
+			item["content"] = append(item["content"].([]any), map[string]any{"type": "input_text", "text": "extra"})
+		},
 	} {
 		req := selfAuthoredRequestBody("alpha", 1)
 		change(req["input"].([]any)[0].(map[string]any))
