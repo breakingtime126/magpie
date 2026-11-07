@@ -2484,7 +2484,7 @@ enabled targets and the actual Toggle, SelectionItem and Invoke patterns. It
 first disables suggestions if on, selects Engineering if not selected, verifies
 both states, then invokes Continue once. There are at most three attempts,
 with no coordinate clicks, injected input, login or new permission/terms
-acceptance. Known noninteractive duplicate text is allowed; unknown text,
+acceptance. Noninteractive duplicate text is allowed; unknown interactive text,
 protected screens, wrong/ambiguous controls, unavailable patterns, changed
 identity or timeout stop the attempt without retries. The inner 20-second
 cooperative budget, parent 30-second deadline, 8192-byte-per-stream cap and
@@ -2511,3 +2511,36 @@ not full onboarding, model-selection or chat success. An unknown next page is
 not clicked automatically. The unrelated four-turn native synthetic slice is
 explicitly `not-run` / `welcome_transition_only` for this profile; its old pin
 is unchanged and it cannot mask the actual welcome outcome.
+
+### Welcome text policy follows action relevance
+
+The [8db95b7c valid-context run](https://github.com/breakingtime126/magpie/actions/runs/42360244510/job/128367802938)
+returned a validated helper result (exit 0, 773 output bytes), zero actions and
+`partialActionUncertain=false`. It stopped at `welcome_read/unreviewed_text`,
+while observing the exact heading and one interactive RadioButton, CheckBox
+and Button for Engineering, suggestions and Continue. Its before/after pixels
+were byte-identical to the reviewed welcome page. The independent zero-context
+smoke and native interop also passed on that run without a helper change. This
+establishes neither a stable smoke fix nor the exact offending UIA name: raw
+names were not retained in the report.
+
+`Get-WelcomeDecision` now applies its existing literal text allowlist only to
+interactive nodes. Noninteractive text, group or document names can aggregate
+labels or expose auxiliary descriptions; requiring every such string to match
+page prose is not needed to identify the three authorized actions. No specific
+unreported string is assumed to have caused the real stop. The protected-screen
+scan still runs first over **all** names, including noninteractive and disabled
+nodes. Unknown interactive names remain rejected, even if disabled. Exact
+heading, target name/type/uniqueness, actual UIA patterns, enabled/state checks,
+provider lineage, original-window identity, foreground and time/output/tree
+bounds are unchanged. This is not an allowance for unknown interactive controls
+or an action on a protected/next page.
+
+The existing pure fixtures now exercise allowed synthetic auxiliary labels,
+unchanged unknown-interactive rejection, protected noninteractive/disabled
+names, missing heading and fixed diagnostic redaction. Existing wrong type,
+case, duplicate/missing target and disabled-then-enabled free-text-control
+checks remain. These labels are synthetic tests, not fabricated captured UIA
+observations. The same separately marked one-attempt welcome action and
+post-action screenshot remain the next real test; no new diagnostic framework,
+coordinate input, retry or timeout change is introduced.

@@ -23,7 +23,24 @@ Expect @() 'unreviewed_screen'
 Expect ($welcome + (Node 'Log in' 'Button' $true)) 'protected_screen'
 Expect ($welcome + (Node 'By continuing you agree to terms of service' 'Text')) 'protected_screen'
 Expect ($welcome + (Node 'Enable notifications' 'Button' $true)) 'unreviewed_text'
-Expect ($welcome + (Node 'A new unreviewed decision' 'Text')) 'unreviewed_text'
+Expect ($welcome + (Node 'A new unreviewed decision' 'Text')) 'welcome'
+# Synthetic policy fixtures, not the undisclosed Name that stopped the real run.
+# No full-page prose match is needed; all interactive and protected-name checks remain.
+foreach ($type in @('Text','Group','Document')) {
+    Expect ($welcome + (Node 'Synthetic aggregate or auxiliary label' $type)) 'welcome'
+    foreach ($label in @('Sign in to ChatGPT','Terms of service','Permission required')) {
+        foreach ($enabled in @($false,$true)) {
+            Expect ($welcome + (Node $label $type $false $enabled)) 'protected_screen'
+        }
+    }
+}
+foreach ($type in @('Button','Edit')) {
+    foreach ($enabled in @($false,$true)) {
+        Expect ($welcome + (Node 'Synthetic aggregate or auxiliary label' $type $true $enabled)) 'unreviewed_text'
+        Expect ($welcome + (Node 'Permission required' $type $true $enabled)) 'protected_screen'
+    }
+}
+Expect @($welcome | Where-Object { $_.Name -cne 'Which best describes your work?' }) 'unreviewed_screen'
 Expect ($welcome + (Node 'Engineering' 'RadioButton' $true)) 'ambiguous_control'
 Expect @($welcome | Where-Object { $_.Name -cne 'Suggest personalized tasks' }) 'ambiguous_control'
 $wrongType = @($welcome | ForEach-Object { Node $_.Name $_.Type $_.Interactive $_.Enabled })
@@ -60,6 +77,11 @@ $observations = Get-WelcomeTargetObservations ($welcome + (Node 'Engineering' 'T
 if ($observations.engineering.interactiveCount -ne 1 -or $observations.engineering.controlType -cne 'RadioButton' -or
     $observations.suggestions.controlType -cne 'CheckBox' -or $observations.continue.controlType -cne 'Button') {
     throw 'Known target diagnostics differ.'
+}
+$auxiliaryObservations = Get-WelcomeTargetObservations ($welcome + (Node 'Private auxiliary canary' 'Group'))
+if (($auxiliaryObservations | ConvertTo-Json -Depth 5 -Compress) -cne
+    ($observations | ConvertTo-Json -Depth 5 -Compress)) {
+    throw 'Auxiliary text changed fixed target diagnostics.'
 }
 $observations = Get-WelcomeTargetObservations ($welcome + (Node 'Engineering' 'Button' $true))
 if ($observations.engineering.interactiveCount -ne 2 -or $observations.engineering.controlType -cne 'ambiguous') {

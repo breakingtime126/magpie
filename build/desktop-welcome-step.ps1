@@ -28,7 +28,9 @@ function Get-WelcomeDecision($Nodes) {
         "Welcome to the ChatGPT desktop app. I'm going to ask you a few quick questions to help me tailor things for how you work.")
     foreach ($node in $Nodes) {
         $normalized = ($node.Name -replace '[\u2018\u2019]', "'" -replace '\s+', ' ').Trim()
-        if ($knownText -cnotcontains $normalized) { return 'unreviewed_text' }
+        # Noninteractive labels can aggregate page text; they do not authorize an action.
+        # The protected-screen check above still examines every name.
+        if ($node.Interactive -and $knownText -cnotcontains $normalized) { return 'unreviewed_text' }
         if ($node.Interactive -and $node.Enabled -and $allowed -cnotcontains $node.Name) { return 'unreviewed_control' }
     }
     foreach ($spec in @(@('Engineering','RadioButton'), @('Suggest personalized tasks','CheckBox'), @('Continue','Button'))) {
