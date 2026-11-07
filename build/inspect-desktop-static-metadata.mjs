@@ -65,7 +65,8 @@ function readExact(fd, count, position) {
 
 // Only the documented two-Pickle layout is accepted. This intentionally does
 // not support alternate Pickle headers, links, or reading unpacked resources.
-export function readIndex(fd, size, includePublicSources = false, reviewedBuild = '') {
+export function readIndex(fd, size, includePublicSources = false, reviewedBuild = '', rendererMenu = false) {
+  if (typeof rendererMenu !== 'boolean' || (rendererMenu && !includePublicSources)) fail('invalid_arguments');
   const { targets } = reviewedStaticBuild(reviewedBuild);
   if (!Number.isSafeInteger(size) || size < 16) fail('truncated_archive');
   if (size > LIMITS.archive) fail('archive_too_large');
@@ -93,6 +94,8 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
   if (!record(header) || !record(header.files)) fail('invalid_header_root');
   const selected = new Map();
   const publicSources = new Map();
+  const sourceCoverage = { dependencyFilesExcluded: 0, nonJavaScriptFilesExcluded: 0 };
+  const sourcePath = relative => rendererMenu ? rendererMenuSourcePath(relative) : publicSourcePath(relative);
   let publicRootBlocked = false;
   const stack = [{ node: header, relative: '', depth: 0, inheritedUnpacked: false }];
   let entries = 0;
@@ -106,10 +109,11 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
       if (targets.some(p => p === relative || p.startsWith(relative + '/'))) {
         selected.set(relative, { status: 'link_not_read' });
       }
-      if (includePublicSources && (relative === '.vite' || relative === '.vite/build')) {
+      if (includePublicSources && (relative === '.vite' || relative === '.vite/build' ||
+          (rendererMenu && !relative.split('/').includes('node_modules')))) {
         publicRootBlocked = true;
       }
-      if (includePublicSources && publicSourcePath(relative)) {
+      if (includePublicSources && sourcePath(relative)) {
         publicSources.set(relative, { status: 'link_not_read' });
       }
       continue;
@@ -129,9 +133,13 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
       continue;
     }
     if (!Number.isSafeInteger(node.size) || node.size < 0) fail('invalid_file_size');
+    if (rendererMenu) {
+      if (relative.split('/').includes('node_modules')) sourceCoverage.dependencyFilesExcluded++;
+      else if (!rendererMenuSourcePath(relative)) sourceCoverage.nonJavaScriptFilesExcluded++;
+    }
     if (unpacked) {
       if (targets.includes(relative)) selected.set(relative, { status: 'unpacked_not_read' });
-      if (includePublicSources && publicSourcePath(relative)) publicSources.set(relative, { status: 'unpacked_not_read' });
+      if (includePublicSources && sourcePath(relative)) publicSources.set(relative, { status: 'unpacked_not_read' });
       continue;
     }
     if (typeof node.offset !== 'string' || !/^(0|[1-9][0-9]{0,19})$/.test(node.offset)) {
@@ -143,7 +151,7 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
     if (targets.includes(relative)) {
       selected.set(relative, { status: 'packed', start: Number(start), size: node.size });
     }
-    if (includePublicSources && publicSourcePath(relative)) {
+    if (includePublicSources && sourcePath(relative)) {
       publicSources.set(relative, { status: 'packed', start: Number(start), size: node.size });
     }
   }
@@ -154,7 +162,7 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
       }
     }
   }
-  return { selected, entries, publicSources, publicRootBlocked };
+  return { selected, entries, publicSources, publicRootBlocked, ...(rendererMenu ? { sourceCoverage } : {}) };
 }
 
 // A conservative lexical reader, not a JavaScript parser. It skips comments,
@@ -403,6 +411,11 @@ const MARKETPLACE_SUFFIXES = Object.freeze([
 const PUBLIC_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const PUBLIC_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}@[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
+// Static menu review only: derive packed JS candidates outside node_modules from the
+// validated ASAR index, without guessing a renderer directory or resolving imports.
+function rendererMenuSourcePath(entry) {
+  return entry.endsWith('.js') && !entry.split('/').includes('node_modules');
+}
 function publicSourcePath(entry) {
   return /^\.vite\/build\/[A-Za-z0-9][A-Za-z0-9_.-]{0,190}\.js$/.test(entry);
 }

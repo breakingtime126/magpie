@@ -1,7 +1,8 @@
 # Disposable CI review only. Does not install or activate Desktop, run inference,
 # initialize app-server, read real profiles, or change accepted runtime pins.
 [CmdletBinding()]
-param([switch]$Run)
+param([switch]$Run, [switch]$RendererMenuOnly)
+if ($Run -and $RendererMenuOnly) { throw 'Contract review modes are mutually exclusive.' }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:contractChildExitUnconfirmed=$false
@@ -64,7 +65,7 @@ function Assert-ContractGeneratedBound([string]$Directory) {
 }
 function Invoke-ContractCommand([string]$Executable,[string[]]$Arguments,[string]$Scratch,
     [int]$OutputLimit=262144,[string]$GeneratedDirectory='',
-    [ValidateSet('signature','native-version','native-app-server-help','native-schema-help','native-schema-generate','schema-validate','frontend-excerpts')]
+    [ValidateSet('signature','native-version','native-app-server-help','native-schema-help','native-schema-generate','schema-validate','frontend-excerpts','renderer-menu-excerpts')]
     [string]$Label='signature') {
     # A new empty HOME/CODEX_HOME for every invocation. New-LiveStart clears all
     # inherited variables and copies only OS support paths, not secrets or tokens.
@@ -111,7 +112,7 @@ function Invoke-ContractCommand([string]$Executable,[string[]]$Arguments,[string
         } else { [void]$script:contractCommandResults.Add($result) }
     }
 }
-function Export-ContractReviewInputs([string]$Package,[string]$Directory) {
+function Export-ContractReviewInputs([string]$Package,[string]$Directory,[switch]$ArchiveOnly) {
     $pins=Get-ContractReviewPins
     Assert-PublicRegularPath $Package
     $stream=[IO.File]::Open($Package,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
@@ -127,6 +128,7 @@ function Export-ContractReviewInputs([string]$Package,[string]$Directory) {
         foreach ($item in @(
             @{path='app/resources/codex.exe';leaf='codex.exe';maximum=536870912;sha256=$pins.backendSha256},
             @{path='app/resources/app.asar';leaf='app.asar';maximum=2147483648;sha256=$pins.archiveSha256})) {
+            if ($ArchiveOnly -and $item.leaf -cne 'app.asar') { continue }
             if ((Get-PublicZipEntryDigest $zip $item.path $item.maximum $watch) -cne $item.sha256) {
                 throw 'Review package entry changed.'
             }
@@ -249,4 +251,72 @@ function Invoke-DesktopContractReview {
     }
     if (-not $succeeded) { throw 'Official native contract review stopped; see fixed-stage report.' }
 }
-if ($Run) { Invoke-DesktopContractReview }
+# A separate static-only entry point: never enters Invoke-DesktopContractReview
+# or executes any binary extracted from the signed package.
+function Assert-RendererMenuReviewCI([string]$Actions,[string]$Runner,[string]$OS,
+    [string]$Repository,[string]$Ref,[string]$Marker) {
+    if ($Actions -cne 'true' -or $Runner -cne 'github-hosted' -or $OS -cne 'Windows' -or
+        $Repository -cne 'breakingtime126/magpie' -or
+        $Ref -cne 'refs/heads/experiment/app-server-bridge-v0.1.3035' -or
+        $Marker -cne 'renderer-menu-review-v1') { throw 'Renderer review requires its static-only CI opt-in.' }
+}
+function Invoke-RendererMenuReview {
+    Assert-RendererMenuReviewCI $env:GITHUB_ACTIONS $env:RUNNER_ENVIRONMENT $env:RUNNER_OS `
+        $env:GITHUB_REPOSITORY $env:GITHUB_REF $env:MAGPIE_RENDERER_MENU_REVIEW
+    $out=Join-Path $env:RUNNER_TEMP 'renderer-menu-review'
+    $work=Join-Path $env:RUNNER_TEMP ('renderer-menu-private-'+[guid]::NewGuid().ToString('N'))
+    if (Test-Path -LiteralPath $out) { throw 'Renderer review output already exists.' }
+    [void][IO.Directory]::CreateDirectory($out); [void][IO.Directory]::CreateDirectory($work)
+    $report=[ordered]@{schema=1;scope='official-renderer-menu-static-only';sourceCommit=$env:GITHUB_SHA
+        status='blocked';stage='package';desktopActivated=$false;nativeExecuted=$false;sourceEvaluated=$false
+        bridgeAccepted=$false;inferenceAttempted=$false;menuContractProven=$false
+        sourceLimits=[ordered]@{files=4096;fileBytes=16777216;totalBytes=134217728;excerptsPerAnchor=2;contextCharactersEachSide=900;excerptTextBytes=16384;outputBytes=1048576}
+        limits=@('Literal bounded public-source excerpts, not a supported API or production fix.',
+            'No native execution, Desktop activation, account, UI, setup, or security action.',
+            'Only packed .js outside node_modules is scanned; missing anchors do not prove absence.',
+            'Each signtool/Node child has cleared environment, 30 second runtime and bounded streams.')}
+    $succeeded=$false
+    try {
+        $pins=Get-ContractReviewPins; $package=Join-Path $work 'ChatGPT-x64.msix'
+        Invoke-WebRequest -Uri 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix' `
+            -OutFile $package -TimeoutSec 180 -MaximumRetryCount 0
+        if ((Get-Item -LiteralPath $package).Length -ne $pins.packageBytes -or
+            (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pins.packageSha256) {
+            throw 'Renderer review package pin mismatch.'
+        }
+        $report.stage='signature'
+        $sdk=Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) 'Windows Kits\10\bin'
+        $verifier=Get-ChildItem -LiteralPath $sdk -Filter signtool.exe -Recurse |
+            Where-Object { $_.FullName -match '\\x64\\signtool.exe$' } | Sort-Object FullName -Descending | Select-Object -First 1
+        if (-not $verifier) { throw 'Official package verifier unavailable.' }
+        $null=Invoke-ContractCommand $verifier.FullName @('verify','/pa','/v',$package) $work -Label signature
+        $signature=Get-AuthenticodeSignature -LiteralPath $package
+        $identity=Get-DesktopPackageIdentityEvidence $package $pins.packageSha256 0 ([string]$signature.Status) $signature.SignerCertificate.Subject
+        Assert-ContractReviewIdentity $identity
+        $report.packageIdentity=$identity
+        $report.signature=[ordered]@{status=[string]$signature.Status;signer=$signature.SignerCertificate.Subject;thumbprint=$signature.SignerCertificate.Thumbprint}
+        $report.stage='archive-extraction'
+        Export-ContractReviewInputs $package $work -ArchiveOnly
+        if (Test-Path -LiteralPath (Join-Path $work 'codex.exe')) { throw 'Static-only review extracted a native binary.' }
+        $report.stage='renderer-menu-excerpts'
+        $node=(Get-Command node -CommandType Application -ErrorAction Stop).Source
+        $inspector=Join-Path $PSScriptRoot 'review-desktop-contract.mjs'
+        $text=Invoke-ContractCommand $node @('--max-old-space-size=512',$inspector,'--renderer-menu',(Join-Path $work 'app.asar')) $work 1048576 -Label renderer-menu-excerpts
+        $evidence=$text | ConvertFrom-Json
+        if ($evidence.schema -ne 1 -or $evidence.scope -cne 'public-static-renderer-menu-excerpts' -or
+            $evidence.archiveSha256 -cne $pins.archiveSha256) { throw 'Renderer review output identity mismatch.' }
+        [IO.File]::WriteAllText((Join-Path $out 'renderer-menu-excerpts.json'),$text,[Text.UTF8Encoding]::new($false))
+        $report.status=$(if ($evidence.requiredAnchorsPresent) { 'observed' } else { 'partial-missing-anchors' })
+        $report.anchors=$evidence.anchors; $report.coverage=$evidence.coverage
+        $succeeded=$true
+    } catch { $report.failure='static_review_unavailable_or_bound_exceeded' }
+    finally {
+        $report.ownedChildExitUnconfirmed=$script:contractChildExitUnconfirmed
+        $report.commands=@($script:contractCommandResults.ToArray())
+        [IO.File]::WriteAllText((Join-Path $out 'report.json'),($report | ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+        Write-Output ('RENDERER_MENU_REVIEW_STATUS='+$report.status+';STAGE='+$report.stage)
+    }
+    if (-not $succeeded) { throw 'Static renderer review stopped; see fixed-stage report.' }
+}
+if ($RendererMenuOnly) { Invoke-RendererMenuReview }
+elseif ($Run) { Invoke-DesktopContractReview }

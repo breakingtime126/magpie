@@ -43,4 +43,32 @@ Check ($source.Contains('$start=New-LiveStart -Executable $Executable -Arguments
 Check ($source.Contains('$child.Stop(); $exitConfirmed=$child.Wait(5000) -and $child.Exited')) 'explicit held-child cleanup confirmation'
 Check ($source.IndexOf('Assert-ContractReviewIdentity $identity') -lt $source.IndexOf('Export-ContractReviewInputs $package $work')) 'identity before extraction and execution'
 Check ($source.IndexOf("'--schemas',`$schemas") -lt $source.IndexOf('[IO.Directory]::Move($publication')) 'validate before publishing generated protocol'
+# The new static mode has its own exact gate; it never invokes the native lane.
+$rendererGate=@('true','github-hosted','Windows','breakingtime126/magpie','refs/heads/experiment/app-server-bridge-v0.1.3035','renderer-menu-review-v1')
+Assert-RendererMenuReviewCI @rendererGate
+for ($i=0; $i -lt $rendererGate.Count; $i++) {
+    $values=$rendererGate.Clone(); $values[$i]='unapproved'
+    Reject { Assert-RendererMenuReviewCI @values } ('renderer gate '+$i)
+}
+$tokens=$null; $errors=$null
+$reviewAst=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+Check ($errors.Count -eq 0) 'renderer/static source parses'
+$staticFunctions=@($reviewAst.FindAll({param($n)
+    $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Invoke-RendererMenuReview'
+},$true))
+Check ($staticFunctions.Count -eq 1) 'one static entry point'
+$staticSource=$staticFunctions[0].Extent.Text
+$commands=@($staticFunctions[0].FindAll({param($n)
+    $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-ContractCommand'
+},$true))
+Check ($commands.Count -eq 2 -and $commands[0].CommandElements[1].Extent.Text -ceq '$verifier.FullName' -and
+    $commands[1].CommandElements[1].Extent.Text -ceq '$node') 'static children only verifier and Node'
+Check (-not ($staticSource -match 'Invoke-DesktopContractReview|generate-json-schema|Add-AppxPackage|ActivateApplication|Start-Process')) 'static mode cannot enter native or Desktop commands'
+Check ($staticSource.Contains('Export-ContractReviewInputs $package $work -ArchiveOnly')) 'static extracts only archive'
+Check ($staticSource.Contains("'--renderer-menu'")) 'fixed renderer scanner mode'
+Check ($source.Contains("if (`$ArchiveOnly -and `$item.leaf -cne 'app.asar') { continue }")) 'archive-only omits native extraction'
+Check ($source.Contains("if (`$Run -and `$RendererMenuOnly) { throw 'Contract review modes are mutually exclusive.' }")) 'mutually exclusive entry flags'
+Check ($source.Contains('if ($RendererMenuOnly) { Invoke-RendererMenuReview }') -and
+    $source.Contains('elseif ($Run) { Invoke-DesktopContractReview }')) 'static selector does not fall through to native'
+Check ($staticSource.IndexOf('Assert-ContractReviewIdentity $identity') -lt $staticSource.IndexOf('Export-ContractReviewInputs $package $work -ArchiveOnly')) 'static trust before extraction'
 Write-Output ('CONTRACT_REVIEW_OFFLINE_CHECKS='+$script:checks)

@@ -49,7 +49,7 @@ concurrency:
 
 jobs:
   observer-unit:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     env:
@@ -600,7 +600,7 @@ jobs:
 
   observed-policy-read:
     needs: observer-unit
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]'))) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]'))) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -772,7 +772,7 @@ jobs:
 
   welcome-helper-offline:
     needs: observer-unit
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
     runs-on: windows-2025
     timeout-minutes: 5
     steps:
@@ -790,7 +790,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Welcome policy fixtures failed.' }
 
   native-original-ui:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -837,7 +837,7 @@ jobs:
 
 
   native-contract-review:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
     runs-on: windows-2025
     timeout-minutes: 12
     env:
@@ -881,5 +881,49 @@ jobs:
             ${{ runner.temp }}/desktop-contract-review/schema-manifest.json
             ${{ runner.temp }}/desktop-contract-review/schema/**/*.json
             ${{ runner.temp }}/desktop-contract-review/frontend-contract.json
+          if-no-files-found: error
+          retention-days: 7
+
+
+  renderer-menu-review:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')
+    runs-on: windows-2025
+    timeout-minutes: 12
+    env:
+      MAGPIE_RENDERER_MENU_REVIEW: renderer-menu-review-v1
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Require exclusive static-only markers before checkout
+        shell: bash
+        env:
+          WINAPP_MARKER: ${{ contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') }}
+          OTHER_MODE: ${{ contains(github.event.head_commit.message, '[native-contract-review-v1]') || contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') || contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') || contains(github.event.head_commit.message, '[native-entry-4239-v1]') || contains(github.event.head_commit.message, '[package-identity-only-v1]') || contains(github.event.head_commit.message, '[app-server-4239-v1]') }}
+        run: |
+          set -euo pipefail
+          test "$WINAPP_MARKER" = true
+          test "$OTHER_MODE" = false
+      - name: Check out the exact static review commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check bounded static readers and nonexecution contract
+        run: |
+          if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Static source commit mismatch.' }
+          ./build/review-desktop-contract.tests.ps1
+          node --max-old-space-size=512 --test build/review-desktop-contract.test.mjs build/inspect-desktop-static-metadata.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Static contract fixtures failed.' }
+      - name: Read only the exact signed package renderer sources
+        run: ./build/review-desktop-contract.ps1 -RendererMenuOnly
+      - name: Upload only bounded public static evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: official-renderer-menu-review-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/renderer-menu-review/report.json
+            ${{ runner.temp }}/renderer-menu-review/renderer-menu-excerpts.json
           if-no-files-found: error
           retention-days: 7

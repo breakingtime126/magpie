@@ -13,6 +13,10 @@ export const ANCHORS = Object.freeze([
   'config/read', 'configRequirements/read', 'model/list', 'thread/list', 'environment/',
 ]);
 const REQUIRED = ANCHORS.slice(0, 9);
+export const MENU_ANCHORS = Object.freeze([
+  'Legacy coding model', 'hasConfiguredModelCatalog', 'model_catalog_json', 'Select model',
+  'modelProvider', 'model_provider', 'isCustomProvider', 'customProvider',
+]);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const fail = () => { throw new Error('Public contract evidence is unavailable.'); };
 const utf8 = bytes => new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -22,23 +26,56 @@ function read(fd, count, position) {
   while (done < count) { const n = fs.readSync(fd, bytes, done, count - done, position + done); if (!n) fail(); done += n; }
   return bytes;
 }
-export function sourceExcerpts(source, sourcePath, sourceSha256, remaining) {
+export function sourceExcerpts(source, sourcePath, sourceSha256, remaining, anchors = ANCHORS, radius = 1600, deduplicate = false) {
   const matches = [];
-  for (const anchor of ANCHORS) {
-    let from = 0; let count = 0; const excerpts = [];
+  for (const anchor of anchors) {
+    let from = 0; let count = 0; let candidateWindowsDeduplicated = 0; const excerpts = [];
     while (true) {
       const offset = source.indexOf(anchor, from); if (offset < 0) break;
       count++; from = offset + anchor.length;
       if (remaining[anchor] > 0) {
-        const start = Math.max(0, offset - 1600); const end = Math.min(source.length, offset + anchor.length + 1600);
+        let start = Math.max(0, offset - radius); let end = Math.min(source.length, offset + anchor.length + radius);
+        if (deduplicate) {
+          // Source is valid UTF-8; trim inward if the UTF-16 context boundary
+          // bisects a supplementary character. Never publish lone surrogates.
+          if (start > 0 && source.charCodeAt(start) >= 0xdc00 && source.charCodeAt(start) <= 0xdfff) start++;
+          if (end < source.length && source.charCodeAt(end - 1) >= 0xd800 && source.charCodeAt(end - 1) <= 0xdbff) end--;
+        }
+        if (deduplicate && excerpts.some(e => start < e.end && e.start < end)) { candidateWindowsDeduplicated++; continue; }
         excerpts.push({ offset, start, end, text: source.slice(start, end) }); remaining[anchor]--;
       }
     }
-    if (count) matches.push({ anchor, count, excerpts });
+    if (count) matches.push({ anchor, count, excerpts, ...(deduplicate ? { candidateWindowsDeduplicated } : {}) });
   }
   return matches.length ? { path: sourcePath, sha256: sourceSha256, matches } : null;
 }
-export function inspectContractArchive(file, expected = ARCHIVE_SHA) {
+// Publication budget is separate from the parser/JSON cap. Prefer one narrow
+// window per anchor before second windows, and never repeat overlapping text.
+export function trimMenuExcerpts(sources) {
+  const candidates = new Map(MENU_ANCHORS.map(a => [a, []]));
+  for (const source of sources) for (const match of source.matches) {
+    for (const excerpt of match.excerpts) candidates.get(match.anchor).push({ source, match, excerpt });
+    match.excerpts = [];
+  }
+  const ranges = new Map(); let textBytes = 0; let deduplicated = 0; let budgetOmitted = 0;
+  for (let round = 0; round < 2; round++) for (const anchor of MENU_ANCHORS) {
+    const entries = candidates.get(anchor);
+    while (entries.length) {
+      const { source, match, excerpt } = entries.shift();
+      const seen = ranges.get(source.path) ?? [];
+      if (seen.some(e => excerpt.start < e.end && e.start < excerpt.end)) { deduplicated++; continue; }
+      const bytes = Buffer.byteLength(excerpt.text);
+      if (textBytes + bytes > 16384) { budgetOmitted++; continue; }
+      match.excerpts.push(excerpt); seen.push(excerpt); ranges.set(source.path, seen); textBytes += bytes;
+      break;
+    }
+  }
+  return { textBytes, textBudgetBytes: 16384, deduplicated, budgetOmitted,
+    remainingCandidatesOmitted: [...candidates.values()].reduce((n, entries) => n + entries.length, 0) };
+}
+export function inspectContractArchive(file, expected = ARCHIVE_SHA, rendererMenu = false) {
+  if (typeof rendererMenu !== 'boolean') fail();
+  const anchors = rendererMenu ? MENU_ANCHORS : ANCHORS;
   if (!path.isAbsolute(file) || fs.realpathSync(file) !== file || !fs.lstatSync(file).isFile()) fail();
   const fd = fs.openSync(file, 'r');
   try {
@@ -46,23 +83,35 @@ export function inspectContractArchive(file, expected = ARCHIVE_SHA) {
     const digest = createHash('sha256'); let position = 0;
     while (position < before.size) { const b = read(fd, Math.min(65536, before.size - position), position); digest.update(b); position += b.length; }
     if (digest.digest('hex') !== expected) fail();
-    const index = readIndex(fd, before.size, true); if (index.publicRootBlocked) fail();
-    const entries = [...index.publicSources.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    const index = readIndex(fd, before.size, true, rendererMenu ? 'desktop-4239' : '', rendererMenu); if (index.publicRootBlocked) fail();
+    const entries = [...index.publicSources.entries()].sort(([a], [b]) => {
+      // Preserve old ordering by default; menu review spends excerpt quotas on
+      // sources outside the already-reviewed main-process directory first.
+      if (rendererMenu && a.startsWith('.vite/build/') !== b.startsWith('.vite/build/')) return a.startsWith('.vite/build/') ? 1 : -1;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
     if (!entries.length || entries.length > 4096) fail();
-    const remaining = Object.fromEntries(ANCHORS.map(a => [a, 8])); const counts = Object.fromEntries(ANCHORS.map(a => [a, 0]));
+    const remaining = Object.fromEntries(anchors.map(a => [a, 8])); const counts = Object.fromEntries(anchors.map(a => [a, 0]));
     const sources = []; let scannedBytes = 0;
     for (const [name, entry] of entries) {
       if (entry.status !== 'packed' || entry.size > 16 * 1024 ** 2) fail();
       scannedBytes += entry.size; if (scannedBytes > 128 * 1024 ** 2) fail();
       const bytes = read(fd, entry.size, entry.start);
-      const result = sourceExcerpts(utf8(bytes), name, hash(bytes), remaining);
+      const result = sourceExcerpts(utf8(bytes), name, hash(bytes), remaining, anchors, rendererMenu ? 900 : 1600, rendererMenu);
       if (result) { sources.push(result); for (const match of result.matches) counts[match.anchor] += match.count; }
     }
     if (!unchanged(before, fs.fstatSync(fd)) || !unchanged(before, fs.statSync(file))) fail();
-    const result = { schema: 1, scope: 'public-static-source-excerpts', archiveSha256: expected,
-      runtimeSelectionProven: false, requiredAnchorsPresent: REQUIRED.every(anchor => counts[anchor] > 0),
+    const publication = rendererMenu ? trimMenuExcerpts(sources) : null;
+    const retained = anchor => rendererMenu ? sources.flatMap(s => s.matches).filter(m => m.anchor === anchor).reduce((n, m) => n + m.excerpts.length, 0) : 8 - remaining[anchor];
+    const result = { schema: 1, scope: rendererMenu ? 'public-static-renderer-menu-excerpts' : 'public-static-source-excerpts', archiveSha256: expected,
+      runtimeSelectionProven: false, requiredAnchorsPresent: (rendererMenu ? ['Legacy coding model', 'model_catalog_json'] : REQUIRED).every(anchor => counts[anchor] > 0),
       offsets: 'JavaScript UTF-16 code units', scannedFiles: entries.length, scannedBytes,
-      anchors: ANCHORS.map(anchor => ({ anchor, matches: counts[anchor], excerpts: 8 - remaining[anchor], truncated: counts[anchor] > 8 })), sources };
+      anchors: anchors.map(anchor => ({ anchor, matches: counts[anchor], excerpts: retained(anchor), truncated: counts[anchor] > retained(anchor) })), sources,
+      ...(rendererMenu ? { coverage: { ...index.sourceCoverage, candidateFiles: entries.length,
+        outsideLegacyDirectory: entries.filter(([name]) => !name.startsWith('.vite/build/')).length,
+        eligiblePackedJavaScriptScanComplete: true, allPackageFilesCovered: false,
+        limits: { files: 4096, fileBytes: 16 * 1024 ** 2, totalBytes: 128 * 1024 ** 2, excerptsPerAnchor: 2, contextCharactersEachSide: 900, excerptTextBytes: 16384, outputBytes: 1024 ** 2 },
+        negativeSearchProvesAbsence: false, publication } } : {}) };
     if (Buffer.byteLength(JSON.stringify(result)) >= 1024 ** 2) fail();
     return result;
   } finally { fs.closeSync(fd); }
@@ -118,8 +167,8 @@ export function validateSchemas(root) {
 }
 function main() {
   try {
-    if (process.argv.length !== 4 || !['--archive', '--schemas'].includes(process.argv[2])) fail();
-    const result = process.argv[2] === '--archive' ? inspectContractArchive(process.argv[3]) : validateSchemas(process.argv[3]);
+    if (process.argv.length !== 4 || !['--archive', '--schemas', '--renderer-menu'].includes(process.argv[2])) fail();
+    const result = process.argv[2] === '--schemas' ? validateSchemas(process.argv[3]) : inspectContractArchive(process.argv[3], ARCHIVE_SHA, process.argv[2] === '--renderer-menu');
     process.stdout.write(JSON.stringify(result) + '\n');
   } catch { process.stderr.write('Public contract evidence is unavailable.\n'); process.exitCode = 1; }
 }

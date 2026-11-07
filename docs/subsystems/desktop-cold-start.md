@@ -3229,3 +3229,68 @@ The visible “Legacy coding model.” tooltip is a lead for static review, not 
 that `model_provider=magpie_bridge` caused filtering. No provider is changed by
 this diagnostic. The independent 4239 native acceptance must remain distinct
 from the actual Desktop's catalog and UI result.
+
+
+### Static-only 4239 renderer menu contract review
+
+The 58dc2fcc observer saw one correlated model/list page with two exact synthetic
+entries: alpha and beta each once, neither hidden, alpha default, no unknown
+entry or next cursor. Desktop also logged response_routed, while the real open
+Select model menu showed only alpha and “Legacy coding model.” The independent
+8880e3e3 native acceptance passed both model identities and four synthetic turns.
+These facts motivate source review; they do not identify the frontend filter.
+Older public issue reports about model_catalog_json are leads, not proof that
+the current 4239 renderer uses that gate or that a provider change is correct.
+
+A push with only `[renderer-menu-review-v1] [winapp-inspection-v0.7.1]` selects
+`renderer-menu-review` in the existing policy workflow. The five previous policy
+jobs exclude the renderer marker; mixed experiment markers fail before checkout.
+The native-entry-4239 workflow watches this document, so its independent job
+also explicitly excludes the renderer marker, including mixed-marker pushes.
+Other Desktop runtime workflows do not watch these changed paths; the common
+winapp marker additionally excludes their default cold-start lanes. Ordinary
+build/package checks may still run; they are not native app-server or GUI runs.
+No dispatch option, UI action, provider value or production runtime pin changes.
+
+`review-desktop-contract.ps1 -RendererMenuOnly` is mutually exclusive with `-Run`.
+It reuses the exact 26.1103.4239.0 MSIX length/hash, signtool, Authenticode and
+manifest/backend/ASAR identity gates. `Export-ContractReviewInputs -ArchiveOnly`
+only creates app.asar; no package executable is extracted or executed. The
+selected entry point launches only the existing SDK signature verifier and Node
+reader in cleared environments through the unchanged 30-second supervisor.
+It never calls the old native version/help/schema path, installs or activates
+Desktop, evaluates package JavaScript, touches profiles, or changes security.
+
+The Node `--renderer-menu <absolute-ASAR-path>` mode rechecks the exact ASAR hash.
+The existing bounded ASAR index derives all eligible packed `.js` entries
+outside a literal node_modules path segment, rather than guessing a renderer
+asset directory. `.vite/build` keeps its old scope by default. The menu mode
+spends excerpt quotas on newly covered paths first, then the old main-process
+paths; those paths are not thereby proven to be renderer components. Links and
+unpacked eligible sources fail closed and are never followed. No imports are
+resolved. JSON, source maps, non-JS files and node_modules files are not scanned;
+fixed exclusion counts and outside-legacy counts disclose this coverage limit.
+
+Only eight fixed anchors are retained: Legacy coding model,
+hasConfiguredModelCatalog, model_catalog_json, Select model, modelProvider,
+model_provider, isCustomProvider and customProvider. Each has at most two
+excerpts, with up to 900 UTF-16 code units of context on each side, source entry
+hash, path and exact offsets. Limits remain 4,096 files, 16 MiB per file,
+128 MiB scanned bytes and output strictly below 1 MiB. Published source text
+has a separate global 16 KiB budget; overlapping windows are deduplicated and
+one window per anchor is considered before second windows. Per-anchor counts,
+truncation and budget/dedup omissions are explicit. The JSON cap is not a source
+publication target, and a caller/filter outside these windows remains unproven. Limit, invalid source, link or identity failures
+block the run instead of silently sampling files or claiming a complete search;
+the report keeps the fixed stage and configured bounds, not a raw exception.
+Missing primary anchors produce `partial-missing-anchors` with useful bounded
+artifacts, never a claim that the code does not exist. Even successful extraction
+has `menuContractProven=false` pending direct review of the actual expressions.
+
+Publication is only report.json and renderer-menu-excerpts.json, never the
+MSIX/ASAR, executable, full source tree, environment, profiles or raw stderr.
+The existing Node suite plus focused indexed-path, exclusion, quota, malformed
+archive and size/count tests runs before the static command. PowerShell gates
+check static/native mode separation and exact archive-only/command bindings.
+Local Node fixtures are executable; PowerShell and the real signed-package
+extraction remain unrun until this specific CI job is deliberately published.

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { ANCHORS, sourceExcerpts, inspectContractArchive, validateSchemas } from './review-desktop-contract.mjs';
+import { ANCHORS, MENU_ANCHORS, trimMenuExcerpts, sourceExcerpts, inspectContractArchive, validateSchemas } from './review-desktop-contract.mjs';
 
 // Synthetic safety fixtures, not captured Codex output or proof of its behavior.
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -15,7 +15,11 @@ function scratch(t) {
 function pack(entries) {
   const header = { files: { '.vite': { files: { build: { files: {} } } } } }; const body = []; let offset = 0;
   for (const [name, text, extra] of entries) {
-    const bytes = Buffer.from(text); header.files['.vite'].files.build.files[name] = { offset: String(offset), size: bytes.length, ...extra };
+    const bytes = Buffer.from(text);
+    const parts = name.includes('/') ? name.split('/') : ['.vite', 'build', name];
+    let directory = header;
+    for (const part of parts.slice(0, -1)) directory = (directory.files[part] ??= { files: {} });
+    directory.files[parts.at(-1)] = { offset: String(offset), size: bytes.length, ...extra };
     body.push(bytes); offset += bytes.length;
   }
   const json = Buffer.from(JSON.stringify(header)); const padding = Buffer.alloc((4 - json.length % 4) % 4);
@@ -86,4 +90,82 @@ test('reject oversized generated file', t => {
   const root = schemas(t, { 'one.json': {} }); const fd = fs.openSync(path.join(root, 'one.json'), 'w');
   try { fs.ftruncateSync(fd, 8 * 1024 ** 2 + 1); } finally { fs.closeSync(fd); }
   assert.throws(() => validateSchemas(root));
+});
+
+
+test('renderer mode derives nonlegacy JS paths and exposes honest excluded coverage', t => {
+  const file = path.join(scratch(t), 'app.asar');
+  const source = 'throw new Error("NEVER_EVALUATE");' + MENU_ANCHORS.join(';') + ';function filterModels(){return hasConfiguredModelCatalog ? allModels : currentModel;}';
+  const bytes = pack([['ui/assets/menu.js', source], ['deps/node_modules/private/index.js', 'PRIVATE_DEPENDENCY_CANARY'],
+    ['ui/assets/locale.json', '{"PRIVATE_NON_JS_CANARY":1}'], ['main.js', 'modelProvider;']]);
+  fs.writeFileSync(file, bytes);
+  const result = inspectContractArchive(file, hash(bytes), true);
+  assert.equal(result.scope, 'public-static-renderer-menu-excerpts');
+  assert.equal(result.requiredAnchorsPresent, true);
+  assert.equal(result.scannedFiles, 2);
+  assert.equal(result.coverage.outsideLegacyDirectory, 1);
+  assert.equal(result.coverage.dependencyFilesExcluded, 1);
+  assert.equal(result.coverage.nonJavaScriptFilesExcluded, 1);
+  assert.equal(result.coverage.allPackageFilesCovered, false);
+  assert.equal(result.coverage.negativeSearchProvesAbsence, false);
+  assert.ok(result.sources[0].matches.some(m => m.excerpts.some(e => e.text.includes('function filterModels()'))));
+  assert.ok(!JSON.stringify(result).includes('PRIVATE_'));
+  const legacy = inspectContractArchive(file, hash(bytes));
+  assert.equal(legacy.scannedFiles, 1);
+  assert.ok(!legacy.sources.some(e => e.path === 'ui/assets/menu.js'));
+  for (const entry of result.sources) for (const match of entry.matches) for (const e of match.excerpts) {
+    const original = entry.path === 'ui/assets/menu.js' ? source : 'modelProvider;';
+    assert.equal(original.slice(e.start, e.end), e.text);
+    assert.equal(original.slice(e.offset, e.offset + match.anchor.length), match.anchor);
+  }
+});
+test('renderer quotas prioritize newly covered files and disclose missing/truncated anchors', t => {
+  const file = path.join(scratch(t), 'app.asar');
+  const bytes = pack([['main.js', 'modelProvider;'.repeat(20)], ['ui/menu.js', 'modelProvider;'.repeat(12)]]);
+  fs.writeFileSync(file, bytes);
+  const result = inspectContractArchive(file, hash(bytes), true);
+  assert.equal(result.sources[0].path, 'ui/menu.js');
+  assert.equal(result.requiredAnchorsPresent, false);
+  assert.deepEqual(result.anchors.find(a => a.anchor === 'modelProvider'), { anchor: 'modelProvider', matches: 32, excerpts: 2, truncated: true });
+  assert.ok(result.sources.some(s => s.matches.some(m => m.candidateWindowsDeduplicated > 0)));
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) < 1024 ** 2);
+});
+test('renderer archive pin, links, unpacked files, invalid UTF8/path and file cap fail closed', t => {
+  const file = path.join(scratch(t), 'app.asar');
+  for (const bytes of [pack([['ui/menu.js', 'model_catalog_json', { link: 'elsewhere.js' }]]),
+    pack([['ui/menu.js', 'model_catalog_json', { unpacked: true }]]),
+    pack([['ui/linked', '', { link: 'elsewhere' }]]), pack([['ui/menu.js', Buffer.from([255])]]),
+    pack([['../menu.js', 'model_catalog_json']]), pack([['ui/menu.js', Buffer.alloc(16 * 1024 ** 2 + 1)]])]) {
+    fs.writeFileSync(file, bytes); assert.throws(() => inspectContractArchive(file, hash(bytes), true));
+  }
+  const bytes = pack([['ui/menu.js', 'model_catalog_json']]); fs.writeFileSync(file, bytes);
+  assert.throws(() => inspectContractArchive(file, '0'.repeat(64), true));
+  assert.throws(() => inspectContractArchive(file, hash(bytes), 'true'));
+});
+test('renderer candidate count cap is not silently sampled', t => {
+  const file = path.join(scratch(t), 'app.asar');
+  const bytes = pack(Array.from({ length: 4097 }, (_, i) => [`ui/f${i}.js`, 'model_catalog_json']));
+  fs.writeFileSync(file, bytes); assert.throws(() => inspectContractArchive(file, hash(bytes), true));
+});
+
+test('published renderer source has a separate global text budget and overlap deduplication', () => {
+  const sources = MENU_ANCHORS.map((anchor, i) => ({ path: `ui/${i}.js`, matches: [{ anchor, count: 8,
+    excerpts: Array.from({ length: 8 }, (_, j) => ({ offset: j * 10000 + 900, start: j * 10000, end: j * 10000 + 1800, text: 'x'.repeat(1800) })) }] }));
+  const publication = trimMenuExcerpts(sources);
+  const excerpts = sources.flatMap(s => s.matches).flatMap(m => m.excerpts);
+  assert.ok(publication.textBytes <= 16384);
+  assert.equal(publication.textBytes, excerpts.reduce((n, e) => n + Buffer.byteLength(e.text), 0));
+  assert.ok(publication.budgetOmitted > 0);
+  assert.ok(sources.every(s => s.matches[0].excerpts.length >= 1 && s.matches[0].excerpts.length <= 2));
+});
+
+test('renderer excerpts keep valid Unicode and count UTF-8 text bytes', () => {
+  const anchor = 'model_provider'; const source = '😀'.repeat(1000) + 'x' + anchor + 'y' + '😀'.repeat(1000);
+  const found = sourceExcerpts(source, 'ui/menu.js', hash(source), { [anchor]: 8 }, [anchor], 900, true);
+  const e = found.matches[0].excerpts[0];
+  assert.equal(e.text.isWellFormed(), true);
+  assert.equal(e.text, source.slice(e.start, e.end));
+  const publication = trimMenuExcerpts([found]);
+  assert.equal(publication.textBytes, Buffer.byteLength(e.text, 'utf8'));
+  assert.ok(publication.textBytes > e.text.length);
 });
