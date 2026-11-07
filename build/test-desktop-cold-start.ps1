@@ -8,6 +8,7 @@ param(
     [string]$NativeControlExecutable = '',
     [string]$NativeControlCatalog = '',
     [string]$DesktopFixtureProfile = '',
+    [string]$DesktopModelSelectionProfile = '',
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
@@ -38,6 +39,14 @@ function Assert-DesktopFixtureProfile([string]$Profile,[bool]$CatalogSupplied,[s
     }
     if (($Profile -ceq 'bridge-owned-catalog-4239' -and $OwnedMarker -cne 'bridge-owned-catalog-v1') -or
         ($Profile -cne 'bridge-owned-catalog-4239' -and $OwnedMarker)) { throw 'Owned catalog requires its exclusive explicit profile.' }
+}
+
+# Selection is a separate explicit opt-in; the underlying fixture stays menu-only
+# unless this exact additional contract is selected by the disposable CI job.
+function Assert-DesktopModelSelectionProfile([string]$Profile,[string]$FixtureProfile,[string]$Marker) {
+    if ($Profile -ceq '' -and $Marker -ceq '') { return }
+    if ($Profile -cne 'bridge-owned-model-selection-4239' -or $FixtureProfile -cne 'bridge-owned-catalog-4239' -or
+        $Marker -cne 'bridge-model-selection-v1') { throw 'Explicit owned model-selection profile and marker required.' }
 }
 
 # Pure validation helpers are AST-loaded by the focused tests, without running the probe.
@@ -1386,7 +1395,7 @@ function Get-DesktopRPCErrorEvidence([object[]]$Records, [string[]]$PublicMethod
 # Only the full sanitized snapshot is evidence, never native config or response bodies.
 # Success relies on the production bridge-owned view and its fresh paired native
 # requirements:null checks. The observer does not prove the view's consumer support.
-function Get-DesktopConfigReadEvidence([object[]]$Records, [switch]$RequireLayers) {
+function Get-DesktopConfigReadEvidence([object[]]$Records, [switch]$RequireLayers, [string]$FixtureProfile='') {
     $pending = @{}
     $seen = @{}
     $requests = 0
@@ -1431,7 +1440,11 @@ function Get-DesktopConfigReadEvidence([object[]]$Records, [switch]$RequireLayer
             $requests++
             if ($event.configIncludeLayers) { $layerRequests++ } else { $withoutLayerRequests++ }
         } elseif ($event.direction -ceq 'from_bridge' -and $event.class -ceq 'response') {
-            Assert-PublicShape $event @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class')
+            if ($event.PSObject.Properties['ownedModelCatalog']) {
+                Assert-PublicOwnedCatalogEvent $event -FixtureProfile $FixtureProfile
+            } else {
+                Assert-PublicShape $event @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class')
+            }
             if (-not $pending.ContainsKey($key)) { throw 'Configuration-read evidence has an unmatched result.' }
             if ($pending[$key]) { $layerResponses++ } else { $withoutLayerResponses++ }
             [void]$pending.Remove($key)
@@ -1811,6 +1824,7 @@ Assert-Desktop4239Options $EnableReviewedBuild4239 $Mode $EnableReviewedStartupP
 Assert-DesktopFixtureProfile $DesktopFixtureProfile ($PSBoundParameters.ContainsKey('NativeControlCatalog')) $Mode `
     $EnableReviewedBuild4239 $EnableReviewedWelcome4239 $EnableReviewedLiveWelcome $EnableReadOnlyWinAppInspection `
     $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly $NativeEntryCase $env:MAGPIE_DESKTOP_SYNTHETIC_MODELS $env:MAGPIE_BRIDGE_OWNED_CATALOG
+Assert-DesktopModelSelectionProfile $DesktopModelSelectionProfile $DesktopFixtureProfile $env:MAGPIE_MODEL_SELECTION
 $desktopAccessibilityArguments = Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239
 $winAppRenderedDepth = $(if ($EnableRendererAccessibility) { 16 } else { 8 })
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
@@ -1888,6 +1902,8 @@ $liveSkipConfirmation = $null
 $confirmationAfterCaptured = $false
 $liveModelMenu = $null
 $modelMenuAfterCaptured = $false
+$liveModelSelection = $null
+$selectionDiagnostic = $null
 $welcomeDeadline = $null
 $liveFixtureStopped = $false
 $liveAfterCaptured = $false
@@ -2604,6 +2620,11 @@ requires_openai_auth = false
                     $liveFixtureReport.fixtureProfile='bridge-owned-catalog-4239'
                     $liveFixtureReport.catalogSource='bridge-owned-self-authored-test-models-v1'
                     $liveFixtureReport.scope='bridge-owned-model-menu-only'
+                    if ($DesktopModelSelectionProfile) {
+                        $liveFixtureReport.scope='bridge-owned-current-draft-selection-only'
+                        $liveFixtureReport.selectionProfile=$DesktopModelSelectionProfile
+                        $liveFixtureReport.limit='At most Beta then Alpha SelectionItem selection and two menu reopens in the same owned window. Current draft only, no persistence, thread migration, message, Windows setup or auth action. Background RPC errors remain separate observations with unknown causal relation.'
+                    }
                 } elseif ($DesktopFixtureProfile -ceq 'synthetic-models-4239') {
                     $liveArguments = @('-desktop-fixtures','-codex',$officialBackend.FullName,'-scratch-parent',$liveScratch,
                         '-fixture-profile','synthetic-models-4239')
@@ -3079,7 +3100,7 @@ requires_openai_auth = false
         $liveFixtureReport.parentDiagnostic=$welcomeDiagnostic
         $liveFixtureReport.partialActionUncertain=$welcomeDiagnostic.partialActionUncertain
         # All fixed captures keep the original owned HWND/PID and generation.
-        $captureWelcomeWindow={param([ValidateSet('official-window-after-welcome.png','official-window-after-skip.png','official-window-after-skip-confirmation.png','official-window-after-model-menu.png')][string]$FileName)
+        $captureWelcomeWindow={param([ValidateSet('official-window-after-welcome.png','official-window-after-skip.png','official-window-after-skip-confirmation.png','official-window-after-model-menu.png','official-window-after-beta-selection.png','official-window-after-alpha-selection.png')][string]$FileName)
             if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
                 $ownedActivationProcess.StartTime.ToUniversalTime().ToString('o') -cne $ownedActivationCreatedUtc -or
                 [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName) { throw 'After window identity unavailable.' }
@@ -3149,6 +3170,28 @@ requires_openai_auth = false
                     $modelMenuAfterCaptured=$true
                     $liveFixtureReport.modelMenu.afterCapture='official-window-after-model-menu.png; screen pixels may contain occlusion and require review'
                 } catch { $liveFixtureReport.modelMenu.afterCapture='unavailable' }
+            }
+            if ($DesktopModelSelectionProfile -ceq 'bridge-owned-model-selection-4239') {
+                $selectionDiagnostic=[ordered]@{commands=@();partialActionUncertain=$false}
+                $liveFixtureReport.modelSelection=[ordered]@{status='not-run';reason='prior_menu_or_capture_unavailable'}
+                if ($null -ne $liveModelMenu -and $liveModelMenu.status -ceq 'observed' -and
+                    $liveModelMenu.nextScreen -ceq 'model_labels_observed' -and $modelMenuAfterCaptured -and
+                    -not $liveFixtureReport.partialActionUncertain) {
+                    $captureSelection={param([string]$owner)
+                        $fileName=switch -CaseSensitive ($owner) {
+                            'beta' { 'official-window-after-beta-selection.png' }
+                            'alpha' { 'official-window-after-alpha-selection.png' }
+                            default { throw 'Unreviewed selection capture.' }
+                        }
+                        & $captureWelcomeWindow $fileName
+                    }
+                    $liveModelSelection=Invoke-WinAppModelSelection $winAppTool $window.Handle $checkInspectionIdentity `
+                        $liveModelMenu $selectionDiagnostic $DesktopModelSelectionProfile $DesktopFixtureProfile $captureSelection
+                    $liveFixtureReport.modelSelection=[ordered]@{status=$liveModelSelection.status;reason=$liveModelSelection.reason;
+                        result=$liveModelSelection;parentDiagnostic=$selectionDiagnostic;
+                        captureLimit='Fixed per-selection screenshots require pixel review; UI draft state only, not persistence or inference.'}
+                    $liveFixtureReport.partialActionUncertain=$liveFixtureReport.partialActionUncertain -or $selectionDiagnostic.partialActionUncertain
+                }
             }
         }
     }
@@ -3748,7 +3791,7 @@ requires_openai_auth = false
                 $report.observer.noAuthStatusEvidenceLimit = 'Correlated success relies on the exact bridge no-auth result validator. It proves only this credential-free fixture, not login, token support or full Desktop compatibility.'
                 $report.observer.featureListEvidence = Get-DesktopFeatureListEvidence $allEvents
                 $report.observer.featureListEvidenceLimit = 'Correlated success relies on the production whole-page comparison validator, not observer inspection of results. Counts cover only observed unscoped requests, including limit-present requests and any cursor-present pages; no result, cursor or limit values are logged. It does not establish GUI usability, real-account support, inference or zero egress.'
-                $report.observer.configReadEvidence = Get-DesktopConfigReadEvidence $allEvents -RequireLayers
+                $report.observer.configReadEvidence = Get-DesktopConfigReadEvidence $allEvents -RequireLayers -FixtureProfile $DesktopFixtureProfile
                 $report.observer.configReadEvidenceLimit = 'Counts cover actual global Desktop requests with and without layers and their correlated successes in the full observed snapshot, with at least one observed layer request required. They rely on the bridge-owned sessionFlags routing layer and fresh paired native requirements:null validator, not native config inspection or observer result bodies. Unsupported consumers fail honestly; this is not GUI usability, shared native configuration, account or service evidence.'
             }
         }
@@ -3946,6 +3989,11 @@ if ($EnableReviewedLiveWelcome) {
         $modelMenuUncertain=$true
         if ($null -ne $liveModelMenu) { $modelMenuUncertain=$modelMenuDiagnostic.partialActionUncertain }
         $liveOutcome=Get-WinAppModelMenuOutcome $liveOutcome $liveModelMenu $modelMenuAfterCaptured $modelMenuUncertain
+        if ($DesktopModelSelectionProfile -ceq 'bridge-owned-model-selection-4239') {
+            $selectionUncertain=$true
+            if ($null -ne $selectionDiagnostic) { $selectionUncertain=$selectionDiagnostic.partialActionUncertain }
+            $liveOutcome=Get-WinAppModelSelectionOutcome $liveOutcome $liveModelSelection $selectionUncertain
+        }
     }
     $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode
 }

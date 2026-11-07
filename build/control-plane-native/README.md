@@ -578,3 +578,57 @@ and contract, not the prior root cause or successful Desktop conversation.
 Local preparation of this slice did not run Go, gofmt, PowerShell, Windows or
 native/Desktop acceptance. Its exact commit must pass CI before any result is
 claimed. The default and earlier explicit profiles remain separate.
+
+### Explicit current-draft model-selection follow-up
+
+The `af72a101a0c1e018fe3ef9138b8b7c4ede8fc1ac` Desktop run
+[42420558493](https://github.com/breakingtime126/magpie/actions/runs/42420558493)
+actually displayed both original Alpha/Beta labels in the same popover, one
+visible interactive instance each, and the pixels showed Alpha checked. The
+fixture audit recorded zero requests/errors. The overall report was blocked by
+an overly narrow config-read evidence validator; that result is retained, not
+rewritten as a full pass. A separately reviewed report-only fix admits the
+existing fixed owned-catalog response metadata under its explicit profile.
+Neither observation proves SelectionItem support, persistence or conversation.
+
+A further, independent PowerShell option
+`-DesktopModelSelectionProfile bridge-owned-model-selection-4239` requires the
+existing `bridge-owned-catalog-4239` fixture, all its markers and the additional
+`[bridge-model-selection-v1]`. Empty/default leaves the earlier menu-only path
+unchanged. No new Go/native/production mode is introduced and no external
+catalog is accepted. Only after a confirmed captured two-label menu can this
+separate stage run, with its own bounded 30-second budget, at most two explicit
+SelectionItem `select` attempts and at most two ExpandCollapse `expand` calls.
+No action is retried. The sequence is fixed Beta then Alpha.
+
+Every target must be the exact unique visible enabled RadioButton and have a
+valid runtime selector, or obtain one through an exact typed readonly lookup.
+Before any selection, a live `IsSelected` read must return precisely the string
+`True` or `False` with the same identity. The pinned official tool obtains this
+property from SelectionItemPattern; missing support can return null even with
+exit code zero and is a stop, never false-by-default. The explicit select calls
+only that pattern. No automatic invocation, ancestor fallback, keyboard input
+or coordinate click is used. Held window/package/process/foreground checks
+surround each command, retaining the existing disclosed non-atomic identity
+limitations rather than claiming an action-instant proof.
+
+A successful action receipt is insufficient. A fresh tree must show the exact
+current-model Button (`Synthetic Beta [beta] None`, then
+`Synthetic Alpha [alpha] None`). If collapsed, that unique enabled Button may
+be reopened once through explicit Expand; if already expanded it is not acted
+on. Another fresh pair of IsSelected reads must show the chosen model true and
+the other false, followed by a verified screenshot. The Beta button spelling is
+an exact prospective assertion, not a previously established UI fact. Any
+unsupported type/pattern, hidden/disabled/duplicate target, stale identity,
+unchanged label/state, visible protected/error screen, timeout or uncertain
+receipt stops the slice. Fixed result observations distinguish target/type,
+selector and selected-state availability without exporting arbitrary UI text.
+
+The result scope is `bridge-owned-current-draft-selection-only`. It establishes
+only current draft selection, not saved configuration, thread migration or a
+message. The existing zero-request fixture audit remains mandatory. Composer,
+send, Windows setup, authentication and permissions are untouched. Production
+write and other RPC denials remain unchanged; existing terminal sanitized RPC
+traces record them without claiming they were caused by a selection. There is
+no runtime trace polling or new observation framework. Menu evidence, selection
+evidence and the separate native four-turn acceptance remain distinct.

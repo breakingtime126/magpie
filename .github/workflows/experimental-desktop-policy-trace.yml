@@ -67,6 +67,7 @@ jobs:
           PUSH_PACKAGE_IDENTITY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
           PUSH_WINAPP_MARKER: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') }}
           PUSH_OWNED_CATALOG: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-owned-catalog-v1]') }}
+          PUSH_MODEL_SELECTION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-model-selection-v1]') }}
           PUSH_SYNTHETIC_MODELS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[desktop-synthetic-models-v1]') }}
           PUSH_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') }}
           PUSH_NATIVE_ENTRY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]') }}
@@ -82,6 +83,10 @@ jobs:
               echo 'Explicit inspection mode and matching full expected SHA are required.' >&2
               exit 1
             fi
+          fi
+          if [[ "$PUSH_MODEL_SELECTION" == 'true' && "$PUSH_OWNED_CATALOG" != 'true' ]]; then
+            echo 'Model selection requires the explicit owned self-authored catalog slice.' >&2
+            exit 1
           fi
           if [[ "$PUSH_OWNED_CATALOG" == 'true' && "$PUSH_SYNTHETIC_MODELS" != 'true' ]]; then
             echo 'Owned catalog requires the explicit self-authored welcome slice.' >&2
@@ -677,6 +682,7 @@ jobs:
     timeout-minutes: 25
     env:
       MAGPIE_BRIDGE_OWNED_CATALOG: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-owned-catalog-v1]') && 'bridge-owned-catalog-v1' || '' }}
+      MAGPIE_MODEL_SELECTION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-model-selection-v1]') && 'bridge-model-selection-v1' || '' }}
       MAGPIE_DESKTOP_SYNTHETIC_MODELS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[desktop-synthetic-models-v1]') && 'desktop-synthetic-models-v1' || '' }}
       MAGPIE_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && 'bridge-welcome-4239-v1' || '' }}
       CGO_ENABLED: '0'
@@ -826,8 +832,12 @@ jobs:
           $packageIdentity = $env:MAGPIE_PACKAGE_IDENTITY_ONLY -ceq 'package-identity-only-v1'
           $build4239 = $env:MAGPIE_REVIEWED_BUILD -ceq 'bridge-ui-4239-v1'
           $welcome4239 = $env:MAGPIE_WELCOME_4239 -ceq 'bridge-welcome-4239-v1'
+          $selectionProfile=''
+          if ($env:MAGPIE_MODEL_SELECTION -ceq 'bridge-model-selection-v1') { $selectionProfile='bridge-owned-model-selection-4239' }
+          elseif ([string]$env:MAGPIE_MODEL_SELECTION -cne '') { throw 'Unreviewed model-selection marker.' }
+          if ($selectionProfile -and $env:MAGPIE_BRIDGE_OWNED_CATALOG -cne 'bridge-owned-catalog-v1') { throw 'Model selection requires owned catalog.' }
           if ($env:MAGPIE_BRIDGE_OWNED_CATALOG -ceq 'bridge-owned-catalog-v1') {
-              ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile bridge-owned-catalog-4239 -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
+              ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile bridge-owned-catalog-4239 -DesktopModelSelectionProfile $selectionProfile -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
           } elseif ($env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq 'desktop-synthetic-models-v1') {
               ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile synthetic-models-4239 -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
           } elseif ([string]$env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq '') {
@@ -847,6 +857,8 @@ jobs:
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-skip.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-skip-confirmation.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-model-menu.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-after-beta-selection.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-after-alpha-selection.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-inspection.png
           if-no-files-found: error
           retention-days: 7

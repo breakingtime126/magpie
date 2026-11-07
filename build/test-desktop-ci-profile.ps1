@@ -8,7 +8,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
-foreach ($name in @('Assert-DesktopFixtureProfile', 'Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
+foreach ($name in @('Assert-DesktopModelSelectionProfile', 'Assert-DesktopFixtureProfile', 'Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicOwnedCatalogEvent', 'Assert-PublicModelCatalogEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
@@ -1021,18 +1021,63 @@ Expect-Reject 'config-read layer error beyond the summary cutoff fails' {
     $response = New-ConfigReadResponse 1 2; $response.seq = 302; $response.kind = 'rpc_error'; $response.class = 'unknown'
     Get-DesktopConfigReadEvidence ($prefix + @($request, $response)) -RequireLayers
 }
+# Config-read evidence admits only explicitly profiled, already-fixed owned metadata.
+function New-OwnedConfigReadResponse {
+    $response=New-ConfigReadResponse 1 1
+    $response | Add-Member -NotePropertyName ownedModelCatalog -NotePropertyValue ([pscustomobject]@{
+        schema=1;pathMatches=$true;digestMatches=$true;validated=$true})
+    return $response
+}
+Expect-Pass 'owned catalog metadata preserves config read layer evidence' {
+    $evidence=Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1 $true),(New-OwnedConfigReadResponse)) -RequireLayers -FixtureProfile 'bridge-owned-catalog-4239'
+    if ($evidence.requests -ne 1 -or $evidence.validatedResponses -ne 1 -or $evidence.layerValidatedResponses -ne 1) { throw 'Owned config-read evidence lost correlation or layers.' }
+}
+foreach ($profile in @('','synthetic-models-4239','BRIDGE-OWNED-CATALOG-4239','PRIVATE_CANARY')) {
+    Expect-Reject 'owned config response needs exact explicit profile' {
+        Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1 $true),(New-OwnedConfigReadResponse)) -RequireLayers -FixtureProfile $profile
+    }
+}
+foreach ($mutation in @(
+    {param($e) $e | Add-Member -NotePropertyName raw -NotePropertyValue 'PRIVATE_CANARY'},
+    {param($e) $e.ownedModelCatalog | Add-Member -NotePropertyName path -NotePropertyValue 'PRIVATE_CANARY'},
+    {param($e) $e.ownedModelCatalog.pathMatches='PRIVATE_CANARY'},
+    {param($e) $e.ownedModelCatalog.schema=2},
+    {param($e) $e.correlation=2}
+)) {
+    Expect-Reject 'owned config evidence rejects unknown raw malformed or unmatched metadata' {
+        $response=New-OwnedConfigReadResponse; & $mutation $response
+        Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1 $true),$response) -RequireLayers -FixtureProfile 'bridge-owned-catalog-4239'
+    }
+}
+Expect-Reject 'owned metadata cannot supply missing layer request' {
+    Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1),(New-OwnedConfigReadResponse)) -RequireLayers -FixtureProfile 'bridge-owned-catalog-4239'
+}
+Expect-Reject 'owned metadata cannot supply missing request correlation' {
+    Get-DesktopConfigReadEvidence @((New-OwnedConfigReadResponse)) -RequireLayers -FixtureProfile 'bridge-owned-catalog-4239'
+}
+Expect-Pass 'owned metadata mismatch remains observation not positive catalog evidence' {
+    $response=New-OwnedConfigReadResponse; $response.ownedModelCatalog.pathMatches=$false
+    $evidence=Get-DesktopConfigReadEvidence @((New-ConfigReadRequest 1 1 $true),$response) -RequireLayers -FixtureProfile 'bridge-owned-catalog-4239'
+    if ($evidence.layerValidatedResponses -ne 1) { throw 'Config-read transport evidence changed.' }
+    # Owned-catalog success is independently counted only when all three booleans are true.
+}
 Expect-Pass 'runtime config-read evidence consumes the full sanitized snapshot once' {
     $calls = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.CommandAst] -and
         $node.GetCommandName() -ceq 'Get-DesktopConfigReadEvidence'
     }, $true))
-    if ($calls.Count -ne 1 -or $calls[0].CommandElements.Count -ne 3 -or
+    if ($calls.Count -ne 1 -or $calls[0].CommandElements.Count -ne 5 -or
         $calls[0].CommandElements[1] -isnot [Management.Automation.Language.VariableExpressionAst] -or
         $calls[0].CommandElements[1].VariablePath.UserPath -cne 'allEvents' -or
         $calls[0].CommandElements[2] -isnot [Management.Automation.Language.CommandParameterAst] -or
         $calls[0].CommandElements[2].ParameterName -cne 'RequireLayers' -or
-        $null -ne $calls[0].CommandElements[2].Argument) {
+        $null -ne $calls[0].CommandElements[2].Argument -or
+        $calls[0].CommandElements[3] -isnot [Management.Automation.Language.CommandParameterAst] -or
+        $calls[0].CommandElements[3].ParameterName -cne 'FixtureProfile' -or
+        $null -ne $calls[0].CommandElements[3].Argument -or
+        $calls[0].CommandElements[4] -isnot [Management.Automation.Language.VariableExpressionAst] -or
+        $calls[0].CommandElements[4].VariablePath.UserPath -cne 'DesktopFixtureProfile') {
         throw 'ConfigRead evidence must consume the full sanitized snapshot and require actual layers.'
     }
 }
@@ -2548,5 +2593,48 @@ if (-not $workflow.Contains('-DesktopFixtureProfile bridge-owned-catalog-4239') 
     -not $workflow.Contains('PUSH_OWNED_CATALOG') -or
     -not $ast.Extent.Text.Contains("`$bridgeSettings.bridge_model_catalog_json = `$liveOwned.OwnedCatalogPath") -or
     -not $ast.Extent.Text.Contains("`$start.EnvironmentVariables['MAGPIE_CI_OWNED_MODEL_CATALOG']")) { throw 'Owned catalog fixture wiring missing.' }
+# Selection is independent of the unchanged fixture/menu-only profile.
+Expect-Pass 'model selection explicit additional profile' {
+    Assert-DesktopModelSelectionProfile 'bridge-owned-model-selection-4239' 'bridge-owned-catalog-4239' 'bridge-model-selection-v1'
+}
+Expect-Pass 'default does not enable selection' { Assert-DesktopModelSelectionProfile '' 'bridge-owned-catalog-4239' '' }
+foreach ($selectionArgs in @(
+    @('','bridge-owned-catalog-4239','bridge-model-selection-v1'),
+    @('bridge-owned-model-selection-4239','bridge-owned-catalog-4239',''),
+    @('bridge-owned-model-selection-4239','synthetic-models-4239','bridge-model-selection-v1'),
+    @('BRIDGE-OWNED-MODEL-SELECTION-4239','bridge-owned-catalog-4239','bridge-model-selection-v1'),
+    @('bridge-owned-model-selection-4239','bridge-owned-catalog-4239','PRIVATE_CANARY')
+)) { Expect-Reject 'selection rejects every mixed or missing authority' { Assert-DesktopModelSelectionProfile @selectionArgs } }
+Expect-Pass 'model selection reaches only one explicit post-menu seam' {
+    $gate=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-DesktopModelSelectionProfile'},$true))
+    $selection=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-WinAppModelSelection'},$true))
+    if ($gate.Count -ne 1 -or $gate[0].Extent.Text -cne 'Assert-DesktopModelSelectionProfile $DesktopModelSelectionProfile $DesktopFixtureProfile $env:MAGPIE_MODEL_SELECTION' -or
+        $selection.Count -ne 1 -or $gate[0].Extent.EndOffset -ge $selection[0].Extent.StartOffset -or
+        -not $selection[0].Extent.Text.EndsWith('$liveModelMenu $selectionDiagnostic $DesktopModelSelectionProfile $DesktopFixtureProfile $captureSelection')) {
+        throw 'Selection lost unique explicit parameter propagation.'
+    }
+    $conditional=$selection[0].Parent;$conditions=@()
+    while ($null -ne $conditional) {
+        if ($conditional -is [Management.Automation.Language.IfStatementAst]) { $conditions+=@($conditional.Clauses | ForEach-Object { $_.Item1.Extent.Text }) }
+        $conditional=$conditional.Parent
+    }
+    if (-not ($conditions -ccontains "`$DesktopModelSelectionProfile -ceq 'bridge-owned-model-selection-4239'") -or
+        -not (($conditions -join ' ').Contains('$modelMenuAfterCaptured')) -or
+        -not (($conditions -join ' ').Contains('$liveFixtureReport.partialActionUncertain'))) { throw 'Selection escaped confirmed captured menu scope.' }
+    $captures=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$captureWelcomeWindow'},$true))
+    $captureParameter='param([ValidateSet(''official-window-after-welcome.png'',''official-window-after-skip.png'',''official-window-after-skip-confirmation.png'',''official-window-after-model-menu.png'',''official-window-after-beta-selection.png'',''official-window-after-alpha-selection.png'')][string]$FileName)'
+    if ($captures.Count -ne 1 -or -not $captures[0].Right.Extent.Text.Contains($captureParameter)) {
+        throw 'Selection captures must be admitted by the exact existing fixed-name capture boundary.'
+    }
+    foreach ($captureFile in @('official-window-after-beta-selection.png','official-window-after-alpha-selection.png')) {
+        $artifactPath='${{ runner.temp }}/desktop-cold-start-report/'+$captureFile
+        if ([regex]::Matches($workflow,[regex]::Escape($artifactPath)).Count -ne 1) {
+            throw 'Each fixed selection screenshot must be delivered exactly once by the existing artifact list.'
+        }
+    }
+    if (-not $workflow.Contains('PUSH_MODEL_SELECTION') -or -not $workflow.Contains('MAGPIE_MODEL_SELECTION:') -or
+        -not $workflow.Contains('-DesktopModelSelectionProfile $selectionProfile')) { throw 'Selection workflow authority missing.' }
+}
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
 

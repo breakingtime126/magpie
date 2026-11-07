@@ -237,6 +237,14 @@ try {
     Reject { New-WinAppWelcomeStart $tool 123 'toggle-off' 'chk-suggestpersonal-1234' } 'two-toggle convenience command is never admitted'
     Reject { New-WinAppWelcomeStart $tool 123 'toggle' 'PRIVATE_ID_CANARY' } 'promoted IDs never become action argv'
     Reject { New-WinAppWelcomeStart $tool 123 'resolve-suggestions' 'PRIVATE_ID_CANARY' } 'readonly resolver never accepts an arbitrary query argument'
+    foreach ($spec in @(@('resolve-selection-alpha','Synthetic Alpha [alpha]','RadioButton'),
+        @('resolve-selection-beta','Synthetic Beta [beta]','RadioButton'),
+        @('resolve-selection-beta-menu','Synthetic Beta [beta] None','Button'))) {
+        $start=New-WinAppWelcomeStart $tool 123 $spec[0] -FixtureProfile 'bridge-owned-catalog-4239' -SelectionProfile 'bridge-owned-model-selection-4239'
+        Pass (($start.ArgumentList -join ' ') -ceq ('ui get-property '+$spec[1]+' --type '+$spec[2]+' --property AutomationId -w 123 --json')) 'selection resolver is an exact typed read'
+        Reject { New-WinAppWelcomeStart $tool 123 $spec[0] -FixtureProfile 'bridge-owned-catalog-4239' } 'menu-only cannot resolve selection targets'
+        Reject { New-WinAppWelcomeStart $tool 123 $spec[0] 'PRIVATE_CANARY' -FixtureProfile 'bridge-owned-catalog-4239' -SelectionProfile 'bridge-owned-model-selection-4239' } 'selection resolver never accepts arbitrary input'
+    }
 } finally { $env:SystemRoot=$oldSystemRoot;Remove-Item -LiteralPath $temporary -Recurse -Force }
 
 $tokens=$null;$errors=$null
@@ -894,4 +902,133 @@ $ownedSnapshot=ConvertTo-WinAppWelcomeSnapshot (Json $nonePage) 123 -FixtureProf
 Pass ((Get-WinAppModelMenuObservation $ownedSnapshot -FixtureProfile $ownedProfile).labelKind -ceq 'model_and_none') 'owned catalog retains observed None opener'
 Pass (-not (Read-WinAppModelFocus (Json (Focused 'Synthetic Alpha [alpha] None')) -FixtureProfile $ownedProfile).Observation.activationAllowed) 'owned catalog cannot activate model opener as selection'
 Reject { Get-WinAppModelNames 'BRIDGE-OWNED-CATALOG-4239' } 'owned labels remain exact profile only'
+
+# Independent fixed UI fixtures exercise the new selection state machine only.
+function SelectionPage([string]$Current,[bool]$Open) {
+    $title=$(if ($Current -ceq 'alpha') { 'Synthetic Alpha [alpha] None' } else { 'Synthetic Beta [beta] None' })
+    $button=Node $title 'Button' ('btn-current'+$Current+'-a123');$button.automationId='current'+$Current
+    $button.expandState=$(if ($Open) { 'expanded' } else { 'collapsed' })
+    $nodes=@((Node 'What should we build?' 'Text'),$button,
+        (Node "Couldn't check Windows setup" 'Text'),(Node 'Try again' 'Button' 'btn-tryagain-a123'))
+    if ($Open) {
+        foreach ($owner in @('alpha','beta')) {
+            $name=$(if ($owner -ceq 'alpha') { 'Synthetic Alpha [alpha]' } else { 'Synthetic Beta [beta]' })
+            $node=Node $name 'RadioButton' ('rdo-'+$owner+'model-a123');$node.automationId=$owner+'model'
+            $nodes+=,$node
+        }
+    }
+    return [ordered]@{depth=16;interactive=$false;hideDisabled=$false;hideOffscreen=$false;
+        windows=@([ordered]@{hwnd=123;elementCount=$nodes.Count;elements=$nodes;
+            windowDpi=96;scale=1;dpiAwareness='per-monitor-aware';coordinateSpace='physical-screen-pixels'})}
+}
+function SelectionState([string]$Owner,$State) {
+    $name=$(if ($Owner -ceq 'alpha') { 'Synthetic Alpha [alpha]' } else { 'Synthetic Beta [beta]' })
+    $slug='rdo-'+$Owner+'model-a123'
+    return [ordered]@{elementId=$slug;element=(Node $name 'RadioButton' $slug);properties=[ordered]@{IsSelected=$State}}
+}
+$selectionProfile='bridge-owned-model-selection-4239'
+$selectionPage=ConvertTo-WinAppModelSelectionSnapshot (Json (SelectionPage 'alpha' $true)) 123
+$selectionTarget=Get-WinAppModelSelectionTarget $selectionPage 'Synthetic Beta [beta]' 'RadioButton' $null $selectionProfile $ownedProfile
+Pass (-not (Read-WinAppModelSelected (Json (SelectionState 'beta' 'False')) $selectionTarget)) 'False string is unselected, not truthy'
+foreach ($badState in @($null,$false,$true,'false','True ','PRIVATE_CANARY',1)) {
+    Reject { Read-WinAppModelSelected (Json (SelectionState 'beta' $badState)) $selectionTarget } 'missing pattern or malformed IsSelected never authorizes selection'
+}
+foreach ($type in @('Button','MenuItem','Text')) {
+    $bad=SelectionPage 'alpha' $true;$bad.windows[0].elements[5].type=$type
+    $page=ConvertTo-WinAppModelSelectionSnapshot (Json $bad) 123
+    Reject { Get-WinAppModelSelectionTarget $page 'Synthetic Beta [beta]' 'RadioButton' $null $selectionProfile $ownedProfile } 'only real RadioButton can be selected'
+}
+foreach ($variant in @('hidden','disabled','duplicate')) {
+    $bad=SelectionPage 'alpha' $true
+    if ($variant -ceq 'hidden') { $bad.windows[0].elements[5].isOffscreen=$true }
+    elseif ($variant -ceq 'disabled') { $bad.windows[0].elements[5].isEnabled=$false }
+    else { $bad.windows[0].elements+=@($bad.windows[0].elements[5]);$bad.windows[0].elementCount++ }
+    Reject { ConvertTo-WinAppModelSelectionSnapshot (Json $bad) 123 } 'selection rejects hidden disabled and duplicate exact targets'
+}
+Reject { Get-WinAppModelSelectionTarget $selectionPage 'Try again' 'Button' $null $selectionProfile $ownedProfile } 'setup remains outside selection allowlist'
+Reject { Get-WinAppModelSelectionTarget $selectionPage 'Synthetic Beta [beta]' 'RadioButton' $null '' $ownedProfile } 'menu-only does not gain selection targets'
+function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
+    [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,[string]$Operation,[string]$Selector='',
+    [string]$FixtureProfile='',[string]$SelectionProfile='') {
+    Pass ($FixtureProfile -ceq 'bridge-owned-catalog-4239' -and $SelectionProfile -ceq 'bridge-owned-model-selection-4239') 'every selection command keeps explicit independent scope'
+    & $CheckIdentity
+    $script:selectionOperations+=,$Operation
+    if ($Operation -ceq 'read') {
+        $current=$script:selectionOwner
+        if ($script:selectionMode -ceq 'unchanged-label' -and $script:selectionCount -gt 0) { $current='alpha' }
+        $page=SelectionPage $current $script:selectionOpen
+        if ($script:selectionMode -ceq 'protected' -and $script:selectionCount -gt 0) {
+            $page.windows[0].elements+=@(Node 'Sign in' 'Button');$page.windows[0].elementCount++
+        }
+        if ($script:selectionMode -ceq 'wrong-type' -and $script:selectionCount -eq 0) { $page.windows[0].elements[5].type='MenuItem' }
+        if ($script:selectionMode -ceq 'promoted') {
+            foreach ($node in $page.windows[0].elements) {
+                if ($node.Contains('automationId')) { $node.selector=$node.automationId }
+            }
+        }
+        return Json $page
+    }
+    if ($Operation -clike 'resolve-*') {
+        $spec=@{'resolve-selection-alpha'=@('Synthetic Alpha [alpha]','RadioButton','alphamodel','rdo-alphamodel-a123');
+            'resolve-selection-beta'=@('Synthetic Beta [beta]','RadioButton','betamodel','rdo-betamodel-a123');
+            'resolve-model-effort'=@('Synthetic Alpha [alpha] None','Button','currentalpha','btn-currentalpha-a123');
+            'resolve-selection-beta-menu'=@('Synthetic Beta [beta] None','Button','currentbeta','btn-currentbeta-a123')}[$Operation]
+        if ($null -eq $spec) { throw 'Unreviewed test resolution.' }
+        $value=Resolution $spec[0] $spec[1] $spec[2] $spec[3]
+        if ($spec[1] -ceq 'Button') { $value.element.expandState='collapsed' }
+        return Json $value
+    }
+    if ($Operation -ceq 'selected') {
+        $owner=$(if ($Selector -ceq 'rdo-alphamodel-a123') { 'alpha' } elseif ($Selector -ceq 'rdo-betamodel-a123') { 'beta' } else { throw 'Wrong selected-state target.' })
+        $selectedOwner=$script:selectionOwner
+        if ($script:selectionMode -ceq 'unchanged-pattern' -and $script:selectionCount -gt 0) { $selectedOwner='alpha' }
+        $state=($selectedOwner -ceq $owner).ToString()
+        if ($script:selectionMode -ceq 'no-pattern') { $state=$null }
+        return Json (SelectionState $owner $state)
+    }
+    if ($Operation -ceq 'select') {
+        $script:selectionCount++
+        Pass ($script:selectionCount -le 2) 'at most two selection attempts'
+        $owner=$(if ($Selector -ceq 'rdo-betamodel-a123') { 'beta' } elseif ($Selector -ceq 'rdo-alphamodel-a123') { 'alpha' } else { throw 'Wrong selection target.' })
+        Pass (($script:selectionCount -eq 1 -and $owner -ceq 'beta') -or ($script:selectionCount -eq 2 -and $owner -ceq 'alpha')) 'fixed Beta then Alpha order'
+        $script:selectionOwner=$owner;$script:selectionOpen=$false
+        if ($script:selectionMode -ceq 'uncertain') { throw 'Synthetic uncertain select.' }
+        $pattern=$(if ($script:selectionMode -ceq 'wrong-receipt') { 'InvokePattern' } else { 'SelectionItemPattern' })
+        return Json ([ordered]@{elementId=$Selector;pattern=$pattern;requestedAction='select';performedAction='select';hwnd=123})
+    }
+    if ($Operation -ceq 'open-model-menu') {
+        $script:selectionReopens++
+        Pass ($script:selectionReopens -le 2 -and $Selector -ceq ('btn-current'+$script:selectionOwner+'-a123')) 'reopen exact current button at most twice'
+        $script:selectionOpen=$true
+        return Json ([ordered]@{elementId=$Selector;pattern='ExpandCollapsePattern';requestedAction='expand';performedAction='expand';hwnd=123})
+    }
+    throw 'Selection attempted an unreviewed keyboard, setup or other operation.'
+}
+$priorMenu=[pscustomobject]@{status='observed';nextScreen='model_labels_observed'}
+foreach ($selectionMode in @('normal','promoted','no-pattern','wrong-type','unchanged-label','unchanged-pattern','wrong-receipt','uncertain','protected','capture-failure')) {
+    $script:selectionMode=$selectionMode;$script:selectionOwner='alpha';$script:selectionOpen=$true
+    $script:selectionOperations=@();$script:selectionCount=0;$script:selectionReopens=0;$script:selectionCaptures=@()
+    $diagnostic=[ordered]@{}
+    $capture={param($owner)
+        if ($script:selectionMode -ceq 'capture-failure') { throw 'Synthetic missing capture.' }
+        $script:selectionCaptures+=,$owner
+    }
+    $result=Invoke-WinAppModelSelection $null 123 {} $priorMenu $diagnostic $selectionProfile $ownedProfile $capture
+    $passed=$selectionMode -cin @('normal','promoted')
+    Pass (($result.status -ceq 'observed') -eq $passed) 'only verified pattern plus changed current label completes selection'
+    if ($passed) {
+        Pass ($result.selectionAttempts -eq 2 -and $result.confirmedSelections -eq 2 -and $result.menuReopens -eq 2 -and
+            ($selectionCaptures -join ',') -ceq 'beta,alpha' -and -not $diagnostic.partialActionUncertain) 'both transitions, reopens and captures verified'
+    } else {
+        Pass ($result.selectionAttempts -le 1) 'failed first transition never retries or starts second selection'
+        if ($selectionMode -ceq 'no-pattern') { Pass ($result.selectionAttempts -eq 0 -and $result.lastObservation.selectionState -ceq 'unavailable') 'unsupported SelectionItem is a diagnosed no-action stop' }
+        if ($selectionMode -ceq 'wrong-type') { Pass ($result.selectionAttempts -eq 0 -and $result.lastObservation.controlType -ceq 'MenuItem') 'different live type is a bounded no-action observation' }
+    }
+    Pass (-not ((Json $result).Contains('PRIVATE_CANARY'))) 'selection report carries only fixed observations'
+}
+$script:selectionOperations=@();$diagnostic=[ordered]@{}
+$result=Invoke-WinAppModelSelection $null 123 {} $priorMenu $diagnostic '' $ownedProfile {}
+Pass ($result.selectionAttempts -eq 0 -and $selectionOperations.Count -eq 0) 'menu-only profile never starts new selection flow'
+$prior=[pscustomobject]@{status='blocked';stage='prior-failure';reason='fixed';exitCode=1}
+Pass ((Get-WinAppModelSelectionOutcome $prior $null $true).stage -ceq 'prior-failure') 'selection never hides existing report or cleanup failure'
 Write-Output ('WINAPP_WELCOME_OFFLINE_CHECKS='+$checks)

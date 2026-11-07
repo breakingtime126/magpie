@@ -371,5 +371,26 @@ try {
     New-Item -ItemType Directory -Path $ownedPath | Out-Null
     Reject { ConvertTo-LiveConfiguration $ownedConfig $ownedScratch $exe -Build4239 $true -FixtureProfile $ownedProfile -Readiness $ownedReady } 'directory is not owned catalog'
 } finally { Remove-Item -LiteralPath $ownedScratch -Recurse -Force }
+# Selection result is a separate bounded schema, never inference or persistence.
+$selectionResult=[pscustomobject]@{schema=1;scope='bridge-owned-current-draft-selection-only';status='observed';reason='both_current_draft_selections_verified';
+    selectionAttempts=2;confirmedSelections=2;menuReopens=2;initialAlphaSelected=$true;betaSelected=$true;alphaSelected=$true;
+    betaLabelMatched=$true;alphaLabelMatched=$true;betaCaptured=$true;alphaCaptured=$true;
+    lastObservation=[pscustomobject]@{target='beta';matches=1;controlType='RadioButton';enabled=$true;selectorKind='runtime_slug';selectionState='unselected';patternConfirmed=$true}}
+Assert-ModelSelectionResult $selectionResult
+foreach ($mutation in @(
+    {param($v) $v.selectionAttempts=3},
+    {param($v) $v.menuReopens=3},
+    {param($v) $v.confirmedSelections=1},
+    {param($v) $v.betaLabelMatched=$false},
+    {param($v) $v.alphaSelected=$false},
+    {param($v) $v.betaCaptured=$false},
+    {param($v) $v.scope='self-authored-model-menu-only'},
+    {param($v) $v.lastObservation.controlType='PRIVATE_CANARY'},
+    {param($v) $v.lastObservation.selectionState=$false},
+    {param($v) $v | Add-Member -NotePropertyName path -NotePropertyValue 'PRIVATE_CANARY'}
+)) {
+    $bad=($selectionResult | ConvertTo-Json -Depth 8 -Compress) | ConvertFrom-Json; & $mutation $bad
+    Reject { Assert-ModelSelectionResult $bad } 'selection success cannot omit proof or widen counts/data'
+}
 Write-Output "LIVE_WELCOME_OFFLINE_CHECKS=$count"
 exit 0

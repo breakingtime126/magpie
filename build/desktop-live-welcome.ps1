@@ -408,3 +408,33 @@ function Invoke-LiveWelcome($Start, [System.Collections.IDictionary]$Diagnostic 
         }
     }
 }
+
+function Assert-ModelSelectionResult($Value) {
+    Assert-LiveShape $Value @('schema','scope','status','reason','selectionAttempts','confirmedSelections','menuReopens',
+        'initialAlphaSelected','betaSelected','alphaSelected','betaLabelMatched','alphaLabelMatched','betaCaptured','alphaCaptured','lastObservation')
+    Assert-LiveInteger $Value.schema 1 1
+    Assert-LiveStrings $Value @('scope','status','reason')
+    if ($Value.scope -cne 'bridge-owned-current-draft-selection-only' -or $Value.status -cnotin @('observed','stopped') -or
+        $Value.reason -cnotin @('selection_profile_unavailable','prior_menu_unavailable','initial_selection_unavailable',
+            'preselection_state_unavailable','selection_action_unavailable','selection_receipt_invalid','selected_label_unavailable',
+            'selection_reopen_unavailable','selected_pair_unavailable','selection_capture_unavailable','both_current_draft_selections_verified')) {
+        throw 'Invalid fixed selection outcome.'
+    }
+    foreach ($key in @('selectionAttempts','confirmedSelections','menuReopens')) { Assert-LiveInteger $Value.$key 0 2 }
+    foreach ($key in @('initialAlphaSelected','betaSelected','alphaSelected','betaLabelMatched','alphaLabelMatched','betaCaptured','alphaCaptured')) {
+        if ($Value.$key -isnot [bool]) { throw 'Invalid selection flag.' }
+    }
+    if ($Value.confirmedSelections -gt $Value.selectionAttempts -or $Value.menuReopens -gt $Value.selectionAttempts) { throw 'Invalid selection counts.' }
+    $o=$Value.lastObservation
+    Assert-LiveShape $o @('target','matches','controlType','enabled','selectorKind','selectionState','patternConfirmed')
+    Assert-LiveStrings $o @('target','controlType','selectorKind','selectionState'); Assert-LiveInteger $o.matches 0 500
+    if ($o.target -cnotin @('none','alpha','beta','current_alpha','current_beta') -or
+        $o.controlType -cnotin @('absent','ambiguous','RadioButton','Button','MenuItem','other') -or
+        $o.selectorKind -cnotin @('not_observed','runtime_slug','promoted_id','unsupported','missing') -or
+        $o.selectionState -cnotin @('not_read','unavailable','selected','unselected') -or
+        $o.enabled -isnot [bool] -or $o.patternConfirmed -isnot [bool]) { throw 'Invalid bounded selection observation.' }
+    if ($Value.status -ceq 'observed' -and ($Value.reason -cne 'both_current_draft_selections_verified' -or
+        $Value.selectionAttempts -ne 2 -or $Value.confirmedSelections -ne 2 -or -not $Value.initialAlphaSelected -or
+        -not $Value.betaSelected -or -not $Value.alphaSelected -or -not $Value.betaLabelMatched -or -not $Value.alphaLabelMatched -or
+        -not $Value.betaCaptured -or -not $Value.alphaCaptured)) { throw 'Incomplete selection success.' }
+}
