@@ -87,8 +87,7 @@ func TestSelfAuthoredProfileCannotReadAnyCatalogInput(t *testing.T) {
 		t.Fatal("self-authored profile accepted an explicitly empty catalog assignment")
 	}
 	var report summary
-	if err := run(context.Background(), options{acceptanceProfile: acceptanceSynthetic4239, catalog: "never-open"}, &report);
-		err != failure("input_invalid") || report.BinaryVerified {
+	if err := run(context.Background(), options{acceptanceProfile: acceptanceSynthetic4239, catalog: "never-open"}, &report); err != failure("input_invalid") || report.BinaryVerified {
 		t.Fatal("direct run did not reject mixed catalog inputs before setup")
 	}
 	if models, err := acceptanceModels(acceptanceSynthetic4239); err != nil || models != [2]string{"test-alpha", "test-beta"} {
@@ -145,8 +144,7 @@ func selfAuthoredModelList() map[string]any {
 
 func TestSelfAuthoredCatalogOracleRequiresActualOwnedModelsAndNone(t *testing.T) {
 	list := selfAuthoredModelList()
-	if model, n, err := checkCatalogForProfile(jsonBytes(list), acceptanceSynthetic4239);
-		err != nil || model != "magpie/alpha/test-alpha" || n != 2 {
+	if model, n, err := checkCatalogForProfile(jsonBytes(list), acceptanceSynthetic4239); err != nil || model != "magpie/alpha/test-alpha" || n != 2 {
 		t.Fatal("complete self-authored native model response rejected")
 	}
 	if _, _, err := checkCatalog(jsonBytes(list)); err == nil {
@@ -238,7 +236,9 @@ func TestSelfAuthoredFixtureRejectsWrongModelsInstructionsReasoningAndNonText(t 
 		func(req map[string]any) { req["instructions"] = "Unreviewed instructions." },
 		func(req map[string]any) { req["reasoning"] = map[string]any{"effort": "low"} },
 		func(req map[string]any) { req["reasoning"] = map[string]any{"effort": "none", "summary": "auto"} },
-		func(req map[string]any) { req["input"] = []any{map[string]any{"type": "function_call", "name": "shell"}} },
+		func(req map[string]any) {
+			req["input"] = []any{map[string]any{"type": "function_call", "name": "shell"}}
+		},
 		func(req map[string]any) {
 			req["input"] = []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_image"}}}}
 		},

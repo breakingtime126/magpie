@@ -25,21 +25,21 @@ func selfAuthoredCatalog(name string) ([]byte, error) {
 	}
 	model := map[string]any{
 		"slug": "test-" + name, "display_name": syntheticDisplayName(name),
-		"description": "Local fixed-text protocol fixture; not a hosted model.",
+		"description":             "Local fixed-text protocol fixture; not a hosted model.",
 		"default_reasoning_level": "none",
 		"supported_reasoning_levels": []any{map[string]any{
 			"effort": "none", "description": syntheticReasoningDescription,
 		}},
 		"shell_type": "disabled", "visibility": "list", "supported_in_api": true,
 		"priority": priority, "support_verbosity": false, "default_verbosity": nil,
-		"truncation_policy": map[string]any{"mode": "tokens", "limit": 1024},
+		"truncation_policy":            map[string]any{"mode": "tokens", "limit": 1024},
 		"experimental_supported_tools": []any{}, "input_modalities": []string{"text"},
 		"include_apps_usage_instructions": false, "include_skills_usage_instructions": false,
 		"include_plugin_usage_instructions": false, "supports_reasoning_summary_parameter": false,
 		"default_reasoning_summary": "none", "node_repl_disabled": true,
 		"supports_search_tool": false, "apply_patch_tool_type": nil,
 		"upgrade": nil, "availability_nux": nil, "additional_speed_tiers": []any{},
-		"service_tiers": []any{},
+		"service_tiers":  []any{},
 		"model_messages": map[string]any{"instructions_template": syntheticInstructions(name)},
 	}
 	// In particular, omit guardian: an empty policy map would change approval
