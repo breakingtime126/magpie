@@ -733,7 +733,7 @@ function Assert-DesktopPackageIdentityOptions([bool]$Enabled, [string]$Mode, [bo
     }
 }
 function Get-DesktopPackageIdentityEvidence([string]$PackagePath, [string]$PackageSha256,
-    [int]$SignatureExitCode, [string]$SignatureStatus, [string]$SignerSubject) {
+    [int]$SignatureExitCode, [string]$SignatureStatus, [string]$SignerSubject, [switch]$RequireEntryService) {
     # Data only. No extraction, installed-package discovery, executable invocation
     # or ASAR source parsing. Keep the same read-locked file through hash and ZIP reads.
     $packageStream = $null; $zip = $null
@@ -783,14 +783,37 @@ function Get-DesktopPackageIdentityEvidence([string]$PackagePath, [string]$Packa
         }
         $backendHash = Get-PublicZipEntryDigest $zip 'app/resources/codex.exe' 536870912 $watch
         $archiveHash = Get-PublicZipEntryDigest $zip 'app/resources/app.asar' 2147483648 $watch
+        $serviceEvidence=$null
+        if ($RequireEntryService) {
+            # Reuse this same verified, read-locked MSIX. No installed file or guessed digest is a source.
+            $serviceEvidence=[ordered]@{status='unavailable';reason='service_declaration_unavailable'}
+            try {
+                $declaration=Get-EntryServiceDeclaration $document
+                $serviceEvidence.reason='service_digest'
+                $serviceHash=Get-PublicZipEntryDigest $zip $declaration.path 536870912 $watch
+                $serviceEvidence=[ordered]@{status='observed';name=$declaration.name;path=$declaration.path;
+                    startupType=$declaration.startupType;startupTypeSource=$declaration.startupTypeSource;
+                    startAccount=$declaration.startAccount;startAccountSource=$declaration.startAccountSource;
+                    arguments=$declaration.arguments;argumentsSource=$declaration.argumentsSource;
+                    bytes=$zip.GetEntry($declaration.path).Length;sha256=$serviceHash}
+            } catch {
+                # Publish only these fixed labels; never an unknown attribute, path or raw exception.
+                if ($_.Exception.Message -cin @('service_missing','service_ambiguous','service_namespace','service_location',
+                    'service_path','service_name','service_startup','service_account','service_arguments')) {
+                    $serviceEvidence.reason=$_.Exception.Message
+                }
+            }
+        }
         if ($watch.ElapsedMilliseconds -gt 120000) { throw 'Package identity time limit exceeded.' }
-        return [ordered]@{
+        $evidence=[ordered]@{
             schema=1; status='observed'; scope='signed-package-static-identity-only'; runtimeAccepted=$false
             packageSha256=$actualPackage; packageBytes=$packageStream.Length
             manifest=[ordered]@{name=$name;publisher=$publisher;version=$version;architecture=$architecture;sha256=$manifestHash}
             backend=[ordered]@{path='app/resources/codex.exe';bytes=$zip.GetEntry('app/resources/codex.exe').Length;sha256=$backendHash}
             archive=[ordered]@{path='app/resources/app.asar';bytes=$zip.GetEntry('app/resources/app.asar').Length;sha256=$archiveHash}
         }
+        if ($RequireEntryService) { $evidence.sandboxService=$serviceEvidence }
+        return $evidence
     } catch { throw 'Read-only signed package identity is unavailable.' }
     finally {
         if ($zip) { $zip.Dispose() }
@@ -1776,6 +1799,8 @@ $entryBridgeStarts = @()
 $entryCleanupError = $false
 $script:entryHelperExitUnconfirmed = $false
 $entryImageObserver = $null
+$entryService = $null
+$entryServiceHandleState = [ordered]@{Held=$null;ImageStream=$null;ProcessId=0;CreatedTicks=[long]0}
 $entryActivationAttempted = $false
 function Block([string]$reason) {
     $report.reason = $reason
@@ -2020,8 +2045,11 @@ namespace DesktopColdProbe {
     }
     if ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239) {
         $report.reviewedBuildIdentity = Get-DesktopPackageIdentityEvidence $package $report.download.packageSha256 `
-            $signatureExit $report.signature.authenticodeStatus $report.signature.signerSubject
+            $signatureExit $report.signature.authenticodeStatus $report.signature.signerSubject -RequireEntryService:$EnableReviewedEntry4239
         Assert-Desktop4239Identity $report.reviewedBuildIdentity
+        if ($EnableReviewedEntry4239 -and $report.reviewedBuildIdentity.sandboxService.status -cne 'observed') {
+            Block 'Verified package service declaration or executable digest is unavailable.'
+        }
         $report.reviewedBuildScope = 'Exact 4239 CI diagnostic input only. Same version is not semantic or Desktop acceptance; existing strict runtime gates remain authoritative.'
     }
     if ($EnableNativeReadOnlyInspection) {
@@ -2569,12 +2597,53 @@ requires_openai_auth = false
     if ($NativeEntryCase) {
         # Registration and configuration must not have launched Desktop. No second activation is attempted.
         $matchedProcessIds=[Collections.Generic.List[int]]::new()
-        $freshness = Get-EntryFreshnessEvidence -Processes @(Get-CimInstance Win32_Process) `
+        $freshnessProcesses=@(Get-CimInstance Win32_Process)
+        $serviceCandidates=@($freshnessProcesses | Where-Object { $_.Name -ieq 'codex-windows-sandbox-service.exe' })
+        $serviceCandidateId=0
+        if ($EnableReviewedEntry4239 -and $serviceCandidates.Count -eq 1) {
+            . (Join-Path $PSScriptRoot 'desktop-entry-observe.ps1')
+            Initialize-EntryHeldObservation
+            $serviceCandidateId=[int]$serviceCandidates[0].ProcessId
+        }
+        $freshness = Get-EntryFreshnessEvidence -Processes $freshnessProcesses `
             -ExpectedPackage $app.PackageFullName -BridgeName $bridgeName `
             -VersionProbeId $versionProbeId -ConfigurationProbeId $configurationProbeId `
-            -ReadPackage { param($ProcessId) [DesktopColdProbe.Native]::PackageFor([uint32]$ProcessId) } `
+            -ReadPackage {
+                param($ProcessId)
+                if ($serviceCandidateId -gt 0 -and $ProcessId -eq $serviceCandidateId) {
+                    # Basename selects only a candidate. This first package query retains the generation
+                    # subsequently checked against the signed image and SCM; CIM timestamps are not authority.
+                    if ($null -ne $entryServiceHandleState.Held) { throw 'Duplicate service candidate query.' }
+                    $entryServiceHandleState.Held=[DesktopEntryReadOnly.Held]::new($ProcessId)
+                    $entryServiceHandleState.ProcessId=$ProcessId
+                    if (-not $entryServiceHandleState.Held.Alive) { throw 'Service candidate exited.' }
+                    $entryServiceHandleState.CreatedTicks=$entryServiceHandleState.Held.CreatedUtcTicks
+                    $relation=$entryServiceHandleState.Held.PackageRelation($app.PackageFullName)
+                    if ($relation -ceq 'unavailable' -or -not $entryServiceHandleState.Held.Alive) { throw 'Service candidate identity unavailable.' }
+                    if ($relation -ceq 'expected') { return $app.PackageFullName }
+                    return $null
+                }
+                [DesktopColdProbe.Native]::PackageFor([uint32]$ProcessId)
+            } `
             -MatchedProcessIds $matchedProcessIds
         $report.nativeEntry.freshnessGuard = $freshness
+        $freshness.verifiedPackagedServices=0
+        $freshness.blockingMatches=$freshness.matches
+        if ($EnableReviewedEntry4239 -and (Test-EntrySingleServiceCandidate $freshness) -and $matchedProcessIds.Count -eq 1 -and
+            $null -ne $entryServiceHandleState.Held -and $matchedProcessIds[0] -eq $entryServiceHandleState.ProcessId) {
+            $report.nativeEntry.packagedService=[ordered]@{status='unavailable';classification='not-verified'}
+            try {
+                $entryService=Open-EntryVerifiedService $entryServiceHandleState $report.reviewedBuildIdentity.sandboxService `
+                    $app.PackageFullName $app.InstallLocation `
+                    ([DateTime]::ParseExact($report.startedUtc,'o',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).Ticks)
+                $report.nativeEntry.packagedService=[ordered]@{status='verified';classification='packaged-sandbox-service';
+                    processId=$entryService.ProcessId;createdUtc=([DateTime]::new($entryService.CreatedTicks,[DateTimeKind]::Utc)).ToString('o');
+                    sameHeldIdentity=$true;scmRunningPidVerified=$true;signedEntryDigestVerified=$true;
+                    limit='Service identity only; not proof of idle state or absence of service-owned state.'}
+                $freshness.verifiedPackagedServices=1
+                $freshness.blockingMatches=0
+            } catch { }
+        }
         if ($NativeEntryCase -ceq 'freshness-observation') {
             . (Join-Path $PSScriptRoot 'desktop-entry-observe.ps1')
             $report.nativeEntry.matchedProcessObservation=Invoke-EntryFreshnessObservation `
@@ -2582,9 +2651,10 @@ requires_openai_auth = false
                 -PackageRoot $app.InstallLocation -Applications $report.manifest.applications -Work $work
             $report.nativeEntry.observationLimit='Read-only fixed path/package/parent labels. No process exemption, termination, USER write or activation, even with zero matches. Unknown labels remain blockers.'
         }
-        if ($freshness.matches -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }
+        if ($freshness.blockingMatches -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }
         if ($NativeEntryCase -ceq 'freshness-observation') { Block 'Observation-only baseline finished; activation and USER writes are deliberately not attempted.' }
         if ($NativeEntryCase -cin @('treatment','restore-before-activation')) {
+            if ($null -ne $entryService) { Assert-EntryVerifiedServiceCurrent $entryService }
             Set-EntryOverrides $entryState @{
                 CODEX_CLI_PATH=$BridgeExecutable; MAGPIE_APP_SERVER_BRIDGE_CONFIG=$bridgeConfig
             } { Read-EntryUserEnvironment } { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange }
@@ -2601,6 +2671,7 @@ requires_openai_auth = false
     }
     $entryActivationFloor = [DateTime]::UtcNow
     if ($NativeEntryCase -and $NativeEntryCase -cne 'alias-control') {
+        if ($null -ne $entryService) { Assert-EntryVerifiedServiceCurrent $entryService }
         $entryActivationAttempted=$true
         $result = Invoke-EntryActivation (Join-Path $PSScriptRoot 'desktop-entry-activate.ps1') $aumid
         $activationPid = $result.processId
@@ -3482,6 +3553,14 @@ requires_openai_auth = false
         $report.nativeEntry.broadcastLimit='A sent or timed-out notification does not prove another process refreshed its environment.'
     }
     try {
+        if ($null -ne $entryServiceHandleState.ImageStream) {
+            # Not an owned child: release query/file handles only, even after failed verification.
+            try { $entryServiceHandleState.ImageStream.Dispose() } catch { $entryCleanupError=$true }
+        }
+        if ($null -ne $entryServiceHandleState.Held) {
+            # Also release a retained candidate after failed verification; never terminate it.
+            try { $entryServiceHandleState.Held.Dispose() } catch { $entryCleanupError=$true }
+        }
         if ($null -ne $entryImageObserver) {
             try { $entryImageObserver.Dispose() } catch { $entryCleanupError=$true }
         }

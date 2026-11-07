@@ -20,6 +20,95 @@ function Get-EntryNativeHash([bool]$Entry4239=$false) {
     if ($Entry4239) { return '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' }
     return '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
 }
+function Get-EntryServiceDeclaration([Xml.XmlDocument]$Document) {
+    $foundation='http://schemas.microsoft.com/appx/manifest/foundation/windows10'
+    $desktop6='http://schemas.microsoft.com/appx/manifest/desktop/windows10/6'
+    $extensions=@($Document.SelectNodes("//*[local-name()='Extension' and @Category='windows.service']"))
+    if ($extensions.Count -eq 0) { throw 'service_missing' }
+    if ($extensions.Count -ne 1) { throw 'service_ambiguous' }
+    $extension=$extensions[0]; $container=$extension.ParentNode; $owner=$container.ParentNode
+    $root=$Document.DocumentElement
+    if ($extension.NamespaceURI -cne $desktop6 -or $container.NamespaceURI -cne $foundation -or
+        $root.NamespaceURI -cne $foundation) { throw 'service_namespace' }
+    if ($container.LocalName -cne 'Extensions' -or $root.LocalName -cne 'Package' -or
+        $owner.LocalName -cne 'Application' -or $owner.NamespaceURI -cne $foundation -or $owner.GetAttribute('Id') -cne 'App' -or
+        $owner.ParentNode.LocalName -cne 'Applications' -or $owner.ParentNode.NamespaceURI -cne $foundation -or
+        -not [Object]::ReferenceEquals($owner.ParentNode.ParentNode,$root)) { throw 'service_location' }
+    if ($extension.GetAttribute('Executable').Replace('\','/') -cne 'app/resources/codex-windows-sandbox-service.exe') {
+        throw 'service_path'
+    }
+    $services=@($extension.SelectNodes("*[local-name()='Service']"))
+    if ($services.Count -eq 0) { throw 'service_missing' }
+    if ($services.Count -ne 1) { throw 'service_ambiguous' }
+    $service=$services[0]
+    if ($service.NamespaceURI -cne $desktop6) { throw 'service_namespace' }
+    if ($service.GetAttribute('Name') -cne 'CodexSandboxService.OpenAI.Codex') { throw 'service_name' }
+    # Required schema metadata, not proof of actual account privileges or startup mode.
+    $startup=$service.GetAttribute('StartupType'); $account=$service.GetAttribute('StartAccount')
+    if ($startup -cnotin @('auto','manual','disabled')) { throw 'service_startup' }
+    if ($account -cnotin @('localSystem','localService','networkService')) { throw 'service_account' }
+    # Do not silently ignore an additional launch-parameter channel or namespace.
+    foreach ($node in @($owner,$extension,$service)) {
+        foreach ($attribute in $node.Attributes) {
+            if ($attribute.LocalName -cin @('Arguments','Parameters') -and
+                (-not [Object]::ReferenceEquals($node,$service) -or $attribute.LocalName -cne 'Arguments' -or
+                 $attribute.NamespaceURI -cne '')) { throw 'service_arguments' }
+        }
+    }
+    $arguments=$service.GetAttribute('Arguments')
+    if ($service.HasAttribute('Arguments') -and $arguments -cne '--service') { throw 'service_arguments' }
+    return [ordered]@{name='CodexSandboxService.OpenAI.Codex';path='app/resources/codex-windows-sandbox-service.exe';
+        startupType=$startup;startupTypeSource='declared';startAccount=$account;startAccountSource='declared';
+        arguments=$arguments;argumentsSource=$(if ($service.HasAttribute('Arguments')) { 'declared' } else { 'not-declared' })}
+}
+function Test-EntrySingleServiceCandidate($Facts) {
+    return $Facts.matches -eq 1 -and $Facts.package -eq 1 -and $Facts.desktopName -eq 0 -and
+        $Facts.nativeName -eq 0 -and $Facts.bridgeName -eq 0 -and
+        $Facts.versionProbePid -eq 0 -and $Facts.configurationProbePid -eq 0 -and $Facts.other -eq 1
+}
+function Assert-EntryServiceBinding($Held, [int]$ProcessId, [long]$CreatedTicks, [long]$MinimumCreatedTicks,
+    [string]$Package, [string]$Image, [int]$ServiceProcessId) {
+    if ($ProcessId -le 0 -or $ServiceProcessId -ne $ProcessId -or $CreatedTicks -lt $MinimumCreatedTicks -or
+        -not $Held.Alive -or $Held.CreatedUtcTicks -ne $CreatedTicks -or
+        $Held.PackageRelation($Package) -cne 'expected' -or $Held.ImagePath -ine $Image -or -not $Held.Alive) {
+        throw 'Packaged sandbox service binding unavailable.'
+    }
+}
+function Open-EntryVerifiedService($HeldState, $Identity, [string]$Package, [string]$InstallRoot,
+    [long]$MinimumCreatedTicks) {
+    # Caller owns the handle retained by the original freshness package query. Never reopen its PID.
+    $held=$HeldState.Held; $processId=$HeldState.ProcessId; $created=$HeldState.CreatedTicks; $stream=$null
+    try {
+        if ($Identity.status -cne 'observed' -or $Identity.name -cne 'CodexSandboxService.OpenAI.Codex' -or
+            $Identity.path -cne 'app/resources/codex-windows-sandbox-service.exe' -or
+            $Identity.arguments -cnotin @('','--service') -or $Identity.bytes -lt 1 -or $Identity.bytes -gt 536870912) {
+            throw 'Entry service signed source unavailable.'
+        }
+        Assert-PublicHash $Identity.sha256
+        if (-not [IO.Path]::IsPathRooted($InstallRoot) -or [IO.Path]::GetFullPath($InstallRoot) -cne $InstallRoot) {
+            throw 'Entry service install root is not canonical.'
+        }
+        $image=[IO.Path]::GetFullPath((Join-Path $InstallRoot $Identity.path.Replace('/','\')))
+        Assert-PublicRegularPath $image
+        Assert-EntryServiceBinding $held $ProcessId $created $MinimumCreatedTicks $Package $image `
+            ([DesktopEntryReadOnly.Held]::RunningSandboxServicePid())
+        $HeldState.ImageStream=[IO.File]::Open($image,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+        $stream=$HeldState.ImageStream
+        $hash=Get-BoundedStreamDigest $stream $Identity.bytes 536870912 ([Diagnostics.Stopwatch]::StartNew())
+        if ($stream.Length -ne $Identity.bytes -or $hash -cne $Identity.sha256) { throw 'Entry service image digest mismatch.' }
+        Assert-EntryServiceBinding $held $ProcessId $created $MinimumCreatedTicks $Package $image `
+            ([DesktopEntryReadOnly.Held]::RunningSandboxServicePid())
+        return [ordered]@{Held=$held;ImageStream=$stream;ProcessId=$ProcessId;CreatedTicks=$created;
+            MinimumCreatedTicks=$MinimumCreatedTicks;Package=$Package;Image=$image}
+    } catch {
+        # Caller retains both references even if verification or later reporting fails.
+        throw 'Packaged sandbox service verification unavailable.'
+    }
+}
+function Assert-EntryVerifiedServiceCurrent($Service) {
+    Assert-EntryServiceBinding $Service.Held $Service.ProcessId $Service.CreatedTicks $Service.MinimumCreatedTicks `
+        $Service.Package $Service.Image ([DesktopEntryReadOnly.Held]::RunningSandboxServicePid())
+}
 function Get-EntryRegistrySnapshot([Microsoft.Win32.RegistryKey]$Key, [switch]$RequireAbsent) {
     if ($null -eq $Key) { throw 'Environment registry key is unavailable.' }
     $names = @($Key.GetValueNames())

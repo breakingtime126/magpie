@@ -147,9 +147,10 @@ reads have a five-second CIM operation timeout (not an absolute wall-clock
 guarantee), and their own enclosing `finally` cannot bypass owned cleanup. A PID
 counter is diagnostic, never permission to ignore a process.
 
-The final freshness guard still rejects every original package/name match,
-including a remaining owned-probe PID candidate, an active unrelated match or
-an unclassified package process. Its metadata retains counters for package,
+The final freshness guard counts every original package/name match, including
+a remaining owned-probe PID candidate, an active unrelated match or an
+unclassified package process. Those remain blockers except for the independently
+verified single packaged service described below. Its metadata retains counters for package,
 Desktop/native/bridge names, the two known probe PID candidates and other matches.
 It also reports at most four matching rows from that same already-collected CIM
 snapshot: PID, an ASCII `.exe` basename of at most 96 characters (otherwise
@@ -167,7 +168,7 @@ telemetry. Failed enumeration remains an error, not an empty result.
 `recordScope: cim-snapshot-unbound-to-package-query` is deliberately weaker than
 held-process image evidence: the CIM row and the later PID-based package query
 may refer to different generations. A reported basename does not verify a system
-image or its role. These labels never exempt, terminate or reopen a process and
+image or its role. These row labels themselves never exempt, terminate or reopen a process and
 do not change the nonzero-match stop before USER writes and activation.
 
 The [`0b3fb89f` run](https://github.com/breakingtime126/magpie/actions/runs/42357424834/job/128358472485)
@@ -176,8 +177,81 @@ passed both treatment-scoped safety hosts, profile checks, build, exact signed
 checks. It stopped with one package-only freshness match, no name/probe-PID
 matches, and exact prior USER absence verified. No activation or USER write
 occurred. Its saved report contains only counters and cannot identify that row.
-The bounded row labels above have not yet been exercised on that real process;
-they do not establish a harmless broker or successful normal-entry inheritance.
+At that checkpoint the bounded row labels had not yet been exercised on the
+real process. The follow-up below identifies the basename, not successful
+normal-entry inheritance.
+
+### Independently bound packaged sandbox service
+
+The [`947f3c68` run](https://github.com/breakingtime126/magpie/actions/runs/42358497172/job/128361681974)
+identified its sole package-only match as `codex-windows-sandbox-service.exe`.
+Both safety hosts and profile checks passed; the unchanged guard still stopped
+before USER writes and activation. The basename and CIM row alone did not
+establish a service role or authorize an exception.
+
+The matching [official 0.167.0-alpha.3.2 source](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/windows-sandbox-service/src/service.rs)
+runs this executable through SCM as a sandbox-provisioning broker. It also
+manages installation/runtime ownership, so it is not described as stateless or
+idle. [Packaged services](https://learn.microsoft.com/en-us/uwp/schemas/appxpackage/uapmanifestschema/element-desktop6-service)
+are installed and registered with their app independently of an interactive GUI.
+
+Only the exclusive 4239 entry profile requests extra evidence from the existing
+signed-package reader. The same read-locked, signature-verified and whole-file
+SHA-pinned MSIX must contain exactly one supported `windows.service` declaration:
+the desktop6 namespace under the Desktop application's `Extensions`,
+`CodexSandboxService.OpenAI.Codex`, and the explicit executable
+`app/resources/codex-windows-sandbox-service.exe`. Package-level service declarations
+are not supported by the documented schema. `StartupType` and `StartAccount` are
+required by that schema, which documents no default for either. Every documented
+value is accepted and recorded with source `declared`, rather than assuming
+`auto` or `localSystem`. These fields describe the declaration, not actual running
+privileges or startup behavior, and do not substitute for the held/SCM identity.
+Missing or invalid required values stop with a fixed `service_startup` or
+`service_account` reason. Optional arguments may be absent (`not-declared`) or
+exactly `--service` (`declared`), as supported by the reviewed executable. Extra
+parameter channels, unknown arguments and explicitly invalid empty arguments
+remain blockers; no unknown text is emitted.
+The same bounded ZIP reader derives the executable digest and byte length from
+that exact package entry, within its existing 120-second package budget and a
+512 MiB entry bound. Service-specific failures retain only fixed reasons for
+missing/ambiguous declaration, namespace, location, path, name, startup, account,
+arguments or digest (`service_digest`); unexpected parser failures use
+`service_declaration_unavailable`. Other profiles do not request this contract.
+
+The freshness scan retains every raw counter. Only one package-only match with
+no Desktop/native/bridge name or owned-probe match is a verification candidate.
+A fixed basename selects a candidate only, never an exemption. The original
+package-query callback opens and retains the existing query-limited/synchronize
+`DesktopEntryReadOnly.Held` in-process, not through another observation child.
+That very same handle supplies both the raw package match and subsequent checks;
+there is no PID reopen gap after the package query. The earlier CIM snapshot is
+still not generation authority. Its held process must be alive,
+have the exact installed package identity and expected canonical non-reparse
+image path, and have been created during this run. Exact creation time is read
+from that handle, not compared against rounded CIM timestamps. A read-locked
+image stream must match the signed entry's bytes and SHA. SCM query-only access
+must simultaneously identify the exact named service as a running own-process
+service with that PID. Pending/stopped/paused, unavailable reads, hash/path/package
+mismatches and additional matches remain blockers.
+
+Only successful verification sets `verifiedPackagedServices: 1` and
+`blockingMatches: 0`; raw `matches` remains 1. The same held generation, package,
+image and SCM PID are checked again before USER mutation and before AUMID
+activation. The file/process references are retained even on verification failure;
+handles remain held until `finally`, after USER restoration, and are only
+disposed. Disposal failure fails cleanup but does not skip the existing
+activation-root cleanup. No service start/stop/configuration,
+privilege change, IPC request or sandbox setup is performed by this verification.
+Ordinary package installation may start its declared service; it is not an owned
+test child and is never a termination target. Full package-family exit remains
+unproven, as does the absence of service-owned state.
+
+Synthetic manifest/binding cases and the existing real owned-handle fixture cover
+missing attributes, ambiguous declarations, dirty matches, SCM state/PID,
+creation identity, package and image mismatch. They do not verify the real 4239
+service declaration or impersonate a signature/SCM result. This new classification
+has not yet run on Windows while authoring the candidate; exact-head CI must
+establish the actual signed-entry and held-service chain before claiming success.
 
 The [first run at `46248d03`](https://github.com/breakingtime126/magpie/actions/runs/42310342651)
 passed the offline safety gate in both hosts, but all four package cases stopped
@@ -518,12 +592,14 @@ auth, control-plane configuration, live fixtures or UI input. The old observer
 fixture package pin and native inference slice remain unchanged because neither
 is a 4239 treatment runtime path.
 
-The actual treatment reuses the existing strict fresh-state predicate, two USER
+The actual treatment reuses the strict fresh-state predicate, two USER
 variables, readback and bounded notification, override-free AUMID caller,
-held activation identity and exact-root cleanup. Any prior package/name match
-still blocks before USER writes. Rollback still attempts both original absences
-and verifies them before process cleanup, including on failure. No broker label
-waives freshness and no child/name-based kill or scratch deletion is added.
+held activation identity and exact-root cleanup. Every prior Desktop/native/bridge
+or unknown package match still blocks before USER writes; only the single
+independently verified packaged sandbox service above is classified separately.
+Rollback still attempts both original absences
+and verifies them before process cleanup, including on failure. No basename or
+broker label waives freshness and no child/name-based kill or scratch deletion is added.
 
 Success means only that the original AUMID activation selected the exact bridge
 image and persistent USER state was restored, with the held activation root

@@ -65,6 +65,18 @@ namespace DesktopEntryReadOnly {
   static extern bool QueryFullProcessImageName(IntPtr value,uint flags,StringBuilder path,ref uint size);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode)]
   static extern int GetPackageFullName(IntPtr value,ref uint size,StringBuilder name);
+   [DllImport("kernel32.dll",SetLastError=true)]
+   static extern bool GetProcessTimes(IntPtr value,out long created,out long exited,out long kernel,out long user);
+   [DllImport("advapi32.dll",CharSet=CharSet.Unicode,ExactSpelling=true,SetLastError=true)]
+   static extern IntPtr OpenSCManagerW(string machine,string database,uint access);
+   [DllImport("advapi32.dll",CharSet=CharSet.Unicode,ExactSpelling=true,SetLastError=true)]
+   static extern IntPtr OpenServiceW(IntPtr manager,string name,uint access);
+   [DllImport("advapi32.dll")] static extern bool CloseServiceHandle(IntPtr value);
+   [StructLayout(LayoutKind.Sequential)] struct ServiceStatus {
+    public uint Type, State, Accepted, Win32Exit, ServiceExit, Checkpoint, WaitHint, ProcessId, Flags;
+   }
+   [DllImport("advapi32.dll",SetLastError=true)]
+   static extern bool QueryServiceStatusEx(IntPtr service,int level,out ServiceStatus status,int size,out int needed);
   public Held(int id) {
    if(id<=0)throw new InvalidOperationException();
    // Query-limited + synchronize only: no terminate, write, VM-read or injection rights.
@@ -72,6 +84,32 @@ namespace DesktopEntryReadOnly {
    if(handle==IntPtr.Zero)throw new InvalidOperationException();
   }
   public bool Alive {get {return handle!=IntPtr.Zero && WaitForSingleObject(handle,0)==258;}}
+   public long CreatedUtcTicks {get {
+    long created,exited,kernel,user;
+    if(!GetProcessTimes(handle,out created,out exited,out kernel,out user))throw new InvalidOperationException();
+    return DateTime.FromFileTimeUtc(created).Ticks;
+   }}
+   public static int RunningSandboxServicePid() {
+    // SCM connect + service query-status only. No start, stop, configure or security rights.
+    IntPtr manager=OpenSCManagerW(null,null,1), service=IntPtr.Zero;
+    try {
+     if(manager==IntPtr.Zero)throw new InvalidOperationException();
+     service=OpenServiceW(manager,"CodexSandboxService.OpenAI.Codex",4);
+     if(service==IntPtr.Zero)throw new InvalidOperationException();
+     ServiceStatus status; int needed;
+     if(!QueryServiceStatusEx(service,0,out status,Marshal.SizeOf(typeof(ServiceStatus)),out needed))throw new InvalidOperationException();
+     return RequireRunningServicePid(status.Type,status.State,status.ProcessId);
+    } finally {
+     bool closed=true;
+     if(service!=IntPtr.Zero && !CloseServiceHandle(service))closed=false;
+     if(manager!=IntPtr.Zero && !CloseServiceHandle(manager))closed=false;
+     if(!closed)throw new InvalidOperationException("Service query handle closure unavailable.");
+    }
+   }
+   public static int RequireRunningServicePid(uint type,uint state,uint id) {
+    if(state!=4 || (type!=0x10 && type!=0x210) || id==0 || id>Int32.MaxValue)throw new InvalidOperationException();
+    return (int)id;
+   }
   public string ImagePath {get {
    uint size=32768;var path=new StringBuilder((int)size);
    if(!QueryFullProcessImageName(handle,0,path,ref size) || size==0)throw new InvalidOperationException();
@@ -85,7 +123,9 @@ namespace DesktopEntryReadOnly {
    if(GetPackageFullName(handle,ref size,name)!=0)return "unavailable";
    return String.Equals(name.ToString(),expected,StringComparison.Ordinal)?"expected":"other";
   }
-  public void Dispose() {if(handle!=IntPtr.Zero){CloseHandle(handle);handle=IntPtr.Zero;}}
+   public void Dispose() {
+    if(handle!=IntPtr.Zero){if(!CloseHandle(handle))throw new InvalidOperationException("Process query handle closure unavailable.");handle=IntPtr.Zero;}
+   }
  }
 }
 '@

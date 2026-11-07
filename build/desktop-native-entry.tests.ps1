@@ -169,6 +169,73 @@ $emptyFacts=Get-EntryFreshnessEvidence @() 'fixture.package' 'fixture-bridge.exe
 Pass ($emptyFacts.matches -eq 0 -and $emptyFacts.records.Count -eq 0 -and -not $emptyFacts.recordsTruncated) 'empty input produces no invented process evidence'
 Reject { Get-EntryFreshnessEvidence $rows '' 'fixture-bridge.exe' 11 12 { $null } } 'empty expected package never matches unknown identities'
 Reject { Get-EntryFreshnessEvidence $rows 'fixture.package' 'fixture-bridge.exe' 11 12 { throw 'synthetic read failure' } } 'freshness read errors fail closed'
+# Synthetic manifest only. This is not a signed package, SCM query or service exemption.
+$serviceExtension='<d:Extension Category="windows.service" Executable="app/resources/codex-windows-sandbox-service.exe"><d:Service Name="CodexSandboxService.OpenAI.Codex" StartupType="auto" StartAccount="localSystem" /></d:Extension>'
+$serviceManifest='<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:d="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"><Applications><Application Id="App"><Extensions>'+$serviceExtension+'</Extensions></Application></Applications></Package>'
+$serviceDeclaration=Get-EntryServiceDeclaration ([xml]$serviceManifest)
+Pass ($serviceDeclaration.name -ceq 'CodexSandboxService.OpenAI.Codex' -and
+    $serviceDeclaration.path -ceq 'app/resources/codex-windows-sandbox-service.exe' -and
+    $serviceDeclaration.startupType -ceq 'auto' -and $serviceDeclaration.startAccount -ceq 'localSystem') 'exact explicit service declaration is required'
+$packageService=$serviceManifest.Replace('<Applications><Application Id="App">','').Replace('</Application></Applications>','')
+Reject { Get-EntryServiceDeclaration ([xml]$packageService) } 'windows.service belongs to application Extensions, never package Extensions'
+Pass ($serviceDeclaration.startupTypeSource -ceq 'declared' -and $serviceDeclaration.startAccountSource -ceq 'declared' -and
+    $serviceDeclaration.argumentsSource -ceq 'not-declared') 'schema metadata source does not invent runtime account or arguments'
+foreach ($startup in @('manual','disabled')) {
+    $declared=Get-EntryServiceDeclaration ([xml]$serviceManifest.Replace('StartupType="auto"',('StartupType="'+$startup+'"')))
+    Pass ($declared.startupType -ceq $startup -and $declared.startupTypeSource -ceq 'declared') 'other documented startup values are metadata, not a presumed auto identity'
+}
+foreach ($account in @('localService','networkService')) {
+    $declared=Get-EntryServiceDeclaration ([xml]$serviceManifest.Replace('StartAccount="localSystem"',('StartAccount="'+$account+'"')))
+    Pass ($declared.startAccount -ceq $account -and $declared.startAccountSource -ceq 'declared') 'other documented accounts are metadata, not a presumed LocalSystem identity'
+}
+$serviceArguments=$serviceManifest.Replace('StartAccount="localSystem"','StartAccount="localSystem" Arguments="--service"')
+$declared=Get-EntryServiceDeclaration ([xml]$serviceArguments)
+Pass ($declared.arguments -ceq '--service' -and $declared.argumentsSource -ceq 'declared') 'only the source-reviewed optional service argument is accepted'
+foreach ($change in @(
+    @($serviceExtension,'','service_missing'), @($serviceExtension,($serviceExtension+$serviceExtension),'service_ambiguous'),
+    @('desktop/windows10/6','desktop/windows10/unknown','service_namespace'), @('Id="App"','Id="Other"','service_location'),
+    @('Executable="app/resources/codex-windows-sandbox-service.exe"','','service_path'),
+    @('app/resources/codex-windows-sandbox-service.exe','app/resources/../codex-windows-sandbox-service.exe','service_path'),
+    @('Name="CodexSandboxService.OpenAI.Codex"','','service_name'), @('StartupType="auto"','','service_startup'),
+    @('StartAccount="localSystem"','','service_account'), @('StartupType="auto"','StartupType="private-startup"','service_startup'),
+    @('StartAccount="localSystem"','StartAccount="private-account"','service_account'),
+    @('StartAccount="localSystem"','StartAccount="localSystem" Arguments="private-unreviewed-argument"','service_arguments'),
+    @('StartAccount="localSystem"','StartAccount="localSystem" Arguments=""','service_arguments'),
+    @('StartAccount="localSystem"','StartAccount="localSystem" d:Arguments="--service"','service_arguments'),
+    @('Category="windows.service"','Category="windows.service" d:Parameters="private-extra-argument"','service_arguments'),
+    @('Id="App"','Id="App" d:Parameters="private-extra-argument"','service_arguments')
+)) {
+    $changedManifest=$serviceManifest.Replace($change[0],$change[1]); $declarationFailure=''
+    try { $null=Get-EntryServiceDeclaration ([xml]$changedManifest) } catch { $declarationFailure=$_.Exception.Message }
+    Pass ($declarationFailure -ceq $change[2] -and $declarationFailure -notmatch 'private-') 'invalid declaration fails with its fixed reason and never leaks unknown data'
+}
+$singleServiceFacts=[ordered]@{matches=1;package=1;desktopName=0;nativeName=0;bridgeName=0;versionProbePid=0;configurationProbePid=0;other=1}
+Pass (Test-EntrySingleServiceCandidate $singleServiceFacts) 'one package-only match is only a candidate for independent verification'
+foreach ($field in @('matches','package','desktopName','nativeName','bridgeName','versionProbePid','configurationProbePid','other')) {
+    $changedFacts=[ordered]@{};foreach ($key in $singleServiceFacts.Keys) { $changedFacts[$key]=$singleServiceFacts[$key] }
+    $changedFacts[$field]=[int]$changedFacts[$field]+1
+    Reject { if (-not (Test-EntrySingleServiceCandidate $changedFacts)) { throw 'blocked' } } 'additional, native, Desktop or bridge matches cannot be exempted'
+}
+function New-ServiceHeldMock {
+    $mock=[pscustomobject]@{Alive=$true;CreatedUtcTicks=[long]200;ImagePath='C:\package\service.exe';Relation='expected'}
+    $mock | Add-Member ScriptMethod PackageRelation { param($Expected) return $this.Relation }
+    return $mock
+}
+$heldService=New-ServiceHeldMock
+Pass (@(Assert-EntryServiceBinding $heldService 31 200 100 'fixture.package' 'C:\package\service.exe' 31).Count -eq 0) 'held service binding accepts only complete matching evidence'
+foreach ($changedField in @('Alive','CreatedUtcTicks','ImagePath','Relation')) {
+    $heldService=New-ServiceHeldMock
+    switch ($changedField) {
+        'Alive' { $heldService.Alive=$false }
+        'CreatedUtcTicks' { $heldService.CreatedUtcTicks=201 }
+        'ImagePath' { $heldService.ImagePath='C:\other\service.exe' }
+        'Relation' { $heldService.Relation='other' }
+    }
+    Reject { Assert-EntryServiceBinding $heldService 31 200 100 'fixture.package' 'C:\package\service.exe' 31 } 'exit, generation, image or package mismatch remains blocking'
+}
+$heldService=New-ServiceHeldMock
+Reject { Assert-EntryServiceBinding $heldService 31 200 100 'fixture.package' 'C:\package\service.exe' 32 } 'SCM PID mismatch remains blocking'
+Reject { Assert-EntryServiceBinding $heldService 31 200 201 'fixture.package' 'C:\package\service.exe' 31 } 'a service predating this run remains blocking'
 $workflow='breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry.yml@refs/heads/experiment/app-server-bridge-v0.1.3035'
 foreach ($case in @('baseline','treatment','restore-before-activation','alias-control','freshness-observation')) {
     $mode='bridge'; if ($case -cin @('baseline','freshness-observation')) { $mode='baseline' }
@@ -550,11 +617,23 @@ try {
     [IO.Directory]::Delete($metadataScratch)
 }
 Initialize-EntryHeldObservation
+Pass ([DesktopEntryReadOnly.Held]::RequireRunningServicePid(0x210,4,31) -eq 31) 'packaged own-process SCM running PID is eligible for binding only'
+Pass ([DesktopEntryReadOnly.Held]::RequireRunningServicePid(0x10,4,31) -eq 31) 'native own-process status still requires the independent held package binding'
+foreach ($serviceState in @(1,2,3,5,6,7)) {
+    Reject { [DesktopEntryReadOnly.Held]::RequireRunningServicePid(0x210,$serviceState,31) } 'SCM stopped, pending or paused state is not accepted'
+}
+Reject { [DesktopEntryReadOnly.Held]::RequireRunningServicePid(0x20,4,31) } 'shared-process service is not the reviewed own-process service'
+foreach ($serviceType in @(0x1,0x50,0x110,0x410)) {
+    Reject { [DesktopEntryReadOnly.Held]::RequireRunningServicePid($serviceType,4,31) } 'driver, user, interactive or unknown SCM type flags cannot be accepted'
+}
+Reject { [DesktopEntryReadOnly.Held]::RequireRunningServicePid(0x210,4,0) } 'SCM zero PID is not an identity'
+Reject { [DesktopEntryReadOnly.Held]::RequireRunningServicePid(0x210,4,[uint32]::MaxValue) } 'SCM PID outside the held-process interface is not accepted'
 $heldSelf=$null
 try {
     $heldSelf=[DesktopEntryReadOnly.Held]::new($PID)
     Pass ($heldSelf.Alive -and $heldSelf.ImagePath -ieq $hostPath) 'query-only held handle captures exact current image metadata'
     Pass ($heldSelf.PackageRelation('fixture.package') -cin @('none','other')) 'package query does not invent expected identity'
+    Pass ($heldSelf.CreatedUtcTicks -eq (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks) 'creation time is taken from the held process, never rounded CIM metadata'
 } finally { if ($null -ne $heldSelf) { $heldSelf.Dispose() } }
 # Exercise zero records first, preserving the complete input and interop path
 # without opening any process handle. This does not skip the owned-process case.
@@ -591,11 +670,46 @@ try {
 # Observation-only mode has two unconditional stop paths before environment writes or activation.
 $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'))
 $observationOffset=$source.IndexOf('$report.nativeEntry.matchedProcessObservation=Invoke-EntryFreshnessObservation')
-$strictBlock=$source.IndexOf("if (`$freshness.matches -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }")
+$strictBlock=$source.IndexOf("if (`$freshness.blockingMatches -ne 0) { Block 'A prior Desktop or bridge process prevents a fresh native-entry observation.' }")
 $zeroBlock=$source.IndexOf("if (`$NativeEntryCase -ceq 'freshness-observation') { Block 'Observation-only baseline finished; activation and USER writes are deliberately not attempted.' }")
 $writeOffset=$source.IndexOf('            Set-EntryOverrides $entryState')
 Pass ($observationOffset -gt 0 -and $strictBlock -gt $observationOffset -and $zeroBlock -gt $strictBlock -and
     $writeOffset -gt $zeroBlock) 'inspection cannot fall through into writes or activation even with zero matches'
+# The sole runtime exemption must remain entry-only and downstream of full verification.
+$serviceExemptions=@($ast.FindAll({param($node)
+    $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $node.Left.Extent.Text -ceq '$freshness.blockingMatches' -and $node.Right.Extent.Text -ceq '0'
+},$true))
+Pass ($serviceExemptions.Count -eq 1) 'there is only one service exemption assignment'
+$serviceBody=$serviceExemptions[0].Parent
+$serviceGate=$serviceBody.Parent.Parent.Parent
+Pass ($serviceGate -is [Management.Automation.Language.IfStatementAst] -and
+    $serviceGate.Clauses[0].Item1.Extent.Text.Contains('$EnableReviewedEntry4239 -and (Test-EntrySingleServiceCandidate $freshness)') -and
+    $serviceGate.Clauses[0].Item1.Extent.Text.Contains('$matchedProcessIds[0] -eq $entryServiceHandleState.ProcessId')) 'only one held package-only candidate in the exclusive entry profile can reach the exemption'
+$serviceVerification=@($serviceBody.FindAll({param($node)
+    $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Open-EntryVerifiedService'
+},$true))
+Pass ($serviceVerification.Count -eq 1 -and $serviceVerification[0].Extent.StartOffset -lt $serviceExemptions[0].Extent.StartOffset -and
+    $serviceVerification[0].CommandElements[1].Extent.Text -ceq '$entryServiceHandleState') 'successful verification of the retained package-query handle precedes exemption'
+$serviceOpenText=(Get-Command Open-EntryVerifiedService).ScriptBlock.ToString()
+Pass (-not $serviceOpenText.Contains('::new($ProcessId)') -and $serviceOpenText.Contains('$held=$HeldState.Held') -and
+    $serviceOpenText.Contains('$HeldState.ImageStream=[IO.File]::Open(')) 'verification never reopens the PID and preserves its file handle on failure'
+Pass ($source.Contains('$entryServiceHandleState.Held=[DesktopEntryReadOnly.Held]::new($ProcessId)') -and
+    $source.Contains('$relation=$entryServiceHandleState.Held.PackageRelation($app.PackageFullName)')) 'original candidate package query uses the retained handle'
+$serviceIdentityCalls=@($ast.FindAll({param($node)
+    $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Get-DesktopPackageIdentityEvidence' -and
+    $node.Extent.Text.Contains('-RequireEntryService:')
+},$true))
+Pass ($serviceIdentityCalls.Count -eq 1 -and
+    $serviceIdentityCalls[0].Extent.Text.Contains('-RequireEntryService:$EnableReviewedEntry4239')) 'only entry requests the additional signed service contract'
+Pass ($source.Replace("`r`n","`n").Contains("if (`$null -ne `$entryService) { Assert-EntryVerifiedServiceCurrent `$entryService }`n            Set-EntryOverrides") -and
+    $source.Replace("`r`n","`n").Contains("if (`$null -ne `$entryService) { Assert-EntryVerifiedServiceCurrent `$entryService }`n        `$entryActivationAttempted=`$true`n        `$result = Invoke-EntryActivation")) 'same held service and SCM PID are rechecked before USER writes and activation'
+$serviceRestoreOffset=$source.LastIndexOf('Restore-EntryOverrides $entryState')
+$serviceFileCloseOffset=$source.IndexOf('$entryServiceHandleState.ImageStream.Dispose()')
+$serviceHandleCloseOffset=$source.IndexOf('$entryServiceHandleState.Held.Dispose()')
+Pass ($serviceFileCloseOffset -gt $serviceRestoreOffset -and $serviceHandleCloseOffset -gt $serviceFileCloseOffset -and
+    $source.Contains('try { $entryServiceHandleState.ImageStream.Dispose() } catch { $entryCleanupError=$true }') -and
+    $source.Contains('try { $entryServiceHandleState.Held.Dispose() } catch { $entryCleanupError=$true }')) 'restoration precedes independent checked service-handle disposal on success and failure'
 # Actual Windows lifetime oracle: keep an exited process handle, then close it.
 # A separate live fixture remains a blocker, and is never passed to that cleanup.
 $exitedFixture=$null; $liveFixture=$null
