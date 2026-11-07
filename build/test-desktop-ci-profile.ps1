@@ -2279,11 +2279,11 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
     $guard=$proof[0].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
     if ($guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedBuild4239 -or $EnableReviewedEntry4239') { throw '4239 proof escaped the two independent opt-ins.' }
     $selectedCalls=@{
-        New-DesktopBridgeSettings='-Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239'
-        Assert-DesktopCompatibilityPackage='-Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)'
-        Wait-LiveReady='-Build4239 $EnableReviewedBuild4239'
-        Complete-LiveFixture='-Build4239 $EnableReviewedBuild4239'
-        ConvertTo-LiveConfiguration='-Build4239 $EnableReviewedBuild4239'
+        'New-DesktopBridgeSettings'='-Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239'
+        'Assert-DesktopCompatibilityPackage'='-Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)'
+        'Wait-LiveReady'='-Build4239 $EnableReviewedBuild4239'
+        'Complete-LiveFixture'='-Build4239 $EnableReviewedBuild4239'
+        'ConvertTo-LiveConfiguration'='-Build4239 $EnableReviewedBuild4239'
     }
     foreach($name in $selectedCalls.Keys) {
         $call=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq $name},$true))
