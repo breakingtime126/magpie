@@ -65,7 +65,7 @@ func TestThreadRevertBeforeTurnIDRoutesToOwner(t *testing.T) {
 				// Native ThreadRevertResponse returns empty turns and opaque cursors.
 				out = reply(t, r, out[0], string(raw(map[string]any{
 					"thread":               map[string]any{"id": thread, "modelProvider": backend, "turns": []any{}},
-					"turnsBackwardsCursor":  "opaque-turn-cursor",
+					"turnsBackwardsCursor": "opaque-turn-cursor",
 					"itemsBackwardsCursor": "opaque-item-cursor",
 				})))
 				if len(out) != 1 || out[0].Backend != "" {
