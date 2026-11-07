@@ -210,6 +210,12 @@ try {
         $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
         Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'model menu uses fixed typed reads and one explicit Button Expand only'
     }
+    foreach ($spec in @(@('open-model-submenu','mnu-55alpha-abcd','ui invoke mnu-55alpha-abcd --action expand -w 123 --json'),
+        @('resolve-submodel-button','','ui get-property 5.5 [alpha] --type Button --property AutomationId -w 123 --json'),
+        @('resolve-submodel-menuitem','','ui get-property 5.5 [alpha] --type MenuItem --property AutomationId -w 123 --json'))) {
+        $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
+        Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'submenu has only fixed typed alpha reads and explicit Expand'
+    }
     Reject { New-WinAppWelcomeStart $tool 123 'open-model-menu' '5.5 [alpha]' } 'model menu cannot invoke a text query'
     Reject { New-WinAppWelcomeStart $tool 123 'resolve-model-effort' 'Try again' } 'model menu resolver cannot target setup'
     Reject { New-WinAppWelcomeStart $tool 123 'confirm-skip' 'Go to ChatGPT' } 'confirmation never invokes text or promoted selectors'
@@ -476,6 +482,36 @@ function ModelPage([switch]$Short,[switch]$Opened,[switch]$MissingBeta) {
     $page.windows[0].elementCount=$page.windows[0].elements.Count
     return $page
 }
+function SubmenuPage([string]$Variant='normal') {
+    $page=Page -Next
+    $name=$(if($Variant -ceq 'combo'){"Medium`n5.5 [alpha]"}elseif($Variant -ceq 'othername'){'Choose 5.5 [alpha]'}else{'5.5 [alpha]'})
+    $type=$(if($Variant -ceq 'menuitem'){'MenuItem'}else{'Button'})
+    $slug=$(if($Variant -ceq 'menuitem'){'mnu-55alpha-bbbb'}elseif($Variant -ceq 'combo'){'btn-medium55alpha-bbbb'}else{'btn-55alpha-bbbb'})
+    $node=Node $name $type $slug;$node.isInvokable=$true;$node.expandState='collapsed'
+    if($Variant -ceq 'promoted'){$node.automationId='submodel';$node.selector='submodel'}
+    if($Variant -ceq 'offscreen'){$node.isOffscreen=$true}
+    if($Variant -ceq 'disabled'){$node.isEnabled=$false}
+    if($Variant -ceq 'expanded'){$node.expandState='expanded'}
+    if($Variant -ceq 'wrong-type'){$node.type='Custom'}
+    $page.windows[0].elements=@((Node 'Medium' 'Text'),$node);$page.windows[0].elementCount=2
+    if($Variant -ceq 'duplicate'){$page.windows[0].elements+=@(Node 'GPT-5.5 [alpha]' 'MenuItem' 'mnu-gpt55alpha-cccc');$page.windows[0].elementCount++}
+    return $page
+}
+foreach ($variant in @('normal','combo','menuitem','offscreen','othername','disabled','expanded','wrong-type','duplicate')) {
+    $page=ConvertTo-WinAppWelcomeSnapshot (Json (SubmenuPage $variant)) 123
+    $observation=Get-WinAppModelSubmenuObservation $page
+    Pass (($observation.decision -ceq 'ready') -eq ($variant -cin @('normal','combo','menuitem'))) 'only observed known visible collapsed submenu types admit an action'
+    Pass ($observation.nameEvidence.Count -eq $(if($variant -ceq 'duplicate'){2}else{1}) -and $observation.nameEvidence[0].isOffscreen -eq ($variant -ceq 'offscreen')) 'same-tree evidence retains offscreen identity without authorizing it'
+    if ($variant -ceq 'combo') { Pass ($observation.nameEvidence[0].nameMatch -ceq 'normalized') 'only whitespace is normalized for the screenshot-backed combination' }
+}
+$bounded=SubmenuPage;$bounded.windows[0].elements+=@((Node 'C:\private\[alpha]' 'Text'),(Node ('x'*121+'[alpha]') 'Text'))
+1..4 | ForEach-Object { $bounded.windows[0].elements+=@(Node ('Related '+$_+' [alpha]') 'Text') }
+$bounded.windows[0].elementCount=$bounded.windows[0].elements.Count
+$observation=Get-WinAppModelSubmenuObservation (ConvertTo-WinAppWelcomeSnapshot (Json $bounded) 123)
+Pass ($observation.nameEvidenceLimited -and $observation.nameEvidence.Count -le 4 -and (Json $observation) -notmatch 'private|x{121}') 'related evidence is bounded and omits paths and oversized names'
+$protected=SubmenuPage;$protected.windows[0].elements+=@(Node 'Permission required' 'Text');$protected.windows[0].elementCount++
+$observation=Get-WinAppModelSubmenuObservation (ConvertTo-WinAppWelcomeSnapshot (Json $protected) 123)
+Pass ($observation.decision -ceq 'protected_screen' -and $observation.nameEvidence.Count -eq 0) 'protected scene does not expose related names or authorize submenu'
 $menuCalls=@($harness.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-WinAppModelMenu'},$true))
 Pass ($menuCalls.Count -eq 1 -and $menuCalls[0].Extent.Text -ceq 'Invoke-WinAppModelMenu $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveSkipConfirmation $modelMenuDiagnostic') 'model menu shares original window guard and deadline once'
 $menuGuard=$menuCalls[0].Parent
@@ -531,6 +567,15 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
         $pattern=$(if($script:menuMode -ceq 'wrong-pattern'){'InvokePattern'}else{'ExpandCollapsePattern'})
         return Json ([ordered]@{elementId=$Selector;pattern=$pattern;requestedAction=$action;performedAction=$action;hwnd=123})
     }
+    if ($Operation -ceq 'open-model-submenu') {
+        $script:menuActions++
+        if ($script:menuMode -ceq 'submenu-uncertain') { throw 'Synthetic uncertain submenu.' }
+        return Json ([ordered]@{elementId=$Selector;pattern='ExpandCollapsePattern';requestedAction='expand';performedAction='expand';hwnd=123})
+    }
+    if ($Operation -ceq 'resolve-submodel-button') {
+        $resolved=Resolution '5.5 [alpha]' 'Button' 'submodel' 'btn-submodel-bbbb';$resolved.element.expandState='collapsed'
+        return Json $resolved
+    }
     if ($Operation -ceq 'resolve-model-effort') {
         $resolved=Resolution '5.5 [alpha] Medium' 'Button' 'modelmenu' 'btn-modelmenu-abcd'
         if ($script:menuMode -cne 'resolution-missing-state') { $resolved.element.expandState=$(if($script:menuMode -ceq 'resolution-expanded'){'expanded'}else{'collapsed'}) }
@@ -539,6 +584,9 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     if ($Operation -cne 'read') { throw 'No selection send or setup operation allowed.' }
     if ($script:menuActions -gt 0) {
         $script:menuPostRead=$true
+        if ($script:menuActions -eq 1 -and $script:menuMode -like 'submenu-*') {
+            return Json (SubmenuPage ($script:menuMode.Substring(8)))
+        }
         $page=ModelPage -Opened -MissingBeta:($script:menuMode -ceq 'missing-beta')
         if ($script:menuMode -ceq 'next-protected') { $page.windows[0].elements[0].name='Sign in to ChatGPT' }
         return Json $page
@@ -548,14 +596,28 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     if ($script:menuMode -ceq 'disabled') { $page.windows[0].elements[1].isEnabled=$false }
     return Json $page
 }
-foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wrong-pattern','resolution-missing-state','resolution-expanded','missing-beta','next-protected','final-identity')) {
+foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wrong-pattern','resolution-missing-state','resolution-expanded','missing-beta','next-protected','final-identity','submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted','submenu-offscreen','submenu-othername','submenu-uncertain')) {
     $script:menuMode=$menuMode;$script:menuActions=0;$script:menuOperations=@();$script:menuPostRead=$false
     $script:menuWatch=[Diagnostics.Stopwatch]::StartNew();$diagnostic=[ordered]@{}
     $identity={if ($script:menuMode -ceq 'final-identity' -and $script:menuPostRead) { throw 'Synthetic identity change.' }}
     $menu=Invoke-WinAppModelMenu $null 123 $identity $menuWatch $confirmedConfirmation $diagnostic
-    Pass ($menuActions -le 1) 'model menu never retries or selects an item'
-    Pass ((Json $menu) -notmatch 'btn-|5.5|Try again|Sign in|What should') 'menu report contains fixed enums and counts, not raw UI text'
-    if ($menuMode -cin @('normal','short','promoted','missing-beta','next-protected')) {
+    Pass ($menuActions -le 2 -and @($menuOperations | Where-Object { $_ -ceq 'open-model-menu' }).Count -le 1 -and
+        @($menuOperations | Where-Object { $_ -ceq 'open-model-submenu' }).Count -le 1) 'each menu level expands at most once and never selects an item'
+    Pass ((Json $menu) -notmatch 'btn-|mnu-|Try again|Sign in|What should') 'menu evidence never exposes selectors or unrelated UI text'
+    if ($menuMode -like 'submenu-*') {
+        Pass ($menu.initialLabels.betaVisibleCount -eq 0 -and $menu.submenu.observation.nameEvidence.Count -le 4) 'first panel evidence remains distinct and bounded'
+        if ($menuMode -cin @('submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted')) {
+            $expected=$(if($menuMode -ceq 'submenu-promoted'){'read,open-model-menu,read,resolve-submodel-button,open-model-submenu,read'}else{'read,open-model-menu,read,open-model-submenu,read'})
+            Pass ($menu.status -ceq 'observed' -and $menu.actions -eq 2 -and $menu.submenu.expansionInvoked -and
+                -not $diagnostic.partialActionUncertain -and ($menuOperations -join ',') -ceq $expected) 'same already-read tree admits one strict submenu expansion then one final read'
+        } elseif ($menuMode -ceq 'submenu-uncertain') {
+            Pass ($menu.status -ceq 'stopped' -and $menu.actions -eq 2 -and $diagnostic.partialActionUncertain -and
+                ($menuOperations -join ',') -ceq 'read,open-model-menu,read,open-model-submenu') 'uncertain submenu stops without another action or read'
+        } else {
+            Pass ($menu.actions -eq 1 -and $menu.submenu.actions -eq 0 -and -not $diagnostic.partialActionUncertain -and
+                ($menuOperations -join ',') -ceq 'read,open-model-menu,read') 'unknown name or offscreen target gives evidence without a guessed action'
+        }
+    } elseif ($menuMode -cin @('normal','short','promoted','missing-beta','next-protected')) {
         $expected=$(if($menuMode -ceq 'promoted'){'read,resolve-model-effort,open-model-menu,read'}else{'read,open-model-menu,read'})
         Pass ($menu.status -ceq 'observed' -and $menu.actions -eq 1 -and $menu.expansionInvoked -and -not $diagnostic.partialActionUncertain -and
             ($menuOperations -join ',') -ceq $expected) 'one bounded explicit expansion followed only by a read'
@@ -572,7 +634,7 @@ foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wron
     }
     $prior=[pscustomobject]@{status='observed';stage='confirmation';reason='fixed';exitCode=0}
     Pass (((Get-WinAppModelMenuOutcome $prior $menu $true $diagnostic.partialActionUncertain).exitCode -eq 0) -eq
-        ($menuMode -cin @('normal','short','promoted'))) 'only both known labels and confirmed capture complete the menu observation'
+        ($menuMode -cin @('normal','short','promoted','submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted'))) 'only both known labels and confirmed capture complete the menu observation'
     Pass ((Get-WinAppModelMenuOutcome $prior $menu $false $false).exitCode -eq 1) 'missing menu pixels blocks completion'
 }
 $script:menuOperations=@();$diagnostic=[ordered]@{}

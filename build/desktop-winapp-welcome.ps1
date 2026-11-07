@@ -35,8 +35,24 @@ function ConvertTo-WinAppWelcomeSnapshot([string]$Text,[long]$WindowHandle) {
     $value=ConvertFrom-LiveJSON $Text 262144
     $pending=[Collections.Generic.Stack[object]]::new(); $nodes=[Collections.Generic.List[object]]::new()
     foreach ($node in $value.windows[0].elements) { $pending.Push($node) }
+    $alphaEvidence=[Collections.Generic.List[object]]::new();$alphaTotal=0;$alphaEvidenceLimited=$false
     while ($pending.Count) {
         $node=$pending.Pop()
+        # Tiny authorized evidence from the same tree, including offscreen nodes.
+        if ($node.PSObject.Properties['name'] -and $node.name.Contains('[alpha]')) {
+            $alphaTotal++
+            if ($alphaEvidence.Count -ge 4 -or $node.name.Length -gt 120 -or $node.name -match '\A[A-Za-z]:|[\\/\x00-\x08\x0b\x0c\x0e-\x1f]') { $alphaEvidenceLimited=$true }
+            else {
+                $normalized=($node.name -replace '\s+',' ').Trim()
+                $known=@('5.5 [alpha]','GPT-5.5 [alpha]','Medium 5.5 [alpha]','Medium GPT-5.5 [alpha]')
+                $match=$(if ($node.name -cin $known) { 'exact' } elseif ($normalized -cin $known) { 'normalized' } else { 'other' })
+                $type=$(if ($node.type -cin @('Button','MenuItem','Hyperlink','Text','Group','Pane','Custom','ComboBox','RadioButton')) { $node.type } else { 'other' })
+                $state='unavailable'
+                if ($node.PSObject.Properties['expandState'] -and $node.expandState -cin @('collapsed','expanded')) { $state=$node.expandState }
+                $alphaEvidence.Add([pscustomobject]@{name=$node.name;nameMatch=$match;controlType=$type;isOffscreen=$node.isOffscreen;
+                    enabled=$node.isEnabled;directInvokable=$node.isInvokable;expandState=$state})
+            }
+        }
         if (-not $node.isOffscreen) {
             $name='';$selector='';$automationId='';$toggle='';$expand=''
             if ($node.PSObject.Properties['name']) { $name=$node.name }
@@ -52,11 +68,11 @@ function ConvertTo-WinAppWelcomeSnapshot([string]$Text,[long]$WindowHandle) {
     }
     $decision=Get-WinAppWelcomeDecision $nodes.ToArray() $summary
     if ($summary.errorMarkerCount -gt 0) { throw 'Welcome error marker observed.' }
-    return [pscustomobject]@{Nodes=$nodes.ToArray();Decision=$decision;Summary=$summary}
+    return [pscustomobject]@{Nodes=$nodes.ToArray();Decision=$decision;Summary=$summary;AlphaEvidence=$alphaEvidence.ToArray();AlphaTotal=$alphaTotal;AlphaEvidenceLimited=$alphaEvidenceLimited}
 }
 function Get-WinAppWelcomeSelectorKind($Node) {
     if (-not $Node.Selector) { return 'missing' }
-    $prefix=@{RadioButton='rdo';CheckBox='chk';Button='btn';Hyperlink='lnk'}[$Node.Type]
+    $prefix=@{RadioButton='rdo';CheckBox='chk';Button='btn';Hyperlink='lnk';MenuItem='mnu'}[$Node.Type]
     $identityName=($Node.AutomationId.ToLowerInvariant() -replace '[^a-z0-9]','')
     if (-not $identityName) { $identityName=($Node.Name.ToLowerInvariant() -replace '[^a-z0-9]','') }
     if ($identityName.Length -gt 15) { $identityName=$identityName.Substring(0,15) }
@@ -89,7 +105,7 @@ function Read-WinAppWelcomeResolvedTarget([string]$Text,$Original,[System.Collec
         if (@('on','off') -cnotcontains $element.toggleState -or $element.toggleState -cne $toggle) { throw 'Resolved toggle state changed.' }
     }
     $expand=''
-    if ($Original.Name -cin @('5.5 [alpha]','5.5 [alpha] Medium') -and $Original.Type -ceq 'Button') {
+    if (($Original.Name -replace '\s+',' ').Trim() -cin @('5.5 [alpha]','5.5 [alpha] Medium','GPT-5.5 [alpha]','Medium 5.5 [alpha]','Medium GPT-5.5 [alpha]') -and $Original.Type -cin @('Button','MenuItem')) {
         $Binding.reason='resolution_expand_state_unavailable'
         Assert-LiveStrings $element @('expandState')
         if ($Original.ExpandState -cne 'collapsed' -or $element.expandState -cne 'collapsed') { throw 'Resolved model menu state changed.' }
@@ -110,12 +126,18 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
         if (-not $Diagnostic.Contains('bindings')) { $Diagnostic.bindings=@() }
         $Diagnostic.bindings+=,$binding
     }
-    if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button','Skip|Button','Skip|Hyperlink','Go to ChatGPT|Button','Go to ChatGPT|Hyperlink','5.5 [alpha]|Button','5.5 [alpha] Medium|Button') -cnotcontains ($Name+'|'+$Type)) {
+    $submenu=($Snapshot.Decision -ceq 'model_submenu_ready')
+    if ($submenu) {
+        if ($Name.Length -gt 120 -or $Name -match '\A[A-Za-z]:|[\\/\x00-\x08\x0b\x0c\x0e-\x1f]') { throw 'Unreviewed model submenu name.' }
+        if (($Name -replace '\s+',' ').Trim() -cnotin @('5.5 [alpha]','GPT-5.5 [alpha]','Medium 5.5 [alpha]','Medium GPT-5.5 [alpha]') -or
+            $Type -cnotin @('Button','MenuItem')) { throw 'Unreviewed model submenu target.' }
+    } elseif (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button','Skip|Button','Skip|Hyperlink','Go to ChatGPT|Button','Go to ChatGPT|Hyperlink','5.5 [alpha]|Button','5.5 [alpha] Medium|Button') -cnotcontains ($Name+'|'+$Type)) {
         throw 'Unreviewed welcome action target.'
     }
     $binding.target=@{Engineering='engineering';'Suggest personalized tasks'='suggestions';Continue='continue';Skip='skip';'Go to ChatGPT'='confirm_skip';'5.5 [alpha]'='model_menu';'5.5 [alpha] Medium'='model_menu'}[$Name]
+    if ($submenu) { $binding.target='model_submenu' }
     $binding.reason='scene_unavailable'
-    $expectedScene=$(if ($Name -cin @('5.5 [alpha]','5.5 [alpha] Medium')) { 'model_menu_ready' } elseif ($Name -ceq 'Go to ChatGPT') { 'confirm_skip_ready' } elseif ($Name -ceq 'Skip') { 'skip_ready' } else { 'welcome' })
+    $expectedScene=$(if ($submenu) { 'model_submenu_ready' } elseif ($Name -cin @('5.5 [alpha]','5.5 [alpha] Medium')) { 'model_menu_ready' } elseif ($Name -ceq 'Go to ChatGPT') { 'confirm_skip_ready' } elseif ($Name -ceq 'Skip') { 'skip_ready' } else { 'welcome' })
     if ($Snapshot.Decision -cne $expectedScene) { throw 'Welcome page not reviewed.' }
     $matches=@($Snapshot.Nodes | Where-Object { $_.Name -ceq $Name -and $_.Type -ceq $Type })
     $binding.reason='target_not_unique'
@@ -126,7 +148,7 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
     if (-not $node.Enabled) { throw 'Welcome target unavailable.' }
     $binding.reason='target_not_invokable'
     if (-not $node.Invokable) { throw 'Welcome target unavailable.' }
-    if ($expectedScene -ceq 'model_menu_ready') {
+    if ($expectedScene -cin @('model_menu_ready','model_submenu_ready')) {
         $binding.reason='target_not_collapsed'
         if ($node.ExpandState -cne 'collapsed') { throw 'Model menu expansion state unavailable.' }
     }
@@ -140,7 +162,7 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
     return Read-WinAppWelcomeResolvedTarget $text $node $binding
 }
 function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem')][string]$Operation,[string]$Selector='') {
     $directory=Join-Path $Tool.Directory ('welcome-'+[guid]::NewGuid().ToString('N'))
     if (Test-Path -LiteralPath $directory) { throw 'Welcome tool scratch not fresh.' }
     [void][IO.Directory]::CreateDirectory($directory)
@@ -148,20 +170,21 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
     $start=New-WinAppStart $localTool $WindowHandle -RenderedDepth 16
     if ($Operation -cne 'read') {
         $arguments=@('ui')
-        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link','resolve-confirm-button','resolve-confirm-link','resolve-model-short','resolve-model-effort')) {
+        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link','resolve-confirm-button','resolve-confirm-link','resolve-model-short','resolve-model-effort','resolve-submodel-button','resolve-submodel-menuitem')) {
             if ($Selector) { throw 'Readonly target resolution does not accept a selector.' }
             $spec=@{'resolve-engineering'=@('Engineering','RadioButton');
                 'resolve-suggestions'=@('Suggest personalized tasks','CheckBox');'resolve-continue'=@('Continue','Button');
                 'resolve-skip-button'=@('Skip','Button');'resolve-skip-link'=@('Skip','Hyperlink');
                 'resolve-confirm-button'=@('Go to ChatGPT','Button');'resolve-confirm-link'=@('Go to ChatGPT','Hyperlink');
-                'resolve-model-short'=@('5.5 [alpha]','Button');'resolve-model-effort'=@('5.5 [alpha] Medium','Button')}[$Operation]
+                'resolve-model-short'=@('5.5 [alpha]','Button');'resolve-model-effort'=@('5.5 [alpha] Medium','Button');
+                'resolve-submodel-button'=@('5.5 [alpha]','Button');'resolve-submodel-menuitem'=@('5.5 [alpha]','MenuItem')}[$Operation]
             $arguments+=@('get-property',$spec[0],'--type',$spec[1],'--property','AutomationId')
         } else {
-            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn';skip='(?:btn|lnk)';'confirm-skip'='(?:btn|lnk)';'open-model-menu'='btn'}[$Operation]
+            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn';skip='(?:btn|lnk)';'confirm-skip'='(?:btn|lnk)';'open-model-menu'='btn';'open-model-submenu'='(?:btn|mnu)'}[$Operation]
             if ($Selector -cnotmatch ('\A'+$prefix+'-[a-z0-9]{1,15}-[a-f0-9]{4}\z')) { throw 'Invalid welcome selector.' }
             if ($Operation -ceq 'selected') { $arguments+=@('get-property',$Selector,'--property','IsSelected') }
             else {
-                $action=$(if ($Operation -ceq 'open-model-menu') { 'expand' } elseif ($Operation -cin @('continue','skip','confirm-skip')) { 'invoke' } else { $Operation })
+                $action=$(if ($Operation -cin @('open-model-menu','open-model-submenu')) { 'expand' } elseif ($Operation -cin @('continue','skip','confirm-skip')) { 'invoke' } else { $Operation })
                 $arguments+=@('invoke',$Selector,'--action',$action)
             }
         }
@@ -172,7 +195,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
 }
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem')][string]$Operation,[string]$Selector='') {
     $remaining=30000-[int]$Deadline.ElapsedMilliseconds
     if ($remaining -le 0) { throw 'Welcome deadline exceeded.' }
     $record=[ordered]@{operation=$Operation;status='stopped';reason='identity_unavailable';exitCode=$null;
@@ -501,10 +524,30 @@ function Get-WinAppModelMenuLabels($Page) {
         betaInteractiveCount=@($beta | Where-Object { $_.Interactive }).Count;
         protectedScreen=($Page.Decision -ceq 'protected_screen')}
 }
+function Get-WinAppModelSubmenuObservation($Page) {
+    $known=@('5.5 [alpha]','GPT-5.5 [alpha]','Medium 5.5 [alpha]','Medium GPT-5.5 [alpha]')
+    $targets=@($Page.Nodes | Where-Object { ($_.Name -replace '\s+',' ').Trim() -cin $known -and $_.Interactive })
+    $observation=[ordered]@{decision='target_unavailable';targetInteractiveCount=$targets.Count;controlType='absent';
+        enabled=$null;directInvokable=$null;expandState='unavailable';alphaNameCount=$Page.AlphaTotal;
+        nameEvidenceLimited=$Page.AlphaEvidenceLimited;nameEvidence=@()}
+    if ($Page.Decision -ceq 'protected_screen') { $observation.decision='protected_screen';return $observation }
+    $observation.nameEvidence=$Page.AlphaEvidence
+    if ($targets.Count -ne 1) { return $observation }
+    $target=$targets[0]
+    if ($target.Name.Length -gt 120 -or $target.Name -match '\A[A-Za-z]:|[\\/\x00-\x08\x0b\x0c\x0e-\x1f]') { return $observation }
+    $observation.controlType=$(if ($target.Type -cin @('Button','MenuItem')) { $target.Type } else { 'other' })
+    $observation.enabled=$target.Enabled;$observation.directInvokable=$target.Invokable
+    if ($target.ExpandState -cin @('collapsed','expanded')) { $observation.expandState=$target.ExpandState }
+    if ($target.Type -cin @('Button','MenuItem') -and $target.Enabled -and $target.Invokable -and $target.ExpandState -ceq 'collapsed') {
+        $observation.decision='ready'
+    }
+    return $observation
+}
 function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,[Diagnostics.Stopwatch]$Deadline,
     $PriorConfirmation,[System.Collections.IDictionary]$Diagnostic) {
     $result=[ordered]@{schema=1;scope='synthetic-model-menu-only';status='stopped';reason='prior_confirmation_unavailable';
-        actions=0;expansionInvoked=$false;nextScreen='not_observed';lastObservation=$null;labels=$null}
+        actions=0;expansionInvoked=$false;nextScreen='not_observed';lastObservation=$null;labels=$null;initialLabels=$null;
+        submenu=[ordered]@{status='not-run';reason='not-required';actions=0;expansionInvoked=$false;observation=$null}}
     $Diagnostic.commands=@();$Diagnostic.bindings=@();$Diagnostic.partialActionUncertain=$false
     $Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
     try {
@@ -531,11 +574,35 @@ function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIde
         $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
         $after=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
         $labels=Get-WinAppModelMenuLabels $after
+        $result.initialLabels=$labels
+        if (-not $labels.protectedScreen -and ($labels.alphaVisibleCount -eq 0 -or $labels.betaVisibleCount -eq 0)) {
+            $observation=Get-WinAppModelSubmenuObservation $after
+            $result.submenu.status='stopped';$result.submenu.reason=$observation.decision;$result.submenu.observation=$observation
+            if ($observation.decision -ceq 'ready') {
+                $known=@('5.5 [alpha]','GPT-5.5 [alpha]','Medium 5.5 [alpha]','Medium GPT-5.5 [alpha]')
+                $node=@($after.Nodes | Where-Object { ($_.Name -replace '\s+',' ').Trim() -cin $known -and $_.Interactive })[0]
+                $after.Decision='model_submenu_ready';$result.reason='submenu_binding_unavailable'
+                $resolve={param($target)
+                    $operation=$(if ($target.Type -ceq 'Button') { 'resolve-submodel-button' } else { 'resolve-submodel-menuitem' })
+                    Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic $operation
+                }
+                $target=Get-WinAppWelcomeTarget $after $node.Name $node.Type $resolve $Diagnostic
+                $result.reason='submenu_action_unavailable';$result.actions++;$result.submenu.actions=1;$Diagnostic.partialActionUncertain=$true
+                $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'open-model-submenu' $target.Selector
+                $result.reason='submenu_receipt_invalid';Assert-WinAppWelcomeAction $text $WindowHandle $target 'expand'
+                $result.submenu.expansionInvoked=$true;$Diagnostic.partialActionUncertain=$false;$result.reason='submenu_read_unavailable'
+                Start-Sleep -Milliseconds 500
+                $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
+                $after=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
+                $labels=Get-WinAppModelMenuLabels $after
+                $result.submenu.status='observed';$result.submenu.reason='single_submenu_expansion_attempted'
+            }
+        }
         $next=$(if ($labels.protectedScreen) { 'protected_screen' }
             elseif ($labels.alphaVisibleCount -gt 0 -and $labels.betaVisibleCount -gt 0) { 'model_labels_observed' } else { 'model_labels_missing' })
         Assert-WinAppFiles $Tool; & $CheckIdentity
         if ($Deadline.ElapsedMilliseconds -ge 30000) { throw 'Model menu deadline exhausted.' }
-        $result.labels=$labels;$result.nextScreen=$next;$result.status='observed';$result.reason='single_menu_expansion_attempted'
+        $result.labels=$labels;$result.nextScreen=$next;$result.status='observed';$result.reason=$(if ($result.submenu.expansionInvoked) { 'menu_and_submenu_expansion_attempted' } else { 'single_menu_expansion_attempted' })
     } catch { $Diagnostic.partialActionUncertain=$Diagnostic.partialActionUncertain -or $result.actions -gt 0 }
     foreach ($command in $Diagnostic.commands) {
         $Diagnostic.stdoutBytes+=$command.stdoutBytes
@@ -549,5 +616,5 @@ function Get-WinAppModelMenuOutcome($Prior,$Menu,[bool]$Captured,[bool]$Uncertai
         $Menu.nextScreen -cne 'model_labels_observed') {
         return [pscustomobject]@{status='blocked';stage='model-menu-stopped';reason='The bounded model-menu observation stopped, is uncertain, lacks both exact synthetic labels or has no verified capture. Prior onboarding evidence is retained.';exitCode=1}
     }
-    return [pscustomobject]@{status='observed';stage='synthetic-model-menu-observed';reason='One model-menu expansion and read found exact alpha/beta label candidates; screenshot review is required. No model selection, message, Windows setup or real-provider capability was tested.';exitCode=0}
+    return [pscustomobject]@{status='observed';stage='synthetic-model-menu-observed';reason='Bounded menu expansion and reads found exact alpha/beta label candidates; screenshot review is required. No model selection, message, Windows setup or real-provider capability was tested.';exitCode=0}
 }

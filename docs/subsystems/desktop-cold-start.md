@@ -3033,3 +3033,58 @@ expansion-state/binding reasons are retained. They cannot diagnose the historica
 exit 1. PowerShell fixtures cover positive collapsed evidence, absent/expanded/
 unknown states, changed promoted-query state, wrong-pattern receipts and
 uncertainty without fallback; local Windows execution remains unavailable.
+
+
+### Second-level model entry after d31bc6f3
+
+The actual `d31bc6f3` first Expand returned a valid receipt without uncertainty.
+Its screenshot shows the **Medium** reasoning-effort panel and a separate
+**5.5 [alpha] >** model entry beneath it, not the model list. Therefore zero
+alpha/beta exact label counts did not mean expansion failed. The counter already
+included both `5.5 [alpha]` and `GPT-5.5 [alpha]`; possible causes of the zero
+include accessible-name composition, offscreen flags, or timing between the
+single read and screenshot. No particular cause or UIA type has been established.
+The Windows setup Continue control remains unrelated and is never targeted.
+
+Within the same `Invoke-WinAppModelMenu`, the already-validated first post-Expand
+tree may now admit at most one second-level Expand. There is no extra diagnostic
+poll, top-level stage, screenshot path or workflow. It requires exactly one
+visible interactive entry among the catalog/screenshot-derived names
+`5.5 [alpha]`, `GPT-5.5 [alpha]`, `Medium 5.5 [alpha]`, and
+`Medium GPT-5.5 [alpha]`. Only whitespace folding/trimming is allowed for those
+fixed combinations. The actual returned type must be Button or MenuItem, enabled,
+directly invokable, and positively `collapsed`. The original returned Name, Type,
+AutomationId and runtime slug remain the binding identity; normalization does not
+replace the provider's Name. A necessary promoted-ID lookup uses only the fixed
+`5.5 [alpha]` query and the observed allowed type, then exact-checks the original
+Name/Type/AutomationId and still-collapsed state before any action. No ancestor,
+coordinate, arbitrary query, Invoke fallback, model selection or setup action is
+introduced. Unknown names/types/states, ambiguity or protection prevent the action.
+
+The original shared 30-second deadline, output/tree bounds, package/generation/
+window/foreground checks and receipt validation remain. A second-level action is
+attempted only after the first Expand and read completed successfully. It runs
+once, followed only by one final read. Uncertainty at either level stops without
+retry. `initialLabels` preserves the first panel's counts; `submenu` records its
+separate bounded observation/action outcome within the existing result. The
+existing model-menu PNG captures the final observed state, and both exact final
+model labels are still required for the mechanical menu outcome, not inference.
+
+For this explicitly authorized pure synthetic, no-account fixture only, that
+same raw tree also supplies tiny related accessible-name evidence: at most four
+nodes containing the literal `[alpha]`, each name at most 120 UTF-16 code units,
+with a fixed type enum, exact/normalized/other match enum, enabled/direct capability,
+`isOffscreen`, and collapsed/expanded/unavailable state. Paths, URI-style slashes,
+drive prefixes, non-whitespace control data and oversized names are omitted;
+limit/omission counts remain explicit. No entire tree, selector, AutomationId,
+path or unrelated control name is published. Offscreen evidence is diagnostic,
+never action authority. Protected/error trees are not published through this
+exception. The name-evidence cap does not manufacture target ambiguity: action
+uniqueness is checked over the whole bounded visible tree independently.
+
+Synthetic fixtures cover exact and whitespace-combined Button entries, an actual
+MenuItem type, promoted-ID rebinding, hidden/unknown-name stops with bounded
+evidence, protected evidence suppression, and uncertainty without retries. These
+are contract tests, not claims about the live second-level UIA tree. PowerShell
+and live Windows verification remain CI work; production Go/readiness behavior
+and every other runtime marker are unchanged by this patch.
