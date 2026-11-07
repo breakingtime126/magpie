@@ -56,6 +56,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git -C .ci-app-server-4239-base rev-parse HEAD)" = 5a9e2f9e49bc00bd87bffd1385d7f4469389f838
           format="$(gofmt -l build/control-plane-native internal/appserverbridge/experimental_feature_run_test.go)"
+          if [[ -n "$format" ]]; then
+            gofmt -d build/control-plane-native internal/appserverbridge/experimental_feature_run_test.go
+          fi
           test -z "$format"
           export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
           isolated="$(mktemp -d "$RUNNER_TEMP/app-server-4239-offline.XXXXXX")"
@@ -66,14 +69,17 @@ jobs:
           mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR"
           cp build/control-plane-native/acceptance_profile_red_test.go .ci-app-server-4239-base/build/control-plane-native/
           cp build/control-plane-native/catalog_identity_red_test.go .ci-app-server-4239-base/build/control-plane-native/
+          cp build/control-plane-native/synthetic_profile_red_test.go .ci-app-server-4239-base/build/control-plane-native/
           status=0
           (cd .ci-app-server-4239-base && go test -v -count=1 -timeout=3m -tags nogui \
-            -run '^(TestStandalone4239AcceptanceOptInAccepted|TestCatalogRejectsCollapsedIdentity)$' ./build/control-plane-native) >"$isolated/red.log" 2>&1 || status=$?
+            -run '^(TestStandalone4239AcceptanceOptInAccepted|TestCatalogRejectsCollapsedIdentity|TestSelfAuthoredAcceptanceWithoutCatalog)$' ./build/control-plane-native) >"$isolated/red.log" 2>&1 || status=$?
           test "$status" -eq 1
           grep -Fq -- '--- FAIL: TestStandalone4239AcceptanceOptInAccepted' "$isolated/red.log"
           grep -Fq -- 'explicit standalone 4239 acceptance profile was rejected input_invalid' "$isolated/red.log"
           grep -Fq -- '--- FAIL: TestCatalogRejectsCollapsedIdentity' "$isolated/red.log"
           grep -Fq -- 'collapsed catalog IDs and display names were accepted' "$isolated/red.log"
+          grep -Fq -- '--- FAIL: TestSelfAuthoredAcceptanceWithoutCatalog' "$isolated/red.log"
+          grep -Fq -- 'explicit self-authored model profile was rejected input_invalid' "$isolated/red.log"
           echo 'Exact-base behavioral red confirmed; setup or compile failure is not evidence.'
           cp internal/appserverbridge/experimental_feature_run_test.go .ci-app-server-4239-base/internal/appserverbridge/
           python3 build/control-plane-native/mutate-shared-response.py \
@@ -119,6 +125,7 @@ jobs:
           if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Source commit mismatch.' }
           & ./build/control-plane-native/acceptance-profile.tests.ps1
           & ./build/control-plane-native/ci-4239.tests.ps1
+          & ./build/control-plane-native/synthetic-profile.tests.ps1
           # Existing default consumers still validate only the original native pin.
           & ./build/test-desktop-ci-profile.ps1
       - name: Repeat the synthetic late-child regression in isolated Windows homes
@@ -159,12 +166,19 @@ jobs:
           go build -trimpath -tags nogui -o $helper ./build/control-plane-native
           if ($LASTEXITCODE -ne 0) { throw 'Acceptance helper build failed.' }
       - name: Verify the signed package and run only synthetic app-server acceptance
+        env:
+          SELF_AUTHORED_MODELS: ${{ contains(github.event.head_commit.message, '[synthetic-models-v1]') }}
         run: |
+          switch -CaseSensitive ($env:SELF_AUTHORED_MODELS) {
+            'true' { $profile = 'synthetic-models-4239' }
+            'false' { $profile = 'app-server-4239' }
+            default { throw 'Unknown model fixture selection.' }
+          }
           ./build/control-plane-native/ci-4239.ps1 `
             -HelperExecutable (Join-Path $env:RUNNER_TEMP 'app-server-4239-helper.exe') `
             -BridgeExecutable (Join-Path $env:RUNNER_TEMP 'app-server-4239-bridge.exe') `
             -ReportDirectory (Join-Path $env:RUNNER_TEMP 'app-server-4239-report') `
-            -AcceptanceProfile app-server-4239
+            -AcceptanceProfile $profile
       - name: Preserve only the fixed interface acceptance report, never GUI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

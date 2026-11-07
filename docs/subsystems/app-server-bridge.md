@@ -22,6 +22,16 @@ protocol, real thread-list and config/layer checks with a different fixed
 binary hash. It is not a Desktop launch, UI acceptance or real-account test.
 Adding the profile does not establish a successful native run.
 
+The separate [self-authored model profile](../../build/control-plane-native/README.md#self-authored-synthetic-model-profile)
+`synthetic-models-4239` uses the same reviewed native executable with two newly
+written local test models, `test-alpha` and `test-beta`. It rejects catalog
+input and does not download or copy a bundled model record. Each child loads
+only its own record; actual model-list identities, original Responses slugs,
+none-effort metadata and four fixed text turns must satisfy the existing
+ownership/config/lifecycle oracles. Its report scope is distinct from legacy
+acceptance. This is CI-only harness behavior, not a production bridge or
+Desktop change, a permission-policy change or proof of a hosted model.
+
 ## Sources and entry points
 
 - [`app_server_bridge.go`](../../internal/cli/app_server_bridge.go):

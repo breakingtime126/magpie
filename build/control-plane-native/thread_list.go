@@ -10,6 +10,10 @@ import (
 // "appServer" instead means Mcp. Query after the completed user turns:
 // ordinary local listings exclude empty previews and attached threads.
 func readThreadLists(p configReader, threads [2]string, report *summary) error {
+	return readThreadListsForProfile(p, threads, report, "")
+}
+
+func readThreadListsForProfile(p configReader, threads [2]string, report *summary, profile string) error {
 	if threads[0] == "" || threads[1] == "" || threads[0] == threads[1] {
 		return failure("thread_list_invalid")
 	}
@@ -29,7 +33,7 @@ func readThreadLists(p configReader, threads [2]string, report *summary) error {
 			if err != nil {
 				return err
 			}
-			id, next, err := checkThreadListPage(raw, threads, seen, page == 1)
+			id, next, err := checkThreadListPageForProfile(raw, threads, seen, page == 1, profile)
 			if err != nil {
 				return err
 			}
@@ -52,7 +56,15 @@ func readThreadLists(p configReader, threads [2]string, report *summary) error {
 // helpers. Each limit-one page must contain one of the actual thread/start IDs,
 // exactly once per query, with the model belonging to that ID's original owner.
 func checkThreadListPage(raw json.RawMessage, threads [2]string, seen map[string]bool, terminal bool) (string, string, error) {
+	return checkThreadListPageForProfile(raw, threads, seen, terminal, "")
+}
+
+func checkThreadListPageForProfile(raw json.RawMessage, threads [2]string, seen map[string]bool, terminal bool, profile string) (string, string, error) {
 	bad := failure("thread_list_invalid")
+	models, err := acceptanceModels(profile)
+	if err != nil {
+		return "", "", bad
+	}
 	if threads[0] == "" || threads[1] == "" || threads[0] == threads[1] {
 		return "", "", bad
 	}
@@ -85,9 +97,9 @@ func checkThreadListPage(raw json.RawMessage, threads [2]string, seen map[string
 	model := ""
 	switch id {
 	case threads[0]:
-		model = "magpie/alpha/gpt-5.5"
+		model = "magpie/alpha/" + models[0]
 	case threads[1]:
-		model = "magpie/beta/gpt-5.5"
+		model = "magpie/beta/" + models[1]
 	default:
 		return "", "", bad
 	}
@@ -100,6 +112,9 @@ func checkThreadListPage(raw json.RawMessage, threads [2]string, seen map[string
 	// normally supplies it; preserve unavailable metadata instead of inventing it.
 	gotModel, present := row["model"]
 	if !present || (gotModel != nil && gotModel != model) {
+		return "", "", bad
+	}
+	if profile == acceptanceSynthetic4239 && gotModel != model {
 		return "", "", bad
 	}
 	return id, next, nil

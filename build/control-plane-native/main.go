@@ -86,6 +86,7 @@ func main() {
 			report.Failure = string(err.(failure))
 			return
 		}
+		report.Scope = acceptanceScope(opts.acceptanceProfile)
 		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 		defer cancel()
 		err = run(ctx, opts, &report)
@@ -120,10 +121,19 @@ func arguments(args []string) (options, error) {
 	if _, err := acceptanceSHA(o.acceptanceProfile); err != nil {
 		return o, err
 	}
-	for _, p := range []string{o.bridge, o.codex, o.catalog, o.scratch} {
+	for _, p := range []string{o.bridge, o.codex, o.scratch} {
 		if !filepath.IsAbs(p) {
 			return o, failure("input_invalid")
 		}
+	}
+	if o.acceptanceProfile == acceptanceSynthetic4239 {
+		catalogProvided := false
+		f.Visit(func(v *flag.Flag) { catalogProvided = catalogProvided || v.Name == "catalog" })
+		if catalogProvided {
+			return o, failure("input_invalid")
+		}
+	} else if !filepath.IsAbs(o.catalog) {
+		return o, failure("input_invalid")
 	}
 	return o, nil
 }
@@ -134,7 +144,7 @@ func acceptanceSHA(profile string) (string, error) {
 	switch profile {
 	case "":
 		return nativeSHA, nil
-	case acceptance4239:
+	case acceptance4239, acceptanceSynthetic4239:
 		return native4239SHA, nil
 	default:
 		return "", failure("input_invalid")

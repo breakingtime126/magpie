@@ -15,6 +15,10 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	if err != nil {
 		return err
 	}
+	models, err := acceptanceModels(o.acceptanceProfile)
+	if err != nil || (o.acceptanceProfile == acceptanceSynthetic4239 && o.catalog != "") {
+		return failure("input_invalid")
+	}
 	if runtime.GOOS != "windows" {
 		return failure("platform_rejected")
 	}
@@ -34,13 +38,24 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	report.NativeSHA256, report.BinaryVerified = pinnedSHA, true
-	data, err := readBounded(o.catalog, 10<<20)
-	if err != nil {
-		return err
-	}
-	catalog, err := selectedCatalog(data)
-	if err != nil {
-		return err
+	var catalogs [2][]byte
+	if o.acceptanceProfile == acceptanceSynthetic4239 {
+		for i, name := range []string{"alpha", "beta"} {
+			catalogs[i], err = selfAuthoredCatalog(name)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		data, err := readBounded(o.catalog, 10<<20)
+		if err != nil {
+			return err
+		}
+		catalog, err := selectedCatalog(data)
+		if err != nil {
+			return err
+		}
+		catalogs = [2][]byte{catalog, catalog}
 	}
 	root, err := os.MkdirTemp(o.scratch, "owned-")
 	if err != nil {
@@ -92,10 +107,19 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	catalogPath := filepath.Join(root, "models.json")
-	if err := writeNew(catalogPath, catalog); err != nil {
-		return err
+	if o.acceptanceProfile != acceptanceSynthetic4239 {
+		if err := writeNew(catalogPath, catalogs[0]); err != nil {
+			return err
+		}
 	}
-	fixtures := []*fixture{newFixture("alpha"), newFixture("beta")}
+	var fixtures []*fixture
+	for i, name := range []string{"alpha", "beta"} {
+		instructions := ""
+		if o.acceptanceProfile == acceptanceSynthetic4239 {
+			instructions = syntheticInstructions(name)
+		}
+		fixtures = append(fixtures, newFixtureWithModel(name, models[i], instructions))
+	}
 	defer func() {
 		for _, f := range fixtures {
 			f.close()
@@ -109,7 +133,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	}()
 	backends := make([]map[string]any, 0, 2)
 	var homes []string
-	for _, f := range fixtures {
+	for i, f := range fixtures {
 		home, err := mkdir(root, f.name+"-home")
 		if err != nil {
 			return err
@@ -119,7 +143,14 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 			return err
 		}
 		homes = append(homes, ch)
-		config, err := nativeConfig(f.name+"_provider", f.server.URL, catalogPath)
+		selectedCatalogPath := catalogPath
+		if o.acceptanceProfile == acceptanceSynthetic4239 {
+			selectedCatalogPath = filepath.Join(root, f.name+"-self-authored-catalog.json")
+			if err := writeNew(selectedCatalogPath, catalogs[i]); err != nil {
+				return err
+			}
+		}
+		config, err := nativeConfigForModel(f.name+"_provider", f.server.URL, selectedCatalogPath, models[i])
 		if err != nil {
 			return err
 		}
@@ -174,7 +205,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	report.Stage = "initial_config"
-	initialVersion, err := readConfig(p, "magpie/alpha/"+modelName, report)
+	initialVersion, err := readConfigForProfile(p, "magpie/alpha/"+models[0], report, o.acceptanceProfile)
 	if err != nil {
 		return err
 	}
@@ -183,13 +214,13 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	if err != nil {
 		return err
 	}
-	defaultModel, count, err := checkCatalog(raw)
+	defaultModel, count, err := checkCatalogForProfile(raw, o.acceptanceProfile)
 	if err != nil {
 		return err
 	}
 	report.CatalogModels = count
 	report.Stage = "resolved_config"
-	resolvedVersion, err := readConfig(p, defaultModel, report)
+	resolvedVersion, err := readConfigForProfile(p, defaultModel, report, o.acceptanceProfile)
 	if err != nil {
 		return err
 	}
@@ -199,7 +230,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	report.Stage = "threads"
 	var threads [2]string
 	for i, name := range []string{"alpha", "beta"} {
-		selected := "magpie/" + name + "/" + modelName
+		selected := "magpie/" + name + "/" + models[i]
 		started, err := p.rpc("thread/start", map[string]any{
 			"model": selected, "modelProvider": "magpie_bridge", "environments": []any{},
 		})
@@ -244,7 +275,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		}
 	}
 	report.Stage = "thread_list"
-	if err := readThreadLists(p, threads, report); err != nil {
+	if err := readThreadListsForProfile(p, threads, report, o.acceptanceProfile); err != nil {
 		return err
 	}
 	report.Stage = "ownership"
@@ -254,7 +285,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 			other = "beta"
 		}
 		response, err := p.request("turn/start", map[string]any{
-			"threadId": threads[i], "model": "magpie/" + other + "/" + modelName,
+			"threadId": threads[i], "model": "magpie/" + other + "/" + models[1-i],
 			"input": []any{map[string]any{"type": "text", "text": "synthetic-owner-denial", "text_elements": []any{}}},
 		})
 		if err != nil {
@@ -271,18 +302,22 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		if err != nil {
 			return err
 		}
-		o, err := object(raw)
+		responseObject, err := object(raw)
 		if err != nil {
 			return err
 		}
-		thread, err := object(o["thread"])
+		thread, err := object(responseObject["thread"])
 		if err != nil || stringField(thread, "id") != threads[i] || stringField(thread, "modelProvider") != "magpie_bridge" {
 			return failure("logical_provider_mismatch")
+		}
+		if o.acceptanceProfile == acceptanceSynthetic4239 &&
+			stringField(thread, "model") != "magpie/"+[]string{"alpha", "beta"}[i]+"/"+models[i] {
+			return failure("ownership_changed")
 		}
 		report.ThreadReads++
 	}
 	report.Stage = "final_config"
-	finalVersion, err := readConfig(p, defaultModel, report)
+	finalVersion, err := readConfigForProfile(p, defaultModel, report, o.acceptanceProfile)
 	if err != nil {
 		return err
 	}
@@ -315,6 +350,13 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 }
 
 func checkCatalog(raw json.RawMessage) (string, int, error) {
+	return checkCatalogForProfile(raw, "")
+}
+
+func checkCatalogForProfile(raw json.RawMessage, profile string) (string, int, error) {
+	if _, err := acceptanceModels(profile); err != nil {
+		return "", 0, err
+	}
 	if _, err := decodeConfigJSON(raw); err != nil {
 		return "", 0, failure("catalog_invalid")
 	}
@@ -325,15 +367,23 @@ func checkCatalog(raw json.RawMessage) (string, int, error) {
 			DisplayName string `json:"displayName"`
 			Default     *bool  `json:"isDefault"`
 			Hidden      *bool  `json:"hidden"`
+
+			Reasoning json.RawMessage `json:"defaultReasoningEffort"`
+			Efforts   json.RawMessage `json:"supportedReasoningEfforts"`
 		} `json:"data"`
 		Next json.RawMessage `json:"nextCursor"`
 	}
 	if json.Unmarshal(raw, &list) != nil || len(list.Data) != 2 || !bytes.Equal(list.Next, []byte("null")) {
 		return "", 0, failure("catalog_invalid")
 	}
-	// The pinned public catalog names GPT-5.5; the existing bridge appends its
-	// owning backend. Exact distinct pairs reject UI-facing identity collapse.
-	want := map[string]string{"magpie/alpha/" + modelName: "GPT-5.5 [alpha]", "magpie/beta/" + modelName: "GPT-5.5 [beta]"}
+	// Each profile checks its own exact identities, never labels borrowed from
+	// the other model set. The existing bridge appends the owning backend.
+	var want map[string]string
+	if profile == acceptanceSynthetic4239 {
+		want = map[string]string{"magpie/alpha/test-alpha": "Synthetic Alpha [alpha]", "magpie/beta/test-beta": "Synthetic Beta [beta]"}
+	} else {
+		want = map[string]string{"magpie/alpha/" + modelName: "GPT-5.5 [alpha]", "magpie/beta/" + modelName: "GPT-5.5 [beta]"}
+	}
 	seen := map[string]bool{}
 	def := ""
 	for _, m := range list.Data {
@@ -343,6 +393,9 @@ func checkCatalog(raw json.RawMessage) (string, int, error) {
 			return "", 0, failure("catalog_invalid")
 		}
 		seen[m.Model] = true
+		if profile == acceptanceSynthetic4239 && !selfAuthoredReasoning(m.Reasoning, m.Efforts) {
+			return "", 0, failure("catalog_invalid")
+		}
 		if *m.Default {
 			if def != "" {
 				return "", 0, failure("catalog_invalid")
@@ -351,6 +404,9 @@ func checkCatalog(raw json.RawMessage) (string, int, error) {
 		}
 	}
 	if def == "" {
+		return "", 0, failure("catalog_invalid")
+	}
+	if profile == acceptanceSynthetic4239 && def != "magpie/alpha/test-alpha" {
 		return "", 0, failure("catalog_invalid")
 	}
 	return def, len(list.Data), nil

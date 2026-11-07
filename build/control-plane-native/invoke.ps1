@@ -1,7 +1,11 @@
 # Dot-source this file only. No execution occurs until the explicit invocation.
 function Assert-ControlPlaneNativeSummary($Report, [string]$AcceptanceProfile = '') {
     $expectedNativeSHA = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
-    if ($AcceptanceProfile -ceq 'app-server-4239') {
+    $expectedScope = 'synthetic-loopback-only'
+    if ($AcceptanceProfile -ceq 'synthetic-models-4239') {
+        $expectedNativeSHA = '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382'
+        $expectedScope = 'self-authored-models-loopback-only'
+    } elseif ($AcceptanceProfile -ceq 'app-server-4239') {
         $expectedNativeSHA = '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382'
     } elseif ($AcceptanceProfile -cne '') { throw 'Invalid native control-plane summary.' }
     $names = @('schema', 'scope', 'status', 'stage', 'failure', 'native_sha256',
@@ -28,7 +32,7 @@ function Assert-ControlPlaneNativeSummary($Report, [string]$AcceptanceProfile = 
         'config_shape_mismatch', 'turn_failed', 'answer_crossed_route', 'unexpected_auth_data',
         'control_home_mismatch', 'thread_list_invalid', 'supervision_failed')
     if (($Report.schema -isnot [int] -and $Report.schema -isnot [long]) -or $Report.schema -ne 1 -or
-        $Report.scope -isnot [string] -or $Report.scope -cne 'synthetic-loopback-only' -or
+        $Report.scope -isnot [string] -or $Report.scope -cne $expectedScope -or
         $Report.status -isnot [string] -or @('passed', 'failed') -cnotcontains $Report.status -or
         $Report.stage -isnot [string] -or $stages -cnotcontains $Report.stage -or
         $Report.failure -isnot [string] -or $failures -cnotcontains $Report.failure -or
@@ -61,13 +65,24 @@ function Assert-ControlPlaneNativeSummary($Report, [string]$AcceptanceProfile = 
     } elseif ($Report.failure -ceq '') { throw 'Invalid native control-plane summary.' }
 }
 
+# Validate presence, not only value: even -CatalogPath '' is forbidden for self-authored models.
+function Get-ControlPlaneNativeCatalogArguments([string]$Profile, [bool]$CatalogSupplied, [string]$Catalog) {
+    if ($Profile -ceq 'synthetic-models-4239') {
+        if ($CatalogSupplied) { throw 'Catalog input is forbidden for self-authored models.' }
+        return
+    }
+    if (($Profile -cne '' -and $Profile -cne 'app-server-4239') -or
+        -not $CatalogSupplied -or [string]::IsNullOrWhiteSpace($Catalog)) { throw 'Invalid catalog profile input.' }
+    return @('-catalog', $Catalog)
+}
+
 function Invoke-ControlPlaneNative {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$HelperExecutable,
         [Parameter(Mandatory)][string]$BridgeExecutable,
         [Parameter(Mandatory)][string]$CodexExecutable,
-        [Parameter(Mandatory)][string]$CatalogPath,
+        [AllowNull()][AllowEmptyString()][string]$CatalogPath,
         [Parameter(Mandatory)][string]$ScratchParent,
         [Parameter(Mandatory)][string]$HelperHome,
         [string]$AcceptanceProfile = ''
@@ -76,8 +91,10 @@ function Invoke-ControlPlaneNative {
     $process = $null
     $started = $false
     try {
-        if ($AcceptanceProfile -cne '' -and $AcceptanceProfile -cne 'app-server-4239') { throw 'Invalid profile.' }
-        foreach ($path in @($HelperExecutable, $BridgeExecutable, $CodexExecutable, $CatalogPath)) {
+        $catalogArguments = @(Get-ControlPlaneNativeCatalogArguments $AcceptanceProfile ($PSBoundParameters.ContainsKey('CatalogPath')) $CatalogPath)
+        $inputFiles = @($HelperExecutable, $BridgeExecutable, $CodexExecutable)
+        if ($catalogArguments.Count -ne 0) { $inputFiles += $CatalogPath }
+        foreach ($path in $inputFiles) {
             $file = Get-Item -LiteralPath $path
             if (-not [IO.Path]::IsPathFullyQualified($path) -or $file.PSIsContainer -or
                 ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid input.' }
@@ -133,8 +150,9 @@ namespace MagpieControlPlaneNativeV167 {
         $psi.RedirectStandardError = $true
         $psi.RedirectStandardInput = $true
         $psi.WorkingDirectory = $HelperHome
-        foreach ($arg in @('-supervise', '-bridge', $BridgeExecutable, '-codex', $CodexExecutable,
-            '-catalog', $CatalogPath, '-scratch-parent', $ScratchParent)) { $psi.ArgumentList.Add($arg) }
+        foreach ($arg in @('-supervise', '-bridge', $BridgeExecutable, '-codex', $CodexExecutable)) { $psi.ArgumentList.Add($arg) }
+        foreach ($arg in $catalogArguments) { $psi.ArgumentList.Add($arg) }
+        foreach ($arg in @('-scratch-parent', $ScratchParent)) { $psi.ArgumentList.Add($arg) }
         if ($AcceptanceProfile -cne '') {
             $psi.ArgumentList.Add('-acceptance-profile')
             $psi.ArgumentList.Add($AcceptanceProfile)

@@ -21,14 +21,19 @@ import (
 // Source: build/test-official-runtime.py Fixture.events; exact native source
 // c40729ea5cf8e947481b130c59807273eda2f8e9, protocol/models.rs.
 type fixture struct {
-	server             *httptest.Server
-	name               string
-	mu                 sync.Mutex
-	requests, failures int
+	server              *httptest.Server
+	name                string
+	model, instructions string
+	mu                  sync.Mutex
+	requests, failures  int
 }
 
 func newFixture(name string) *fixture {
-	f := &fixture{name: name}
+	return newFixtureWithModel(name, modelName, "")
+}
+
+func newFixtureWithModel(name, model, instructions string) *fixture {
+	f := &fixture{name: name, model: model, instructions: instructions}
 	s := httptest.NewUnstartedServer(http.HandlerFunc(f.serveHTTP))
 	s.Config.ReadHeaderTimeout = 5 * time.Second
 	s.Config.ReadTimeout = 10 * time.Second
@@ -75,9 +80,15 @@ func (f *fixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req map[string]json.RawMessage
-	if json.Unmarshal(data, &req) != nil || req == nil || stringField(req, "model") != modelName {
+	if json.Unmarshal(data, &req) != nil || req == nil || stringField(req, "model") != f.model {
 		f.fail(w)
 		return
+	}
+	if f.instructions != "" {
+		if _, err := decodeConfigJSON(data); err != nil || !selfAuthoredRequest(req, f.name) {
+			f.fail(w)
+			return
+		}
 	}
 	var stream bool
 	if json.Unmarshal(req["stream"], &stream) != nil || !stream {
@@ -143,7 +154,14 @@ func (f *fixture) close() {
 }
 
 func nativeConfig(provider, endpoint, catalog string) ([]byte, error) {
+	return nativeConfigForModel(provider, endpoint, catalog, modelName)
+}
+
+func nativeConfigForModel(provider, endpoint, catalog, model string) ([]byte, error) {
 	if (provider != "alpha_provider" && provider != "beta_provider") || !loopbackURL(endpoint) {
+		return nil, failure("fixture_invalid")
+	}
+	if model != modelName && model != "test-"+strings.TrimSuffix(provider, "_provider") {
 		return nil, failure("fixture_invalid")
 	}
 	// JSON string quoting is valid for these TOML basic strings, including
@@ -157,7 +175,7 @@ func nativeConfig(provider, endpoint, catalog string) ([]byte, error) {
 			"[model_providers.%s]\nname = %s\nbase_url = %s\nwire_api = \"responses\"\n"+
 			"request_max_retries = 0\nstream_max_retries = 0\nstream_idle_timeout_ms = 15000\n"+
 			"requires_openai_auth = false\nsupports_websockets = false\n",
-		jsonBytes(modelName), jsonBytes(provider), jsonBytes(catalog),
+		jsonBytes(model), jsonBytes(provider), jsonBytes(catalog),
 		jsonBytes(endpoint+"/backend-api"), provider, jsonBytes("Synthetic "+provider), jsonBytes(endpoint+"/v1"))
 	if strings.Contains(text, "auth.json") {
 		return nil, failure("fixture_invalid")

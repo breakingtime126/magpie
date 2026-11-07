@@ -44,9 +44,17 @@ var configOriginPaths = []string{
 }
 
 func configOracle(model string, includeLayers bool) (map[string]any, string, error) {
+	return configOracleForProfile(model, includeLayers, "")
+}
+
+func configOracleForProfile(model string, includeLayers bool, profile string) (map[string]any, string, error) {
+	models, err := acceptanceModels(profile)
+	if err != nil {
+		return nil, "", err
+	}
 	canonical := initialConfigJSON
 	if model != "" {
-		if model != "magpie/alpha/"+modelName && model != "magpie/beta/"+modelName {
+		if model != "magpie/alpha/"+models[0] && model != "magpie/beta/"+models[1] {
 			return nil, "", failure("config_shape_mismatch")
 		}
 		canonical = fmt.Sprintf(resolvedConfigJSON, model)
@@ -82,13 +90,17 @@ type configReader interface {
 // fresh paired native requirements for each; no preceding success authorizes a
 // cached response. The second true read checks stable session provenance.
 func readConfig(p configReader, model string, report *summary) (string, error) {
+	return readConfigForProfile(p, model, report, "")
+}
+
+func readConfigForProfile(p configReader, model string, report *summary, profile string) (string, error) {
 	version := ""
 	for _, includeLayers := range []bool{false, true, true} {
 		raw, err := p.rpc("config/read", map[string]any{"includeLayers": includeLayers})
 		if err != nil {
 			return "", err
 		}
-		got, err := checkConfig(raw, model, includeLayers)
+		got, err := checkConfigForProfile(raw, model, includeLayers, profile)
 		if err != nil {
 			return "", err
 		}
@@ -106,7 +118,11 @@ func readConfig(p configReader, model string, report *summary) (string, error) {
 }
 
 func checkConfig(raw json.RawMessage, model string, includeLayers bool) (string, error) {
-	want, version, err := configOracle(model, includeLayers)
+	return checkConfigForProfile(raw, model, includeLayers, "")
+}
+
+func checkConfigForProfile(raw json.RawMessage, model string, includeLayers bool, profile string) (string, error) {
+	want, version, err := configOracleForProfile(model, includeLayers, profile)
 	if err != nil {
 		return "", err
 	}

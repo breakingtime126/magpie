@@ -4,6 +4,72 @@ This CI-only program exercises the compiled production adapter against the
 unmodified Windows `codex-cli 0.167.0-alpha.3.2` executable bundled with the
 verified Desktop package. It is separate from the retained Linux 0.166 tests.
 
+## Self-authored synthetic-model profile
+
+`-acceptance-profile synthetic-models-4239` is a separate, explicit model
+fixture mode on the already reviewed 4239 native pin. It neither changes the
+omitted/default profile nor enables Desktop. It rejects every `-catalog`
+argument, including an explicitly empty value. The PowerShell wrapper likewise
+rejects any supplied `-CatalogPath` before file access. Unknown mode strings
+fail rather than choosing the legacy catalog path.
+
+[`selfAuthoredCatalog`](synthetic_models.go) writes a new single-record catalog
+for each backend: alpha owns `test-alpha`, beta owns `test-beta`. Each record
+and its short instruction are authored for this loopback test from public
+`ModelInfo` / `ModelMessages` types at OpenAI Codex commit
+`c40729ea5cf8e947481b130c59807273eda2f8e9`; no bundled catalog, complete hosted
+model record, old candidate or catalog hash/golden is needed by this mode.
+The two files are separate, created exclusively in this invocation's fresh
+owned root, and passed as absolute `model_catalog_json` paths.
+
+The records describe text input, disabled shell, empty experimental tools and
+service tiers, and only the public `none` reasoning effort. Apps/skills/plugin
+instruction insertion, verbosity, search and reasoning summaries are disabled
+in this fixture metadata. `supported_in_api=true` means only that our local
+Responses endpoint accepts the record's slug; it is not an entitlement or
+hosted-model capability claim. No guardian, approval-coverage or permission
+policy is supplied by the records. Native configuration retains the exact
+existing isolated `read-only` / `never` test settings, changing only the model
+selection and the independently generated catalog path.
+
+The existing compiled-adapter acceptance sequence is reused. It checks actual
+native model/list IDs, aliases, display names, explicit visibility, sole alpha
+default and the exact none-effort option. Config/session-layer fingerprints,
+two projectless threads, interleaved two turns per thread, real thread/list,
+owner-switch rejection, assistant completion auditing and owned cleanup remain
+required. New-mode thread listings must contain the exact original owner's
+model rather than an unavailable/null model.
+
+Each loopback endpoint verifies its own original slug and short self-authored
+instruction, rejects other reasoning efforts and nontext input items, and
+returns only the existing fixed assistant-text SSE. Tool declarations in a
+native request are inert, not proof of execution; the fixture never emits a
+tool call. Request bodies, native instructions, environment values and native
+errors are not logged or persisted. A schema match alone does not prove
+runtime selection, Desktop visibility, real-model behavior or zero egress.
+
+Reports retain the existing fixed field/count schema, but their scope is
+`self-authored-models-loopback-only`; old-profile consumers reject that scope,
+and this profile rejects legacy-scope reports. The outer preparation report
+uses profile `synthetic-models-4239` and scope `synthetic-models-4239-only`.
+All unknown RPCs, native errors, missing/changed metadata, fixture violations
+and cleanup failures remain errors. Nothing falls back to the old catalog.
+
+The existing standalone workflow selects this path only when the authorized
+push message contains both `[app-server-4239-v1]` and
+`[synthetic-models-v1]`. The first marker retains the existing exclusion from
+unrelated Desktop jobs. The native step passes the new explicit profile to
+`ci-4239.ps1`: it verifies/extracts the same signed official runtime but skips
+the legacy catalog download entirely. Without the second marker, the old
+standalone profile and its behavior remain unchanged.
+
+Offline coverage includes a named old-parser behavioral red, self-authored
+record/alias/request negative tests, untouched native-config comparison, scope
+separation and PowerShell catalog-presence/CI-branch guards. At preparation,
+only source/static checks were available: Go, gofmt, PowerShell and official
+Windows native execution were not run locally. Actual CI results at the exact
+published commit are required before claiming four-turn native success.
+
 ## Separately reviewed Desktop fixture build
 
 The independent four-turn acceptance defaults to the

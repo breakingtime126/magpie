@@ -128,7 +128,7 @@ function Export-Standalone4239Native([string]$PackagePath, [string]$Destination,
 }
 
 function Assert-Standalone4239CI([string]$Profile) {
-    if ($Profile -cne 'app-server-4239' -or $env:GITHUB_ACTIONS -cne 'true' -or
+    if (($Profile -cne 'app-server-4239' -and $Profile -cne 'synthetic-models-4239') -or $env:GITHUB_ACTIONS -cne 'true' -or
         $env:RUNNER_OS -cne 'Windows' -or $env:GITHUB_EVENT_NAME -cne 'push' -or
         $env:GITHUB_REPOSITORY -cne 'breakingtime126/magpie' -or
         $env:GITHUB_REF -cne 'refs/heads/experiment/app-server-bridge-v0.1.3035' -or
@@ -152,6 +152,10 @@ $root = Join-Path $runnerRoot ('app-server-4239-' + [guid]::NewGuid().ToString('
 $report = [ordered]@{schema=1;scope='app-server-4239-synthetic-only';profile='app-server-4239';
     source_commit=$env:GITHUB_SHA;status='failed';stage='download';failure='preparation_failed';
     gui_verified=$false;package_verified=$false;preparation_cleanup_complete=$false;native=$null}
+if ($AcceptanceProfile -ceq 'synthetic-models-4239') {
+    $report.scope = 'synthetic-models-4239-only'
+    $report.profile = 'synthetic-models-4239'
+}
 try {
     $package = Join-Path $root 'official.msix'
     Save-StandalonePublicInput 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix' $package 4294967296
@@ -169,16 +173,26 @@ try {
     $report.stage = 'extraction'
     $codex = Join-Path $root 'codex.exe'
     Export-Standalone4239Native $package $codex $identity
-    $report.stage = 'catalog'
-    $catalog = Join-Path $root 'models.json'
-    Save-StandalonePublicInput 'https://raw.githubusercontent.com/openai/codex/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/models-manager/models.json' $catalog 10485760
-    $scratch = Join-Path $root 'scratch'; $helperHome = Join-Path $root 'helper-home'
-    [void][IO.Directory]::CreateDirectory($scratch); [void][IO.Directory]::CreateDirectory($helperHome)
-    $report.stage = 'acceptance'; $report.failure = 'native_acceptance_failed'
-    $report.native = Invoke-ControlPlaneNative -HelperExecutable $HelperExecutable -BridgeExecutable $BridgeExecutable `
-        -CodexExecutable $codex -CatalogPath $catalog -ScratchParent $scratch -HelperHome $helperHome `
-        -AcceptanceProfile app-server-4239
-    Assert-ControlPlaneNativeSummary $report.native -AcceptanceProfile app-server-4239
+    if ($AcceptanceProfile -ceq 'synthetic-models-4239') {
+        $scratch = Join-Path $root 'scratch'; $helperHome = Join-Path $root 'helper-home'
+        [void][IO.Directory]::CreateDirectory($scratch); [void][IO.Directory]::CreateDirectory($helperHome)
+        $report.stage = 'acceptance'; $report.failure = 'native_acceptance_failed'
+        $report.native = Invoke-ControlPlaneNative -HelperExecutable $HelperExecutable -BridgeExecutable $BridgeExecutable `
+            -CodexExecutable $codex -ScratchParent $scratch -HelperHome $helperHome `
+            -AcceptanceProfile synthetic-models-4239
+        Assert-ControlPlaneNativeSummary $report.native -AcceptanceProfile synthetic-models-4239
+    } else {
+        $report.stage = 'catalog'
+        $catalog = Join-Path $root 'models.json'
+        Save-StandalonePublicInput 'https://raw.githubusercontent.com/openai/codex/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/models-manager/models.json' $catalog 10485760
+        $scratch = Join-Path $root 'scratch'; $helperHome = Join-Path $root 'helper-home'
+        [void][IO.Directory]::CreateDirectory($scratch); [void][IO.Directory]::CreateDirectory($helperHome)
+        $report.stage = 'acceptance'; $report.failure = 'native_acceptance_failed'
+        $report.native = Invoke-ControlPlaneNative -HelperExecutable $HelperExecutable -BridgeExecutable $BridgeExecutable `
+            -CodexExecutable $codex -CatalogPath $catalog -ScratchParent $scratch -HelperHome $helperHome `
+            -AcceptanceProfile app-server-4239
+        Assert-ControlPlaneNativeSummary $report.native -AcceptanceProfile app-server-4239
+    }
     if ($report.native.status -cne 'passed') { throw 'Native acceptance failed.' }
     $report.status = 'passed'; $report.stage = 'complete'; $report.failure = ''
 } catch {

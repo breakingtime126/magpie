@@ -38,8 +38,9 @@ func (b *boundedCapture) bytes() ([]byte, bool) {
 }
 
 func supervise(args []string) {
+	scope := "synthetic-loopback-only"
 	failed := func() {
-		_ = json.NewEncoder(os.Stdout).Encode(summary{Schema: 1, Scope: "synthetic-loopback-only",
+		_ = json.NewEncoder(os.Stdout).Encode(summary{Schema: 1, Scope: scope,
 			Status: "failed", Stage: "supervisor", Failure: "supervision_failed"})
 	}
 	opts, err := arguments(args)
@@ -47,6 +48,7 @@ func supervise(args []string) {
 		failed()
 		os.Exit(1)
 	}
+	scope = acceptanceScope(opts.acceptanceProfile)
 	if checkEnvironment(os.Environ()) != nil {
 		failed()
 		os.Exit(1)
@@ -111,7 +113,7 @@ func validSummaryForProfile(s summary, profile string) bool {
 	if err != nil {
 		return false
 	}
-	if s.Schema != 1 || s.Scope != "synthetic-loopback-only" ||
+	if s.Schema != 1 || s.Scope != acceptanceScope(profile) ||
 		(s.Status != "passed" && s.Status != "failed") ||
 		(s.NativeSHA256 != "" && s.NativeSHA256 != pinnedSHA) {
 		return false
