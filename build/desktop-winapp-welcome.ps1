@@ -51,11 +51,11 @@ function ConvertTo-WinAppWelcomeSnapshot([string]$Text,[long]$WindowHandle) {
     }
     $decision=Get-WinAppWelcomeDecision $nodes.ToArray() $summary
     if ($summary.errorMarkerCount -gt 0) { throw 'Welcome error marker observed.' }
-    return [pscustomobject]@{Nodes=$nodes.ToArray();Decision=$decision}
+    return [pscustomobject]@{Nodes=$nodes.ToArray();Decision=$decision;Summary=$summary}
 }
 function Get-WinAppWelcomeSelectorKind($Node) {
     if (-not $Node.Selector) { return 'missing' }
-    $prefix=@{RadioButton='rdo';CheckBox='chk';Button='btn'}[$Node.Type]
+    $prefix=@{RadioButton='rdo';CheckBox='chk';Button='btn';Hyperlink='lnk'}[$Node.Type]
     $identityName=($Node.AutomationId.ToLowerInvariant() -replace '[^a-z0-9]','')
     if (-not $identityName) { $identityName=($Node.Name.ToLowerInvariant() -replace '[^a-z0-9]','') }
     if ($identityName.Length -gt 15) { $identityName=$identityName.Substring(0,15) }
@@ -102,12 +102,13 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
         if (-not $Diagnostic.Contains('bindings')) { $Diagnostic.bindings=@() }
         $Diagnostic.bindings+=,$binding
     }
-    if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button') -cnotcontains ($Name+'|'+$Type)) {
+    if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button','Skip|Button','Skip|Hyperlink') -cnotcontains ($Name+'|'+$Type)) {
         throw 'Unreviewed welcome action target.'
     }
-    $binding.target=@{Engineering='engineering';'Suggest personalized tasks'='suggestions';Continue='continue'}[$Name]
+    $binding.target=@{Engineering='engineering';'Suggest personalized tasks'='suggestions';Continue='continue';Skip='skip'}[$Name]
     $binding.reason='scene_unavailable'
-    if ($Snapshot.Decision -cne 'welcome') { throw 'Welcome page not reviewed.' }
+    $expectedScene=$(if ($Name -ceq 'Skip') { 'skip_ready' } else { 'welcome' })
+    if ($Snapshot.Decision -cne $expectedScene) { throw 'Welcome page not reviewed.' }
     $matches=@($Snapshot.Nodes | Where-Object { $_.Name -ceq $Name -and $_.Type -ceq $Type })
     $binding.reason='target_not_unique'
     if ($matches.Count -ne 1) { throw 'Welcome target unavailable.' }
@@ -127,7 +128,7 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
     return Read-WinAppWelcomeResolvedTarget $text $node $binding
 }
 function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link')][string]$Operation,[string]$Selector='') {
     $directory=Join-Path $Tool.Directory ('welcome-'+[guid]::NewGuid().ToString('N'))
     if (Test-Path -LiteralPath $directory) { throw 'Welcome tool scratch not fresh.' }
     [void][IO.Directory]::CreateDirectory($directory)
@@ -135,17 +136,18 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
     $start=New-WinAppStart $localTool $WindowHandle -RenderedDepth 16
     if ($Operation -cne 'read') {
         $arguments=@('ui')
-        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue')) {
+        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link')) {
             if ($Selector) { throw 'Readonly target resolution does not accept a selector.' }
             $spec=@{'resolve-engineering'=@('Engineering','RadioButton');
-                'resolve-suggestions'=@('Suggest personalized tasks','CheckBox');'resolve-continue'=@('Continue','Button')}[$Operation]
+                'resolve-suggestions'=@('Suggest personalized tasks','CheckBox');'resolve-continue'=@('Continue','Button');
+                'resolve-skip-button'=@('Skip','Button');'resolve-skip-link'=@('Skip','Hyperlink')}[$Operation]
             $arguments+=@('get-property',$spec[0],'--type',$spec[1],'--property','AutomationId')
         } else {
-            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn'}[$Operation]
+            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn';skip='(?:btn|lnk)'}[$Operation]
             if ($Selector -cnotmatch ('\A'+$prefix+'-[a-z0-9]{1,15}-[a-f0-9]{4}\z')) { throw 'Invalid welcome selector.' }
             if ($Operation -ceq 'selected') { $arguments+=@('get-property',$Selector,'--property','IsSelected') }
             else {
-                $action=$(if ($Operation -ceq 'continue') { 'invoke' } else { $Operation })
+                $action=$(if ($Operation -cin @('continue','skip')) { 'invoke' } else { $Operation })
                 $arguments+=@('invoke',$Selector,'--action',$action)
             }
         }
@@ -156,7 +158,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
 }
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link')][string]$Operation,[string]$Selector='') {
     $remaining=30000-[int]$Deadline.ElapsedMilliseconds
     if ($remaining -le 0) { throw 'Welcome deadline exceeded.' }
     $record=[ordered]@{operation=$Operation;status='stopped';reason='identity_unavailable';exitCode=$null;
@@ -220,13 +222,15 @@ function Read-WinAppWelcomeSelected([string]$Text,$Target) {
         @('True','False') -cnotcontains $value.properties.IsSelected) { throw 'Welcome selection state unavailable.' }
     return $value.properties.IsSelected -ceq 'True'
 }
-function Invoke-WinAppWelcome($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,[System.Collections.IDictionary]$Diagnostic) {
+function Invoke-WinAppWelcome($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,[System.Collections.IDictionary]$Diagnostic,
+    [Diagnostics.Stopwatch]$SharedDeadline=$null) {
     $result=[ordered]@{schema=1;scope='synthetic-welcome-only';status='stopped';reason='uia_provider_error';
         stage='welcome_read';actions=0;suggestionsDisabled=$false;engineeringSelected=$false;
         continueInvoked=$false;nextScreen='not_observed';targetObservations=$null;initialReadObservation=$null}
     $Diagnostic.stage='official_tool_welcome';$Diagnostic.reason='welcome_stopped';$Diagnostic.commands=@();$Diagnostic.bindings=@()
     $Diagnostic.partialActionUncertain=$false;$Diagnostic.exitCode=$null;$Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
-    $deadline=[Diagnostics.Stopwatch]::StartNew()
+    $deadline=$SharedDeadline
+    if ($null -eq $deadline) { $deadline=[Diagnostics.Stopwatch]::StartNew() }
     try {
         Assert-WinAppFiles $Tool
         function Read-Page {
@@ -294,4 +298,83 @@ function Invoke-WinAppWelcome($Tool,[long]$WindowHandle,[scriptblock]$CheckIdent
     $value=ConvertFrom-LiveJSON ($result | ConvertTo-Json -Depth 8 -Compress)
     Assert-WelcomeResult $value
     return $value
+}
+
+function Get-WinAppSkipObservation($Page) {
+    $nodes=$Page.Nodes
+    $named=@($nodes | Where-Object { $_.Name -ceq 'Skip' })
+    $targets=@($named | Where-Object { $_.Interactive })
+    $type='absent';$enabled=$null;$invokable=$null
+    if ($targets.Count -gt 1) { $type='ambiguous' }
+    elseif ($targets.Count -eq 1) {
+        $type=$(if ($targets[0].Type -ceq 'Button') { 'button' } elseif ($targets[0].Type -ceq 'Hyperlink') { 'hyperlink' } else { 'other' })
+        $enabled=$targets[0].Enabled;$invokable=$targets[0].Invokable
+    }
+    $observation=[ordered]@{decision='scene_changed';headingCount=$Page.Summary.headingExactCount;
+        engineeringCount=@($nodes | Where-Object { $_.Name -ceq 'Engineering' }).Count;
+        thinkingCount=@($nodes | Where-Object { $_.Name -ceq 'Thinking' }).Count;
+        skipVisibleNameCount=$named.Count;skipInteractiveCount=$targets.Count;skipType=$type;enabled=$enabled;directInvokable=$invokable}
+    if ($Page.Decision -ceq 'protected_screen') { $observation.decision='protected_screen';return $observation }
+    $oldControls=@($nodes | Where-Object { $_.Interactive -and $_.Name -cin @('Suggest personalized tasks','Continue') })
+    if ($Page.Summary.headingExactCount -ne 1 -or $Page.Summary.headingVisibleCount -ne 1 -or
+        $observation.engineeringCount -lt 1 -or $oldControls.Count -ne 0) { return $observation }
+    if ($type -cin @('ambiguous','other')) { $observation.decision='ambiguous_target';return $observation }
+    if ($targets.Count -eq 1 -and $enabled -and $invokable) { $observation.decision='ready';return $observation }
+    if ($named.Count -gt 0 -or $observation.thinkingCount -gt 0) { $observation.decision='waiting' }
+    return $observation
+}
+function Invoke-WinAppSkip($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,[Diagnostics.Stopwatch]$Deadline,
+    $PriorWelcome,[System.Collections.IDictionary]$Diagnostic) {
+    $result=[ordered]@{schema=1;scope='synthetic-skip-only';status='stopped';reason='prior_welcome_unavailable';
+        actions=0;readinessReads=0;skipInvoked=$false;nextScreen='not_observed';lastObservation=$null}
+    $Diagnostic.commands=@();$Diagnostic.bindings=@();$Diagnostic.partialActionUncertain=$false
+    $Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
+    try {
+        Assert-WelcomeResult $PriorWelcome
+        if ($PriorWelcome.status -cne 'observed' -or $PriorWelcome.nextScreen -cne 'unreviewed_screen' -or $null -eq $Deadline) { throw 'Prior welcome unavailable.' }
+        Assert-WinAppFiles $Tool
+        $result.reason='readiness_unavailable';$ready=$false
+        for ($read=0;$read -lt 4;$read++) {
+            $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
+            $page=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
+            $result.readinessReads++;$result.lastObservation=Get-WinAppSkipObservation $page
+            if ($result.lastObservation.decision -ceq 'ready') { $ready=$true;break }
+            if ($result.lastObservation.decision -cne 'waiting') { $result.reason=$result.lastObservation.decision;throw 'Skip scene unavailable.' }
+            if ($read -eq 3 -or $Deadline.ElapsedMilliseconds -ge 29500) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $ready) { $result.reason='skip_not_ready';throw 'Skip readiness exhausted.' }
+        $result.reason='target_binding_unavailable';$page.Decision='skip_ready'
+        $type=$(if ($result.lastObservation.skipType -ceq 'button') { 'Button' } else { 'Hyperlink' })
+        $resolve={param($target)
+            $operation=$(if ($target.Type -ceq 'Button') { 'resolve-skip-button' } else { 'resolve-skip-link' })
+            Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic $operation
+        }
+        $target=Get-WinAppWelcomeTarget $page 'Skip' $type $resolve $Diagnostic
+        $result.reason='skip_action_unavailable';$result.actions=1;$Diagnostic.partialActionUncertain=$true
+        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'skip' $target.Selector
+        $result.reason='skip_receipt_invalid';Assert-WinAppWelcomeAction $text $WindowHandle $target 'invoke'
+        $result.skipInvoked=$true;$Diagnostic.partialActionUncertain=$false;$result.reason='next_read_unavailable'
+        Start-Sleep -Milliseconds 500
+        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
+        $after=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
+        $next=$(if ($after.Decision -ceq 'protected_screen') { 'protected_screen' }
+            elseif (@($after.Nodes | Where-Object { $_.Name -ceq 'Skip' -and $_.Interactive }).Count -gt 0) { 'skip_still_visible' } else { 'unreviewed_screen' })
+        Assert-WinAppFiles $Tool; & $CheckIdentity
+        if ($Deadline.ElapsedMilliseconds -ge 30000) { throw 'Skip deadline exhausted.' }
+        $result.nextScreen=$next;$result.status='observed';$result.reason='single_skip_attempted'
+    } catch { $Diagnostic.partialActionUncertain=$Diagnostic.partialActionUncertain -or $result.actions -gt 0 }
+    foreach ($command in $Diagnostic.commands) {
+        $Diagnostic.stdoutBytes+=$command.stdoutBytes
+        $Diagnostic.outputLimitExceeded=$Diagnostic.outputLimitExceeded -or $command.outputLimitExceeded
+    }
+    return [pscustomobject]$result
+}
+function Get-WinAppSkipOutcome($Prior,$Skip,[bool]$Captured,[bool]$Uncertain) {
+    if ($Prior.exitCode -ne 0) { return $Prior }
+    if ($null -eq $Skip -or $Skip.status -cne 'observed' -or -not $Captured -or $Uncertain -or
+        $Skip.nextScreen -cne 'unreviewed_screen') {
+        return [pscustomobject]@{status='blocked';stage='welcome-skip-stopped';reason='The bounded Skip stage stopped, reached a protected screen, remained unchanged or lacks confirmed capture. Prior welcome evidence is retained; no next-page acceptance is claimed.';exitCode=1}
+    }
+    return [pscustomobject]@{status='observed';stage='welcome-skip-transition-observed';reason='One confirmed welcome sequence and one Skip invocation completed with next-screen pixels. The resulting page is unreviewed; no composer, model or conversation success is established.';exitCode=0}
 }

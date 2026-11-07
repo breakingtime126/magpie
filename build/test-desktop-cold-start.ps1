@@ -1797,6 +1797,9 @@ $liveFixture = $null
 $liveFixtureReport = $null
 $winAppTool = $null
 $liveWelcome = $null
+$liveSkip = $null
+$skipAfterCaptured = $false
+$welcomeDeadline = $null
 $liveFixtureStopped = $false
 $liveAfterCaptured = $false
 $publicPluginCatalog = $null
@@ -2492,6 +2495,9 @@ requires_openai_auth = false
                 privateScratchRetained = $true; wholeProcessFamilyExitProven = $false
                 limit = 'One welcome transition only. No full onboarding, composer, model use or conversation claim. Private scratch is never uploaded or deleted while descendants may remain.'
             }
+            if ($EnableReviewedWelcome4239) {
+                $liveFixtureReport.limit='One welcome sequence, then at most one bounded Skip in the same owned window. No full onboarding, composer, model use or conversation claim. Private scratch is retained.'
+            }
             if ($EnableReviewedLiveWelcome) { $report.liveWelcome=$liveFixtureReport }
             else {
                 $liveFixtureReport.scope='synthetic-inspection-fixture-only'
@@ -2939,7 +2945,8 @@ requires_openai_auth = false
             $expectedDesktopExecutable = Get-LiveDesktopExecutable $app.InstallLocation $desktopApp.GetAttribute('Executable')
             if ([IO.Path]::GetFullPath($ownerExecutable) -ine $expectedDesktopExecutable) { throw 'Owned executable mismatch.' }
             if ($EnableReviewedWelcome4239) {
-                $liveWelcome=Invoke-WinAppWelcome $winAppTool $window.Handle $checkInspectionIdentity $welcomeDiagnostic
+                $welcomeDeadline=[Diagnostics.Stopwatch]::StartNew()
+                $liveWelcome=Invoke-WinAppWelcome $winAppTool $window.Handle $checkInspectionIdentity $welcomeDiagnostic $welcomeDeadline
             } else {
                 $welcomeDiagnostic.stage='helper_host'; $welcomeDiagnostic.reason='helper_host_unavailable'
                 $welcomeHost = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -2960,8 +2967,8 @@ requires_openai_auth = false
         }
         $liveFixtureReport.parentDiagnostic=$welcomeDiagnostic
         $liveFixtureReport.partialActionUncertain=$welcomeDiagnostic.partialActionUncertain
-        # Capture again even on a stopped result, but only the original owned HWND/PID.
-        try {
+        # Both fixed captures keep the original owned HWND/PID and generation.
+        $captureWelcomeWindow={param([ValidateSet('official-window-after-welcome.png','official-window-after-skip.png')][string]$FileName)
             if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
                 $ownedActivationProcess.StartTime.ToUniversalTime().ToString('o') -cne $ownedActivationCreatedUtc -or
                 [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName) { throw 'After window identity unavailable.' }
@@ -2974,11 +2981,33 @@ requires_openai_auth = false
             if ($right -le $left -or $bottom -le $top) { throw 'After window outside screen.' }
             $bitmap=New-Object Drawing.Bitmap(($right-$left),($bottom-$top)); $graphics=[Drawing.Graphics]::FromImage($bitmap)
             try { $graphics.CopyFromScreen($left,$top,0,0,$bitmap.Size)
-                $bitmap.Save((Join-Path $out 'official-window-after-welcome.png'),[Drawing.Imaging.ImageFormat]::Png)
+                $bitmap.Save((Join-Path $out $FileName),[Drawing.Imaging.ImageFormat]::Png)
             } finally { $graphics.Dispose(); $bitmap.Dispose() }
+        }
+        try {
+            & $captureWelcomeWindow 'official-window-after-welcome.png'
             $liveAfterCaptured=$true
             $liveFixtureReport.afterCapture='official-window-after-welcome.png; screen pixels may contain occlusion and require review'
         } catch { $liveFixtureReport.afterCapture='unavailable' }
+        if ($EnableReviewedWelcome4239) {
+            $skipDiagnostic=[ordered]@{commands=@();bindings=@();partialActionUncertain=$false}
+            $liveFixtureReport.skip=[ordered]@{status='not-run';reason='prior_welcome_or_capture_unavailable'}
+            if ($null -ne $liveWelcome -and $liveWelcome.status -ceq 'observed' -and
+                $liveWelcome.nextScreen -ceq 'unreviewed_screen' -and $liveAfterCaptured -and
+                -not $welcomeDiagnostic.partialActionUncertain) {
+                $liveSkip=Invoke-WinAppSkip $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveWelcome $skipDiagnostic
+                $liveFixtureReport.skip=[ordered]@{status=$liveSkip.status;reason=$liveSkip.reason;result=$liveSkip;parentDiagnostic=$skipDiagnostic}
+                $liveFixtureReport.partialActionUncertain=$welcomeDiagnostic.partialActionUncertain -or $skipDiagnostic.partialActionUncertain
+                # Capture even a stopped Skip stage when the original owner is still verified.
+                try {
+                    & $checkInspectionIdentity
+                    & $captureWelcomeWindow 'official-window-after-skip.png'
+                    & $checkInspectionIdentity
+                    $skipAfterCaptured=$true
+                    $liveFixtureReport.skip.afterCapture='official-window-after-skip.png; screen pixels may contain occlusion and require review'
+                } catch { $liveFixtureReport.skip.afterCapture='unavailable' }
+            }
+        }
     }
     if ($Mode -ne 'baseline') {
         $bridgeStarts = @($report.processStarts | Where-Object {
@@ -3752,6 +3781,11 @@ if ($EnableReviewedLiveWelcome) {
     }
     $prior = [pscustomobject]@{status=$report.status;stage=$report.stage;reason=$report.reason;exitCode=$exitCode}
     $liveOutcome = Get-LiveWelcomeOutcome $prior $liveFixtureStopped $liveWelcome $liveAfterCaptured
+    if ($EnableReviewedWelcome4239) {
+        $skipUncertain=$true
+        if ($null -ne $liveSkip) { $skipUncertain=$skipDiagnostic.partialActionUncertain }
+        $liveOutcome=Get-WinAppSkipOutcome $liveOutcome $liveSkip $skipAfterCaptured $skipUncertain
+    }
     $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode
 }
 if ($EnableReadOnlyWinAppInspection) {

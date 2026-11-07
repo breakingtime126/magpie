@@ -190,6 +190,13 @@ try {
         Pass (-not (Test-Path $start.Environment['WINAPP_UI_LOCK_DIRECTORY']) -and
             -not (Test-Path $start.Environment['WINAPP_CLI_CACHE_DIRECTORY'])) 'new nonexistent tool state paths'
     }
+    foreach ($spec in @(@('skip','btn-skip-abcd','ui invoke btn-skip-abcd --action invoke -w 123 --json'),
+        @('skip','lnk-skip-abcd','ui invoke lnk-skip-abcd --action invoke -w 123 --json'),
+        @('resolve-skip-button','','ui get-property Skip --type Button --property AutomationId -w 123 --json'),
+        @('resolve-skip-link','','ui get-property Skip --type Hyperlink --property AutomationId -w 123 --json'))) {
+        $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
+        Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'Skip uses only fixed typed reads or direct Invoke, never coordinates'
+    }
     Reject { New-WinAppWelcomeStart $tool 123 'toggle' 'rdo-engineering-abcd' } 'operation cannot use another target type'
     Reject { New-WinAppWelcomeStart $tool 123 'toggle-off' 'chk-suggestpersonal-1234' } 'two-toggle convenience command is never admitted'
     Reject { New-WinAppWelcomeStart $tool 123 'toggle' 'PRIVATE_ID_CANARY' } 'promoted IDs never become action argv'
@@ -207,7 +214,7 @@ while ($null -ne $branch -and $branch -isnot [Management.Automation.Language.IfS
 Pass ($null -ne $branch -and $branch.Clauses[0].Item1.Extent.Text -ceq '$EnableReviewedWelcome4239' -and
     $legacy[0].Extent.StartOffset -gt $branch.ElseClause.Extent.StartOffset -and
     $legacy[0].Extent.EndOffset -lt $branch.ElseClause.Extent.EndOffset) 'official and legacy actions are mutually exclusive'
-Pass ($official[0].Extent.Text -ceq 'Invoke-WinAppWelcome $winAppTool $window.Handle $checkInspectionIdentity $welcomeDiagnostic') 'official action receives held-window guard, not free selector input'
+Pass ($official[0].Extent.Text -ceq 'Invoke-WinAppWelcome $winAppTool $window.Handle $checkInspectionIdentity $welcomeDiagnostic $welcomeDeadline') 'official action receives held-window guard, not free selector input'
 
 # Exercise the real fixed orchestration using a local synthetic command substitute.
 # No actual CLI process is created. Shared process/deadline tests remain in the existing suites.
@@ -253,6 +260,7 @@ foreach ($mode in @('normal','auxiliary','promoted','resolution-failure','uncert
     $diagnostic=[ordered]@{};$result=Invoke-WinAppWelcome $null 123 {
         if ($script:mode -ceq 'final-identity' -and $script:reads -eq 4) { throw 'Synthetic final identity failure.' }
     } $diagnostic
+    if ($mode -ceq 'normal') { $confirmedWelcome=$result }
     if ($mode -cin @('normal','auxiliary','promoted')) {
         Pass ($result.status -ceq 'observed' -and $result.actions -eq 3 -and $result.nextScreen -ceq 'unreviewed_screen') 'one complete fixed welcome transition'
         $expected='read,toggle,read,selected,select,read,selected,continue,read'
@@ -271,4 +279,68 @@ foreach ($mode in @('normal','auxiliary','promoted','resolution-failure','uncert
     }
     Pass ((Json $result) -notmatch 'PRIVATE_CANARY|rdo-|chk-|btn-') 'raw selector and UI data remain private'
 }
+# The second scene is a synthetic expectation from the screenshot, not captured
+# UIA evidence. The live run must supply the actual supported Skip type/state.
+function SkipPage([string]$Type='Button',[bool]$Enabled=$true) {
+    $page=Page -Next
+    $prefix=$(if ($Type -ceq 'Hyperlink') { 'lnk' } else { 'btn' })
+    $page.windows[0].elements=@((Node 'Which best describes your work?' 'Text'),
+        (Node 'Engineering' 'Text'),(Node 'Thinking' 'Text'),(Node 'Skip' $Type ($prefix+'-skip-abcd') $Enabled))
+    $page.windows[0].elements[3].isInvokable=$true;$page.windows[0].elementCount=4
+    return $page
+}
+$skipCalls=@($harness.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-WinAppSkip'},$true))
+Pass ($skipCalls.Count -eq 1 -and $skipCalls[0].Extent.Text -ceq 'Invoke-WinAppSkip $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveWelcome $skipDiagnostic') 'Skip has one call and receives the same original deadline and window guard'
+$skipGuard=$skipCalls[0].Parent
+while ($null -ne $skipGuard -and $skipGuard -isnot [Management.Automation.Language.IfStatementAst]) { $skipGuard=$skipGuard.Parent }
+Pass ($skipGuard.Clauses[0].Item1.Extent.Text.Contains('$liveAfterCaptured') -and
+    $skipGuard.Clauses[0].Item1.Extent.Text.Contains('-not $welcomeDiagnostic.partialActionUncertain')) 'Skip cannot follow a failed capture or uncertain welcome'
+function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
+    [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,[string]$Operation,[string]$Selector='') {
+    & $CheckIdentity;$script:skipOperations+=,$Operation
+    if ($Operation -ceq 'skip') {
+        $script:skipActions++
+        if ($script:skipMode -ceq 'uncertain') { throw 'Synthetic uncertain Skip.' }
+        return Json ([ordered]@{elementId=$Selector;pattern='InvokePattern';requestedAction='invoke';performedAction='invoke';hwnd=123})
+    }
+    if ($Operation -cne 'read') { throw 'Unexpected extra Skip operation.' }
+    $script:skipReads++
+    if ($script:skipActions -gt 0) {
+        $after=Page -Next
+        if ($script:skipMode -ceq 'next-protected') { $after.windows[0].elements[0].name='Sign in to ChatGPT' }
+        return Json $after
+    }
+    $type=$(if ($script:skipMode -ceq 'link') { 'Hyperlink' } else { 'Button' })
+    $page=SkipPage $type ($script:skipReads -gt 1 -and $script:skipMode -cne 'waiting')
+    if ($script:skipMode -ceq 'ambiguous') { $page.windows[0].elements+=@(Node 'Skip' 'Hyperlink' 'lnk-skip-ffff');$page.windows[0].elementCount++ }
+    if ($script:skipMode -ceq 'protected') {
+        $page.windows[0].elements+=@(Node 'Password' 'Text' '' $false);$page.windows[0].elements[-1].isOffscreen=$true;$page.windows[0].elementCount++
+    }
+    return Json $page
+}
+foreach ($skipMode in @('normal','link','waiting','ambiguous','protected','uncertain','next-protected')) {
+    $script:skipMode=$skipMode;$script:skipReads=0;$script:skipActions=0;$script:skipOperations=@()
+    $diagnostic=[ordered]@{};$watch=[Diagnostics.Stopwatch]::StartNew()
+    $skip=Invoke-WinAppSkip $null 123 {} $watch $confirmedWelcome $diagnostic
+    Pass ($skipActions -le 1) 'Skip is never retried'
+    Pass ((Json $skip) -notmatch 'btn-|lnk-|Password|Which best describes') 'Skip publishes only fixed metadata, not raw tree text'
+    if ($skipMode -cin @('normal','link','next-protected')) {
+        Pass ($skip.status -ceq 'observed' -and $skip.actions -eq 1 -and $skip.readinessReads -eq 2 -and
+            ($skipOperations -join ',') -ceq 'read,read,skip,read') 'bounded readiness then one Skip and one post-read'
+    } elseif ($skipMode -ceq 'uncertain') {
+        Pass ($skip.status -ceq 'stopped' -and $skip.actions -eq 1 -and $diagnostic.partialActionUncertain -and
+            ($skipOperations -join ',') -ceq 'read,read,skip') 'uncertain Skip has no post-action retry'
+    } else {
+        Pass ($skip.status -ceq 'stopped' -and $skip.actions -eq 0 -and -not $diagnostic.partialActionUncertain) 'unready ambiguous or protected scene never invokes Skip'
+        if ($skipMode -ceq 'waiting') { Pass ($skip.readinessReads -eq 4) 'readiness has a fixed four-read maximum' }
+    }
+    $prior=[pscustomobject]@{status='observed';stage='first-welcome';reason='fixed';exitCode=0}
+    $outcome=Get-WinAppSkipOutcome $prior $skip $true $diagnostic.partialActionUncertain
+    Pass (($outcome.exitCode -eq 0) -eq ($skipMode -cin @('normal','link'))) 'protected or uncertain second stage cannot become a successful overall outcome'
+}
+$script:skipOperations=@();$diagnostic=[ordered]@{}
+$stopped=Invoke-WinAppSkip $null 123 {} ([Diagnostics.Stopwatch]::StartNew()) $result $diagnostic
+Pass ($stopped.actions -eq 0 -and $skipOperations.Count -eq 0) 'stopped prior welcome never starts a Skip read or action'
+$prior=[pscustomobject]@{status='blocked';stage='earlier-failure';reason='fixed';exitCode=1}
+Pass ((Get-WinAppSkipOutcome $prior $null $false $true).stage -ceq 'earlier-failure') 'earlier Desktop failure remains primary'
 Write-Output ('WINAPP_WELCOME_OFFLINE_CHECKS='+$checks)

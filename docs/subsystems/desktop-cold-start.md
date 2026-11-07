@@ -2830,3 +2830,59 @@ mismatch rejection, incomplete-ID no-query behavior, literal readonly argv,
 redaction and the fixed action sequence with optional reads. No successful
 welcome, next-page, model selection or stronger atomic identity guarantee is
 claimed from these fixtures.
+
+### One bounded Skip after the confirmed welcome sequence
+
+The [b191b84e run](https://github.com/breakingtime126/magpie/actions/runs/42368019523)
+(artifact `13573005951`) performed three confirmed welcome actions: suggestions
+Off, Engineering selected, then one Continue. The after-welcome PNG shows the
+Engineering answer, Thinking and a bottom Skip label; fixture alpha/beta request
+counts were both zero. This proves that sequence, not model inference or a
+completed onboarding flow. The screenshot does not prove Skip's UIA type,
+enabled state, pattern or later destination, and no onboarding handler source
+was available to establish what Thinking or Skip does next.
+
+Only the existing separately selected 4239 welcome-action profile now attempts
+one additional ordinary Skip stage. The original three-action result and
+`official-window-after-welcome.png` remain intact. Skip requires that result to
+be confirmed, its next screen unreviewed (not protected or unchanged), its
+capture successful and its action outcome certain. It never reruns welcome.
+All other markers, including the original read-only marker pair, remain
+unchanged; production Go, package acceptance and native inference tests do not
+change.
+
+The next-stage read must expose the known role-answer scene: one exact visible
+work heading, Engineering, no old suggestions/Continue controls, and no full-tree
+protected/login/error marker. A visible interactive Skip must be unique across
+the small supported Button/Hyperlink set; any same-name wrong interactive type
+or multiple interactive matches stops. Noninteractive duplicate labels do not
+become extra action targets. Actual enabled and direct-invokable state are
+required; the screenshot is never used as a coordinate or state oracle. Skip
+may be read-only-polled at most four times, with 500-ms pauses, while that scene
+shows Thinking or an unavailable Skip. Other scenes stop, not trigger a search
+through other windows. If exposed as a promoted ID, only the existing fixed
+Name+Type readonly resolution may supply its verified runtime slug.
+
+The phase shares the **same** 30-second deadline started before the first
+welcome sequence, including intermediate elapsed time. It does not renew a
+per-phase or per-command budget or enlarge the 180-second fixture lifetime.
+At most three welcome actions plus one explicit Invoke of Skip can occur.
+No coordinates, automatic pattern/ancestor fallback, focus change, account,
+new permission/terms acceptance or retry follows an uncertain result. A single
+post-Skip read and `official-window-after-skip.png` are the endpoint. A login,
+protected screen or still-visible Skip is reported without further input; no
+composer/model destination is hardcoded or claimed.
+
+`liveWelcome.skip.result` and its separate `parentDiagnostic` preserve fixed
+readiness counts, allowed type category, availability, one-action status and
+next-screen category. Raw names, IDs, slugs and trees remain private. Overall
+`liveWelcome.partialActionUncertain` includes either phase; the original
+welcome result/diagnostic stays separate. A failed Skip or missing verified
+post-capture blocks the overall result without erasing the first success.
+Only the fixed new PNG path is added to the existing artifact allowlist.
+
+Synthetic tests cover disabled-to-ready Button and Hyperlink, duplicate types,
+protected offscreen text, the four-read limit, uncertain single invocation,
+protected next screen, failed-prior exclusion and earlier-failure precedence.
+These are not observed Skip UIA facts. Local PowerShell/Windows execution is
+unavailable; the existing blocking CI test step performs that verification.
