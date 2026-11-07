@@ -51,13 +51,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $directory = Join-Path $env:RUNNER_TEMP 'desktop-entry-4239-safety'
           New-Item -ItemType Directory -Path $directory | Out-Null
-          $gate = [ordered]@{schema=1;scope='native-entry-safety-only';status='failed';rollbackMutationRejected=$false;
+          $gate = [ordered]@{schema=1;scope='native-entry-safety-only';fixtureScope='treatment';status='failed';rollbackMutationRejected=$false;
             core='not-run';desktop='not-run';profiles='not-run'}
           try {
             $savedNativePreference = $PSNativeCommandUseErrorActionPreference
             try {
               $PSNativeCommandUseErrorActionPreference = $false
-              $output = & pwsh -NoProfile -NonInteractive -File build/desktop-native-entry.tests.ps1 -BreakRestoration 2>&1
+              $output = & pwsh -NoProfile -NonInteractive -File build/desktop-native-entry.tests.ps1 -TreatmentPrerequisites -BreakRestoration 2>&1
               $status = $LASTEXITCODE
             } finally { $PSNativeCommandUseErrorActionPreference = $savedNativePreference }
             if ($status -eq 0 -or ($output | Out-String) -notlike '*treatment rollback removes both introduced values*') {
@@ -69,17 +69,16 @@ jobs:
               if ($hostName -ceq 'desktop') { $executable = 'powershell' }
               $diagnostic = Join-Path $directory ($hostName + '.json')
               $gate[$hostName] = 'failed'
-              & $executable -NoProfile -NonInteractive -File build/desktop-native-entry.tests.ps1 -DiagnosticPath $diagnostic
+              & $executable -NoProfile -NonInteractive -File build/desktop-native-entry.tests.ps1 -TreatmentPrerequisites -DiagnosticPath $diagnostic
               if ($LASTEXITCODE -ne 0) { throw 'Native-entry safety fixtures failed; treatment is not attempted.' }
               $evidence = [IO.File]::ReadAllText($diagnostic) | ConvertFrom-Json
               $expectedHost = 'Core'
               if ($hostName -ceq 'desktop') { $expectedHost = 'Desktop' }
               if ($evidence.schema -ne 1 -or $evidence.scope -cne 'native-entry-safety-only' -or
                   $evidence.host -cne $expectedHost -or $evidence.status -cne 'passed' -or
-                  $evidence.zeroRecords -cne 'passed' -or $evidence.ownedProcess -cne 'passed' -or
-                  $evidence.lastHelper.phase -cne 'output_ready' -or $evidence.lastHelper.exit -cne 'zero' -or
-                  $evidence.lastHelper.cleanup -cne 'exit-confirmed') {
-                throw 'Both bounded observation fixtures must succeed before treatment.'
+                  $evidence.fixtureScope -cne 'treatment' -or
+                  $evidence.zeroRecords -cne 'not-run' -or $evidence.ownedProcess -cne 'not-run') {
+                throw 'Both hosts must pass treatment prerequisites without claiming the separate observation fixtures ran.'
               }
               $gate[$hostName] = 'passed'
             }

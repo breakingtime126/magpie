@@ -290,7 +290,9 @@ restoration, and an owned junction. Junction
 rejection also exercises the directory flag, so it is not isolated proof of
 the reparse branch. Cleanup deletes known leaves without recursive traversal.
 The existing complete zero-record and owned-process cases remain mandatory
-in both hosts. The previous Windows run is a behavioral failure; the metadata
+in both hosts of the default diagnostic suite. The treatment-only prerequisite
+scope below excludes these two cases, not their shared supervisor tests.
+The previous Windows run is a behavioral failure; the metadata
 replacement and new cases still require exact-commit Windows execution before
 calling the stall fixed. Earlier native/bridge UI observations remain separate
 evidence and are not rerun or strengthened by this change.
@@ -329,8 +331,8 @@ The original decoded-empty-input assertion is retained. An additional helper
 requires raw `OpenStandardInput().ReadByte()` to return `-1`, without stripping
 or accepting a BOM. Tests also exercise real memory-stream preamble emission,
 encoding selection and original encoding restoration after helper success and
-failure. Both parent hosts must pass the complete existing prerequisites;
-the metadata and process-identity fixtures are not skipped. These new tests
+failure. Both parent hosts must pass the applicable prerequisites described
+below; metadata and the treatment's event-image identity fixtures remain. These new tests
 and the encoding correction still require exact-commit Windows execution.
 
 The [`a823a4cb` entry run](https://github.com/breakingtime126/magpie/actions/runs/42353998804/job/128347964132)
@@ -431,7 +433,7 @@ push changes one of its listed paths and the head commit contains
 `[native-entry-4239-v1]`. The push must not contain the winapp, bridge-UI,
 package-identity, original-native-UI or native-contract-review markers. No
 workflow-dispatch capability is needed. One Windows 2025 VM runs the unchanged missing-second-rollback mutation,
-the full native-entry safety suite in both PowerShell hosts, and the default
+the treatment-scoped native-entry safety suite in both PowerShell hosts, and the default
 and selected-profile fixtures before building or running one treatment. There
 is no matrix, retry or second activation. The new marker suppresses all ten
 jobs across the existing bridge-Windows, cold-start, old native-entry and
@@ -443,11 +445,30 @@ used as a routing workaround. The other seven workflows at the reviewed base
 do not directly respond to this branch push. Pull-request or scheduled events
 are separate triggers and are not covered by this push-only exclusion.
 
-The zero-record and owned-process helper cases must both reach validated
-`output_ready`, exit zero and confirm cleanup in each host. The optional
+The runtime's sole `Invoke-EntryFreshnessObservation` call is inside
+`NativeEntryCase -ceq 'freshness-observation'`; the exclusive 4239 profile admits
+only `treatment`. That read-only diagnostic is not the separate
+`DesktopEntryImages.Observer` used by treatment to bind exact child and parent
+creation identities. At `74e33a3`, the zero-record diagnostic reached its
+30-second limit after `input_file_validated`; real treatment was not reached.
+The diagnostic failure is unresolved, not relabeled as a pass.
+
+This lane passes `-TreatmentPrerequisites` to the existing test suite. Only the
+two complete freshness-observation helper cases are not run, with
+`fixtureScope: treatment`, `zeroRecords: not-run` and `ownedProcess: not-run`
+required in both host reports. Without that switch the default suite still
+requires both complete cases to reach validated `output_ready`, exit zero and
+confirm cleanup. Shared EOF/byte limits/deadlines/held-cleanup tests, registry
+transactions and rollback mutation, the real event-image observer fixture,
+input metadata checks and owned-probe lifetime checks still execute and block
+treatment on failure. No runtime guard or helper implementation changes.
+
+The optional
 `DiagnosticPath` on the test suite writes only fixed status/fixture labels and
 the existing eight-field supervisor evidence, including the last completed
 input phase. A terminating fixture error saves failed status before propagating.
+`lastHelper` describes the last attempted helper, including deliberately failing
+supervisor cases; it is not a fabricated successful observation in treatment scope.
 The workflow also saves a fixed prerequisite-gate result in `finally` and
 uploads these reports on failure. No raw helper input, output, stderr, exception
 or environment is added to those diagnostic artifacts. A failed prerequisite

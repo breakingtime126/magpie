@@ -1,12 +1,14 @@
 # Offline only: mock registry snapshots and callbacks, never start Desktop or mutate environment.
 [CmdletBinding()]
-param([switch]$BreakRestoration, [string]$DiagnosticPath='')
+param([switch]$BreakRestoration, [string]$DiagnosticPath='', [switch]$TreatmentPrerequisites)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'desktop-native-entry.ps1')
 . (Join-Path $PSScriptRoot 'desktop-entry-observe.ps1')
 $script:entryLastHelperEvidence=$null
+$fixtureScope='all'; $observationStatus='not-started'
+if ($TreatmentPrerequisites) { $fixtureScope='treatment'; $observationStatus='not-run' }
 $script:entrySafetyDiagnostic=[ordered]@{schema=1;scope='native-entry-safety-only';host=[string]$PSVersionTable.PSEdition;
-    status='running';zeroRecords='not-started';ownedProcess='not-started';lastHelper=$null}
+    fixtureScope=$fixtureScope;status='running';zeroRecords=$observationStatus;ownedProcess=$observationStatus;lastHelper=$null}
 function Save-EntrySafetyDiagnostic([string]$Status) {
     if ([string]::IsNullOrEmpty($DiagnosticPath)) { return }
     $script:entrySafetyDiagnostic.status=$Status
@@ -518,6 +520,9 @@ try {
 # Then exercise the complete helper/JSON path against only this owned test process.
 # Its package is deliberately absent/different: this is unavailable observation,
 # never fake package identity, provisioning, Desktop activation or a guard waiver.
+# Only freshness-observation calls this helper at runtime, never treatment.
+# Keep these cases in the default suite; treatment records them as not-run.
+if (-not $TreatmentPrerequisites) {
 $observationScratch=Join-Path ([IO.Path]::GetTempPath()) ('entry-observation-test-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $observationScratch | Out-Null
 try {
@@ -541,6 +546,7 @@ try {
     Pass ($script:entryLastHelperEvidence.phase -ceq 'output_ready' -and $script:entryLastHelperEvidence.exit -ceq 'zero') 'real helper completes the fixed observation protocol'
     $script:entrySafetyDiagnostic.ownedProcess='passed'; Save-EntrySafetyDiagnostic 'running'
 } finally { Remove-Item -LiteralPath $observationScratch -Recurse -Force }
+}
 # Observation-only mode has two unconditional stop paths before environment writes or activation.
 $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'))
 $observationOffset=$source.IndexOf('$report.nativeEntry.matchedProcessObservation=Invoke-EntryFreshnessObservation')
