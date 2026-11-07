@@ -343,6 +343,71 @@ $start=New-EntryActivationStart 'C:\owned\desktop-entry-activate.ps1' 'OpenAI.Co
 foreach ($name in @('CODEX_CLI_PATH','MAGPIE_APP_SERVER_BRIDGE_CONFIG','CODEX_HOME','GITHUB_TOKEN','ACTIONS_RUNTIME_TOKEN','GITHUB_SHA')) {
     Pass (-not $start.EnvironmentVariables.ContainsKey($name)) ('caller excludes '+$name)
 }
+# Native control preserves the old allowlist but does not invoke a PowerShell child.
+$controlPath='C:\owned\entry-activation-control.exe'
+$controlStart=New-EntryControlStart $controlPath 'activate' 'OpenAI.Codex_test!App'
+Pass ($controlStart.FileName -ceq $controlPath -and $controlStart.Arguments -ceq 'activate "OpenAI.Codex_test!App"' -and
+    -not $controlStart.UseShellExecute -and $controlStart.RedirectStandardOutput -and $controlStart.RedirectStandardError) 'native host retains explicit non-shell process construction'
+foreach ($name in @('CODEX_CLI_PATH','MAGPIE_APP_SERVER_BRIDGE_CONFIG','CODEX_HOME','GITHUB_TOKEN','ACTIONS_RUNTIME_TOKEN','GITHUB_SHA')) {
+    Pass (-not $controlStart.EnvironmentVariables.ContainsKey($name)) ('native control excludes '+$name)
+}
+Pass ((New-EntryControlStart $controlPath 'notify').Arguments -ceq 'notify') 'notify has no AUMID or arbitrary arguments'
+Reject { New-EntryControlStart $controlPath 'notify' 'OpenAI.Codex_test!App' } 'notify cannot hide an activation target'
+Reject { New-EntryControlStart $controlPath 'unknown' } 'control action set is closed'
+Reject { New-EntryControlStart 'C:\owned\other.exe' 'self-test' } 'only the private control basename is accepted'
+Reject { New-EntryControlStart $controlPath 'activate' 'private-invalid-target' } 'invalid activation target cannot reach a child'
+. (Join-Path $PSScriptRoot 'desktop-entry-activate.ps1')
+if ($PSVersionTable.PSEdition -ceq 'Desktop') {
+    Write-Output 'ENTRY_SAFETY_FIXTURE=compiled-control-no-action'
+    $controlScratch=Join-Path ([IO.Path]::GetTempPath()) ('entry-control-test-'+[guid]::NewGuid().ToString('N'))
+    $null=[IO.Directory]::CreateDirectory($controlScratch); $controlHost=$null
+    try {
+        $controlHost=New-EntryActivationHost (Join-Path $controlScratch 'entry-activation-control.exe')
+        $nativeCheck=New-EntryControlStart $controlHost.Path 'self-test'
+        Pass ((Invoke-EntryBoundedHelper $nativeCheck 10000) -ceq 'entry-host-ready') 'real compiled host consumes raw EOF without broadcast or activation'
+        Pass ($controlHost.Sha256 -cmatch '^[a-f0-9]{64}$') 'private compiled artifact has a recorded digest'
+        Reject {
+            $writer=$null
+            try { $writer=[IO.File]::Open($controlHost.Path,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite) }
+            finally { if ($null -ne $writer) { $writer.Dispose() } }
+        } 'compiled host remains read-locked until caller cleanup'
+        foreach ($invalidArguments in @('', 'unknown', 'activate "private-invalid-target"', 'activate "OpenAI.Codex_test!App" extra')) {
+            $nativeCheck=New-EntryControlStart $controlHost.Path 'self-test'; $nativeCheck.Arguments=$invalidArguments
+            Reject { Invoke-EntryBoundedHelper $nativeCheck 10000 } 'invalid native request fails before any Windows activation or notification API'
+        }
+        foreach ($overrideName in @('CODEX_CLI_PATH','magpie_app_server_bridge_config')) {
+            $nativeCheck=New-EntryControlStart $controlHost.Path 'self-test'
+            $nativeCheck.EnvironmentVariables[$overrideName]='private-override-canary'
+            Reject { Invoke-EntryBoundedHelper $nativeCheck 10000 } 'native host rejects case-insensitive inherited override even in self-test'
+        }
+        Reject { New-EntryActivationHost $controlHost.Path } 'existing compiled artifact is never overwritten'
+        # Synthetic returned-result cases, never an actual COM call or broadcast.
+        $originalBounded=(Get-Command Invoke-EntryBoundedHelper).ScriptBlock
+        try {
+            Set-Item Function:Invoke-EntryBoundedHelper { param($Start,$Milliseconds) return $script:controlReply }
+            $script:controlReply='{"hresult":-2147467259,"processId":0,"callerOverridesAbsent":true}'
+            Reject { Invoke-EntryActivation $controlHost.Path 'OpenAI.Codex_test!App' } 'failed HRESULT never grants an activation root'
+            Pass ($script:entryLastActivationResult.hresult -ceq '0x80004005' -and
+                $script:entryLastActivationResult.processId -eq 0) 'failed numeric COM result is retained separately from ownership'
+            $script:controlReply='{"hresult":0,"processId":0,"callerOverridesAbsent":true}'
+            Reject { Invoke-EntryActivation $controlHost.Path 'OpenAI.Codex_test!App' } 'success HRESULT without a PID still fails'
+            $script:controlReply='{"hresult":0,"processId":31,"callerOverridesAbsent":true}'
+            Pass ((Invoke-EntryActivation $controlHost.Path 'OpenAI.Codex_test!App').processId -eq 31) 'well-formed synthetic success still requires downstream runtime identity checks'
+            foreach ($reply in @('{"sent":false,"win32Error":1460}','{"sent":false,"win32Error":0}')) {
+                $script:controlReply=$reply
+                Pass ((Send-EntryEnvironmentChange $controlHost.Path) -ceq 'unconfirmed' -and
+                    -not $script:entryLastBroadcastResult.sent) 'failure with a Win32 code or zero last-error remains unconfirmed'
+            }
+            $script:controlReply='{"sent":false,"win32Error":1460}'
+            $null=Send-EntryEnvironmentChange $controlHost.Path
+            Pass ($script:entryLastBroadcastResult.win32Error -ceq '0x000005B4') 'notification Win32 error remains numeric public evidence'
+        } finally { Set-Item Function:Invoke-EntryBoundedHelper $originalBounded }
+
+    } finally {
+        if ($null -ne $controlHost) { $controlHost.Stream.Dispose() }
+        Remove-Item -LiteralPath $controlScratch -Recurse -Force
+    }
+} else { Write-Output 'ENTRY_CONTROL_COMPILATION=not-run-Core-parent-requires-Framework' }
 foreach ($case in @('treatment','alias-control')) {
     Pass ((Get-EntryOutcome $case 1 1 0 $true $true $false $true) -ceq 'bridge-image-observed') 'verified exact bridge selection'
     Pass ((Get-EntryOutcome $case 1 0 0 $true $true $false $true) -ceq 'bridge-start-event-only') 'brief child not upgraded to image proof'

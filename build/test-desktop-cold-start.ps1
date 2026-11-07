@@ -1800,6 +1800,9 @@ $entryCleanupError = $false
 $script:entryHelperExitUnconfirmed = $false
 $entryImageObserver = $null
 $entryService = $null
+$entryActivationHost = $null
+$script:entryLastActivationResult = $null
+$script:entryLastBroadcastResult = $null
 $entryServiceHandleState = [ordered]@{Held=$null;ImageStream=$null;ProcessId=0;CreatedTicks=[long]0}
 $entryActivationAttempted = $false
 function Block([string]$reason) {
@@ -1862,6 +1865,15 @@ try {
         Assert-EntryFresh $before (Test-EntryProcessOverride) (Test-EntryMachineOverride) $profilePresent $preexisting
         $entryState = New-EntryTransaction $before
         $report.nativeEntry.preflight='no-existing-overrides-profile-or-desktop'
+        if ($NativeEntryCase -cin @('baseline','treatment','restore-before-activation')) {
+            # Only cases that actually call the activation/notification control need this host.
+            . (Join-Path $PSScriptRoot 'desktop-entry-activate.ps1')
+            $entryActivationHost=New-EntryActivationHost (Join-Path $work 'entry-activation-control.exe')
+            $hostCheck=New-EntryControlStart $entryActivationHost.Path 'self-test'
+            if ((Invoke-EntryBoundedHelper $hostCheck 10000) -cne 'entry-host-ready') { Block 'Private activation host self-check failed.' }
+            $report.nativeEntry.activationHost=[ordered]@{kind='private-compiled-control';sha256=$entryActivationHost.Sha256;
+                noInputSelfCheck='passed';scope='CI host only, not official package identity or successful activation'}
+        }
     }
     if ($EnableReviewedLaunchCompatibility) {
         $report.captureValidated = $false
@@ -2657,10 +2669,11 @@ requires_openai_auth = false
             if ($null -ne $entryService) { Assert-EntryVerifiedServiceCurrent $entryService }
             Set-EntryOverrides $entryState @{
                 CODEX_CLI_PATH=$BridgeExecutable; MAGPIE_APP_SERVER_BRIDGE_CONFIG=$bridgeConfig
-            } { Read-EntryUserEnvironment } { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange }
+            } { Read-EntryUserEnvironment } { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange $entryActivationHost.Path }
+            if ($null -ne $script:entryLastBroadcastResult) { $report.nativeEntry.setBroadcastResult=$script:entryLastBroadcastResult }
             if ($NativeEntryCase -ceq 'restore-before-activation') {
                 Restore-EntryOverrides $entryState { Read-EntryUserEnvironment } `
-                    { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange }
+                    { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange $entryActivationHost.Path }
                 $report.nativeEntry.postRestoreActivation='first-activation-after-verified-persistent-restore'
             }
         }
@@ -2673,7 +2686,7 @@ requires_openai_auth = false
     if ($NativeEntryCase -and $NativeEntryCase -cne 'alias-control') {
         if ($null -ne $entryService) { Assert-EntryVerifiedServiceCurrent $entryService }
         $entryActivationAttempted=$true
-        $result = Invoke-EntryActivation (Join-Path $PSScriptRoot 'desktop-entry-activate.ps1') $aumid
+        $result = Invoke-EntryActivation $entryActivationHost.Path $aumid
         $activationPid = $result.processId
         $report.activation = [ordered]@{ method='AUMID-allowlisted-helper'; hresult='0x00000000'; processId=$activationPid }
     } elseif ($Mode -eq 'baseline') {
@@ -3539,20 +3552,25 @@ requires_openai_auth = false
     if ($NativeEntryCase) {
         $report.nativeEntry.primaryOutcome=[ordered]@{status=$report.status;stage=$report.stage;
             reason=$report.reason;exitCode=$exitCode}
+        if ($null -ne $script:entryLastActivationResult) { $report.nativeEntry.activationApiResult=$script:entryLastActivationResult }
     }
     # Restore first, before process cleanup can fail. This does not refresh existing process environments.
     if ($NativeEntryCase -and $null -ne $entryState) {
         try {
             Restore-EntryOverrides $entryState { Read-EntryUserEnvironment } `
-                { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange }
+                { param($Name,$Item) Write-EntryUserEnvironment $Name $Item } { Send-EntryEnvironmentChange $entryActivationHost.Path }
         } catch { $entryCleanupError=$true }
         $report.nativeEntry.persistentRestoration=$(if ($entryState.RestoreVerified) { 'exact-prior-absence-verified' } else { 'unconfirmed' })
         $report.nativeEntry.userWriteReadbackVerified=$entryState.SetVerified
         $report.nativeEntry.setBroadcast=$entryState.SetBroadcast
         $report.nativeEntry.restoreBroadcast=$entryState.RestoreBroadcast
+        if ($null -ne $script:entryLastBroadcastResult) { $report.nativeEntry.restoreBroadcastResult=$script:entryLastBroadcastResult }
         $report.nativeEntry.broadcastLimit='A sent or timed-out notification does not prove another process refreshed its environment.'
     }
     try {
+        if ($null -ne $entryActivationHost) {
+            try { $entryActivationHost.Stream.Dispose() } catch { $entryCleanupError=$true }
+        }
         if ($null -ne $entryServiceHandleState.ImageStream) {
             # Not an owned child: release query/file handles only, even after failed verification.
             try { $entryServiceHandleState.ImageStream.Dispose() } catch { $entryCleanupError=$true }

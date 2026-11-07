@@ -286,13 +286,19 @@ function Invoke-EntryBoundedHelper($Start, [int]$Milliseconds, [int]$MaxBytes = 
     }
     return $output
 }
-function Send-EntryEnvironmentChange {
-    # SendMessageTimeout's timeout is per window, not total. Bound the helper instead.
-    $start = New-EntryActivationStart (Join-Path $PSScriptRoot 'desktop-entry-activate.ps1') 'OpenAI.Codex_test!Test'
-    $start.Arguments = '-NoProfile -NonInteractive -File "' + (Join-Path $PSScriptRoot 'desktop-entry-activate.ps1') + '" -NotifyEnvironment'
+function Send-EntryEnvironmentChange([string]$Executable) {
+    # SendMessageTimeout's timeout is per window, not total. Keep the same external bound.
+    $script:entryLastBroadcastResult=$null
+    $start = New-EntryControlStart $Executable 'notify'
     try {
         $text=Invoke-EntryBoundedHelper $start 10000
-        if ($text -ceq 'sent') { return 'sent' }
+        $result=$text | ConvertFrom-Json
+        if (@($result.PSObject.Properties).Count -ne 2 -or $result.sent -isnot [bool] -or
+            ($result.win32Error -isnot [int] -and $result.win32Error -isnot [long]) -or
+            $result.win32Error -lt 0 -or $result.win32Error -gt [uint32]::MaxValue -or
+            ($result.sent -and $result.win32Error -ne 0)) { throw 'Invalid notification helper result.' }
+        $script:entryLastBroadcastResult=[ordered]@{sent=$result.sent;win32Error=('0x{0:X8}' -f [uint32]$result.win32Error)}
+        if ($result.sent) { return 'sent' }
     } catch { }
     return 'unconfirmed'
 }
@@ -351,14 +357,30 @@ function New-EntryActivationStart([string]$Script, [string]$Aumid) {
     # Deliberately no CODEX_CLI_PATH, bridge config, CODEX_HOME, runner metadata, or tokens.
     return $start
 }
-function Invoke-EntryActivation([string]$Script, [string]$Aumid) {
+function New-EntryControlStart([string]$Executable, [string]$Action, [string]$Aumid='') {
+    if ($Action -cnotin @('activate','notify','self-test') -or
+        -not [IO.Path]::IsPathRooted($Executable) -or [IO.Path]::GetFullPath($Executable) -cne $Executable -or
+        [IO.Path]::GetFileName($Executable) -cne 'entry-activation-control.exe' -or
+        ($Action -cne 'activate' -and $Aumid)) { throw 'Invalid private activation host request.' }
+    # Reuse the existing explicit environment allowlist, including its quoting checks.
+    $target='OpenAI.Codex_test!Test'; if ($Action -ceq 'activate') { $target=$Aumid }
+    $start=New-EntryActivationStart $Executable $target
+    $start.FileName=$Executable
+    $start.Arguments=$Action
+    if ($Action -ceq 'activate') { $start.Arguments+=' "'+$Aumid+'"' }
+    return $start
+}
+function Invoke-EntryActivation([string]$Executable, [string]$Aumid) {
+    $script:entryLastActivationResult=$null
     if (Test-EntryProcessOverride) { throw 'Activation caller acquired an override.' }
-    $start = New-EntryActivationStart $Script $Aumid
+    $start = New-EntryControlStart $Executable 'activate' $Aumid
     $text=Invoke-EntryBoundedHelper $start 20000
     $result = $text | ConvertFrom-Json
     if (@($result.PSObject.Properties).Count -ne 3 -or $result.hresult -isnot [int] -or
-        $result.processId -isnot [int] -or $result.processId -le 0 -or $result.hresult -ne 0 -or
+        $result.processId -isnot [int] -or $result.processId -lt 0 -or
         $result.callerOverridesAbsent -isnot [bool] -or -not $result.callerOverridesAbsent) { throw 'Invalid activation helper result.' }
+    $script:entryLastActivationResult=[ordered]@{hresult=('0x{0:X8}' -f $result.hresult);processId=$result.processId}
+    if ($result.processId -le 0 -or $result.hresult -ne 0) { throw 'Activation API did not return a successful process identity.' }
     return $result
 }
 

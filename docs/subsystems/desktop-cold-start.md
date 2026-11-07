@@ -181,6 +181,49 @@ At that checkpoint the bounded row labels had not yet been exercised on the
 real process. The follow-up below identifies the basename, not successful
 normal-entry inheritance.
 
+### Native control host after the a471 activation timeout
+
+The [a471 run](https://github.com/breakingtime126/magpie/actions/runs/42361304295/job/128370089300)
+passed Core 850, Desktop 854 and profile 1282 checks. Its actual signed service
+entry was 58,228,016 bytes, SHA-256
+`6223d2b7744c745b239ef41030c4ccb9cab6fed1d4b8e652e3993b49dd9eadd6`,
+with declared auto/localSystem and no Arguments. The complete held/package/image/
+SCM chain passed and preserved raw matches=1, blockingMatches=0. USER writes were
+read back, and exact prior absence was restored. The 10-second set notification,
+20-second activation helper and 10-second restore notification all timed out with
+confirmed helper exit. No valid application-root handoff was obtained. This does
+not establish whether Desktop activated, nor identify PowerShell or Add-Type as
+the root cause. That uncertain activation is never retried or killed by name.
+
+The replacement keeps the existing bounded supervisor and API contracts. Before
+USER mutation, the working Windows PowerShell parent compiles the C# control body
+into one private, read-locked .NET Framework executable in this run's owned scratch
+directory. A no-action self-check requires raw stdin EOF and the same override-free
+allowlisted process environment. Core safety still covers shared guards; the
+existing Desktop safety host compiles and exercises the native no-action path.
+The child no longer starts PowerShell or compiles interop code. This is a different
+host for the same operation, not a proven causal fix or a new workflow/matrix.
+
+The control accepts only notify, self-test or one allowlisted AUMID activation.
+It retains the 10/20-second external deadlines, 512-byte output bound, held-child
+cleanup and existing USER-finally ordering. Notification still uses
+`SendMessageTimeoutW`; its per-window timeout alone is not a total deadline.
+Fixed `setBroadcastResult`/`restoreBroadcastResult` metadata preserves sent and
+Win32 error code when the helper returns; zero error with failed delivery remains
+unconfirmed, not successful propagation. No raw exception or path is emitted.
+For the short-lived activation caller, explicit `CLSCTX_LOCAL_SERVER` follows the
+[activation-manager lifetime contract](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-iapplicationactivationmanager).
+Only successful HRESULT plus the returned app PID can reach the unchanged held
+root/session/package validation and cleanup. A returned numeric COM error may be
+recorded as `activationApiResult`, but never grants ownership or authorizes retry.
+No unknown root is killed. Failure before a usable result remains uncertain.
+
+All signature/service/freshness/observer/rollback guards remain. Tests or a native
+host self-check are not actual activation evidence. This replacement had not run
+on Windows when authored; it must be tested on a new VM. Success still means
+AUMID API selection and verified persistent rollback, not literal Start/taskbar
+interaction, full runtime rollback, model switching or chat.
+
 ### Independently bound packaged sandbox service
 
 The [`947f3c68` run](https://github.com/breakingtime126/magpie/actions/runs/42358497172/job/128361681974)
@@ -249,9 +292,10 @@ unproven, as does the absence of service-owned state.
 Synthetic manifest/binding cases and the existing real owned-handle fixture cover
 missing attributes, ambiguous declarations, dirty matches, SCM state/PID,
 creation identity, package and image mismatch. They do not verify the real 4239
-service declaration or impersonate a signature/SCM result. This new classification
-has not yet run on Windows while authoring the candidate; exact-head CI must
-establish the actual signed-entry and held-service chain before claiming success.
+service declaration or impersonate a signature/SCM result. The initial candidate
+was unexecuted when authored; the a471 run above subsequently established the
+actual signed-entry and held-service chain, but not successful activation or
+bridge inheritance.
 
 The [first run at `46248d03`](https://github.com/breakingtime126/magpie/actions/runs/42310342651)
 passed the offline safety gate in both hosts, but all four package cases stopped
