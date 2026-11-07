@@ -255,8 +255,24 @@ Pass (-not (Test-EntryHelperSucceeded $false $false $false $false 0)) 'unfinishe
 Pass (-not (Test-EntryHelperSucceeded $false $true $true $false 0)) 'timer deadline rejects zero exit'
 Pass (-not (Test-EntryHelperSucceeded $false $true $false $true 0)) 'overflow or read error rejects zero exit'
 Pass (-not (Test-EntryHelperSucceeded $false $true $false $false 7)) 'nonzero exit rejects otherwise complete helper'
+# Model the Framework writer boundary with real streams, without changing console settings.
+$preambleStream=[IO.MemoryStream]::new()
+$preambleWriter=[IO.StreamWriter]::new($preambleStream,[Text.UTF8Encoding]::new($true),128,$true)
+try {
+    $preambleWriter.AutoFlush=$true
+    Pass ($preambleStream.Length -eq 3) 'an empty auto-flushed UTF-8 writer emits its preamble before close'
+} finally { $preambleWriter.Dispose(); $preambleStream.Dispose() }
+foreach ($encoding in @([Text.Encoding]::ASCII,[Text.UTF8Encoding]::new($false))) {
+    Pass ([object]::ReferenceEquals((Get-EntryNoInputEncoding $encoding),$encoding)) 'preamble-free encoding is unchanged'
+}
+$bomEncoding=[Text.UTF8Encoding]::new($true)
+$noBomEncoding=Get-EntryNoInputEncoding $bomEncoding
+Pass ($noBomEncoding.CodePage -eq $bomEncoding.CodePage -and $noBomEncoding.GetPreamble().Length -eq 0 -and
+    $bomEncoding.GetPreamble().Length -eq 3) 'UTF-8 normalization preserves its code page and original encoding'
+Reject { Get-EntryNoInputEncoding ([Text.UnicodeEncoding]::new($false,$true)) } 'other preamble-bearing code pages fail before process start'
+Reject { Get-EntryNoInputEncoding $null } 'missing input encoding is not accepted'
 $hostPath=(Get-Process -Id $PID).Path
-foreach ($fixture in @('normal','stdin-eof','nonzero','overflow','timeout')) {
+foreach ($fixture in @('normal','stdin-eof','stdin-byte-eof','nonzero','overflow','timeout')) {
     Write-Output ('ENTRY_SAFETY_FIXTURE=bounded-'+$fixture)
     $start=New-Object Diagnostics.ProcessStartInfo
     $start.FileName=$hostPath; $start.UseShellExecute=$false; $start.CreateNoWindow=$true
@@ -268,20 +284,27 @@ foreach ($fixture in @('normal','stdin-eof','nonzero','overflow','timeout')) {
     }
     $command="[Console]::WriteLine('fixture-ok')"; $deadline=10000
     if ($fixture -ceq 'stdin-eof') { $command="if ([Console]::In.ReadToEnd().Length -ne 0) { exit 2 }; [Console]::WriteLine('fixture-eof')" }
+    if ($fixture -ceq 'stdin-byte-eof') { $command="if ([Console]::OpenStandardInput().ReadByte() -ne -1) { exit 2 }; [Console]::WriteLine('fixture-byte-eof')" }
     if ($fixture -ceq 'nonzero') { $command="[Console]::Out.WriteLine('private-output-fixture'); [Console]::Error.WriteLine('private-error-fixture'); exit 7" }
     if ($fixture -ceq 'overflow') { $command="[Console]::Write(('x' * 4096))" }
     if ($fixture -ceq 'timeout') { $command='Start-Sleep -Seconds 30'; $deadline=1000 }
     $start.Arguments='-NoProfile -NonInteractive -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $script:entryHelperExitUnconfirmed=$false
+    $encodingBeforeHelper=[Console]::InputEncoding
     if ($fixture -ceq 'normal') { Pass ((Invoke-EntryBoundedHelper $start $deadline) -ceq 'fixture-ok') 'bounded helper normal output' }
     elseif ($fixture -ceq 'stdin-eof') { Pass ((Invoke-EntryBoundedHelper $start $deadline) -ceq 'fixture-eof') 'no-input helper receives EOF rather than runner stdin' }
+    elseif ($fixture -ceq 'stdin-byte-eof') { Pass ((Invoke-EntryBoundedHelper $start $deadline) -ceq 'fixture-byte-eof') 'no-input helper receives zero bytes, including no encoding preamble' }
     else { Reject { Invoke-EntryBoundedHelper $start $deadline } ('bounded helper rejects '+$fixture) }
+    $encodingAfterHelper=[Console]::InputEncoding
+    Pass ($encodingAfterHelper.CodePage -eq $encodingBeforeHelper.CodePage -and
+        [Convert]::ToBase64String($encodingAfterHelper.GetPreamble()) -ceq
+        [Convert]::ToBase64String($encodingBeforeHelper.GetPreamble())) 'helper success and failure restore the original input encoding'
     Pass (-not $script:entryHelperExitUnconfirmed) 'owned helper exit confirmed after success or failure'
     $helperEvidence=$script:entryLastHelperEvidence
     Pass ($helperEvidence.Count -eq 8 -and $helperEvidence.start -ceq 'confirmed' -and $helperEvidence.cleanup -ceq 'exit-confirmed' -and
         $helperEvidence.phase -ceq 'not-reported' -and $helperEvidence.streamsCompleted) 'helper records fixed lifecycle evidence'
     Pass (($helperEvidence | ConvertTo-Json -Compress) -notmatch 'private-output-fixture|private-error-fixture|FileName|Arguments') 'helper diagnostics exclude raw output and process inputs'
-    if ($fixture -cin @('normal','stdin-eof','nonzero')) {
+    if ($fixture -cin @('normal','stdin-eof','stdin-byte-eof','nonzero')) {
         Pass (-not $helperEvidence.waitExpired -and -not $helperEvidence.timerExpired -and -not $helperEvidence.overflowOrReadError) 'normal and nonzero exits are not relabeled deadline or overflow'
         $expectedExit='zero'; if ($fixture -ceq 'nonzero') { $expectedExit='nonzero' }
         Pass ($helperEvidence.exit -ceq $expectedExit) 'helper zero and nonzero exits stay distinct'
@@ -302,7 +325,12 @@ $missingStart.FileName=Join-Path ([IO.Path]::GetTempPath()) ('entry-missing-'+[g
 $missingStart.UseShellExecute=$false; $missingStart.RedirectStandardOutput=$true; $missingStart.RedirectStandardError=$true
 $missingStart.EnvironmentVariables.Clear()
 Pass (-not (Test-Path -LiteralPath $missingStart.FileName)) 'constructor-failure fixture executable is absent'
+$encodingBeforeConstruction=[Console]::InputEncoding
 Reject { Invoke-EntryBoundedHelper $missingStart 10000 } 'constructor failure is sanitized'
+$encodingAfterConstruction=[Console]::InputEncoding
+Pass ($encodingAfterConstruction.CodePage -eq $encodingBeforeConstruction.CodePage -and
+    [Convert]::ToBase64String($encodingAfterConstruction.GetPreamble()) -ceq
+    [Convert]::ToBase64String($encodingBeforeConstruction.GetPreamble())) 'failed construction restores the original input encoding'
 Pass ($script:entryLastHelperEvidence.start -ceq 'uncertain' -and
     $script:entryLastHelperEvidence.cleanup -ceq 'unconfirmed' -and $script:entryHelperExitUnconfirmed) 'constructor failure cannot prove no process started or cleaned up'
 # This fixture verified an absent executable, so no actual process was created.

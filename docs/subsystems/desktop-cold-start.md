@@ -295,6 +295,44 @@ replacement and new cases still require exact-commit Windows execution before
 calling the stall fixed. Earlier native/bridge UI observations remain separate
 evidence and are not rerun or strengthened by this change.
 
+At [`2a8982e6`](https://github.com/breakingtime126/magpie/actions/runs/42343447135/job/128315953467),
+the Core-host suite passed 627 assertions, including real metadata boundaries,
+the complete zero-record helper (about 29.1 seconds), owned-process helper
+(about 17.9 seconds) and owned-probe lifetime checks. The subsequent Desktop
+host passed bounded normal output, then its decoded-stdin EOF case exited
+nonzero after about 0.16 seconds. No deadline, overflow or read-error flag
+was set, streams completed, and held helper exit was confirmed. This was not
+another metadata timeout. Desktop provisioning and USER mutation were not reached.
+
+The [.NET Framework Process reference implementation](https://github.com/microsoft/referencesource/blob/main/System/services/monitoring/system/diagnosticts/Process.cs#L2153-L2155) creates redirected stdin using
+`Console.InputEncoding` and enables the writer's `AutoFlush` during
+`Process.Start`. [`StreamWriter`](https://github.com/microsoft/referencesource/blob/main/mscorlib/system/io/streamwriter.cs#L293-L337) can emit an encoding preamble then, before
+any explicit input or `CloseInput`. This is a source-backed mechanism, not
+proof of the failed child's actual bytes or exact exit code. Changing only
+the close operation cannot remove bytes emitted during construction.
+
+The native helper wrapper now selects a preamble-free encoding before
+construction. An already preamble-free encoding is unchanged; UTF-8 code page
+65001 with exactly the EF-BB-BF preamble selects BOM-free UTF-8. Other
+preamble-bearing encodings fail closed before starting a child. The serial
+caller temporarily assigns only that input encoding and restores the original
+in `finally`, including failed construction, with code-page/preamble readback.
+This does not change the console code-page value, environment, registry,
+user preferences or shared supervisor. The managed input reader can be reset
+by the encoding setter; this private serial caller has no concurrent stdin reader.
+This does not provide general concurrent-console or cross-thread isolation.
+The existing held ownership, zero-input close, output bounds and deadlines
+remain unchanged. Restoration failure fails the operation and still reaches
+the existing held-process cleanup.
+
+The original decoded-empty-input assertion is retained. An additional helper
+requires raw `OpenStandardInput().ReadByte()` to return `-1`, without stripping
+or accepting a BOM. Tests also exercise real memory-stream preamble emission,
+encoding selection and original encoding restoration after helper success and
+failure. Both parent hosts must pass the complete existing prerequisites;
+the metadata and process-identity fixtures are not skipped. These new tests
+and the encoding correction still require exact-commit Windows execution.
+
 The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
 allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving
 window, so the parent applies a separate ten-second helper deadline and verifies

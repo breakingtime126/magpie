@@ -102,6 +102,15 @@ function Get-EntryHelperPhase([string]$Text) {
 function Test-EntryHelperSucceeded([bool]$WaitExpired, [bool]$Drained, [bool]$TimedOut, [bool]$Overflow, [int]$ExitCode) {
     return (-not $WaitExpired -and $Drained -and -not $TimedOut -and -not $Overflow -and $ExitCode -eq 0)
 }
+function Get-EntryNoInputEncoding([Text.Encoding]$Encoding) {
+    if ($null -eq $Encoding) { throw 'Missing no-input encoding.' }
+    $preamble=$Encoding.GetPreamble()
+    if ($preamble.Length -eq 0) { return $Encoding }
+    if ($Encoding.CodePage -ne 65001 -or [BitConverter]::ToString($preamble) -cne 'EF-BB-BF') {
+        throw 'Unreviewed no-input encoding preamble.'
+    }
+    return [Text.UTF8Encoding]::new($false)
+}
 function Invoke-EntryBoundedHelper($Start, [int]$Milliseconds, [int]$MaxBytes = 512) {
     if ($MaxBytes -notin @(512,4096)) { throw 'Unreviewed helper output bound.' }
     $child=$null; $output=$null; $failed=$false
@@ -114,10 +123,29 @@ function Invoke-EntryBoundedHelper($Start, [int]$Milliseconds, [int]$MaxBytes = 
         Initialize-LiveSupervisor
         # These helpers accept no stdin. Own and close it rather than inheriting runner input.
         $Start.RedirectStandardInput=$true
-        # Construction can throw after Process.Start but before returning ownership.
-        $evidence.start='uncertain'
-        $child=[DesktopLive.BoundedProcess]::new($Start,$MaxBytes,$Milliseconds)
-        $evidence.start='confirmed'
+        # Framework Process.Start can flush a preamble before CloseInput. Preserve the
+        # console code page and restore this serial caller's managed encoding in finally.
+        $savedInputEncoding=[Console]::InputEncoding
+        $noInputEncoding=Get-EntryNoInputEncoding $savedInputEncoding
+        $restoreInputEncoding=-not [object]::ReferenceEquals($savedInputEncoding,$noInputEncoding)
+        try {
+            if ($restoreInputEncoding) { [Console]::InputEncoding=$noInputEncoding }
+            $currentInputEncoding=[Console]::InputEncoding
+            if ($currentInputEncoding.CodePage -ne $savedInputEncoding.CodePage -or
+                $currentInputEncoding.GetPreamble().Length -ne 0) { throw 'No-input encoding was not established.' }
+            # Construction can throw after Process.Start but before returning ownership.
+            $evidence.start='uncertain'
+            $child=[DesktopLive.BoundedProcess]::new($Start,$MaxBytes,$Milliseconds)
+            $evidence.start='confirmed'
+        } finally {
+            if ($restoreInputEncoding) {
+                [Console]::InputEncoding=$savedInputEncoding
+                $restoredInputEncoding=[Console]::InputEncoding
+                if ($restoredInputEncoding.CodePage -ne $savedInputEncoding.CodePage -or
+                    [Convert]::ToBase64String($restoredInputEncoding.GetPreamble()) -cne
+                    [Convert]::ToBase64String($savedInputEncoding.GetPreamble())) { throw 'No-input encoding restoration failed.' }
+            }
+        }
         $child.CloseInput()
         if (-not $child.Wait($Milliseconds)) {
             $evidence.waitExpired=$true
