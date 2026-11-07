@@ -2277,11 +2277,41 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
     if ($proof.Count -ne 1 -or $proof[0].Extent.Text -cne 'Assert-Desktop4239Identity $report.reviewedBuildIdentity' -or $proof[0].Extent.EndOffset -ge $installs[0].Extent.StartOffset) { throw '4239 trust proof lost its unique pre-install seam.' }
     if ($options[0].Extent.EndOffset -ge $proof[0].Extent.StartOffset) { throw '4239 options no longer guard package admission.' }
     $guard=$proof[0].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
-    if ($guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedBuild4239') { throw '4239 proof escaped opt-in.' }
-    foreach($name in @('New-DesktopBridgeSettings','Wait-LiveReady','Complete-LiveFixture','ConvertTo-LiveConfiguration','Assert-DesktopCompatibilityPackage')) {
-        $call=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq $name},$true))
-        if ($call.Count -ne 1 -or -not $call[0].Extent.Text.EndsWith('-Build4239 $EnableReviewedBuild4239')) { throw 'Selected build lost its exact runtime propagation.' }
+    if ($guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedBuild4239 -or $EnableReviewedEntry4239') { throw '4239 proof escaped the two independent opt-ins.' }
+    $selectedCalls=@{
+        New-DesktopBridgeSettings='-Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239'
+        Assert-DesktopCompatibilityPackage='-Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)'
+        Wait-LiveReady='-Build4239 $EnableReviewedBuild4239'
+        Complete-LiveFixture='-Build4239 $EnableReviewedBuild4239'
+        ConvertTo-LiveConfiguration='-Build4239 $EnableReviewedBuild4239'
     }
+    foreach($name in $selectedCalls.Keys) {
+        $call=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq $name},$true))
+        if ($call.Count -ne 1 -or -not $call[0].Extent.Text.EndsWith($selectedCalls[$name])) { throw 'Selected build lost its exact runtime propagation.' }
+    }
+}
+
+Expect-Pass '4239 native entry preserves independent authority and every image oracle' {
+    $entryCalls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-EntryOptions'},$true))
+    if ($entryCalls.Count -ne 1 -or -not $entryCalls[0].Extent.Text.EndsWith('-WorkflowRef $env:GITHUB_WORKFLOW_REF -Entry4239 $EnableReviewedEntry4239 -ProfileMarker $env:MAGPIE_NATIVE_ENTRY_PROFILE')) {
+        throw 'Entry options lost their explicit workflow and profile authority.'
+    }
+    $guard=$entryCalls[0].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
+    if ($guard.Clauses[0].Item1.Extent.Text -cne '$NativeEntryCase -or $EnableReviewedEntry4239') { throw 'An entry flag without a case can evade admission.' }
+    $other=@($entryCalls[0].CommandElements | Where-Object { $_.Extent.Text.StartsWith('($EnableReviewedStartupProbe') })
+    $otherText='($EnableReviewedStartupProbe -or $EnableReviewedLaunchCompatibility -or $useLiveFixtures -or $InspectStaticLauncher -or $EnableReviewedBuild4239 -or $EnableNativeReadOnlyInspection -or $InspectPackageIdentityOnly)'
+    if ($other.Count -ne 1 -or ($other[0].Extent.Text -replace '\s+',' ') -cne $otherText) { throw 'Entry accepted another experiment opt-in.' }
+    $hashCalls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Get-EntryNativeHash'},$true))
+    if ($hashCalls.Count -ne 1 -or $hashCalls[0].Extent.Text -cne 'Get-EntryNativeHash -Entry4239 $EnableReviewedEntry4239') { throw 'Entry native identity selection is not unique.' }
+    $hashAssignments=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$expectedHash' -and $n.Right.Extent.Text -ceq '$entryNativeHash'},$true))
+    if ($hashAssignments.Count -ne 2) { throw 'Both live and event image oracles must use the selected exact native hash.' }
+    $nativeGate=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+        $n.Clauses[0].Item1.Extent.Text.StartsWith('$NativeEntryCase -and ($versionText')},$true))
+    if ($nativeGate.Count -ne 1 -or $nativeGate[0].Clauses[0].Item1.Extent.Text -notmatch '-cne\s+\$entryNativeHash\)') {
+        throw 'Installed native version check lost its selected digest.'
+    }
+    if ($hashCalls[0].Extent.StartOffset -le $entryCalls[0].Extent.EndOffset) { throw 'Native hash was selected before entry admission.' }
 }
 
 Expect-Pass 'static build selection preserves exact old and new source entry sets' {

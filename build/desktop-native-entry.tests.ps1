@@ -1,9 +1,32 @@
 # Offline only: mock registry snapshots and callbacks, never start Desktop or mutate environment.
 [CmdletBinding()]
-param([switch]$BreakRestoration)
+param([switch]$BreakRestoration, [string]$DiagnosticPath='')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'desktop-native-entry.ps1')
 . (Join-Path $PSScriptRoot 'desktop-entry-observe.ps1')
+$script:entryLastHelperEvidence=$null
+$script:entrySafetyDiagnostic=[ordered]@{schema=1;scope='native-entry-safety-only';host=[string]$PSVersionTable.PSEdition;
+    status='running';zeroRecords='not-started';ownedProcess='not-started';lastHelper=$null}
+function Save-EntrySafetyDiagnostic([string]$Status) {
+    if ([string]::IsNullOrEmpty($DiagnosticPath)) { return }
+    $script:entrySafetyDiagnostic.status=$Status
+    if ($null -ne $script:entryLastHelperEvidence) {
+        # Fixed supervisor labels, booleans and phase only. Never exception/input/stream text.
+        $safe=[ordered]@{}
+        foreach ($name in @('start','waitExpired','timerExpired','overflowOrReadError','streamsCompleted','exit','phase','cleanup')) {
+            $safe[$name]=$script:entryLastHelperEvidence[$name]
+        }
+        $script:entrySafetyDiagnostic.lastHelper=$safe
+    }
+    [IO.File]::WriteAllText($DiagnosticPath,($script:entrySafetyDiagnostic | ConvertTo-Json -Depth 4 -Compress),
+        (New-Object Text.UTF8Encoding($false)))
+}
+trap {
+    $entrySafetyFailure=$_
+    try { Save-EntrySafetyDiagnostic 'failed' } catch { Write-Output 'ENTRY_SAFETY_DIAGNOSTIC_WRITE_FAILED' }
+    throw $entrySafetyFailure
+}
+Save-EntrySafetyDiagnostic 'running'
 $count=0
 function Pass([bool]$Condition, [string]$Name) { if (-not $Condition) { throw $Name }; $script:count++ }
 function Reject([scriptblock]$Action, [string]$Name) { $failed=$false; try { $null=& $Action } catch { $failed=$true }; Pass $failed $Name }
@@ -112,6 +135,32 @@ foreach ($case in @('baseline','treatment','restore-before-activation','alias-co
 }
 Reject { Assert-EntryOptions 'treatment' 'observe' $false $workflow } 'observer not normal entry'
 Reject { Assert-EntryOptions 'unknown' 'bridge' $false $workflow } 'closed case set'
+$entry4239Workflow='breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry-4239.yml@refs/heads/experiment/app-server-bridge-v0.1.3035'
+$entry4239Marker='user-aumid-4239-v1'
+Assert-EntryOptions 'treatment' 'bridge' $false $entry4239Workflow $true $entry4239Marker
+foreach ($case in @('', 'baseline','restore-before-activation','alias-control','freshness-observation','unknown')) {
+    Reject { Assert-EntryOptions $case 'bridge' $false $entry4239Workflow $true $entry4239Marker } '4239 entry permits treatment only'
+}
+foreach ($mode in @('baseline','observe')) {
+    Reject { Assert-EntryOptions 'treatment' $mode $false $entry4239Workflow $true $entry4239Marker } '4239 entry forbids alternate launch modes'
+}
+foreach ($marker in @('', 'wrong')) {
+    Reject { Assert-EntryOptions 'treatment' 'bridge' $false $entry4239Workflow $true $marker } '4239 entry requires its exact opt-in marker'
+}
+Reject { Assert-EntryOptions 'treatment' 'bridge' $true $entry4239Workflow $true $entry4239Marker } '4239 entry rejects every additional opt-in'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $false $workflow $true $entry4239Marker } 'old workflow cannot enable 4239 entry'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $false $entry4239Workflow $false $entry4239Marker } 'new workflow cannot implicitly select 4239 entry'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $false $workflow $false $entry4239Marker } 'entry marker cannot change old default behavior'
+$entry4239Hash=Get-EntryNativeHash $true
+Pass ($entry4239Hash -ceq '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' -and
+    (Get-EntryNativeHash) -ceq '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39') 'entry native image oracles select an exact independent digest'
+$entry4239Settings=New-DesktopBridgeSettings $backends $true $false 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash '' $false $true
+Pass ($entry4239Settings.Count -eq 2 -and $entry4239Settings.startup_probe -ceq 'compare-unrestricted-v0.167.0-alpha.3.2') '4239 entry selects only startup comparison'
+foreach ($backend in $entry4239Settings.backends) { Pass ($backend.startup_probe_sha256 -ceq $entry4239Hash) '4239 entry pins both original native children' }
+Reject { New-DesktopBridgeSettings $backends $true $false 'codex-cli 0.167.0-alpha.3.2' (Get-EntryNativeHash) '' $false $true } '4239 entry rejects old same-version backend'
+Reject { New-DesktopBridgeSettings $backends $false $false 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash '' $false $true } '4239 entry cannot skip genuine startup comparison'
+Reject { New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $false $true } '4239 entry cannot select launch compatibility'
+Reject { New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $true $true } '4239 entry cannot combine with the UI build profile'
 $before=New-Snapshot
 Assert-EntryFresh $before $false $false $false $false
 foreach ($position in 0..3) {
@@ -315,10 +364,31 @@ $applications[0].executable='app/ChatGPT.exe'
 $observation='{"schema":1,"scope":"freshness-observation-only","matches":1,"truncated":false,"originalGenerationVerified":false,"records":[{"status":"observed","image":"windows_runtime_broker","package":"expected","liveThroughout":true}]}' | ConvertFrom-Json
 Assert-EntryObservation $observation 1
 $canonical=$observation | ConvertTo-Json -Depth 6 -Compress
-$prefix="ENTRY_PHASE=started`nENTRY_PHASE=input_validated`nENTRY_PHASE=interop_ready`n"
+$inputPhases=@('input_file_validated','input_bytes_read','input_json_parsed','input_shape_validated')
+$prefix="ENTRY_PHASE=started`n"
+$previousPhase='started'
+foreach ($phase in $inputPhases) {
+    $partialPrefix=$prefix+'ENTRY_PHASE='+$phase
+    Pass ((Get-EntryHelperPhase $partialPrefix) -ceq $previousPhase) 'partial input marker cannot advance completed phase'
+    $prefix+="ENTRY_PHASE=$phase`n"
+    Pass ((Get-EntryHelperPhase $prefix) -ceq $phase) 'completed input marker identifies the last finished operation'
+    $previousPhase=$phase
+}
+$prefix+="ENTRY_PHASE=input_validated`nENTRY_PHASE=interop_ready`n"
 $recordFrames="ENTRY_PHASE=record_started`nENTRY_PHASE=record_finished`n"
 $framed=$prefix+$recordFrames+"ENTRY_PHASE=output_ready`n"+$canonical
 Pass ((ConvertFrom-EntryObservationOutput $framed 1).records[0].image -ceq 'windows_runtime_broker') 'ordered phase frames preserve the canonical validated report'
+foreach ($phase in $inputPhases) {
+    $frame="ENTRY_PHASE=$phase`n"
+    Reject { ConvertFrom-EntryObservationOutput ($framed.Replace($frame,'')) 1 } 'missing input phase rejects otherwise valid observation'
+    Reject { ConvertFrom-EntryObservationOutput ($framed.Replace($frame,($frame+$frame))) 1 } 'repeated input phase rejects otherwise valid observation'
+    Reject { ConvertFrom-EntryObservationOutput ($framed.Replace($frame,'').Replace("ENTRY_PHASE=started`n",($frame+"ENTRY_PHASE=started`n"))) 1 } 'reordered input phase rejects otherwise valid observation'
+}
+$zero=$canonical | ConvertFrom-Json
+$zero.matches=0; $zero.records=@()
+$zeroFrames=$prefix+"ENTRY_PHASE=output_ready`n"+($zero | ConvertTo-Json -Depth 6 -Compress)
+Pass ((ConvertFrom-EntryObservationOutput $zeroFrames 0).records.Count -eq 0) 'zero-record observation requires complete input phases without record frames'
+Reject { ConvertFrom-EntryObservationOutput ($zeroFrames.Replace("ENTRY_PHASE=output_ready`n",($recordFrames+"ENTRY_PHASE=output_ready`n"))) 0 } 'zero-record observation rejects an unexpected record frame'
 $invalidJsonError=''
 try { $null=ConvertFrom-EntryObservationOutput ($prefix+$recordFrames+"ENTRY_PHASE=output_ready`n"+'{"private-output-fixture":') 1 }
 catch { $invalidJsonError=$_.Exception.Message }
@@ -371,19 +441,33 @@ try {
     Pass ($heldSelf.Alive -and $heldSelf.ImagePath -ieq $hostPath) 'query-only held handle captures exact current image metadata'
     Pass ($heldSelf.PackageRelation('fixture.package') -cin @('none','other')) 'package query does not invent expected identity'
 } finally { if ($null -ne $heldSelf) { $heldSelf.Dispose() } }
-# Exercise the complete helper/JSON path against only this owned test process.
+# Exercise zero records first, preserving the complete input and interop path
+# without opening any process handle. This does not skip the owned-process case.
+# Then exercise the complete helper/JSON path against only this owned test process.
 # Its package is deliberately absent/different: this is unavailable observation,
 # never fake package identity, provisioning, Desktop activation or a guard waiver.
 $observationScratch=Join-Path ([IO.Path]::GetTempPath()) ('entry-observation-test-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $observationScratch | Out-Null
 try {
+    Write-Output 'ENTRY_SAFETY_FIXTURE=observation-zero-records'
+    $script:entrySafetyDiagnostic.zeroRecords='started'; Save-EntrySafetyDiagnostic 'running'
+    $zeroIds=[Collections.Generic.List[int]]::new()
+    $zeroObservation=Invoke-EntryFreshnessObservation $zeroIds 0 'OpenAI.Codex_26.1103.3517.0_x64__2p2nqsd0c76g0' `
+        'C:\fixture-package' $applications $observationScratch
+    Pass ($zeroObservation.matches -eq 0 -and $zeroObservation.records.Count -eq 0 -and
+        -not $zeroObservation.originalGenerationVerified) 'complete zero-record helper preserves absence of process observations'
+    Pass ($script:entryLastHelperEvidence.phase -ceq 'output_ready' -and $script:entryLastHelperEvidence.exit -ceq 'zero' -and
+        $script:entryLastHelperEvidence.cleanup -ceq 'exit-confirmed' -and -not $script:entryHelperExitUnconfirmed) 'zero-record helper completes and exits under unchanged supervision'
+    $script:entrySafetyDiagnostic.zeroRecords='passed'; Save-EntrySafetyDiagnostic 'running'
     Write-Output 'ENTRY_SAFETY_FIXTURE=observation-owned-process'
+    $script:entrySafetyDiagnostic.ownedProcess='started'; Save-EntrySafetyDiagnostic 'running'
     $selfIds=[Collections.Generic.List[int]]::new(); $selfIds.Add($PID)
     $selfObservation=Invoke-EntryFreshnessObservation $selfIds 1 'OpenAI.Codex_26.1103.3517.0_x64__2p2nqsd0c76g0' `
         'C:\fixture-package' $applications $observationScratch
     Pass ($selfObservation.records.Count -eq 1 -and $selfObservation.records[0].status -ceq 'unavailable' -and
         $selfObservation.records[0].package -cin @('none','other') -and -not $selfObservation.originalGenerationVerified) 'complete bounded observation helper preserves unavailable package identity'
     Pass ($script:entryLastHelperEvidence.phase -ceq 'output_ready' -and $script:entryLastHelperEvidence.exit -ceq 'zero') 'real helper completes the fixed observation protocol'
+    $script:entrySafetyDiagnostic.ownedProcess='passed'; Save-EntrySafetyDiagnostic 'running'
 } finally { Remove-Item -LiteralPath $observationScratch -Recurse -Force }
 # Observation-only mode has two unconditional stop paths before environment writes or activation.
 $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'))
@@ -439,4 +523,5 @@ try {
         }
     }
 }
+Save-EntrySafetyDiagnostic 'passed'
 Write-Output ('Native entry offline safety assertions passed: '+$count)

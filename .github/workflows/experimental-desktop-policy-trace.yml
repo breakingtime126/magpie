@@ -48,7 +48,7 @@ concurrency:
 
 jobs:
   observer-unit:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]'))
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     env:
@@ -591,7 +591,7 @@ jobs:
 
   observed-policy-read:
     needs: observer-unit
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]')))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]'))) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]'))
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -746,7 +746,7 @@ jobs:
           retention-days: 7
 
   native-original-ui:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]')
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]'))
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -793,7 +793,7 @@ jobs:
 
 
   native-contract-review:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]')
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]'))
     runs-on: windows-2025
     timeout-minutes: 12
     env:

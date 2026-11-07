@@ -247,6 +247,24 @@ EOF, nonzero exit, deadline and byte overflow,
 redaction and malformed frames. Exact-head Windows execution remains required;
 no observation, environment inheritance or successful activation is claimed.
 
+At [`b4f704e4`](https://github.com/breakingtime126/magpie/actions/runs/42316096858/job/128228938689),
+the owned-process fixture reached only `started`, then exceeded its 30-second
+deadline. The report confirmed helper exit and completed streams, with no
+overflow/read-error flag. This locates the failure before `input_validated`,
+not in native process observation; the exact operation remains unknown.
+Four new completed-phase frames separate file metadata validation, bounded byte
+reading, JSON parsing plus stream disposal, and input-shape validation. The
+existing `input_validated` frame still follows known-image-table construction.
+The output parser requires every frame in order, and the diagnostic phase
+scanner recognizes only complete fixed lines. No raw input or error is added.
+A zero-record fixture exercises the same complete helper/input/interop path
+without opening a process handle, before the existing owned-process fixture.
+The helper still has the same 30-second deadline, 4 KiB output and 16 KiB input
+bounds, cleared environment, stdin EOF and held-process cleanup. This is a
+diagnostic change, not a confirmed timeout fix. Both PowerShell host runs and
+the original package observation remain unverified for this change; no workflow
+or 4239 native-entry run is enabled by these frames alone.
+
 The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
 allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving
 window, so the parent applies a separate ten-second helper deadline and verifies
@@ -304,6 +322,69 @@ Sources: [Windows process environments](https://learn.microsoft.com/en-us/window
 [WM_SETTINGCHANGE](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-settingchange),
 [SendMessageTimeout](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagetimeoutw),
 and [AUMID activation](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-iapplicationactivationmanager-activateapplication).
+
+### Independent 4239 single-treatment entry profile
+
+[`experimental-desktop-native-entry-4239.yml`](../../.github/workflows/experimental-desktop-native-entry-4239.yml)
+is a separate push-marker workflow, disabled unless an exact experimental-branch
+push changes one of its listed paths and the head commit contains
+`[native-entry-4239-v1]`. The push must not contain the winapp, bridge-UI,
+package-identity, original-native-UI or native-contract-review markers. No
+workflow-dispatch capability is needed. One Windows 2025 VM runs the unchanged missing-second-rollback mutation,
+the full native-entry safety suite in both PowerShell hosts, and the default
+and selected-profile fixtures before building or running one treatment. There
+is no matrix, retry or second activation. The new marker suppresses all ten
+jobs across the existing bridge-Windows, cold-start, old native-entry and
+policy-trace workflows for that push. Their existing conditions and behavior
+for other commits are preserved. This prevents the policy trace's default
+live-welcome action from running beside the new entry treatment, even if a
+conflicting marker makes the new lane decline the push. No winapp marker is
+used as a routing workaround. The other seven workflows at the reviewed base
+do not directly respond to this branch push. Pull-request or scheduled events
+are separate triggers and are not covered by this push-only exclusion.
+
+The zero-record and owned-process helper cases must both reach validated
+`output_ready`, exit zero and confirm cleanup in each host. The optional
+`DiagnosticPath` on the test suite writes only fixed status/fixture labels and
+the existing eight-field supervisor evidence, including the last completed
+input phase. A terminating fixture error saves failed status before propagating.
+The workflow also saves a fixed prerequisite-gate result in `finally` and
+uploads these reports on failure. No raw helper input, output, stderr, exception
+or environment is added to those diagnostic artifacts. A failed prerequisite
+stops the job before package provisioning or USER-state mutation. The 30-second
+helper runtime, 4 KiB output, 16 KiB input, cleared environment, stdin EOF and
+held-process cleanup are unchanged; the unresolved timeout is not relabeled fixed.
+
+`-EnableReviewedEntry4239` is default-off and requires `-Mode bridge`,
+`-NativeEntryCase treatment`, the exact dedicated workflow path and the
+`MAGPIE_NATIVE_ENTRY_PROFILE=user-aumid-4239-v1` marker. It rejects every other
+experiment opt-in, including `-EnableReviewedBuild4239`. The existing 4239 UI
+profile's exclusive admission, static-reader propagation and alias-cleanup
+distinctions are unchanged. The shared signed-package identity reader must
+establish the [reviewed 4239 tuple](#reviewed-4239-bridge-observation-profile)
+before installation. The installed native version/hash check and both live
+and event-based child-image checks select that same native digest.
+
+`New-DesktopBridgeSettings` has a separate entry selector which permits only
+the existing genuine startup comparison with two exact native executables.
+It does not enable launch compatibility, attestation, gateway OAuth, synthetic
+auth, control-plane configuration, live fixtures or UI input. The old observer
+fixture package pin and native inference slice remain unchanged because neither
+is a 4239 treatment runtime path.
+
+The actual treatment reuses the existing strict fresh-state predicate, two USER
+variables, readback and bounded notification, override-free AUMID caller,
+held activation identity and exact-root cleanup. Any prior package/name match
+still blocks before USER writes. Rollback still attempts both original absences
+and verifies them before process cleanup, including on failure. No broker label
+waives freshness and no child/name-based kill or scratch deletion is added.
+
+Success means only that the original AUMID activation selected the exact bridge
+image and persistent USER state was restored, with the held activation root
+confirmed exited. It is not literal Start/taskbar click evidence, config-path
+consumption proof, full process-family exit, same-session runtime rollback,
+successful account login or a dual-provider conversation. This new lane and its
+Windows prerequisites have not been run while authoring the candidate.
 
 ## Policy-read diagnostic
 

@@ -82,7 +82,8 @@ namespace DesktopEntryReadOnly {
 '@
 }
 function Write-EntryObservationPhase([string]$Phase) {
-    if ($Phase -cnotin @('started','input_validated','interop_ready','record_started','record_finished','output_ready')) {
+    if ($Phase -cnotin @('started','input_file_validated','input_bytes_read','input_json_parsed',
+        'input_shape_validated','input_validated','interop_ready','record_started','record_finished','output_ready')) {
         throw 'Invalid observation phase.'
     }
     [Console]::Out.WriteLine('ENTRY_PHASE='+$Phase)
@@ -137,7 +138,9 @@ function ConvertFrom-EntryObservationOutput([string]$Text, [int]$ExpectedMatches
     # Ordered fixed frames followed by exactly one canonical JSON line. Unknown, repeated,
     # reordered or raw lines cannot become part of the published report.
     $record='ENTRY_PHASE=record_started\r?\nENTRY_PHASE=record_finished\r?\n'
-    $pattern='\AENTRY_PHASE=started\r?\nENTRY_PHASE=input_validated\r?\nENTRY_PHASE=interop_ready\r?\n(?<records>(?:'+$record+'){0,4})ENTRY_PHASE=output_ready\r?\n(?<json>[^\r\n]+)\z'
+    $prefix='\AENTRY_PHASE=started\r?\nENTRY_PHASE=input_file_validated\r?\nENTRY_PHASE=input_bytes_read\r?\n'+
+        'ENTRY_PHASE=input_json_parsed\r?\nENTRY_PHASE=input_shape_validated\r?\nENTRY_PHASE=input_validated\r?\nENTRY_PHASE=interop_ready\r?\n'
+    $pattern=$prefix+'(?<records>(?:'+$record+'){0,4})ENTRY_PHASE=output_ready\r?\n(?<json>[^\r\n]+)\z'
     if ([Text.Encoding]::UTF8.GetByteCount($Text) -gt 4096) { throw 'Observation output exceeds its bound.' }
     $frames=[regex]::Match($Text,$pattern)
     if (-not $frames.Success -or [regex]::Matches($frames.Groups['records'].Value,'ENTRY_PHASE=record_started').Count -ne [Math]::Min(4,$ExpectedMatches)) {
@@ -171,6 +174,7 @@ try {
     Write-EntryObservationPhase 'started'
     $file=Get-Item -LiteralPath $InputPath
     if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -lt 1 -or $file.Length -gt 16384) { throw 'input' }
+    Write-EntryObservationPhase 'input_file_validated'
     $stream=[IO.File]::OpenRead($InputPath)
     try {
         $bytes=New-Object byte[] 16385; $count=0
@@ -179,13 +183,16 @@ try {
             if ($read -eq 0) { break }; $count+=$read
         }
         if ($count -lt 1 -or $count -gt 16384) { throw 'input' }
+        Write-EntryObservationPhase 'input_bytes_read'
         $inputValue=[Text.Encoding]::UTF8.GetString($bytes,0,$count) | ConvertFrom-Json
     } finally { $stream.Dispose() }
+    Write-EntryObservationPhase 'input_json_parsed'
     if (-not (Test-EntryIntegralRange $inputValue.schema 1 1) -or $inputValue.package -cne 'OpenAI.Codex_26.1103.3517.0_x64__2p2nqsd0c76g0' -or
         $inputValue.windowsRoot -ine $env:SystemRoot -or -not (Test-EntryIntegralRange $inputValue.matches 0 65536) -or
         $inputValue.processIds -isnot [array] -or
         $inputValue.processIds.Count -ne [Math]::Min(4,$inputValue.matches)) { throw 'input' }
     foreach ($processId in $inputValue.processIds) { if (-not (Test-EntryIntegralRange $processId 1 2147483647)) { throw 'input' } }
+    Write-EntryObservationPhase 'input_shape_validated'
     $images=Get-EntryKnownImages $inputValue.packageRoot $inputValue.windowsRoot $inputValue.applications
     Write-EntryObservationPhase 'input_validated'
     Initialize-EntryHeldObservation

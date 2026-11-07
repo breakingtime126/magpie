@@ -1,11 +1,24 @@
 # CI-only native package entry helpers. Dot-sourcing has no side effects.
 function Get-EntryVariableNames { return @('CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG') }
-function Assert-EntryOptions([string]$Case, [string]$Mode, [bool]$OtherOptIn, [string]$WorkflowRef) {
+function Assert-EntryOptions([string]$Case, [string]$Mode, [bool]$OtherOptIn, [string]$WorkflowRef,
+    [bool]$Entry4239=$false, [string]$ProfileMarker='') {
+    if ($Entry4239) {
+        if ($Case -cne 'treatment' -or $Mode -cne 'bridge' -or $OtherOptIn -or
+            $ProfileMarker -cne 'user-aumid-4239-v1' -or
+            $WorkflowRef -cne 'breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry-4239.yml@refs/heads/experiment/app-server-bridge-v0.1.3035') {
+            throw 'Reviewed 4239 entry requires its exclusive single-treatment workflow.'
+        }
+        return
+    }
     $modes = @{ baseline='baseline'; treatment='bridge'; 'restore-before-activation'='bridge'; 'alias-control'='bridge'; 'freshness-observation'='baseline' }
-    if (-not $modes.ContainsKey($Case) -or $modes[$Case] -cne $Mode -or $OtherOptIn -or
+    if (-not $modes.ContainsKey($Case) -or $modes[$Case] -cne $Mode -or $OtherOptIn -or $ProfileMarker -or
         $WorkflowRef -cne 'breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry.yml@refs/heads/experiment/app-server-bridge-v0.1.3035') {
         throw 'Native entry requires its dedicated disposable workflow and exact case, without other opt-ins.'
     }
+}
+function Get-EntryNativeHash([bool]$Entry4239=$false) {
+    if ($Entry4239) { return '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' }
+    return '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
 }
 function Get-EntryRegistrySnapshot([Microsoft.Win32.RegistryKey]$Key, [switch]$RequireAbsent) {
     if ($null -eq $Key) { throw 'Environment registry key is unavailable.' }
@@ -80,7 +93,7 @@ function Get-EntryHelperPhase([string]$Text) {
     $lines=$Text -split "`n"
     for ($index=0; $index -lt $lines.Count-1; $index++) {
         $line=$lines[$index].TrimEnd([char]13)
-        if ($line -cmatch '^ENTRY_PHASE=(started|input_validated|interop_ready|record_started|record_finished|output_ready)$') {
+        if ($line -cmatch '^ENTRY_PHASE=(started|input_file_validated|input_bytes_read|input_json_parsed|input_shape_validated|input_validated|interop_ready|record_started|record_finished|output_ready)$') {
             $phase=$Matches[1]
         } else { break }
     }

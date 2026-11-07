@@ -13,6 +13,7 @@ param(
     [switch]$EnableReadOnlyWinAppInspection,
     [switch]$EnableNativeReadOnlyInspection,
     [switch]$EnableReviewedBuild4239,
+    [switch]$EnableReviewedEntry4239,
     [switch]$InspectPackageIdentityOnly,
     [switch]$InspectStaticLauncher,
     [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
@@ -969,13 +970,17 @@ function Wait-DesktopRegistration(
 
 function New-DesktopBridgeSettings(
     $Backends, [bool]$StartupProbe, [bool]$LaunchCompatibility,
-    [string]$VersionText, [string]$BackendHash, [string]$ControlHome = '', [bool]$Build4239=$false
+    [string]$VersionText, [string]$BackendHash, [string]$ControlHome = '', [bool]$Build4239=$false,
+    [bool]$Entry4239=$false
 ) {
     if ($LaunchCompatibility -and -not $StartupProbe) {
         throw 'Reviewed launch compatibility requires the separate exact-version startup opt-in.'
     }
     if ($Build4239 -and (-not $StartupProbe -or -not $LaunchCompatibility)) {
         throw 'Reviewed 4239 settings require both explicit compatibility gates.'
+    }
+    if ($Entry4239 -and ($Build4239 -or -not $StartupProbe -or $LaunchCompatibility)) {
+        throw 'Reviewed 4239 entry settings require startup comparison only.'
     }
     # Copy only the caller's fresh test configuration; no filesystem or environment access.
     $copies = @()
@@ -988,7 +993,7 @@ function New-DesktopBridgeSettings(
     if ($StartupProbe) {
         $expectedVersion = 'codex-cli 0.167.0-alpha.3.2'
         $expectedBackendHash = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
-        if ($Build4239) { $expectedBackendHash = '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' }
+        if ($Build4239 -or $Entry4239) { $expectedBackendHash = '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' }
         if ($VersionText -cne $expectedVersion -or $BackendHash -cne $expectedBackendHash -or $copies.Count -ne 2) {
             throw 'Reviewed startup inspection requires two exact verified official backends.'
         }
@@ -1702,11 +1707,13 @@ if ($EnableReadOnlyWinAppInspection) {
     Assert-WinAppOptions $true $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
         $EnableReviewedLiveWelcome $NativeEntryCase $env:MAGPIE_WINAPP_INSPECTION
 }
-if ($NativeEntryCase) {
+if ($NativeEntryCase -or $EnableReviewedEntry4239) {
     . (Join-Path $PSScriptRoot 'desktop-native-entry.ps1')
     Assert-EntryOptions -Case $NativeEntryCase -Mode $Mode `
-        -OtherOptIn ($EnableReviewedStartupProbe -or $EnableReviewedLaunchCompatibility -or $useLiveFixtures -or $InspectStaticLauncher) `
-        -WorkflowRef $env:GITHUB_WORKFLOW_REF
+        -OtherOptIn ($EnableReviewedStartupProbe -or $EnableReviewedLaunchCompatibility -or $useLiveFixtures -or $InspectStaticLauncher -or
+            $EnableReviewedBuild4239 -or $EnableNativeReadOnlyInspection -or $InspectPackageIdentityOnly) `
+        -WorkflowRef $env:GITHUB_WORKFLOW_REF -Entry4239 $EnableReviewedEntry4239 -ProfileMarker $env:MAGPIE_NATIVE_ENTRY_PROFILE
+    $entryNativeHash = Get-EntryNativeHash -Entry4239 $EnableReviewedEntry4239
 }
 if ($useLiveFixtures) {
     . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
@@ -1786,6 +1793,7 @@ try {
     if ($NativeEntryCase) {
         $report.nativeEntry = [ordered]@{
             case=$NativeEntryCase; scope='disposable-native-entry-only'; selection='not-observed'
+            reviewedProfile=$(if ($EnableReviewedEntry4239) { 'user-aumid-4239-v1' } else { 'desktop-3517' })
             apiActivationIsNotLiteralClick=$true; callerOverridesAbsent=$false
             bridgeConfigInheritance='not-directly-observed'; processFamilyExit='not-proven'
             postRestoreActivation='not-attempted'; persistentRestoration='not-yet-verified'
@@ -1985,7 +1993,7 @@ namespace DesktopColdProbe {
         # Unconditional, including when the URL returns the old reviewed hash.
         Block 'Read-only package identity mode stops before installation or execution; package remains unapproved.'
     }
-    if ($EnableReviewedBuild4239) {
+    if ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239) {
         $report.reviewedBuildIdentity = Get-DesktopPackageIdentityEvidence $package $report.download.packageSha256 `
             $signatureExit $report.signature.authenticodeStatus $report.signature.signerSubject
         Assert-Desktop4239Identity $report.reviewedBuildIdentity
@@ -1995,7 +2003,7 @@ namespace DesktopColdProbe {
         $report.nativePackageIdentity = Get-DesktopPackageIdentityEvidence $package $report.download.packageSha256 `
             $signatureExit $report.signature.authenticodeStatus $report.signature.signerSubject
         $report.nativePackageIdentityLimit = 'Actual signed package identity only; no bridge protocol or compatibility acceptance.'
-    } elseif (-not $EnableReviewedBuild4239) {
+    } elseif (-not ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)) {
         if ($report.download.packageSha256 -ne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
             if ($EnableReviewedLaunchCompatibility) {
                 Block 'Reviewed launch compatibility package hash mismatch; inspect the changed floating download before running.'
@@ -2034,7 +2042,7 @@ namespace DesktopColdProbe {
         Block 'Unexpected official package identity or architecture; inspect evidence before proceeding.'
     }
     Assert-DesktopCompatibilityPackage -LaunchCompatibility ($EnableReviewedLaunchCompatibility -or [bool]$NativeEntryCase) `
-        -DesktopVersion $report.manifest.version -PackageHash $report.download.packageSha256 -Build4239 $EnableReviewedBuild4239
+        -DesktopVersion $report.manifest.version -PackageHash $report.download.packageSha256 -Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)
     # Exact Desktop executable observed in the verified 26.1103.3517.0 package.
     # The two other applications are native Chrome host and command runner, not Desktop.
     $desktopApps = @($apps | Where-Object {
@@ -2356,7 +2364,7 @@ namespace DesktopColdProbe {
         $report.officialBackendVersion = $versionText
         if ($NativeEntryCase -and ($versionText -cne 'codex-cli 0.167.0-alpha.3.2' -or
             (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant() -cne
-                '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39')) {
+                $entryNativeHash)) {
             Block 'Native entry requires the exact reviewed original backend.'
         }
         $backends = @()
@@ -2432,7 +2440,7 @@ requires_openai_auth = false
             } catch { Block 'The live fixture could not establish its bounded reviewed contract.' }
         }
         $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe ($EnableReviewedStartupProbe -or [bool]$NativeEntryCase) `
-            -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome -Build4239 $EnableReviewedBuild4239
+            -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome -Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239
         if ($useLiveFixtures) {
             $bridgeSettings.working_directory = $liveWorkspace
             $bridgeSettings.gateway_oauth_provider_name = 'Synthetic alpha_provider'
@@ -2649,7 +2657,7 @@ requires_openai_auth = false
                         $child.SessionId -eq $processSession -and -not $child.HasExited -and
                         $child.MainModule.FileName -ieq $p.ExecutablePath) {
                         $kind = 'original-native'
-                        $expectedHash = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+                        $expectedHash = $entryNativeHash
                         if ($p.ExecutablePath -ieq $BridgeExecutable) { $kind='bridge'; $expectedHash=$report.bridge.sha256 }
                         if ((Get-FileHash -Algorithm SHA256 -LiteralPath $child.MainModule.FileName).Hash.ToLowerInvariant() -ceq $expectedHash) {
                             $entryImages[[string]$p.ProcessId] = [ordered]@{processId=[int]$p.ProcessId;
@@ -2687,7 +2695,7 @@ requires_openai_auth = false
             if ($image.ParentId -ne $activationPid -or $image.CreatedTicks -lt $entryActivationFloor.Ticks -or
                 $image.ParentCreatedTicks -ne $ownedActivationProcess.StartTime.ToUniversalTime().Ticks) { continue }
             $kind='original-native'; $expectedImage=$officialBackend.FullName
-            $expectedHash='40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+            $expectedHash=$entryNativeHash
             if ($image.Path -ieq $BridgeExecutable) { $kind='bridge'; $expectedImage=$BridgeExecutable; $expectedHash=$report.bridge.sha256 }
             if ($image.Path -ieq $expectedImage -and
                 (Get-FileHash -Algorithm SHA256 -LiteralPath $expectedImage).Hash.ToLowerInvariant() -ceq $expectedHash) {
