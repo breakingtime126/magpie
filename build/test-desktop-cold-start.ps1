@@ -874,6 +874,16 @@ function Assert-Desktop4239Options([bool]$Enabled,[string]$Mode,[bool]$Startup,[
         throw 'Reviewed 4239 build requires its exclusive zero-action bridge inspection mode.'
     }
 }
+function Get-DesktopStaticEntries([bool]$Build4239=$false) {
+    if ($Build4239) {
+        return @('.vite/build/early-bootstrap-339-ce026819bf837ba7.js',
+            '.vite/build/early-bootstrap-824-d144f7c160c094ea.js',
+            '.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js')
+    }
+    return @('.vite/build/early-bootstrap-339-fe39e0119f57b81e.js',
+        '.vite/build/early-bootstrap-824-d144f7c160c094ea.js',
+        '.vite/build/early-bootstrap-715-fa9cbf44c39465d5.js')
+}
 function Assert-Desktop4239Identity($Evidence) {
     if ($Evidence.status -cne 'observed' -or $Evidence.manifest.version -cne '26.1103.4239.0' -or
         $Evidence.packageSha256 -cne '9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c' -or
@@ -1712,6 +1722,7 @@ $report = [ordered]@{
         'Bridge phase tests launch only; explicit CI compatibility opt-ins are recorded separately, never evidence of account login.', 'Window visibility is not model or account acceptance.')
 }
 $activationPid = 0
+$aliasActivationAttempted = $false
 $activationExitConfirmed = $false
 $captureValidated = $false
 $ownedActivationProcess = $null
@@ -2092,6 +2103,7 @@ namespace DesktopColdProbe {
         $readStatic = New-Object Diagnostics.ProcessStartInfo
         $readStatic.FileName = $node
         $readStatic.Arguments = '--max-old-space-size=512 "' + $inspector + '" --package-root "' + $app.InstallLocation + '"'
+        if ($EnableReviewedBuild4239) { $readStatic.Arguments += ' --reviewed-build desktop-4239' }
         $readStatic.UseShellExecute = $false
         $readStatic.CreateNoWindow = $true
         $readStatic.RedirectStandardOutput = $true
@@ -2158,9 +2170,7 @@ namespace DesktopColdProbe {
             Block 'Static inspection could not read the reviewed package safely.'
         }
         Assert-StaticCount $staticReport.archiveEntries 100000
-        $expectedEntries = @('.vite/build/early-bootstrap-339-fe39e0119f57b81e.js',
-            '.vite/build/early-bootstrap-824-d144f7c160c094ea.js',
-            '.vite/build/early-bootstrap-715-fa9cbf44c39465d5.js')
+        $expectedEntries = Get-DesktopStaticEntries -Build4239 $EnableReviewedBuild4239
         if (@($staticReport.entries).Count -ne 3) { Block 'Unexpected static-inspector entry count.' }
         $seenStaticEntries = @{}
         foreach ($entry in $staticReport.entries) {
@@ -2596,6 +2606,7 @@ requires_openai_auth = false
         $start.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $bridgeConfig
         Assert-PublicEnvironmentSize $start.EnvironmentVariables
         if ($NativeEntryCase) { $entryActivationAttempted=$true }
+        $aliasActivationAttempted = $true
         $started = [Diagnostics.Process]::Start($start)
         if (-not $started) { Block 'Registered alias did not return a process.' }
         $activationPid = $started.Id
@@ -3437,9 +3448,13 @@ requires_openai_auth = false
         }
         if ($subscription) { Unregister-Event -SourceIdentifier $eventSource -ErrorAction SilentlyContinue }
         Get-Event -SourceIdentifier $eventSource -ErrorAction SilentlyContinue | Remove-Event -ErrorAction SilentlyContinue
-        if ($InspectPackageIdentityOnly -and $activationPid -eq 0 -and $null -eq $ownedActivationProcess -and
+        if (($InspectPackageIdentityOnly -and $activationPid -eq 0 -and $null -eq $ownedActivationProcess -and
             $null -eq $subscription -and $observed.Count -eq 0 -and -not $report.Contains('registration') -and
-            $null -eq $liveFixture -and $null -eq $winAppTool) {
+            $null -eq $liveFixture -and $null -eq $winAppTool) -or
+            ($EnableReviewedBuild4239 -and -not $aliasActivationAttempted -and $activationPid -eq 0 -and
+            $null -eq $ownedActivationProcess -and $ownedActivationCreatedUtc -ceq '' -and $null -eq $subscription -and
+            $observed.Count -eq 0 -and -not $report.Contains('activation') -and $null -eq $liveFixture -and
+            $null -eq $liveFixtureReport)) {
             # This proves only that this harness did not start Desktop. It is not
             # successful process cleanup and never sets activationExitConfirmed.
             $report.desktopActivationCleanup = 'not-started'

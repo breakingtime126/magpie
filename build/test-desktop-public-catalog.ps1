@@ -12,7 +12,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tok
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 $functions = @('Assert-PublicShape', 'Assert-PublicInteger', 'Assert-PublicHash', 'Get-PublicDigest',
     'Assert-PublicCanonicalJSON', 'Get-PublicCatalogFailureCodes', 'Assert-PublicCatalogFailure', 'ConvertFrom-PublicRPCMethodFacts', 'Get-PublicRPCMethods', 'Assert-PublicRequestTraceEvent', 'Assert-PublicAuthRequestEvent', 'Assert-PublicReadRequestEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Get-PublicPluginShapes', 'Assert-PublicPluginShapeEvent', 'Get-PublicASTSkipReasons', 'Assert-PublicAnalysis', 'Get-PublicMarketplaceRoot', 'Assert-PublicManifestPath', 'Get-PublicPluginManifestRoot', 'Assert-PublicMCPRelation', 'ConvertTo-PublicPluginEnvironment', 'Get-BoundedStreamDigest',
-    'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance', 'Get-DesktopPackageIdentityEvidence',
+    'Assert-PublicRegularPath', 'Assert-PublicZipIndex', 'Get-PublicZipEntryDigest', 'Confirm-PublicCatalogProvenance', 'Get-DesktopPackageIdentityEvidence', 'Get-DesktopStaticEntries',
     'Assert-PublicEnvironmentSize', 'Assert-PublicPluginEvent')
 foreach ($name in $functions) {
     $definitions = @($ast.FindAll({
@@ -1153,20 +1153,24 @@ function New-MCPPackageFixture([string]$derivation, [string]$variant = 'valid') 
     return [pscustomobject]@{ catalog=$c; path=$zipPath; sha256=$hash }
 }
 try {
-    Expect-Pass 'actual Node package report roundtrips through PowerShell' {
-        $script:nodeFixtureStage='fixture_setup'
-        $modulePath = Join-Path $PSScriptRoot 'inspect-desktop-static-metadata.mjs'
-        $fixtureRoot = Join-Path $temporary 'OpenAI.Codex_26.1103.3517.0_x64__abcdefghijklm'
-        $generatorPath = Join-Path $temporary 'node-public-report-fixture.mjs'
-        $generator = @'
+    foreach ($fixtureBuild in @('3517','4239')) {
+        Expect-Pass ('actual Node package report roundtrips through PowerShell: ' + $fixtureBuild) {
+            $reviewedStaticBuild=$(if($fixtureBuild -ceq '4239'){'desktop-4239'}else{''})
+            $script:nodeFixtureStage='fixture_setup'
+            $modulePath = Join-Path $PSScriptRoot 'inspect-desktop-static-metadata.mjs'
+            $fixtureRoot = Join-Path $temporary ('OpenAI.Codex_26.1103.'+$fixtureBuild+'.0_x64__abcdefghijklm')
+            $generatorPath = Join-Path $temporary 'node-public-report-fixture.mjs'
+            $generator = @'
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const { inspectPackage } = await import(pathToFileURL(process.argv[2]).href);
 const root = process.argv[3];
-const body = Buffer.from('const modern=/[a&&b]/v; const x="browser@openai-curated-remote";');
+const profile = process.argv[4] ?? '';
+const target = profile === 'desktop-4239' ? 'early-bootstrap-199-e3316cddb4ea6a6b.js' : 'public-plugin-fixture.js';
+const body = Buffer.from(profile === 'desktop-4239' ? 'class A{getConfigOverrides(){return ["selected_4239_key=true"];}}; const x="browser@openai-curated-remote";' : 'const modern=/[a&&b]/v; const x="browser@openai-curated-remote";');
 const header = Buffer.from(JSON.stringify({files:{'.vite':{files:{build:{files:{
-  'public-plugin-fixture.js':{size:body.length,offset:'0'}
+  [target]:{size:body.length,offset:'0'}
 }}}}}}));
 const padded = Math.ceil(header.length / 4) * 4;
 const archive = Buffer.alloc(16 + padded + body.length);
@@ -1189,67 +1193,81 @@ writeJSON('fixture/.codex-plugin/plugin.json',{name:'not-the-identity',mcpServer
 writeJSON('fixture/servers.json',{mcpServers:{PublicServer:{command:'PRIVATE_CANARY',env:{secret:'PRIVATE_CANARY'}}}});
 writeJSON('.codex-plugin/plugin.json',{$schema:'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',name:'namespace-only'});
 writeJSON('.codex-plugin/mcp.json',{$schema:'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',mcpServers:{AgentServer:{type:'stdio',command:'PRIVATE_CANARY'}}});
-process.stdout.write(JSON.stringify(inspectPackage(root)));
+process.stdout.write(JSON.stringify(inspectPackage(root, profile)));
 '@
-        [IO.File]::WriteAllText($generatorPath, $generator, (New-Object Text.UTF8Encoding($false)))
-        $script:nodeFixtureStage='node_execution'
-        $nodeOutput = @(& node --max-old-space-size=512 $generatorPath $modulePath $fixtureRoot)
-        if ($LASTEXITCODE -ne 0 -or $nodeOutput.Count -ne 1) { throw 'Node fixture failed.' }
-        $json = [string]$nodeOutput[0]
-        $script:nodeFixtureStage='json_decoding'
-        $nodeReport = $json | ConvertFrom-Json
-        $script:nodeFixtureStage='canonical_json'
-        Assert-PublicCanonicalJSON $json $nodeReport
-        $script:nodeFixtureStage='public_report_shape'
-        Assert-PublicShape $nodeReport @('schema', 'status', 'runtimeKeyProven', 'archiveEntries', 'entries', 'publicPlugins')
-        $script:nodeFixtureStage='candidate_expectations'
-        if ($nodeReport.publicPlugins.candidates.Count -ne 8 -or $nodeReport.publicPlugins.status -cne 'complete') {
-            throw 'Node fixture did not establish public candidates.'
-        }
-        $script:nodeFixtureStage='catalog_validation'
-        $handoff = ConvertTo-PublicPluginEnvironment $nodeReport.publicPlugins $packageHash
-        $script:nodeFixtureStage='candidate_relations'
-        if (($handoff | ConvertFrom-Json).keys[0] -cne 'plugins.browser@openai-curated-remote.auto_provision') {
-            throw 'Node fixture key order mismatch.'
-        }
-        $nested=@($nodeReport.publicPlugins.candidates | Where-Object { $_.derivation -ceq 'legacy_mcp_path' })
-        if ($nested.Count -ne 1 -or $nested[0].key -cne 'plugins.fixture@public-market.mcp_servers.PublicServer.enabled' -or
-            $json.Contains('PRIVATE_CANARY')) { throw 'Node fixture relation or privacy mismatch.' }
-        $agent=@($nodeReport.publicPlugins.candidates | Where-Object { $_.derivation -ceq 'agent_mcp_default' })
-        if ($agent.Count -ne 1 -or $agent[0].key -cne 'plugins.zagent@public-market.mcp_servers.AgentServer.enabled') {
-            throw 'Node ambiguous agent root relation mismatch.'
-        }
-        $script:nodeFixtureStage='zip_creation'
-        $expectedEntries=@(
-            'app/resources/app.asar',
-            'app/resources/plugins/public-market/.agents/plugins/marketplace.json',
-            'app/resources/plugins/public-market/fixture/.codex-plugin/plugin.json',
-            'app/resources/plugins/public-market/fixture/servers.json',
-            'app/resources/plugins/public-market/.codex-plugin/plugin.json',
-            'app/resources/plugins/public-market/.codex-plugin/mcp.json'
-        )
-        $includedEntries=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-        $zipPath=Join-Path $temporary 'node-original.zip'
-        $zip=[IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
-        try {
-            foreach ($file in @(Get-ChildItem -LiteralPath $fixtureRoot -Force -File -Recurse)) {
-                $relative=$file.FullName.Substring($fixtureRoot.Length + 1).Replace('\', '/')
-                if (-not $includedEntries.Add($relative)) { throw 'Duplicate synthetic ZIP entry.' }
-                $entry=$zip.CreateEntry($relative)
-                $stream=$entry.Open()
-                $inputStream=[IO.File]::OpenRead($file.FullName)
-                try { $inputStream.CopyTo($stream) } finally { $inputStream.Dispose(); $stream.Dispose() }
+            [IO.File]::WriteAllText($generatorPath, $generator, (New-Object Text.UTF8Encoding($false)))
+            $script:nodeFixtureStage='node_execution'
+            $nodeOutput = @(& node --max-old-space-size=512 $generatorPath $modulePath $fixtureRoot $reviewedStaticBuild)
+            if ($LASTEXITCODE -ne 0 -or $nodeOutput.Count -ne 1) { throw 'Node fixture failed.' }
+            $json = [string]$nodeOutput[0]
+            $script:nodeFixtureStage='json_decoding'
+            $nodeReport = $json | ConvertFrom-Json
+            $script:nodeFixtureStage='canonical_json'
+            Assert-PublicCanonicalJSON $json $nodeReport
+            $script:nodeFixtureStage='public_report_shape'
+            Assert-PublicShape $nodeReport @('schema', 'status', 'runtimeKeyProven', 'archiveEntries', 'entries', 'publicPlugins')
+            if ((@($nodeReport.entries | ForEach-Object { $_.entry }) -join '|') -cne
+                ((Get-DesktopStaticEntries ($fixtureBuild -ceq '4239')) -join '|')) { throw 'Node selected entry names do not match the harness.' }
+            if ($fixtureBuild -ceq '4239' -and ($nodeReport.entries[2].status -cne 'static_candidates_only' -or
+                @($nodeReport.entries[2].candidates | Where-Object { $_.key -ceq 'selected_4239_key' }).Count -ne 1)) {
+                throw 'New selected source was not actually inspected.'
             }
-        } finally { $zip.Dispose() }
-        $script:nodeFixtureStage='zip_entry_completeness'
-        if ($includedEntries.Count -ne $expectedEntries.Count) { throw 'Synthetic ZIP entry count mismatch.' }
-        foreach ($expectedEntry in $expectedEntries) {
-            if (-not $includedEntries.Contains($expectedEntry)) { throw 'Synthetic ZIP is missing a required source.' }
-        }
-        $script:nodeFixtureStage='provenance'
-        $hash=(Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        Confirm-PublicCatalogProvenance $nodeReport.publicPlugins $zipPath $hash
-    } -ReportFixtureStage
+            $script:nodeFixtureStage='candidate_expectations'
+            if ($nodeReport.publicPlugins.candidates.Count -ne 8 -or $nodeReport.publicPlugins.status -cne 'complete') {
+                throw 'Node fixture did not establish public candidates.'
+            }
+            $script:nodeFixtureStage='catalog_validation'
+            $handoff = ConvertTo-PublicPluginEnvironment $nodeReport.publicPlugins $packageHash
+            $script:nodeFixtureStage='candidate_relations'
+            if (($handoff | ConvertFrom-Json).keys[0] -cne 'plugins.browser@openai-curated-remote.auto_provision') {
+                throw 'Node fixture key order mismatch.'
+            }
+            $nested=@($nodeReport.publicPlugins.candidates | Where-Object { $_.derivation -ceq 'legacy_mcp_path' })
+            if ($nested.Count -ne 1 -or $nested[0].key -cne 'plugins.fixture@public-market.mcp_servers.PublicServer.enabled' -or
+                $json.Contains('PRIVATE_CANARY')) { throw 'Node fixture relation or privacy mismatch.' }
+            $agent=@($nodeReport.publicPlugins.candidates | Where-Object { $_.derivation -ceq 'agent_mcp_default' })
+            if ($agent.Count -ne 1 -or $agent[0].key -cne 'plugins.zagent@public-market.mcp_servers.AgentServer.enabled') {
+                throw 'Node ambiguous agent root relation mismatch.'
+            }
+            $script:nodeFixtureStage='zip_creation'
+            $expectedEntries=@(
+                'app/resources/app.asar',
+                'app/resources/plugins/public-market/.agents/plugins/marketplace.json',
+                'app/resources/plugins/public-market/fixture/.codex-plugin/plugin.json',
+                'app/resources/plugins/public-market/fixture/servers.json',
+                'app/resources/plugins/public-market/.codex-plugin/plugin.json',
+                'app/resources/plugins/public-market/.codex-plugin/mcp.json'
+            )
+            $includedEntries=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+            $zipPath=Join-Path $temporary ('node-original-'+$fixtureBuild+'.zip')
+            $zip=[IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
+            try {
+                foreach ($file in @(Get-ChildItem -LiteralPath $fixtureRoot -Force -File -Recurse)) {
+                    $relative=$file.FullName.Substring($fixtureRoot.Length + 1).Replace('\', '/')
+                    if (-not $includedEntries.Add($relative)) { throw 'Duplicate synthetic ZIP entry.' }
+                    $entry=$zip.CreateEntry($relative)
+                    $stream=$entry.Open()
+                    $inputStream=[IO.File]::OpenRead($file.FullName)
+                    try { $inputStream.CopyTo($stream) } finally { $inputStream.Dispose(); $stream.Dispose() }
+                }
+            } finally { $zip.Dispose() }
+            $script:nodeFixtureStage='zip_entry_completeness'
+            if ($includedEntries.Count -ne $expectedEntries.Count) { throw 'Synthetic ZIP entry count mismatch.' }
+            foreach ($expectedEntry in $expectedEntries) {
+                if (-not $includedEntries.Contains($expectedEntry)) { throw 'Synthetic ZIP is missing a required source.' }
+            }
+            $script:nodeFixtureStage='provenance'
+            $hash=(Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            Confirm-PublicCatalogProvenance $nodeReport.publicPlugins $zipPath $hash
+            if ($fixtureBuild -ceq '4239') {
+                $oldZip=Join-Path $temporary 'node-original-3517.zip'
+                $oldHash=(Get-FileHash -LiteralPath $oldZip -Algorithm SHA256).Hash.ToLowerInvariant()
+                Expect-Reject '4239 source evidence cannot bind the old-profile ASAR' {
+                    Confirm-PublicCatalogProvenance $nodeReport.publicPlugins $oldZip $oldHash
+                }
+            }
+        } -ReportFixtureStage
+    }
     Expect-Pass 'all MCP relation source bytes bind to original ZIP without publishing values' {
         foreach ($derivation in @('legacy_mcp_inline', 'legacy_mcp_default', 'legacy_mcp_path', 'agent_mcp_default')) {
             $fixture=New-MCPPackageFixture $derivation

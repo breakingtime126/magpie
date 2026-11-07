@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TARGETS, LIMITS, readIndex, inspectArchive, inspectPackage, analyzeSource } from './inspect-desktop-static-metadata.mjs';
+import { TARGETS, LIMITS, readIndex, inspectArchive, inspectPackage, inspectPublicPluginPackage, parsePackageArguments, analyzeSource } from './inspect-desktop-static-metadata.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-static-metadata-'));
@@ -165,6 +165,20 @@ test('package-directory redirects are rejected before source access', t => {
   assert.throws(() => inspectPackage(root), rejected('package_path_redirected'));
 });
 
+test('explicit 4239 profile reaches both bounded package readers', t => {
+  const root = path.join(fixture(t), 'OpenAI.Codex_26.1103.4239.0_x64__abcdefghijklm');
+  fs.mkdirSync(path.join(root, 'app', 'resources'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'app', 'resources', 'app.asar'), pack({ files: {} }));
+  const report = inspectPackage(root, 'desktop-4239');
+  assert.equal(report.status, 'static_candidates_only');
+  assert.notEqual(report.publicPlugins.status, 'blocked');
+  assert.deepEqual(report.entries.map(x => x.entry), [
+    '.vite/build/early-bootstrap-339-ce026819bf837ba7.js',
+    '.vite/build/early-bootstrap-824-d144f7c160c094ea.js',
+    '.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js',
+  ]);
+});
+
 test('method literals and direct -c pairs have separate evidence', () => {
   const report = analyzeSource('class A{#private=1;getConfigOverrides(){return ["features.code_mode_host.enabled=true","count_key=17"];}startupCommand(){return ["-c","extra_key=false"];}}');
   assert.equal(report.lexicalStatus, 'complete');
@@ -241,4 +255,55 @@ test('repeated occurrences aggregate and computed or escaped key names are omitt
   assert.equal(report.candidates.length, 1);
   assert.equal(report.candidates[0].occurrences, 2);
   assert.equal(report.candidates[0].key, 'same_key');
+});
+
+
+test('4239 sources are read and build profiles cannot cross-pair', t => {
+  const root = path.join(fixture(t), 'OpenAI.Codex_26.1103.4239.0_x64__abcdefghijklm');
+  fs.mkdirSync(path.join(root, 'app', 'resources'), { recursive: true });
+  const target = '.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js';
+  const data = Buffer.from('class A{getConfigOverrides(){return ["selected_4239_key=true"];}}');
+  const bytes = pack(tree([[target, { offset: '0', size: data.length }]]), data);
+  const file = path.join(root, 'app', 'resources', 'app.asar');
+  fs.writeFileSync(file, bytes);
+  const report = inspectPackage(root, 'desktop-4239');
+  assert.equal(report.entries[2].status, 'static_candidates_only');
+  assert.equal(report.entries[2].entry, target);
+  assert.deepEqual(report.entries[2].candidates.map(x => x.key), ['selected_4239_key']);
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  assert.ok(inspectArchive(file).entries.every(x => x.status === 'missing_entry'));
+  assert.throws(() => inspectPackage(root), rejected('unexpected_package_directory'));
+  const oldRoot = packageRoot(t);
+  assert.throws(() => inspectPackage(oldRoot, 'desktop-4239'), rejected('unexpected_package_directory'));
+  assert.deepEqual(inspectPublicPluginPackage(root), { schema:1, status:'blocked', reason:'public_source_path' });
+  assert.deepEqual(inspectPublicPluginPackage(oldRoot, 'desktop-4239'), { schema:1, status:'blocked', reason:'public_source_path' });
+  for (const profile of ['4239', 'desktop-4240', 'desktop-4239 ', null, {}]) {
+    assert.throws(() => inspectPackage(root, profile), rejected('invalid_arguments'));
+    assert.deepEqual(inspectPublicPluginPackage(root, profile), { schema:1, status:'blocked', reason:'invalid_arguments' });
+  }
+});
+
+test('4239 targets retain link, unpacked, size and redirected-path guards', t => {
+  const target = '.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js';
+  for (const [value, status] of [[{link:'PRIVATE_TARGET'},'link_not_read'], [{unpacked:true,size:1},'unpacked_not_read']]) {
+    const file = archive(t, pack(tree([[target,value]])));
+    assert.equal(inspectArchive(file, false, 'desktop-4239').entries[2].status, status);
+  }
+  const file = archive(t, pack(tree([[target,{offset:'0',size:LIMITS.entry+1}]])));
+  fs.truncateSync(file, fs.statSync(file).size + LIMITS.entry + 1);
+  assert.equal(inspectArchive(file, false, 'desktop-4239').entries[2].status, 'entry_too_large');
+  const root = path.join(fixture(t), 'OpenAI.Codex_26.1103.4239.0_x64__abcdefghijklm');
+  fs.mkdirSync(path.join(root, 'app'), { recursive:true });
+  try { fs.symlinkSync(fixture(t), path.join(root,'app','resources'), process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (e) { if (['EPERM','EACCES','ENOTSUP'].includes(e.code)) { t.skip('OS did not permit synthetic redirect'); return; } throw e; }
+  assert.throws(() => inspectPackage(root, 'desktop-4239'), rejected('package_path_redirected'));
+});
+
+test('CLI selection accepts only the explicit fixed 4239 profile', () => {
+  assert.deepEqual(parsePackageArguments(['--package-root','fixture']), { packageRoot:'fixture', reviewedBuild:'' });
+  assert.deepEqual(parsePackageArguments(['--package-root','fixture','--reviewed-build','desktop-4239']),
+    { packageRoot:'fixture', reviewedBuild:'desktop-4239' });
+  for (const args of [[], ['--package-root'], ['--package-root',''], ['--package-root','fixture','--reviewed-build',''],
+    ['--package-root','fixture','--reviewed-build','desktop-4240'], ['--package-root','fixture','--reviewed-build','desktop-4239','extra'],
+    ['--reviewed-build','desktop-4239','--package-root','fixture']]) assert.throws(() => parsePackageArguments(args), rejected('invalid_arguments'));
 });

@@ -18,6 +18,18 @@ export const TARGETS = Object.freeze([
   '.vite/build/early-bootstrap-824-d144f7c160c094ea.js',
   '.vite/build/early-bootstrap-715-fa9cbf44c39465d5.js',
 ]);
+const TARGETS_4239 = Object.freeze([
+  '.vite/build/early-bootstrap-339-ce026819bf837ba7.js',
+  '.vite/build/early-bootstrap-824-d144f7c160c094ea.js',
+  '.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js',
+]);
+function reviewedStaticBuild(reviewedBuild) {
+  switch (reviewedBuild) {
+    case '': return { directory: /^OpenAI\.Codex_26\.1103\.3517\.0_x64__[a-z0-9]{13}$/i, targets: TARGETS };
+    case 'desktop-4239': return { directory: /^OpenAI\.Codex_26\.1103\.4239\.0_x64__[a-z0-9]{13}$/i, targets: TARGETS_4239 };
+    default: fail('invalid_arguments');
+  }
+}
 export const LIMITS = Object.freeze({
   archive: 2 * 1024 ** 3, header: 32 * 1024 ** 2, entries: 100000,
   depth: 64, entry: 16 * 1024 ** 2, total: 32 * 1024 ** 2,
@@ -53,7 +65,8 @@ function readExact(fd, count, position) {
 
 // Only the documented two-Pickle layout is accepted. This intentionally does
 // not support alternate Pickle headers, links, or reading unpacked resources.
-export function readIndex(fd, size, includePublicSources = false) {
+export function readIndex(fd, size, includePublicSources = false, reviewedBuild = '') {
+  const { targets } = reviewedStaticBuild(reviewedBuild);
   if (!Number.isSafeInteger(size) || size < 16) fail('truncated_archive');
   if (size > LIMITS.archive) fail('archive_too_large');
   const prefix = readExact(fd, 16, 0);
@@ -90,7 +103,7 @@ export function readIndex(fd, size, includePublicSources = false) {
     const unpacked = inheritedUnpacked || node.unpacked === true;
     if (own(node, 'link')) {
       if (typeof node.link !== 'string' || node.link.length === 0) fail('invalid_link_entry');
-      if (TARGETS.some(p => p === relative || p.startsWith(relative + '/'))) {
+      if (targets.some(p => p === relative || p.startsWith(relative + '/'))) {
         selected.set(relative, { status: 'link_not_read' });
       }
       if (includePublicSources && (relative === '.vite' || relative === '.vite/build')) {
@@ -117,7 +130,7 @@ export function readIndex(fd, size, includePublicSources = false) {
     }
     if (!Number.isSafeInteger(node.size) || node.size < 0) fail('invalid_file_size');
     if (unpacked) {
-      if (TARGETS.includes(relative)) selected.set(relative, { status: 'unpacked_not_read' });
+      if (targets.includes(relative)) selected.set(relative, { status: 'unpacked_not_read' });
       if (includePublicSources && publicSourcePath(relative)) publicSources.set(relative, { status: 'unpacked_not_read' });
       continue;
     }
@@ -127,14 +140,14 @@ export function readIndex(fd, size, includePublicSources = false) {
     const offset = BigInt(node.offset);
     const start = BigInt(8 + headerSize) + offset;
     if (start + BigInt(node.size) > BigInt(size)) fail('file_outside_archive');
-    if (TARGETS.includes(relative)) {
+    if (targets.includes(relative)) {
       selected.set(relative, { status: 'packed', start: Number(start), size: node.size });
     }
     if (includePublicSources && publicSourcePath(relative)) {
       publicSources.set(relative, { status: 'packed', start: Number(start), size: node.size });
     }
   }
-  for (const target of TARGETS) {
+  for (const target of targets) {
     for (const [relative, entry] of selected) {
       if (entry.status === 'link_not_read' && target.startsWith(relative + '/')) {
         selected.set(target, { status: 'link_not_read' });
@@ -494,10 +507,11 @@ export function readPublicManifest(file, remainingSourceBytes) {
 // This function reads only bounded native-recognized public declarations and
 // validated local JSON references. It never loads code, follows links or reads
 // user state. Declarations do not establish native selection or loadability.
-export function inspectPublicPluginPackage(packageRoot) {
+export function inspectPublicPluginPackage(packageRoot, reviewedBuild = '') {
   try {
+    const build = reviewedStaticBuild(reviewedBuild);
     if (typeof packageRoot !== 'string' || !path.isAbsolute(packageRoot) ||
-        !/^OpenAI\.Codex_26\.1103\.3517\.0_x64__[a-z0-9]{13}$/i.test(path.basename(packageRoot))) {
+        !build.directory.test(path.basename(packageRoot))) {
       fail('public_source_path');
     }
     const root = path.resolve(packageRoot);
@@ -611,7 +625,7 @@ export function inspectPublicPluginPackage(packageRoot) {
     try {
       const opened = fs.fstatSync(fd);
       if (!unchanged(before, opened)) fail('public_archive_changed');
-      const index = readIndex(fd, opened.size, true);
+      const index = readIndex(fd, opened.size, true, reviewedBuild);
       if (index.publicRootBlocked) fail('public_source_not_packed');
       const entries = [...index.publicSources].sort(([a], [b]) => asciiOrder(a, b));
       coverage.jsFiles = entries.length;
@@ -690,16 +704,17 @@ export function inspectPublicPluginPackage(packageRoot) {
 function unchanged(a, b) {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
 }
-export function inspectArchive(archivePath, includeSnapshot = false) {
+export function inspectArchive(archivePath, includeSnapshot = false, reviewedBuild = '') {
+  const { targets } = reviewedStaticBuild(reviewedBuild);
   const before = fs.lstatSync(archivePath);
   if (before.isSymbolicLink() || !before.isFile()) fail('archive_not_regular');
   const fd = fs.openSync(archivePath, 'r');
   try {
     const opened = fs.fstatSync(fd);
     if (!unchanged(before, opened)) fail('archive_changed');
-    const index = readIndex(fd, opened.size);
+    const index = readIndex(fd, opened.size, false, reviewedBuild);
     let total = 0;
-    const entries = TARGETS.map(entry => {
+    const entries = targets.map(entry => {
       const info = index.selected.get(entry);
       if (!info) return { entry, status: 'missing_entry' };
       if (info.status !== 'packed') return { entry, status: info.status };
@@ -721,9 +736,10 @@ export function inspectArchive(archivePath, includeSnapshot = false) {
 // Call only with Get-AppxPackage's InstallLocation after the existing
 // test-desktop-cold-start.ps1 verifies the downloaded hash/signature and the
 // registered name/version/publisher/status. This reader is NOT a signer verifier.
-export function inspectPackage(packageRoot) {
+export function inspectPackage(packageRoot, reviewedBuild = '') {
+  const build = reviewedStaticBuild(reviewedBuild);
   if (typeof packageRoot !== 'string' || !path.isAbsolute(packageRoot)) fail('package_root_not_absolute');
-  if (!/^OpenAI\.Codex_26\.1103\.3517\.0_x64__[a-z0-9]{13}$/i.test(path.basename(packageRoot))) {
+  if (!build.directory.test(path.basename(packageRoot))) {
     fail('unexpected_package_directory');
   }
   const root = path.resolve(packageRoot);
@@ -743,8 +759,8 @@ export function inspectPackage(packageRoot) {
     if (stat.isSymbolicLink() || !equalPath(fs.realpathSync(current), current)) fail('package_path_redirected');
     if (part !== 'app.asar' && !stat.isDirectory()) fail('package_path_not_directory');
   }
-  const legacy = inspectArchive(current, true);
-  const publicPlugins = inspectPublicPluginPackage(root);
+  const legacy = inspectArchive(current, true, reviewedBuild);
+  const publicPlugins = inspectPublicPluginPackage(root, reviewedBuild);
   // Only successful public reports are eligible for the harness's package-hash
   // verification. Bind their legacy metadata to the exact same archive bytes.
   if (publicPlugins.status !== 'blocked' && legacy.archiveSha256 !== publicPlugins.archiveSha256) {
@@ -752,12 +768,20 @@ export function inspectPackage(packageRoot) {
   }
   return { ...legacy.report, publicPlugins };
 }
+export function parsePackageArguments(args) {
+  if (!Array.isArray(args) || (args.length !== 2 && args.length !== 4) ||
+      args[0] !== '--package-root' || typeof args[1] !== 'string' || args[1].length === 0 ||
+      (args.length === 4 && (args[2] !== '--reviewed-build' || args[3] !== 'desktop-4239'))) {
+    fail('invalid_arguments');
+  }
+  return { packageRoot: args[1], reviewedBuild: args.length === 4 ? args[3] : '' };
+}
 function main() {
   try {
     if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' ||
         process.env.RUNNER_OS !== 'Windows') fail('disposable_windows_ci_required');
-    if (process.argv.length !== 4 || process.argv[2] !== '--package-root') fail('invalid_arguments');
-    const report = inspectPackage(process.argv[3]);
+    const { packageRoot, reviewedBuild } = parsePackageArguments(process.argv.slice(2));
+    const report = inspectPackage(packageRoot, reviewedBuild);
     const text = JSON.stringify(report);
     if (Buffer.byteLength(text) > 65536) fail('report_limit');
     process.stdout.write('DESKTOP_STATIC_METADATA=' + text + '\n');

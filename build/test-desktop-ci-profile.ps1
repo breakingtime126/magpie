@@ -8,7 +8,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
-foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
+foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
@@ -2141,19 +2141,24 @@ Expect-Pass 'package identity always stops before the unchanged pin and installa
         $exits[0].Extent.StartOffset -le $gate.Extent.EndOffset -or
         $exits[0].Extent.EndOffset -ge $native[0].Extent.StartOffset) { throw 'Static-only outcome can reach native turns.' }
 }
-Expect-Pass 'package-only not-started evidence cannot manufacture activation exit' {
+Expect-Pass 'explicit prelaunch not-started evidence cannot manufacture activation exit' {
     $proofs = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
         $n.Left.Extent.Text -ceq '$report.desktopActivationCleanup'}, $true))
     if ($proofs.Count -ne 1 -or $proofs[0].Right.Extent.Text -cne "'not-started'") { throw 'Not-started evidence changed.' }
     $guard=$proofs[0].Parent
     while ($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]) { $guard=$guard.Parent }
-    $expected = '$InspectPackageIdentityOnly -and $activationPid -eq 0 -and $null -eq $ownedActivationProcess -and ' +
+    $expected = '($InspectPackageIdentityOnly -and $activationPid -eq 0 -and $null -eq $ownedActivationProcess -and ' +
         '$null -eq $subscription -and $observed.Count -eq 0 -and -not $report.Contains(''registration'') -and ' +
-        '$null -eq $liveFixture -and $null -eq $winAppTool'
+        '$null -eq $liveFixture -and $null -eq $winAppTool) -or ' +
+        '($EnableReviewedBuild4239 -and -not $aliasActivationAttempted -and $activationPid -eq 0 -and ' +
+        '$null -eq $ownedActivationProcess -and $ownedActivationCreatedUtc -ceq '''' -and $null -eq $subscription -and ' +
+        '$observed.Count -eq 0 -and -not $report.Contains(''activation'') -and $null -eq $liveFixture -and ' +
+        '$null -eq $liveFixtureReport)'
     $actual = $guard.Clauses[0].Item1.Extent.Text -replace '\s+', ' '
     if ($actual -cne $expected) { throw 'Not-started evidence lost a pre-launch proof.' }
     $condition=[scriptblock]::Create($actual)
     foreach ($change in @('none','disabled','pid','process','subscription','observed','registration','fixture','tool')) {
+        $EnableReviewedBuild4239=$false; $aliasActivationAttempted=$false
         $InspectPackageIdentityOnly=$true; $activationPid=0; $ownedActivationProcess=$null
         $subscription=$null; $observed=@{}; $report=[ordered]@{}; $liveFixture=$null; $winAppTool=$null
         switch ($change) {
@@ -2167,6 +2172,35 @@ Expect-Pass 'package-only not-started evidence cannot manufacture activation exi
             'tool' { $winAppTool=[pscustomobject]@{} }
         }
         if ((& $condition) -ne ($change -ceq 'none')) { throw 'Uncertain activation was labeled not-started.' }
+    }
+    foreach ($change in @('none','disabled','attempted','pid','process','created','subscription','observed','activation','fixture','fixture-report')) {
+        $InspectPackageIdentityOnly=$false; $EnableReviewedBuild4239=$true; $aliasActivationAttempted=$false
+        $activationPid=0; $ownedActivationProcess=$null; $ownedActivationCreatedUtc=''
+        $subscription=$null; $observed=@{}; $report=[ordered]@{registration=[pscustomobject]@{}}
+        $liveFixture=$null; $liveFixtureReport=$null; $winAppTool=[pscustomobject]@{}
+        switch ($change) {
+            'disabled' { $EnableReviewedBuild4239=$false }
+            'attempted' { $aliasActivationAttempted=$true }
+            'pid' { $activationPid=1 }
+            'process' { $ownedActivationProcess=[pscustomobject]@{} }
+            'created' { $ownedActivationCreatedUtc='uncertain' }
+            'subscription' { $subscription=[pscustomobject]@{} }
+            'observed' { $observed['1']=$true }
+            'activation' { $report.activation=[pscustomobject]@{} }
+            'fixture' { $liveFixture=[pscustomobject]@{} }
+            'fixture-report' { $liveFixtureReport=[ordered]@{status='not-run'} }
+        }
+        if ((& $condition) -ne ($change -ceq 'none')) { throw '4239 uncertain activation was labeled not-started.' }
+    }
+    $markers=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$aliasActivationAttempted'},$true))
+    if ($markers.Count -ne 2 -or $markers[0].Right.Extent.Text -cne '$false' -or
+        $markers[1].Right.Extent.Text -cne '$true' -or $markers[1].Extent.EndOffset -ge $guard.Extent.StartOffset) {
+        throw 'Alias activation attempt provenance changed.'
+    }
+    $normalized=$ast.Extent.Text.Replace("`r`n","`n")
+    if (-not $normalized.Contains("`$aliasActivationAttempted = `$true`n        `$started = [Diagnostics.Process]::Start(`$start)")) {
+        throw 'Alias activation can start before recording the attempt.'
     }
     $fabricated = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
         $n.Left.Extent.Text -ceq '$activationExitConfirmed' -and $n.Right.Extent.Text -ceq '$true'}, $true))
@@ -2248,6 +2282,25 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
         $call=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq $name},$true))
         if ($call.Count -ne 1 -or -not $call[0].Extent.Text.EndsWith('-Build4239 $EnableReviewedBuild4239')) { throw 'Selected build lost its exact runtime propagation.' }
     }
+}
+
+Expect-Pass 'static build selection preserves exact old and new source entry sets' {
+    $old=@('.vite/build/early-bootstrap-339-fe39e0119f57b81e.js','.vite/build/early-bootstrap-824-d144f7c160c094ea.js','.vite/build/early-bootstrap-715-fa9cbf44c39465d5.js')
+    $new=@('.vite/build/early-bootstrap-339-ce026819bf837ba7.js','.vite/build/early-bootstrap-824-d144f7c160c094ea.js','.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js')
+    if (((Get-DesktopStaticEntries) -join '|') -cne ($old -join '|') -or
+        ((Get-DesktopStaticEntries $true) -join '|') -cne ($new -join '|')) { throw 'Static selected source identities changed.' }
+    $calls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Get-DesktopStaticEntries'},$true))
+    if ($calls.Count -ne 1 -or $calls[0].Extent.Text -cne 'Get-DesktopStaticEntries -Build4239 $EnableReviewedBuild4239') {
+        throw 'Static output allowlist lost selected profile.'
+    }
+    $argumentAssignments=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$readStatic.Arguments'},$true))
+    if ($argumentAssignments.Count -ne 2 -or $argumentAssignments[0].Right.Extent.Text -cne '''--max-old-space-size=512 "'' + $inspector + ''" --package-root "'' + $app.InstallLocation + ''"''' -or
+        $argumentAssignments[1].Operator -ne [Management.Automation.Language.TokenKind]::PlusEquals -or
+        $argumentAssignments[1].Right.Extent.Text -cne ''' --reviewed-build desktop-4239''') { throw 'Static CLI path/profile authority changed.' }
+    $guard=$argumentAssignments[1].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
+    if ($guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedBuild4239') { throw 'Static profile escaped explicit opt-in.' }
 }
 
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)

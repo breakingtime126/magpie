@@ -2003,3 +2003,43 @@ No raw UI text or values are added to the public summary. This correction
 does not alter selectors, traversal, tool invocations, bridge admission,
 workflow markers, login handling, or input permissions, and does not request
 another UI run. PowerShell and runtime fixtures were not run while authoring.
+
+#### 4239 static-reader profile propagation
+
+The 67311fd8 bridge-context attempt verified the reviewed 4239 package tuple
+and registration, then stopped before activation because the static reader
+still required a 3517 package-directory name. This was a missed profile
+propagation, not evidence of a Desktop or bridge process failure.
+
+Only the already selected 4239 harness profile now appends
+`--reviewed-build desktop-4239` to the static reader. It selects one exact
+4239 directory version and the three source paths established by the actual
+signed-ASAR contract artifact: `339-ce026819bf837ba7`,
+`824-d144f7c160c094ea`, and `199-e3316cddb4ea6a6b` under
+`.vite/build/early-bootstrap-*.js`. The outer reader, nested public-plugin
+reader, ASAR index/selected-source pass and PowerShell output allowlist all
+receive that selection. Omitting the option retains the 3517 directory/target set;
+unknown options and crossed directory/profile pairs fail closed. Existing
+three-argument `readIndex` and two-argument `inspectArchive` callers retain
+their old semantics. The optional read-caller scan remains not run.
+
+The path still comes only from verified registration after the exact package,
+backend and ASAR tuple checks. Reparse/redirect protections, fixed relative
+archive path, limits, installed/signed-ZIP source hashes, snapshot consistency
+and output schema are unchanged. The profile does not accept arbitrary
+versions, hashes, source paths or caller-selected targets.
+
+A failure before any alias activation attempt and before fixture/subscription
+creation can now record `desktopActivationCleanup: not-started` in the new
+profile. An attempt is recorded before Process.Start, so an uncertain start
+is not mislabeled. The old package-only proof is retained; neither branch
+sets `desktopActivationExited` true. Other cleanup failures remain failures,
+and the original static blocker stays the primary reason.
+
+Regression coverage includes the original named Node failure, selected source
+content rather than missing-entry success, nested catalog/profile cross-pairs,
+path/source limits, snapshot swaps for both builds, CLI selection, both-build
+Node-to-PowerShell provenance roundtrips, harness option/entry propagation and
+prelaunch versus uncertain activation. Node checks can run locally; PowerShell
+and actual Windows execution still require the reviewed CI commit. No new UI
+read, input action or independent inference acceptance is added.

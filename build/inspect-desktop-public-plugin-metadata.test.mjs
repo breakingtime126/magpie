@@ -14,10 +14,10 @@ import {
 const JS = '.vite/build/public-plugin-fixture.js';
 const OTHER_JS = '.vite/build/second-public-plugin-fixture.js';
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-function fixture(t) {
+function fixture(t, build = '3517') {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-public-plugin-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-  const root = path.join(home, 'OpenAI.Codex_26.1103.3517.0_x64__abcdefghijklm');
+  const root = path.join(home, 'OpenAI.Codex_26.1103.' + build + '.0_x64__abcdefghijklm');
   fs.mkdirSync(path.join(root, 'app', 'resources'), { recursive: true });
   return root;
 }
@@ -250,29 +250,31 @@ test('empty catalog digest is explicit and fixed-target inspection remains separ
   assert.equal(report.keysSha256, digest(''));
 });
 
-test('legacy and public metadata must come from the same archive snapshot', t => {
-  const root = fixture(t), archive = path.join(root, 'app/resources/app.asar');
-  writeArchive(root, [[TARGETS[0], 'class A{getConfigOverrides(){return ["legacy_key=true"];}}']]);
-  const replacement = pack([[TARGETS[0], 'const x="replacement@market";']]);
-  const originalOpen = fs.openSync, originalClose = fs.closeSync;
-  const archiveFDs = new Set();
-  let swapped = false, archiveReads = 0;
-  t.mock.method(fs, 'openSync', function (name, ...args) {
-    const fd = originalOpen.call(fs, name, ...args);
-    if (name === archive && args[0] === 'r') { archiveFDs.add(fd); archiveReads++; }
-    return fd;
+for (const [build, profile, target] of [['3517', '', TARGETS[0]], ['4239', 'desktop-4239', '.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js']]) {
+  test('legacy and public metadata must share archive snapshot for ' + build, t => {
+    const root = fixture(t, build), archive = path.join(root, 'app/resources/app.asar');
+    writeArchive(root, [[target, 'class A{getConfigOverrides(){return ["legacy_key=true"];}}']]);
+    const replacement = pack([[target, 'const x="replacement@market";']]);
+    const originalOpen = fs.openSync, originalClose = fs.closeSync;
+    const archiveFDs = new Set();
+    let swapped = false, archiveReads = 0;
+    t.mock.method(fs, 'openSync', function (name, ...args) {
+      const fd = originalOpen.call(fs, name, ...args);
+      if (name === archive && args[0] === 'r') { archiveFDs.add(fd); archiveReads++; }
+      return fd;
+    });
+    t.mock.method(fs, 'closeSync', function (fd) {
+      originalClose.call(fs, fd);
+      if (archiveFDs.delete(fd) && !swapped) {
+        swapped = true;
+        fs.writeFileSync(archive, replacement);
+      }
+    });
+    assert.throws(() => inspectPackage(root, profile), error => error.code === 'archive_changed');
+    assert.equal(swapped, true);
+    assert.equal(archiveReads, 2);
   });
-  t.mock.method(fs, 'closeSync', function (fd) {
-    originalClose.call(fs, fd);
-    if (archiveFDs.delete(fd) && !swapped) {
-      swapped = true;
-      fs.writeFileSync(archive, replacement);
-    }
-  });
-  assert.throws(() => inspectPackage(root), error => error.code === 'archive_changed');
-  assert.equal(swapped, true);
-  assert.equal(archiveReads, 2);
-});
+}
 
 test('a later unreadable source discards earlier valid public candidates', t => {
   const root = fixture(t);
