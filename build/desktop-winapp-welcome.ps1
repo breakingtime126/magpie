@@ -15,8 +15,8 @@ foreach ($welcomePolicyName in @('Get-WelcomeDecision','Get-WelcomeChromeRejecti
 # Explicit profile-local labels. Never add self-authored labels to legacy targets.
 function Get-WinAppModelNames([string]$FixtureProfile='') {
     if ($FixtureProfile -ceq 'synthetic-models-4239') {
-        return [pscustomobject]@{Menu=@('Synthetic Alpha [alpha]');Submenu=@('Synthetic Alpha [alpha]');
-            Expanded=@('Synthetic Alpha [alpha]');Alpha=@('Synthetic Alpha [alpha]');Beta=@('Synthetic Beta [beta]');
+        return [pscustomobject]@{Menu=@('Synthetic Alpha [alpha]','Synthetic Alpha [alpha] None');Submenu=@('Synthetic Alpha [alpha]');
+            Expanded=@('Synthetic Alpha [alpha]','Synthetic Alpha [alpha] None');Alpha=@('Synthetic Alpha [alpha]');Beta=@('Synthetic Beta [beta]');
             All=@('Synthetic Alpha [alpha]','Synthetic Beta [beta]')}
     }
     if ($FixtureProfile -cne '') { throw 'Unreviewed model-label profile.' }
@@ -212,8 +212,8 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
                 'resolve-model-short'=@('5.5 [alpha]','Button');'resolve-model-effort'=@('5.5 [alpha] Medium','Button');
                 'resolve-submodel-button'=@('5.5 [alpha]','Button');'resolve-submodel-menuitem'=@('5.5 [alpha]','MenuItem')}[$Operation]
             if ($FixtureProfile -ceq 'synthetic-models-4239') {
-                if ($Operation -ceq 'resolve-model-effort') { throw 'No reasoning-effort UI target is authorized.' }
-                if ($Operation -cin @('resolve-model-short','resolve-submodel-button','resolve-submodel-menuitem')) {
+                if ($Operation -ceq 'resolve-model-effort') { $spec=@($modelNames.Menu[1],'Button') }
+                elseif ($Operation -cin @('resolve-model-short','resolve-submodel-button','resolve-submodel-menuitem')) {
                     $spec=@($modelNames.Alpha[0],$spec[1])
                 }
             }
@@ -539,7 +539,8 @@ function Get-WinAppModelMenuObservation($Page,[string]$FixtureProfile='') {
     elseif ($targets.Count -eq 1) {
         $type=$(if ($targets[0].Type -ceq 'Button') { 'button' } else { 'other' })
         $enabled=$targets[0].Enabled;$invokable=$targets[0].Invokable
-        $label=$(if ($targets[0].Name -ceq $modelNames.Menu[0]) { 'model_only' } else { 'model_and_medium' })
+        $label=$(if ($targets[0].Name -ceq $modelNames.Menu[0]) { 'model_only' }
+            elseif ($FixtureProfile -ceq 'synthetic-models-4239') { 'model_and_none' } else { 'model_and_medium' })
         if ($targets[0].ExpandState -cin @('collapsed','expanded')) { $expand=$targets[0].ExpandState }
     }
     $observation=[ordered]@{decision='scene_changed';headingCount=@($nodes | Where-Object { $_.Name -ceq 'What should we build?' }).Count;

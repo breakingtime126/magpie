@@ -509,3 +509,13 @@ counts describe a received `model/list` response, not visible or usable UI.
 Distinct source slugs are a minimal follow-up experiment, not a proven cause
 of the earlier missing beta menu item. No Desktop run is authorized merely by
 preparing this source; first require the separate new-model native acceptance.
+
+The menu-only follow-up recognizes the exact current-model Button label
+`Synthetic Alpha [alpha] None` observed in Desktop run
+[42413441847](https://github.com/breakingtime126/magpie/actions/runs/42413441847)
+at `8c9bd8d617981b05c1a01cf8db1e3e0709742373`. This label is profile-local and
+only identifies the same collapsed menu opener; `None` is not reported as
+Medium. It does not expand model-item counts, submenu names or keyboard model
+activation. Exact typed resolution, unique visible enabled Button identity and
+collapsed-state checks still precede Expand. The preceding run stopped before
+any menu action; this follow-up has not yet established two visible menu items.

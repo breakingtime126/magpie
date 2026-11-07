@@ -210,6 +210,9 @@ try {
         $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
         Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'model menu uses fixed typed reads and one explicit Button Expand only'
     }
+    $start=New-WinAppWelcomeStart $tool 123 'resolve-model-effort' -FixtureProfile 'synthetic-models-4239'
+    Pass (($start.ArgumentList -join ' ') -ceq 'ui get-property Synthetic Alpha [alpha] None --type Button --property AutomationId -w 123 --json') 'observed None opener uses one exact typed query'
+    Reject { New-WinAppWelcomeStart $tool 123 'resolve-model-effort' 'Try again' -FixtureProfile 'synthetic-models-4239' } 'None resolver cannot accept a setup target'
     foreach ($spec in @(@('open-model-submenu','mnu-55alpha-abcd','ui invoke mnu-55alpha-abcd --action expand -w 123 --json'),
         @('resolve-submodel-button','','ui get-property 5.5 [alpha] --type Button --property AutomationId -w 123 --json'),
         @('resolve-submodel-menuitem','','ui get-property 5.5 [alpha] --type MenuItem --property AutomationId -w 123 --json'))) {
@@ -839,5 +842,49 @@ foreach ($variant in @('hidden','disabled','duplicate','protected')) {
     else { $bad.windows[0].elements+=@($bad.windows[0].elements[1]);$bad.windows[0].elementCount++ }
     $labels=Get-WinAppModelMenuLabels (ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123 -FixtureProfile $selfProfile) -FixtureProfile $selfProfile
     Pass $labels.protectedScreen 'hidden disabled or duplicate synthetic labels stop the observation'
+}
+# Exact current-model opener observed in 8c9's pixels, not a new model-item name.
+$nonePage=ModelPage
+$nonePage.windows[0].elements[1].name='Synthetic Alpha [alpha] None'
+$nonePage.windows[0].elements[1].automationId='selfnone'
+$nonePage.windows[0].elements[1].selector='selfnone'
+$noneSnapshot=ConvertTo-WinAppWelcomeSnapshot (Json $nonePage) 123 -FixtureProfile $selfProfile
+$noneObservation=Get-WinAppModelMenuObservation $noneSnapshot -FixtureProfile $selfProfile
+Pass ($noneObservation.decision -ceq 'ready' -and $noneObservation.labelKind -ceq 'model_and_none') 'observed None suffix identifies the menu without claiming Medium'
+Pass ((Get-WinAppModelMenuObservation $noneSnapshot).decision -cne 'ready') 'legacy profile does not admit the None opener'
+Pass ((Get-WinAppModelMenuLabels $noneSnapshot -FixtureProfile $selfProfile).alphaVisibleCount -eq 0) 'None opener is not counted as a model-list item'
+Pass (-not (Read-WinAppModelFocus (Json (Focused 'Synthetic Alpha [alpha] None')) -FixtureProfile $selfProfile).Observation.activationAllowed) 'None label does not authorize keyboard model activation'
+$noneSnapshot.Decision='model_menu_ready'
+$noneResolved=Resolution 'Synthetic Alpha [alpha] None' 'Button' 'selfnone' 'btn-selfnone-abcd'
+$noneResolved.element.expandState='collapsed'
+$binding=[ordered]@{}
+$noneTarget=Get-WinAppWelcomeTarget $noneSnapshot 'Synthetic Alpha [alpha] None' 'Button' { Json $noneResolved } $binding -FixtureProfile $selfProfile
+Pass ($noneTarget.Selector -ceq 'btn-selfnone-abcd' -and $noneTarget.ExpandState -ceq 'collapsed' -and $binding.bindings[0].resolved) 'None opener retains exact resolved identity and collapsed state'
+foreach ($variant in @('missing','expanded','disabled','offscreen','wrong-name','wrong-type')) {
+    $bad=Json $noneResolved | ConvertFrom-Json
+    switch ($variant) {
+        'missing' { $bad.element.PSObject.Properties.Remove('expandState') }
+        'expanded' { $bad.element.expandState='expanded' }
+        'disabled' { $bad.element.isEnabled=$false }
+        'offscreen' { $bad.element.isOffscreen=$true }
+        'wrong-name' { $bad.element.name='Synthetic Alpha [alpha]' }
+        'wrong-type' { $bad.element.type='MenuItem' }
+    }
+    Reject { Get-WinAppWelcomeTarget $noneSnapshot 'Synthetic Alpha [alpha] None' 'Button' { Json $bad } ([ordered]@{}) -FixtureProfile $selfProfile } 'None typed resolution cannot skip identity or collapsed-state checks'
+}
+foreach ($variant in @('duplicate','plain-and-none','disabled','offscreen','expanded','missing','wrong-type','near-name')) {
+    $bad=Json $nonePage | ConvertFrom-Json
+    switch ($variant) {
+        'duplicate' { $bad.windows[0].elements+=@($bad.windows[0].elements[1]);$bad.windows[0].elementCount++ }
+        'plain-and-none' { $bad.windows[0].elements+=@(Node 'Synthetic Alpha [alpha]' 'Button' 'btn-other-abcd');$bad.windows[0].elementCount++ }
+        'disabled' { $bad.windows[0].elements[1].isEnabled=$false }
+        'offscreen' { $bad.windows[0].elements[1].isOffscreen=$true }
+        'expanded' { $bad.windows[0].elements[1].expandState='expanded' }
+        'missing' { $bad.windows[0].elements[1].PSObject.Properties.Remove('expandState') }
+        'wrong-type' { $bad.windows[0].elements[1].type='RadioButton' }
+        'near-name' { $bad.windows[0].elements[1].name='Synthetic Alpha [alpha] None extra' }
+    }
+    $page=ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123 -FixtureProfile $selfProfile
+    Pass ((Get-WinAppModelMenuObservation $page -FixtureProfile $selfProfile).decision -cne 'ready') 'None opener remains exact unique visible enabled collapsed Button only'
 }
 Write-Output ('WINAPP_WELCOME_OFFLINE_CHECKS='+$checks)
