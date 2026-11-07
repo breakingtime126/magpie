@@ -346,23 +346,24 @@ of those types. UI tool setup previously used `ZipFile.OpenRead` first, whereas
 the entry path reaches this reader first. This dependency correction does not
 by itself establish the cause of the earlier generic failure.
 
-The existing native-entry safety suite adds two fresh Windows PowerShell
-children under the same bounded helper, cleared environment and held cleanup.
-Each AST-loads only the six required reader functions, writes the same static
-645-byte synthetic ZIP, and calls the real reader without previously using a
-ZIP API. The control removes only the new assembly-load line; the fixed child
-must validate the synthetic package, manifest, backend and archive digests.
-The control reports rejection or success rather than requiring an assumption
-about assemblies preloaded by a particular host. Only an observed rejected
-control plus passing fixed child supports the proposed dependency mechanism
-for that synthetic path. Neither result establishes the prior real failure's
-cause. Fixture signature arguments are supplied test values, not an official
-package, an executable backend, a valid ASAR or real signature verification.
+The [`e9de4307` run](https://github.com/breakingtime126/magpie/actions/runs/42355487033/job/128352541498)
+stopped when the newly added cold synthetic identity control reached its
+30-second deadline with empty stdout and confirmed held-child exit. The fixed
+synthetic case and the real treatment were not reached. This did not establish
+the control's internal failure point or validate the dependency correction.
+Its supplied signature arguments were test values, not actual verification.
 
-No workflow change is required: both existing host runs execute these cases
-before the real treatment. No pin, size/time bound, freshness or USER rollback
-rule changes. New fresh-host cases and the real signed-package path remain
-unrun while authoring this change; local source/ZIP checks are not Windows proof.
+Those 68 lines of experimental comparison are removed from the default safety
+suite, restoring the exact suite previously observed to pass Core 663 and
+Desktop 667 assertions. The comparison was a dependency investigation, not a
+production safety guard. No alternate fixture entry point or workflow is added.
+The existing workflow still requires both safety hosts and the profile checks
+before building and running the real treatment. The explicit assembly load
+remains in the reader, to be exercised directly against the actual downloaded,
+signature-verified official package in the same new VM. Exact identity pins,
+stream/time bounds, freshness, held ownership and USER rollback remain intact.
+That real signed-package validation after this removal has not run while
+authoring this change; neither success nor the earlier failure's cause is claimed.
 
 The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
 allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving
