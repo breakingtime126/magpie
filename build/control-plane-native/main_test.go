@@ -271,7 +271,7 @@ func TestSummaryNeverAcceptsWeakenedSuccess(t *testing.T) {
 }
 
 func TestCatalogRequiresBothActualAliasesAndOneDefault(t *testing.T) {
-	valid := `{"data":[{"model":"magpie/alpha/gpt-5.5","isDefault":true,"hidden":false},{"model":"magpie/beta/gpt-5.5","isDefault":false,"hidden":false}],"nextCursor":null}`
+	valid := `{"data":[{"id":"magpie/alpha/gpt-5.5","model":"magpie/alpha/gpt-5.5","displayName":"GPT-5.5 [alpha]","isDefault":true,"hidden":false},{"id":"magpie/beta/gpt-5.5","model":"magpie/beta/gpt-5.5","displayName":"GPT-5.5 [beta]","isDefault":false,"hidden":false}],"nextCursor":null}`
 	def, n, err := checkCatalog([]byte(valid))
 	if err != nil || n != 2 || def != "magpie/alpha/gpt-5.5" {
 		t.Fatal("valid catalog rejected")

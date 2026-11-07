@@ -1,5 +1,9 @@
 # Dot-source this file only. No execution occurs until the explicit invocation.
-function Assert-ControlPlaneNativeSummary($Report) {
+function Assert-ControlPlaneNativeSummary($Report, [string]$AcceptanceProfile = '') {
+    $expectedNativeSHA = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+    if ($AcceptanceProfile -ceq 'app-server-4239') {
+        $expectedNativeSHA = '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382'
+    } elseif ($AcceptanceProfile -cne '') { throw 'Invalid native control-plane summary.' }
     $names = @('schema', 'scope', 'status', 'stage', 'failure', 'native_sha256',
         'binary_verified', 'version_verified', 'config_reads', 'layer_reads',
         'stable_layer_rereads', 'layer_version_changes', 'catalog_models',
@@ -29,7 +33,7 @@ function Assert-ControlPlaneNativeSummary($Report) {
         $Report.stage -isnot [string] -or $stages -cnotcontains $Report.stage -or
         $Report.failure -isnot [string] -or $failures -cnotcontains $Report.failure -or
         $Report.native_sha256 -isnot [string] -or
-        @('', '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39') -cnotcontains $Report.native_sha256) {
+        @('', $expectedNativeSHA) -cnotcontains $Report.native_sha256) {
         throw 'Invalid native control-plane summary.'
     }
     foreach ($name in @('binary_verified', 'version_verified', 'adapter_clean_exit', 'cleanup_complete')) {
@@ -65,12 +69,14 @@ function Invoke-ControlPlaneNative {
         [Parameter(Mandatory)][string]$CodexExecutable,
         [Parameter(Mandatory)][string]$CatalogPath,
         [Parameter(Mandatory)][string]$ScratchParent,
-        [Parameter(Mandatory)][string]$HelperHome
+        [Parameter(Mandatory)][string]$HelperHome,
+        [string]$AcceptanceProfile = ''
     )
     $ErrorActionPreference = 'Stop'
     $process = $null
     $started = $false
     try {
+        if ($AcceptanceProfile -cne '' -and $AcceptanceProfile -cne 'app-server-4239') { throw 'Invalid profile.' }
         foreach ($path in @($HelperExecutable, $BridgeExecutable, $CodexExecutable, $CatalogPath)) {
             $file = Get-Item -LiteralPath $path
             if (-not [IO.Path]::IsPathFullyQualified($path) -or $file.PSIsContainer -or
@@ -129,6 +135,10 @@ namespace MagpieControlPlaneNativeV167 {
         $psi.WorkingDirectory = $HelperHome
         foreach ($arg in @('-supervise', '-bridge', $BridgeExecutable, '-codex', $CodexExecutable,
             '-catalog', $CatalogPath, '-scratch-parent', $ScratchParent)) { $psi.ArgumentList.Add($arg) }
+        if ($AcceptanceProfile -cne '') {
+            $psi.ArgumentList.Add('-acceptance-profile')
+            $psi.ArgumentList.Add($AcceptanceProfile)
+        }
         $psi.Environment.Clear()
         $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot')
         if (-not [IO.Path]::IsPathFullyQualified($systemRoot)) { throw 'Invalid system root.' }
@@ -167,7 +177,7 @@ namespace MagpieControlPlaneNativeV167 {
         } else { throw 'Invalid result.' }
         if ($text.Contains("`n") -or $text.Contains("`r")) { throw 'Invalid result.' }
         $report = $text | ConvertFrom-Json
-        Assert-ControlPlaneNativeSummary $report
+        Assert-ControlPlaneNativeSummary $report -AcceptanceProfile $AcceptanceProfile
         if (($report | ConvertTo-Json -Depth 16 -Compress) -cne $text -or
             (($process.ExitCode -eq 0) -ne ($report.status -ceq 'passed'))) { throw 'Invalid result.' }
         return $report

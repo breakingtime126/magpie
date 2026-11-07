@@ -11,6 +11,10 @@ import (
 )
 
 func run(ctx context.Context, o options, report *summary) (runErr error) {
+	pinnedSHA, err := acceptanceSHA(o.acceptanceProfile)
+	if err != nil {
+		return err
+	}
 	if runtime.GOOS != "windows" {
 		return failure("platform_rejected")
 	}
@@ -26,10 +30,10 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	if err := regularFile(o.bridge, 512<<20); err != nil {
 		return err
 	}
-	if err := verifyBinary(o.codex); err != nil {
+	if err := verifyBinaryHash(o.codex, pinnedSHA); err != nil {
 		return err
 	}
-	report.NativeSHA256, report.BinaryVerified = nativeSHA, true
+	report.NativeSHA256, report.BinaryVerified = pinnedSHA, true
 	data, err := readBounded(o.catalog, 10<<20)
 	if err != nil {
 		return err
@@ -84,7 +88,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	report.VersionVerified = true
-	if err := verifyBinary(o.codex); err != nil {
+	if err := verifyBinaryHash(o.codex, pinnedSHA); err != nil {
 		return err
 	}
 	catalogPath := filepath.Join(root, "models.json")
@@ -127,7 +131,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 			return failure("scratch_not_empty")
 		}
 		backends = append(backends, map[string]any{"id": f.name, "provider": f.name + "_provider",
-			"command": o.codex, "home": home, "codex_home": ch, "startup_probe_sha256": nativeSHA})
+			"command": o.codex, "home": home, "codex_home": ch, "startup_probe_sha256": pinnedSHA})
 	}
 	cfg := map[string]any{"backends": backends, "working_directory": cwd, "control_plane": controlMode, "control_home": controlHome}
 	cfgPath := filepath.Join(root, "bridge.json")
@@ -311,26 +315,35 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 }
 
 func checkCatalog(raw json.RawMessage) (string, int, error) {
+	if _, err := decodeConfigJSON(raw); err != nil {
+		return "", 0, failure("catalog_invalid")
+	}
 	var list struct {
 		Data []struct {
-			Model   string `json:"model"`
-			Default bool   `json:"isDefault"`
-			Hidden  bool   `json:"hidden"`
+			ID          string `json:"id"`
+			Model       string `json:"model"`
+			DisplayName string `json:"displayName"`
+			Default     *bool  `json:"isDefault"`
+			Hidden      *bool  `json:"hidden"`
 		} `json:"data"`
 		Next json.RawMessage `json:"nextCursor"`
 	}
-	if json.Unmarshal(raw, &list) != nil || len(list.Data) != 2 || (len(list.Next) != 0 && !bytes.Equal(list.Next, []byte("null"))) {
+	if json.Unmarshal(raw, &list) != nil || len(list.Data) != 2 || !bytes.Equal(list.Next, []byte("null")) {
 		return "", 0, failure("catalog_invalid")
 	}
-	want := map[string]bool{"magpie/alpha/" + modelName: false, "magpie/beta/" + modelName: false}
+	// The pinned public catalog names GPT-5.5; the existing bridge appends its
+	// owning backend. Exact distinct pairs reject UI-facing identity collapse.
+	want := map[string]string{"magpie/alpha/" + modelName: "GPT-5.5 [alpha]", "magpie/beta/" + modelName: "GPT-5.5 [beta]"}
+	seen := map[string]bool{}
 	def := ""
 	for _, m := range list.Data {
-		seen, ok := want[m.Model]
-		if !ok || seen || m.Hidden {
+		label, ok := want[m.Model]
+		if !ok || seen[m.Model] || m.ID != m.Model || m.DisplayName != label ||
+			m.Default == nil || m.Hidden == nil || *m.Hidden {
 			return "", 0, failure("catalog_invalid")
 		}
-		want[m.Model] = true
-		if m.Default {
+		seen[m.Model] = true
+		if *m.Default {
 			if def != "" {
 				return "", 0, failure("catalog_invalid")
 			}

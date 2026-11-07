@@ -42,7 +42,8 @@ func supervise(args []string) {
 		_ = json.NewEncoder(os.Stdout).Encode(summary{Schema: 1, Scope: "synthetic-loopback-only",
 			Status: "failed", Stage: "supervisor", Failure: "supervision_failed"})
 	}
-	if _, err := arguments(args); err != nil {
+	opts, err := arguments(args)
+	if err != nil {
 		failed()
 		os.Exit(1)
 	}
@@ -84,7 +85,7 @@ func supervise(args []string) {
 	var report summary
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
-	if overflow || d.Decode(&report) != nil || !validSummary(report) ||
+	if overflow || d.Decode(&report) != nil || !validSummaryForProfile(report, opts.acceptanceProfile) ||
 		(err == nil) != (report.Status == "passed") {
 		failed()
 		os.Exit(1)
@@ -102,9 +103,17 @@ func supervise(args []string) {
 }
 
 func validSummary(s summary) bool {
+	return validSummaryForProfile(s, "")
+}
+
+func validSummaryForProfile(s summary, profile string) bool {
+	pinnedSHA, err := acceptanceSHA(profile)
+	if err != nil {
+		return false
+	}
 	if s.Schema != 1 || s.Scope != "synthetic-loopback-only" ||
 		(s.Status != "passed" && s.Status != "failed") ||
-		(s.NativeSHA256 != "" && s.NativeSHA256 != nativeSHA) {
+		(s.NativeSHA256 != "" && s.NativeSHA256 != pinnedSHA) {
 		return false
 	}
 	stages := map[string]bool{}
@@ -145,6 +154,6 @@ func validSummary(s summary) bool {
 			return false
 		}
 	}
-	return s.Stage == "complete" && s.Failure == "" && s.NativeSHA256 == nativeSHA &&
+	return s.Stage == "complete" && s.Failure == "" && s.NativeSHA256 == pinnedSHA &&
 		s.BinaryVerified && s.VersionVerified && s.AdapterCleanExit && s.CleanupComplete
 }

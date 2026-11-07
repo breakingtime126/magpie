@@ -30,13 +30,13 @@ type desktopAudit struct {
 }
 
 // These pins select a CI fixture runtime, not a Desktop compatibility verdict.
-// The independent four-turn acceptance continues to require nativeSHA.
+// The independent four-turn acceptance requires its own acceptance-profile.
 func desktopFixtureSHA(build string) (string, error) {
 	switch build {
 	case "":
 		return nativeSHA, nil
 	case "desktop-4239":
-		return "4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382", nil
+		return native4239SHA, nil
 	default:
 		return "", failure("input_invalid")
 	}

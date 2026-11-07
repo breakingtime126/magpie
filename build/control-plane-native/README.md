@@ -6,9 +6,11 @@ verified Desktop package. It is separate from the retained Linux 0.166 tests.
 
 ## Separately reviewed Desktop fixture build
 
-The independent four-turn acceptance described below remains pinned to the
+The independent four-turn acceptance defaults to the
 original native SHA-256 `40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39`.
-Its arguments do not accept a build override.
+The separate, explicit [standalone 4239 profile](#standalone-4239-app-server-profile)
+below is the only additional acceptance pin. Neither path accepts an arbitrary
+build or hash.
 
 Only `-desktop-fixtures` accepts the explicit option
 `-reviewed-build desktop-4239`. It selects native SHA-256
@@ -35,7 +37,7 @@ Build `go build -trimpath -tags nogui -o control-plane-native.exe ./build/contro
 The caller supplies the adapter, official executable, and the exact official
 `codex-rs/models-manager/models.json` from commit
 `c40729ea5cf8e947481b130c59807273eda2f8e9`.
-The harness verifies native SHA-256
+By default the harness verifies native SHA-256
 `40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39`,
 the native version, and catalog Git blob
 `489ebe3f2483348641a16160ce8491dd077eabca` before use.
@@ -55,6 +57,72 @@ belong to the disposable CI job. Never use a user computer or credential store.
 The wrapper does not download anything or start Desktop. The integrating job
 owns preparation and deletion of its inputs. It must verify the original
 signed package independently.
+
+### Standalone 4239 app-server profile
+
+Only an explicit `-AcceptanceProfile app-server-4239` on the wrapper (or
+`-acceptance-profile app-server-4239` on the helper and its supervisor) selects
+the separately reviewed Desktop 26.1103.4239.0 native executable. Its exact
+SHA-256 is `4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382`.
+The caller still independently verifies the signed package identity before
+supplying the native file. The version and public catalog pins stay unchanged.
+
+```powershell
+Invoke-ControlPlaneNative -HelperExecutable $helper -BridgeExecutable $bridge `
+  -CodexExecutable $codex4239 -CatalogPath $catalog `
+  -ScratchParent $freshEmptyScratch -HelperHome $freshEmptyHelperHome `
+  -AcceptanceProfile app-server-4239
+```
+
+An omitted or empty option preserves the original pin. Every other nonempty
+value, including a hash, case variant or Desktop-only `desktop-4239`, is
+rejected before runtime setup. Conversely the Desktop fixture parser does not
+accept `-acceptance-profile`. The selected pin controls both file checks,
+both native backend startup pins and both supervisor/wrapper summary checks.
+The fixed summary schema and every acceptance count are unchanged; a report
+for the other pin is invalid, even with the same native version string.
+Default summary consumers, including the existing Desktop gate, still accept
+only the old pin. Keep this standalone report separate from Desktop evidence.
+
+This profile enables an attempt, not a compatibility assertion. The exact
+same four-turn, thread-list, config/layer, isolation, no-auth fixture and
+cleanup checks below must pass on the selected executable. A native denial,
+unsupported request or semantic difference stops the attempt. Do not change
+permissions, sandbox mode or expected responses to make it pass. No Desktop
+process, UI navigation, account, real provider or tool task is accepted by
+this interface-only result. The profile was prepared locally; native 4239
+acceptance and GUI compatibility are not established by this change.
+
+The separate [standalone CI workflow](../../.github/workflows/experimental-control-plane-native-4239.yml)
+is push-only on `experiment/app-server-bridge-v0.1.3035`. Its paths are limited
+to that workflow, `build/control-plane-native/**` and the focused synthetic
+`internal/appserverbridge/experimental_feature_run_test.go` fixture; its job also requires
+the explicit commit marker `[app-server-4239-v1]` and rejects combined Desktop
+or inspection markers. No marker means no standalone acceptance. Do not add
+the marker until this exact attempt is wanted. A future repeat must touch a
+watched path; an empty marker-only commit does not satisfy the path filter.
+The workflow checks out the triggering SHA, requires an exact-base behavioral
+red and offline synthetic tests, then uses a fresh Windows runner.
+
+`ci-4239.ps1` requires the exact profile and that CI context. It imports only
+the existing signed-package identity function definitions, downloads bounded
+public package/catalog inputs, verifies real SDK and Authenticode signatures,
+and checks the fixed package/version/native/ASAR tuple. It then rehashes the
+locked package and extracts only `app/resources/codex.exe`. There is no package
+registration, service setup, Desktop launch, registry edit or security-setting
+change. Missing dependencies or an updated floating package stop the attempt.
+The selected binary and catalog are reverified by the native harness.
+The preparation directory is deleted after the owned acceptance processes stop.
+
+Only `app-server-4239-report/report.json` is published. It wraps the strictly
+validated native summary with fixed preparation status, source commit,
+`package_verified`, `preparation_cleanup_complete` and `gui_verified:false`.
+No package, native homes, raw errors, protocol/config or screenshots are uploaded.
+This workflow never runs the old-pinned acceptance as a substitute. The existing
+policy-trace, cold-start and generic bridge/native-runtime jobs explicitly skip this
+marker on push only; their dispatch behavior stays unchanged. The remaining
+Desktop workflows' path filters do not match this patch. Static fixtures guard
+those exclusions and reject every conflicting Desktop/inspection marker.
 
 The wrapper clears the helper environment, suppresses stderr, bounds captured
 stdout, and runs the `-supervise` watchdog. The watchdog uses
@@ -82,6 +150,18 @@ must match the known threads, actual turn IDs and route-specific synthetic
 answers. Extra, duplicate, unexplained or wrong-route completions fail even
 when no waiter would have consumed them. The assistant count is derived from
 that complete audit, not from successful waiter calls.
+
+The actual `model/list` response must have exactly two rows, an explicit null
+`nextCursor`, and distinct exact `id`/`model` pairs
+`magpie/alpha/gpt-5.5` and `magpie/beta/gpt-5.5`. Both must explicitly report
+`hidden:false`, with exactly one genuine boolean `isDefault:true`. Their
+distinct display names must be `GPT-5.5 [alpha]` and `GPT-5.5 [beta]`: the
+[pinned native record](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/models-manager/models.json)
+supplies `GPT-5.5`, and the [existing bridge merger](../../internal/appserverbridge/router.go)
+appends each owner. No returned label or metadata is changed by this check.
+Missing/null/mistyped fields, duplicate JSON keys, collapsed IDs or labels,
+hidden rows, unknown aliases and incomplete pages fail. These assertions prove
+interface identities and routability, not that Desktop rendered both choices.
 
 After the four completed turns, two nonempty `thread/list` queries exercise
 the real adapter and both native backends. The first includes
@@ -192,10 +272,35 @@ propagation. Summary tests reject missing or weakened list counts.
 The real acceptance is never silently skipped by these tests; it is the
 separate explicit Windows CI invocation above.
 
-Source was prepared without an available executor. gofmt, unit/race/vet/build,
-the full suite, and exact native runtime acceptance were not run during
-authoring. Record the exact integrated head and real CI outcomes before
-claiming success.
+`go test -race ./build/control-plane-native -run TestStandalone` covers exact
+default/explicit profile selection, invalid options and cross-profile or
+weakened summaries. `acceptance_profile_red_test.go` uses only the original
+base APIs; run that file alone on commit
+`5a9e2f9e49bc00bd87bffd1385d7f4469389f838` to require the named opt-in assertion
+to fail, not compilation. `pwsh -NoProfile -NonInteractive -File
+build/control-plane-native/acceptance-profile.tests.ps1` exercises only the
+pure wrapper validator and source argument wiring. It starts no process.
+Existing Desktop profile fixtures must still pass without a profile argument.
+The CI also runs `catalog_identity_red_test.go` alone on the exact old base and
+requires its collapsed-ID/label assertion to fail behaviorally. Catalog identity
+mutations and workflow routing/static path exclusions then run with the full
+synthetic helper suite on the candidate.
+
+The same isolated CI run also verifies the synthetic feature-response fixture
+race correction without changing production routing. It copies the candidate
+fixture into the exact old checkout and applies the two-anchor
+`mutate-shared-response.py` mutation there only. The delayed native-child test
+must fail its generation assertion, not compilation. The unmutated candidate
+then repeats fresh/failure pages, delayed-sibling delivery and immutable
+generation tests under Linux `-race -count=5` and Windows `-count=20`. Both use
+fresh isolated homes with tool caches resolved before HOME changes. These are
+synthetic subprocess tests, not additional official native or Desktop evidence.
+
+The 4239 profile and CI extension were prepared locally without a Go toolchain
+or PowerShell. gofmt, unit/race/vet/build, PowerShell fixtures and exact native
+runtime acceptance were not run for this candidate. Record the exact
+integrated head and real CI outcomes before claiming success. Earlier results
+for another pinned executable do not establish 4239 acceptance.
 
 
 ## Live Desktop fixture service (explicit opt-in)

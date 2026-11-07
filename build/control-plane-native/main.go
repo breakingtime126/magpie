@@ -20,12 +20,14 @@ import (
 )
 
 const (
-	nativeSHA     = "40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39"
-	nativeVersion = "codex-cli 0.167.0-alpha.3.2"
-	catalogBlob   = "489ebe3f2483348641a16160ce8491dd077eabca"
-	controlMode   = "routing-v0.167.0-alpha.3.2"
-	modelName     = "gpt-5.5"
-	maxMessage    = 4 << 20
+	nativeSHA      = "40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39"
+	native4239SHA  = "4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382"
+	acceptance4239 = "app-server-4239"
+	nativeVersion  = "codex-cli 0.167.0-alpha.3.2"
+	catalogBlob    = "489ebe3f2483348641a16160ce8491dd077eabca"
+	controlMode    = "routing-v0.167.0-alpha.3.2"
+	modelName      = "gpt-5.5"
+	maxMessage     = 4 << 20
 )
 
 type summary struct {
@@ -58,7 +60,7 @@ type summary struct {
 	CleanupComplete          bool   `json:"cleanup_complete"`
 }
 
-type options struct{ bridge, codex, catalog, scratch string }
+type options struct{ bridge, codex, catalog, scratch, acceptanceProfile string }
 type failure string
 
 func (e failure) Error() string { return string(e) }
@@ -111,8 +113,12 @@ func arguments(args []string) (options, error) {
 	f.StringVar(&o.codex, "codex", "", "")
 	f.StringVar(&o.catalog, "catalog", "", "")
 	f.StringVar(&o.scratch, "scratch-parent", "", "")
+	f.StringVar(&o.acceptanceProfile, "acceptance-profile", "", "")
 	if f.Parse(args) != nil || f.NArg() != 0 {
 		return o, failure("input_invalid")
+	}
+	if _, err := acceptanceSHA(o.acceptanceProfile); err != nil {
+		return o, err
 	}
 	for _, p := range []string{o.bridge, o.codex, o.catalog, o.scratch} {
 		if !filepath.IsAbs(p) {
@@ -120,6 +126,19 @@ func arguments(args []string) (options, error) {
 		}
 	}
 	return o, nil
+}
+
+// This selects only the standalone synthetic app-server acceptance runtime.
+// It does not authorize Desktop actions or alter a native permission setting.
+func acceptanceSHA(profile string) (string, error) {
+	switch profile {
+	case "":
+		return nativeSHA, nil
+	case acceptance4239:
+		return native4239SHA, nil
+	default:
+		return "", failure("input_invalid")
+	}
 }
 
 func regularFile(path string, limit int64) error {

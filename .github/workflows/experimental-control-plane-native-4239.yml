@@ -1,0 +1,175 @@
+name: Experimental standalone app-server 4239
+
+on:
+  push:
+    branches: [experiment/app-server-bridge-v0.1.3035]
+    paths:
+      - .github/workflows/experimental-control-plane-native-4239.yml
+      - build/control-plane-native/**
+      - internal/appserverbridge/experimental_feature_run_test.go
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-app-server-4239-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline:
+    if: >-
+      github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' &&
+      github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]') &&
+      !contains(github.event.head_commit.message, '[native-entry-4239-v1]') &&
+      !contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') &&
+      !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') &&
+      !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') &&
+      !contains(github.event.head_commit.message, '[package-identity-only-v1]') &&
+      !contains(github.event.head_commit.message, '[native-ui-inspection-v1]') &&
+      !contains(github.event.head_commit.message, '[native-contract-review-v1]')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '1'
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check out the exact old standalone profile parser
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 5a9e2f9e49bc00bd87bffd1385d7f4469389f838
+          path: .ci-app-server-4239-base
+          persist-credentials: false
+      - name: Require behavioral red and the unchanged synthetic oracle suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C .ci-app-server-4239-base rev-parse HEAD)" = 5a9e2f9e49bc00bd87bffd1385d7f4469389f838
+          format="$(gofmt -l build/control-plane-native internal/appserverbridge/experimental_feature_run_test.go)"
+          test -z "$format"
+          export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
+          isolated="$(mktemp -d "$RUNNER_TEMP/app-server-4239-offline.XXXXXX")"
+          trap 'chmod -R u+w "$isolated"; rm -rf "$isolated" .ci-app-server-4239-base' EXIT
+          export HOME="$isolated/home" CODEX_HOME="$isolated/codex"
+          export XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache"
+          export XDG_DATA_HOME="$isolated/data" XDG_STATE_HOME="$isolated/state" TMPDIR="$isolated/tmp"
+          mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR"
+          cp build/control-plane-native/acceptance_profile_red_test.go .ci-app-server-4239-base/build/control-plane-native/
+          cp build/control-plane-native/catalog_identity_red_test.go .ci-app-server-4239-base/build/control-plane-native/
+          status=0
+          (cd .ci-app-server-4239-base && go test -v -count=1 -timeout=3m -tags nogui \
+            -run '^(TestStandalone4239AcceptanceOptInAccepted|TestCatalogRejectsCollapsedIdentity)$' ./build/control-plane-native) >"$isolated/red.log" 2>&1 || status=$?
+          test "$status" -eq 1
+          grep -Fq -- '--- FAIL: TestStandalone4239AcceptanceOptInAccepted' "$isolated/red.log"
+          grep -Fq -- 'explicit standalone 4239 acceptance profile was rejected input_invalid' "$isolated/red.log"
+          grep -Fq -- '--- FAIL: TestCatalogRejectsCollapsedIdentity' "$isolated/red.log"
+          grep -Fq -- 'collapsed catalog IDs and display names were accepted' "$isolated/red.log"
+          echo 'Exact-base behavioral red confirmed; setup or compile failure is not evidence.'
+          cp internal/appserverbridge/experimental_feature_run_test.go .ci-app-server-4239-base/internal/appserverbridge/
+          python3 build/control-plane-native/mutate-shared-response.py \
+            .ci-app-server-4239-base/internal/appserverbridge/experimental_feature_run_test.go
+          status=0
+          (cd .ci-app-server-4239-base && go test -v -count=1 -timeout=3m -tags nogui \
+            -run '^TestRunExperimentalFeature167LateSiblingUsesOriginalGeneration$' ./internal/appserverbridge) >"$isolated/fixture-red.log" 2>&1 || status=$?
+          test "$status" -eq 1
+          grep -Fq -- '--- FAIL: TestRunExperimentalFeature167LateSiblingUsesOriginalGeneration' "$isolated/fixture-red.log"
+          grep -Fq -- "delayed native child read a different request's fixture response" "$isolated/fixture-red.log"
+          echo 'Shared-response mutation failed the delayed-child generation assertion.'
+          go test -race -count=5 -timeout=5m -tags nogui \
+            -run '^(TestRunExperimentalFeature167(FreshPagesAndFailures|LateSiblingUsesOriginalGeneration)|TestExperimentalFeatureFixtureLateReadsKeepTheirGeneration)$' ./internal/appserverbridge
+          go test -race -count=1 -timeout=8m -tags nogui ./build/control-plane-native
+          go vet -tags nogui ./build/control-plane-native
+
+  native:
+    needs: offline
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: '0'
+      GOOS: windows
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check exact source and offline PowerShell boundaries
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD) -cne $env:GITHUB_SHA) { throw 'Source commit mismatch.' }
+          & ./build/control-plane-native/acceptance-profile.tests.ps1
+          & ./build/control-plane-native/ci-4239.tests.ps1
+          # Existing default consumers still validate only the original native pin.
+          & ./build/test-desktop-ci-profile.ps1
+      - name: Repeat the synthetic late-child regression in isolated Windows homes
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $names = @('GOPATH','GOMODCACHE','GOCACHE','HOME','USERPROFILE','CODEX_HOME','APPDATA','LOCALAPPDATA',
+            'XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','XDG_STATE_HOME','TMP','TEMP','TMPDIR')
+          $saved = @{}
+          foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+          $isolated = Join-Path $env:RUNNER_TEMP ('feature-fixture-' + [guid]::NewGuid().ToString('N'))
+          [void](New-Item -ItemType Directory -Path $isolated)
+          try {
+            # Resolve tool caches before replacing HOME, then retain those exact paths.
+            foreach ($name in @('GOPATH','GOMODCACHE','GOCACHE')) {
+              $value = & go env $name
+              if ($LASTEXITCODE -ne 0 -or -not [IO.Path]::IsPathFullyQualified($value)) { throw 'Go cache lookup failed.' }
+              [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+            }
+            foreach ($name in @('HOME','USERPROFILE','CODEX_HOME','APPDATA','LOCALAPPDATA',
+              'XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','XDG_STATE_HOME','TMP','TEMP','TMPDIR')) {
+              $directory = Join-Path $isolated $name.ToLowerInvariant()
+              [void][IO.Directory]::CreateDirectory($directory)
+              [Environment]::SetEnvironmentVariable($name, $directory, 'Process')
+            }
+            go test -count=20 -timeout=10m -tags nogui `
+              -run '^(TestRunExperimentalFeature167(FreshPagesAndFailures|LateSiblingUsesOriginalGeneration)|TestExperimentalFeatureFixtureLateReadsKeepTheirGeneration)$' ./internal/appserverbridge
+            if ($LASTEXITCODE -ne 0) { throw 'Synthetic feature fixture regression failed.' }
+          } finally {
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+            Remove-Item -LiteralPath $isolated -Recurse -Force
+          }
+      - name: Build the unchanged adapter and explicit acceptance helper
+        run: |
+          $bridge = Join-Path $env:RUNNER_TEMP 'app-server-4239-bridge.exe'
+          $helper = Join-Path $env:RUNNER_TEMP 'app-server-4239-helper.exe'
+          go build -trimpath -tags nogui -o $bridge ./cmd/magpie-codex-bridge
+          if ($LASTEXITCODE -ne 0) { throw 'Adapter build failed.' }
+          go build -trimpath -tags nogui -o $helper ./build/control-plane-native
+          if ($LASTEXITCODE -ne 0) { throw 'Acceptance helper build failed.' }
+      - name: Verify the signed package and run only synthetic app-server acceptance
+        run: |
+          ./build/control-plane-native/ci-4239.ps1 `
+            -HelperExecutable (Join-Path $env:RUNNER_TEMP 'app-server-4239-helper.exe') `
+            -BridgeExecutable (Join-Path $env:RUNNER_TEMP 'app-server-4239-bridge.exe') `
+            -ReportDirectory (Join-Path $env:RUNNER_TEMP 'app-server-4239-report') `
+            -AcceptanceProfile app-server-4239
+      - name: Preserve only the fixed interface acceptance report, never GUI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-server-4239-synthetic-${{ github.sha }}
+          path: ${{ runner.temp }}/app-server-4239-report/report.json
+          if-no-files-found: warn
+          retention-days: 7

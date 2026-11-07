@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,17 @@ func experimentalFeatureFixture() (bool, int) {
 	defer log.Close()
 	fmt.Fprintln(os.Stderr, "experimental-feature-private-stderr-canary")
 	decoder := json.NewDecoder(os.Stdin)
+	readNumber := 0
+	holdNumber := 0
+	if data, err := os.ReadFile(filepath.Join(home, "fixture-experimental-feature-hold-read")); err == nil {
+		holdNumber, err = strconv.Atoi(string(data))
+		if err != nil || holdNumber < 1 {
+			return true, 61
+		}
+	} else if !os.IsNotExist(err) {
+		return true, 62
+	}
+	var heldID json.RawMessage
 	for {
 		var request json.RawMessage
 		if err := decoder.Decode(&request); err == io.EOF {
@@ -54,7 +66,27 @@ func experimentalFeatureFixture() (bool, int) {
 		case "initialized":
 			continue
 		case "experimentalFeature/list":
-			body, err = os.ReadFile(filepath.Join(home, "fixture-experimental-feature-response"))
+			readNumber++
+			if readNumber == holdNumber {
+				// Hold the file read, not merely the response. The next client
+				// request releases it after the test has published a new page.
+				heldID = append(json.RawMessage(nil), msg["id"]...)
+				continue
+			}
+			if heldID != nil {
+				late, err := os.ReadFile(experimentalFeatureResponsePath(home, holdNumber))
+				if err != nil {
+					return true, 63
+				}
+				if os.WriteFile(filepath.Join(home, "fixture-experimental-feature-held-body"), late, 0600) != nil {
+					return true, 64
+				}
+				if _, err := fmt.Fprintf(os.Stdout, "{\"id\":%s,%s}\n", heldID, late); err != nil {
+					return true, 65
+				}
+				heldID = nil
+			}
+			body, err = os.ReadFile(experimentalFeatureResponsePath(home, readNumber))
 			if err != nil {
 				return true, 57
 			}
@@ -97,10 +129,42 @@ func experimentalFeatureRunConfig(t *testing.T, enabled bool) Config {
 	return cfg
 }
 
+// Each request reads its own immutable generation. A failed fanout may return
+// before its sibling reads the fixture, so replacing a shared response file
+// races that late read (including os.WriteFile's truncate/write window).
+func experimentalFeatureResponsePath(home string, number int) string {
+	return filepath.Join(home, fmt.Sprintf("fixture-experimental-feature-response-%d", number))
+}
+
 func experimentalFeatureRunResponses(t *testing.T, cfg Config, first, second string) {
 	t.Helper()
 	for i, body := range []string{first, second} {
-		if err := os.WriteFile(filepath.Join(cfg.Backends[i].Home, "fixture-experimental-feature-response"), []byte(body), 0600); err != nil {
+		home := cfg.Backends[i].Home
+		counter := filepath.Join(home, "fixture-experimental-feature-response-count")
+		number := 1
+		data, err := os.ReadFile(counter)
+		if err == nil {
+			previous, parseErr := strconv.Atoi(string(data))
+			if parseErr != nil || previous < 1 {
+				t.Fatal("invalid fixture response generation")
+			}
+			number = previous + 1
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		// Parent publication is sequential and completes before the next
+		// client request. Children never read or write the counter.
+		path := experimentalFeatureResponsePath(home, number)
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, writeErr := file.WriteString(body)
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			t.Fatal("cannot publish immutable fixture response")
+		}
+		if err := os.WriteFile(counter, []byte(strconv.Itoa(number)), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -247,4 +311,60 @@ func TestExperimentalFeatureFixtureIsJSON(t *testing.T) {
 	if json.Compact(&b, []byte(experimentalFeatureFixturePage)) != nil {
 		t.Fatal("malformed synthetic feature fixture")
 	}
+}
+
+func TestExperimentalFeatureFixtureLateReadsKeepTheirGeneration(t *testing.T) {
+	cfg := Config{Backends: []Backend{{Home: t.TempDir()}, {Home: t.TempDir()}}}
+	first := `"error":{"code":-32037,"message":"synthetic failure"}`
+	second := `"result":` + experimentalFeatureFixturePage
+	experimentalFeatureRunResponses(t, cfg, first, second)
+	// Model a sibling that has accepted request 1 but has not opened its
+	// response yet. No sleep or scheduler ordering determines this delay.
+	latePath := experimentalFeatureResponsePath(cfg.Backends[1].Home, 1)
+	next := `"result":{"data":[],"nextCursor":null}`
+	experimentalFeatureRunResponses(t, cfg, next, next)
+	late, err := os.ReadFile(latePath)
+	if err != nil || string(late) != second {
+		t.Fatal("publishing the next response changed the pending sibling's generation")
+	}
+	for _, backend := range cfg.Backends {
+		data, err := os.ReadFile(experimentalFeatureResponsePath(backend.Home, 2))
+		if err != nil || string(data) != next {
+			t.Fatal("new requests did not receive their own response generation")
+		}
+	}
+}
+
+func TestRunExperimentalFeature167LateSiblingUsesOriginalGeneration(t *testing.T) {
+	cfg := experimentalFeatureRunConfig(t, true)
+	if err := os.WriteFile(filepath.Join(cfg.Backends[1].Home, "fixture-experimental-feature-hold-read"), []byte("2"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bridge := startFixtureBridge(t, cfg)
+	stream := readRequirementsStream(t, bridge)
+	authStatusRunInitialize(t, bridge, stream)
+	ask := func(id int) object {
+		t.Helper()
+		return stream.ask(t, bridge, fmt.Sprintf(`{"id":%d,"method":"experimentalFeature/list","params":{"limit":1}}`, id))
+	}
+	if response := ask(1); !exists(response, "result") {
+		t.Fatal("initial page failed")
+	}
+	original := `"result":` + experimentalFeatureFixturePage
+	experimentalFeatureRunResponses(t, cfg, `"error":{"code":-32037,"message":"synthetic failure"}`, original)
+	if response := ask(2); !exists(response, "error") || exists(response, "result") {
+		t.Fatal("first backend failure did not end the fanout")
+	}
+	// The secondary deliberately has not read generation 2. Generation 3
+	// publication and this request release it without any timing assumption.
+	next := `{"data":[],"nextCursor":null}`
+	experimentalFeatureRunResponses(t, cfg, `"result":`+next, `"result":`+next)
+	if response := ask(3); !sameJSON(response["result"], []byte(next)) || exists(response, "error") {
+		t.Fatal("late sibling prevented the next independent fanout")
+	}
+	late, err := os.ReadFile(filepath.Join(cfg.Backends[1].Home, "fixture-experimental-feature-held-body"))
+	if err != nil || string(late) != original {
+		t.Fatal("delayed native child read a different request's fixture response")
+	}
+	experimentalFeatureRunFinish(t, cfg, bridge, stream, []string{`{"limit":1}`, `{"limit":1}`, `{"limit":1}`}, 4)
 }

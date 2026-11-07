@@ -13,6 +13,15 @@ network policy, and Windows process behavior have not been accepted. A merged
 `model/list` response does not prove those features work in Desktop. Native
 account quota UI may disable Send independently of the selected custom model.
 
+The CI-only [standalone native acceptance harness](../../build/control-plane-native/README.md#standalone-4239-app-server-profile)
+has an explicit `app-server-4239` profile for the separately reviewed
+26.1103.4239.0 native executable. Its omitted/empty profile remains pinned to
+the original runtime; no production bridge default or native permission is
+changed. The new profile attempts the same two-thread/four-turn synthetic
+protocol, real thread-list and config/layer checks with a different fixed
+binary hash. It is not a Desktop launch, UI acceptance or real-account test.
+Adding the profile does not establish a successful native run.
+
 ## Sources and entry points
 
 - [`app_server_bridge.go`](../../internal/cli/app_server_bridge.go):
