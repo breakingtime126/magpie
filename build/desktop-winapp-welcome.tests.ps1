@@ -197,6 +197,15 @@ try {
         $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
         Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'Skip uses only fixed typed reads or direct Invoke, never coordinates'
     }
+    foreach ($spec in @(@('confirm-skip','btn-gotochatgpt-abcd','ui invoke btn-gotochatgpt-abcd --action invoke -w 123 --json'),
+        @('confirm-skip','lnk-gotochatgpt-abcd','ui invoke lnk-gotochatgpt-abcd --action invoke -w 123 --json'),
+        @('resolve-confirm-button','','ui get-property Go to ChatGPT --type Button --property AutomationId -w 123 --json'),
+        @('resolve-confirm-link','','ui get-property Go to ChatGPT --type Hyperlink --property AutomationId -w 123 --json'))) {
+        $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
+        Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'confirmation uses only fixed typed reads or explicit Invoke'
+    }
+    Reject { New-WinAppWelcomeStart $tool 123 'confirm-skip' 'Go to ChatGPT' } 'confirmation never invokes text or promoted selectors'
+    Reject { New-WinAppWelcomeStart $tool 123 'resolve-confirm-button' 'PRIVATE_CANARY' } 'confirmation resolver never accepts arbitrary query input'
     Reject { New-WinAppWelcomeStart $tool 123 'toggle' 'rdo-engineering-abcd' } 'operation cannot use another target type'
     Reject { New-WinAppWelcomeStart $tool 123 'toggle-off' 'chk-suggestpersonal-1234' } 'two-toggle convenience command is never admitted'
     Reject { New-WinAppWelcomeStart $tool 123 'toggle' 'PRIVATE_ID_CANARY' } 'promoted IDs never become action argv'
@@ -323,6 +332,7 @@ foreach ($skipMode in @('normal','link','waiting','ambiguous','protected','uncer
     $diagnostic=[ordered]@{};$watch=[Diagnostics.Stopwatch]::StartNew()
     $skip=Invoke-WinAppSkip $null 123 {} $watch $confirmedWelcome $diagnostic
     Pass ($skipActions -le 1) 'Skip is never retried'
+    if ($skipMode -ceq 'normal') { $confirmedSkip=$skip }
     Pass ((Json $skip) -notmatch 'btn-|lnk-|Password|Which best describes') 'Skip publishes only fixed metadata, not raw tree text'
     if ($skipMode -cin @('normal','link','next-protected')) {
         Pass ($skip.status -ceq 'observed' -and $skip.actions -eq 1 -and $skip.readinessReads -eq 2 -and
@@ -343,4 +353,97 @@ $stopped=Invoke-WinAppSkip $null 123 {} ([Diagnostics.Stopwatch]::StartNew()) $r
 Pass ($stopped.actions -eq 0 -and $skipOperations.Count -eq 0) 'stopped prior welcome never starts a Skip read or action'
 $prior=[pscustomobject]@{status='blocked';stage='earlier-failure';reason='fixed';exitCode=1}
 Pass ((Get-WinAppSkipOutcome $prior $null $false $true).stage -ceq 'earlier-failure') 'earlier Desktop failure remains primary'
+# Screenshot-derived fixed confirmation labels, not captured UIA evidence.
+# No raw tree, selector or arbitrary UI text is published by the stage.
+function ConfirmationPage([string]$Type='Button') {
+    $page=Page -Next
+    $prefix=$(if ($Type -ceq 'Hyperlink') { 'lnk' } else { 'btn' })
+    $page.windows[0].elements=@((Node 'Skip setup?' 'Text'),
+        (Node 'Keep setting up' 'Button' 'btn-keepsettingup-abcd'),
+        (Node 'Go to ChatGPT' $Type ($prefix+'-gotochatgpt-abcd')))
+    $page.windows[0].elements[2].isInvokable=$true;$page.windows[0].elementCount=3
+    return $page
+}
+$confirmationCalls=@($harness.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-WinAppSkipConfirmation'},$true))
+Pass ($confirmationCalls.Count -eq 1 -and $confirmationCalls[0].Extent.Text -ceq 'Invoke-WinAppSkipConfirmation $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveSkip $confirmationDiagnostic') 'one confirmation call shares original window guard and deadline'
+$confirmationGuard=$confirmationCalls[0].Parent
+while ($null -ne $confirmationGuard -and $confirmationGuard -isnot [Management.Automation.Language.IfStatementAst]) { $confirmationGuard=$confirmationGuard.Parent }
+Pass ($confirmationGuard.Clauses[0].Item1.Extent.Text.Contains('$skipAfterCaptured') -and
+    $confirmationGuard.Clauses[0].Item1.Extent.Text.Contains('-not $liveFixtureReport.partialActionUncertain')) 'confirmation follows only captured certain Skip'
+foreach ($variant in @('missing-title','duplicate-title','missing-cancel','duplicate-cancel','wrong-cancel-type','missing-target','duplicate-target','wrong-target-type','offscreen','disabled','no-pattern','protected')) {
+    $page=ConfirmationPage
+    switch ($variant) {
+        'missing-title' { $page.windows[0].elements[0].name='Other scene' }
+        'duplicate-title' { $page.windows[0].elements+=@(Node 'Skip setup?' 'Text') }
+        'missing-cancel' { $page.windows[0].elements[1].name='Other control' }
+        'duplicate-cancel' { $page.windows[0].elements+=@(Node 'Keep setting up' 'Hyperlink') }
+        'wrong-cancel-type' { $page.windows[0].elements[1].type='Edit' }
+        'missing-target' { $page.windows[0].elements[2].name='Other control' }
+        'duplicate-target' { $page.windows[0].elements+=@(Node 'Go to ChatGPT' 'Hyperlink' 'lnk-gotochatgpt-abcd') }
+        'wrong-target-type' { $page.windows[0].elements[2].type='Custom' }
+        'offscreen' { $page.windows[0].elements[2].isOffscreen=$true }
+        'disabled' { $page.windows[0].elements[2].isEnabled=$false }
+        'no-pattern' { $page.windows[0].elements[2].isInvokable=$false }
+        'protected' { $page.windows[0].elements+=@(Node 'Permission required' 'Text' '' $false);$page.windows[0].elements[-1].isOffscreen=$true }
+    }
+    $page.windows[0].elementCount=$page.windows[0].elements.Count
+    Pass ((Get-WinAppSkipConfirmationObservation (ConvertTo-WinAppWelcomeSnapshot (Json $page) 123)).decision -cne 'ready') 'scene ambiguity unavailable target or protected text stops confirmation'
+}
+$confirmationPage=ConvertTo-WinAppWelcomeSnapshot (Json (ConfirmationPage)) 123
+Reject { Get-WinAppWelcomeTarget $confirmationPage 'Go to ChatGPT' 'Button' } 'confirmation target requires admitted confirmation scene'
+$confirmationPage.Decision='confirm_skip_ready'
+Reject { Get-WinAppWelcomeTarget $confirmationPage 'Keep setting up' 'Button' } 'cancel control is scene evidence, never an action target'
+function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
+    [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,[string]$Operation,[string]$Selector='') {
+    Pass ([object]::ReferenceEquals($Deadline,$script:confirmationWatch)) 'all confirmation commands share the original budget'
+    & $CheckIdentity;$script:confirmationOperations+=,$Operation
+    if ($Operation -ceq 'confirm-skip') {
+        $script:confirmationActions++
+        if ($script:confirmationMode -ceq 'uncertain') { throw 'Synthetic uncertain confirmation.' }
+        return Json ([ordered]@{elementId=$Selector;pattern='InvokePattern';requestedAction='invoke';performedAction='invoke';hwnd=$(if($script:confirmationMode -ceq 'wrong-receipt'){124}else{123})})
+    }
+    if ($Operation -ceq 'resolve-confirm-button') {
+        return Json (Resolution 'Go to ChatGPT' 'Button' 'confirmgo' 'btn-confirmgo-abcd')
+    }
+    if ($Operation -cne 'read') { throw 'Unexpected confirmation operation.' }
+    if ($script:confirmationActions -gt 0) {
+        $script:confirmationPostRead=$true
+        $after=Page -Next
+        if ($script:confirmationMode -ceq 'next-protected') { $after.windows[0].elements[0].name='Sign in to ChatGPT' }
+        if ($script:confirmationMode -ceq 'unchanged') { $after=ConfirmationPage }
+        return Json $after
+    }
+    $page=ConfirmationPage $(if ($script:confirmationMode -ceq 'link') { 'Hyperlink' } else { 'Button' })
+    if ($script:confirmationMode -ceq 'promoted') { $page.windows[0].elements[2].automationId='confirmgo';$page.windows[0].elements[2].selector='confirmgo' }
+    if ($script:confirmationMode -ceq 'disabled') { $page.windows[0].elements[2].isEnabled=$false }
+    return Json $page
+}
+foreach ($confirmationMode in @('normal','link','promoted','disabled','uncertain','wrong-receipt','next-protected','unchanged','final-identity')) {
+    $script:confirmationMode=$confirmationMode;$script:confirmationActions=0;$script:confirmationOperations=@();$script:confirmationPostRead=$false
+    $script:confirmationWatch=[Diagnostics.Stopwatch]::StartNew();$diagnostic=[ordered]@{}
+    $identity={if ($script:confirmationMode -ceq 'final-identity' -and $script:confirmationPostRead) { throw 'Synthetic changed identity.' }}
+    $confirmation=Invoke-WinAppSkipConfirmation $null 123 $identity $confirmationWatch $confirmedSkip $diagnostic
+    Pass ($confirmationActions -le 1) 'confirmation is never retried'
+    Pass ((Json $confirmation) -notmatch 'btn-|lnk-|Sign in|Skip setup|Go to ChatGPT') 'confirmation output contains fixed metadata only'
+    if ($confirmationMode -cin @('normal','link','promoted','next-protected','unchanged')) {
+        $expected=$(if($confirmationMode -ceq 'promoted'){'read,resolve-confirm-button,confirm-skip,read'}else{'read,confirm-skip,read'})
+        Pass ($confirmation.status -ceq 'observed' -and $confirmation.actions -eq 1 -and $confirmation.confirmationInvoked -and
+            -not $diagnostic.partialActionUncertain -and ($confirmationOperations -join ',') -ceq $expected) 'one admitted confirmation then only one next-page read'
+    } elseif ($confirmationMode -ceq 'disabled') {
+        Pass ($confirmation.actions -eq 0 -and -not $diagnostic.partialActionUncertain -and ($confirmationOperations -join ',') -ceq 'read') 'disabled confirmation stops without polling or action'
+    } else {
+        Pass ($confirmation.status -ceq 'stopped' -and $confirmation.actions -eq 1 -and
+            $confirmation.nextScreen -ceq 'not_observed' -and $diagnostic.partialActionUncertain) 'failed confirmation retains uncertainty without committing next-screen success'
+        if ($confirmationMode -cne 'final-identity') { Pass (($confirmationOperations -join ',') -ceq 'read,confirm-skip') 'uncertain action or invalid receipt prevents later reads and retries' }
+    }
+    $prior=[pscustomobject]@{status='observed';stage='skip';reason='fixed';exitCode=0}
+    $outcome=Get-WinAppSkipConfirmationOutcome $prior $confirmation $true $diagnostic.partialActionUncertain
+    Pass (($outcome.exitCode -eq 0) -eq ($confirmationMode -cin @('normal','link','promoted'))) 'only confirmed transition and capture can finish; next page remains unreviewed'
+    Pass ((Get-WinAppSkipConfirmationOutcome $prior $confirmation $false $false).exitCode -eq 1) 'missing final pixels block completion'
+}
+$script:confirmationOperations=@();$diagnostic=[ordered]@{}
+$stopped=Invoke-WinAppSkipConfirmation $null 123 {} $confirmationWatch $null $diagnostic
+Pass ($stopped.actions -eq 0 -and $confirmationOperations.Count -eq 0) 'missing successful prior Skip never starts confirmation'
+$prior=[pscustomobject]@{status='blocked';stage='earlier-failure';reason='fixed';exitCode=1}
+Pass ((Get-WinAppSkipConfirmationOutcome $prior $null $false $true).stage -ceq 'earlier-failure') 'confirmation never hides an earlier failure'
 Write-Output ('WINAPP_WELCOME_OFFLINE_CHECKS='+$checks)

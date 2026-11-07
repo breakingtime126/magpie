@@ -102,12 +102,12 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
         if (-not $Diagnostic.Contains('bindings')) { $Diagnostic.bindings=@() }
         $Diagnostic.bindings+=,$binding
     }
-    if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button','Skip|Button','Skip|Hyperlink') -cnotcontains ($Name+'|'+$Type)) {
+    if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button','Skip|Button','Skip|Hyperlink','Go to ChatGPT|Button','Go to ChatGPT|Hyperlink') -cnotcontains ($Name+'|'+$Type)) {
         throw 'Unreviewed welcome action target.'
     }
-    $binding.target=@{Engineering='engineering';'Suggest personalized tasks'='suggestions';Continue='continue';Skip='skip'}[$Name]
+    $binding.target=@{Engineering='engineering';'Suggest personalized tasks'='suggestions';Continue='continue';Skip='skip';'Go to ChatGPT'='confirm_skip'}[$Name]
     $binding.reason='scene_unavailable'
-    $expectedScene=$(if ($Name -ceq 'Skip') { 'skip_ready' } else { 'welcome' })
+    $expectedScene=$(if ($Name -ceq 'Go to ChatGPT') { 'confirm_skip_ready' } elseif ($Name -ceq 'Skip') { 'skip_ready' } else { 'welcome' })
     if ($Snapshot.Decision -cne $expectedScene) { throw 'Welcome page not reviewed.' }
     $matches=@($Snapshot.Nodes | Where-Object { $_.Name -ceq $Name -and $_.Type -ceq $Type })
     $binding.reason='target_not_unique'
@@ -128,7 +128,7 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
     return Read-WinAppWelcomeResolvedTarget $text $node $binding
 }
 function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link')][string]$Operation,[string]$Selector='') {
     $directory=Join-Path $Tool.Directory ('welcome-'+[guid]::NewGuid().ToString('N'))
     if (Test-Path -LiteralPath $directory) { throw 'Welcome tool scratch not fresh.' }
     [void][IO.Directory]::CreateDirectory($directory)
@@ -136,18 +136,19 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
     $start=New-WinAppStart $localTool $WindowHandle -RenderedDepth 16
     if ($Operation -cne 'read') {
         $arguments=@('ui')
-        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link')) {
+        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link','resolve-confirm-button','resolve-confirm-link')) {
             if ($Selector) { throw 'Readonly target resolution does not accept a selector.' }
             $spec=@{'resolve-engineering'=@('Engineering','RadioButton');
                 'resolve-suggestions'=@('Suggest personalized tasks','CheckBox');'resolve-continue'=@('Continue','Button');
-                'resolve-skip-button'=@('Skip','Button');'resolve-skip-link'=@('Skip','Hyperlink')}[$Operation]
+                'resolve-skip-button'=@('Skip','Button');'resolve-skip-link'=@('Skip','Hyperlink');
+                'resolve-confirm-button'=@('Go to ChatGPT','Button');'resolve-confirm-link'=@('Go to ChatGPT','Hyperlink')}[$Operation]
             $arguments+=@('get-property',$spec[0],'--type',$spec[1],'--property','AutomationId')
         } else {
-            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn';skip='(?:btn|lnk)'}[$Operation]
+            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn';skip='(?:btn|lnk)';'confirm-skip'='(?:btn|lnk)'}[$Operation]
             if ($Selector -cnotmatch ('\A'+$prefix+'-[a-z0-9]{1,15}-[a-f0-9]{4}\z')) { throw 'Invalid welcome selector.' }
             if ($Operation -ceq 'selected') { $arguments+=@('get-property',$Selector,'--property','IsSelected') }
             else {
-                $action=$(if ($Operation -cin @('continue','skip')) { 'invoke' } else { $Operation })
+                $action=$(if ($Operation -cin @('continue','skip','confirm-skip')) { 'invoke' } else { $Operation })
                 $arguments+=@('invoke',$Selector,'--action',$action)
             }
         }
@@ -158,7 +159,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
 }
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link')][string]$Operation,[string]$Selector='') {
     $remaining=30000-[int]$Deadline.ElapsedMilliseconds
     if ($remaining -le 0) { throw 'Welcome deadline exceeded.' }
     $record=[ordered]@{operation=$Operation;status='stopped';reason='identity_unavailable';exitCode=$null;
@@ -377,4 +378,76 @@ function Get-WinAppSkipOutcome($Prior,$Skip,[bool]$Captured,[bool]$Uncertain) {
         return [pscustomobject]@{status='blocked';stage='welcome-skip-stopped';reason='The bounded Skip stage stopped, reached a protected screen, remained unchanged or lacks confirmed capture. Prior welcome evidence is retained; no next-page acceptance is claimed.';exitCode=1}
     }
     return [pscustomobject]@{status='observed';stage='welcome-skip-transition-observed';reason='One confirmed welcome sequence and one Skip invocation completed with next-screen pixels. The resulting page is unreviewed; no composer, model or conversation success is established.';exitCode=0}
+}
+
+# This is only the observed ordinary Skip confirmation, not login or consent.
+function Get-WinAppSkipConfirmationObservation($Page) {
+    $nodes=$Page.Nodes
+    $title=@($nodes | Where-Object { $_.Name -ceq 'Skip setup?' })
+    $cancel=@($nodes | Where-Object { $_.Name -ceq 'Keep setting up' -and $_.Interactive })
+    $targets=@($nodes | Where-Object { $_.Name -ceq 'Go to ChatGPT' -and $_.Interactive })
+    $type='absent';$enabled=$null;$invokable=$null
+    if ($targets.Count -gt 1) { $type='ambiguous' }
+    elseif ($targets.Count -eq 1) {
+        $type=$(if ($targets[0].Type -ceq 'Button') { 'button' } elseif ($targets[0].Type -ceq 'Hyperlink') { 'hyperlink' } else { 'other' })
+        $enabled=$targets[0].Enabled;$invokable=$targets[0].Invokable
+    }
+    $observation=[ordered]@{decision='scene_changed';titleCount=$title.Count;cancelInteractiveCount=$cancel.Count;
+        targetInteractiveCount=$targets.Count;targetType=$type;enabled=$enabled;directInvokable=$invokable}
+    if ($Page.Decision -ceq 'protected_screen') { $observation.decision='protected_screen';return $observation }
+    if ($title.Count -ne 1 -or $cancel.Count -ne 1 -or $cancel[0].Type -cnotin @('Button','Hyperlink')) { return $observation }
+    if ($type -cin @('ambiguous','other')) { $observation.decision='ambiguous_target';return $observation }
+    $observation.decision='target_not_ready'
+    if ($targets.Count -eq 1 -and $enabled -and $invokable) { $observation.decision='ready' }
+    return $observation
+}
+function Invoke-WinAppSkipConfirmation($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,[Diagnostics.Stopwatch]$Deadline,
+    $PriorSkip,[System.Collections.IDictionary]$Diagnostic) {
+    $result=[ordered]@{schema=1;scope='synthetic-skip-confirmation-only';status='stopped';reason='prior_skip_unavailable';
+        actions=0;confirmationInvoked=$false;nextScreen='not_observed';lastObservation=$null}
+    $Diagnostic.commands=@();$Diagnostic.bindings=@();$Diagnostic.partialActionUncertain=$false
+    $Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
+    try {
+        if ($null -eq $PriorSkip -or $PriorSkip.status -cne 'observed' -or $PriorSkip.actions -ne 1 -or
+            -not $PriorSkip.skipInvoked -or $PriorSkip.nextScreen -cne 'unreviewed_screen' -or $null -eq $Deadline) { throw 'Prior Skip unavailable.' }
+        Assert-WinAppFiles $Tool
+        $result.reason='confirmation_read_unavailable'
+        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
+        $page=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
+        $result.lastObservation=Get-WinAppSkipConfirmationObservation $page
+        if ($result.lastObservation.decision -cne 'ready') { $result.reason=$result.lastObservation.decision;throw 'Skip confirmation unavailable.' }
+        $result.reason='target_binding_unavailable';$page.Decision='confirm_skip_ready'
+        $type=$(if ($result.lastObservation.targetType -ceq 'button') { 'Button' } else { 'Hyperlink' })
+        $resolve={param($target)
+            $operation=$(if ($target.Type -ceq 'Button') { 'resolve-confirm-button' } else { 'resolve-confirm-link' })
+            Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic $operation
+        }
+        $target=Get-WinAppWelcomeTarget $page 'Go to ChatGPT' $type $resolve $Diagnostic
+        $result.reason='confirmation_action_unavailable';$result.actions=1;$Diagnostic.partialActionUncertain=$true
+        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'confirm-skip' $target.Selector
+        $result.reason='confirmation_receipt_invalid';Assert-WinAppWelcomeAction $text $WindowHandle $target 'invoke'
+        $result.confirmationInvoked=$true;$Diagnostic.partialActionUncertain=$false;$result.reason='next_read_unavailable'
+        Start-Sleep -Milliseconds 500
+        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
+        $after=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
+        $next=$(if ($after.Decision -ceq 'protected_screen') { 'protected_screen' }
+            elseif (@($after.Nodes | Where-Object { $_.Name -ceq 'Skip setup?' -or
+                ($_.Name -ceq 'Go to ChatGPT' -and $_.Interactive) }).Count -gt 0) { 'confirmation_still_visible' } else { 'unreviewed_screen' })
+        Assert-WinAppFiles $Tool; & $CheckIdentity
+        if ($Deadline.ElapsedMilliseconds -ge 30000) { throw 'Skip confirmation deadline exhausted.' }
+        $result.nextScreen=$next;$result.status='observed';$result.reason='single_confirmation_attempted'
+    } catch { $Diagnostic.partialActionUncertain=$Diagnostic.partialActionUncertain -or $result.actions -gt 0 }
+    foreach ($command in $Diagnostic.commands) {
+        $Diagnostic.stdoutBytes+=$command.stdoutBytes
+        $Diagnostic.outputLimitExceeded=$Diagnostic.outputLimitExceeded -or $command.outputLimitExceeded
+    }
+    return [pscustomobject]$result
+}
+function Get-WinAppSkipConfirmationOutcome($Prior,$Confirmation,[bool]$Captured,[bool]$Uncertain) {
+    if ($Prior.exitCode -ne 0) { return $Prior }
+    if ($null -eq $Confirmation -or $Confirmation.status -cne 'observed' -or -not $Captured -or $Uncertain -or
+        $Confirmation.nextScreen -cne 'unreviewed_screen') {
+        return [pscustomobject]@{status='blocked';stage='welcome-skip-confirmation-stopped';reason='The ordinary Skip confirmation stopped, reached a protected screen, remained unchanged or lacks confirmed capture. Prior welcome and Skip evidence is retained.';exitCode=1}
+    }
+    return [pscustomobject]@{status='observed';stage='welcome-skip-confirmation-observed';reason='Welcome, Skip and its ordinary confirmation completed with next-screen pixels. The resulting page is unreviewed; no model, conversation or normal-entry acceptance is established.';exitCode=0}
 }

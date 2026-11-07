@@ -2886,3 +2886,42 @@ protected offscreen text, the four-read limit, uncertain single invocation,
 protected next screen, failed-prior exclusion and earlier-failure precedence.
 These are not observed Skip UIA facts. Local PowerShell/Windows execution is
 unavailable; the existing blocking CI test step performs that verification.
+
+### Ordinary Skip confirmation after 0647705d
+
+The actual `0647705d` run completed the welcome sequence and one Skip invocation
+without action uncertainty or fixture requests (`alpha_requests=0`,
+`beta_requests=0`). Its retained `official-window-after-skip.png` shows an ordinary
+**Skip setup?** modal, the explanation **You'll go straight to ChatGPT**, and
+**Keep setting up** / **Go to ChatGPT** controls. It is not evidence of a composer,
+model selection, conversation, or successful normal entry. The screenshot does
+not establish the confirmation control's UIA type or state.
+
+Only the existing explicit welcome triple-marker profile adds one confirmation
+stage after a successful, certain Skip and its retained capture. A fresh bounded
+read must find the exact visible modal title once, one interactive **Keep setting
+up** button/link, and one exact **Go to ChatGPT** Button or Hyperlink across both
+types. The action target must be enabled and directly invokable. Same-name wrong
+interactive types or duplicates, missing scene evidence, protected text anywhere
+in the tree, incomplete output, or identity changes stop. Other controls remain
+untargeted. The fixed target uses a runtime slug; only a promoted AutomationId
+may request the existing one-shot exact-checked typed readonly resolution.
+
+`Invoke-WinAppSkipConfirmation` uses the existing original HWND/generation/package/
+foreground checks, command supervisor, explicit Invoke and receipt validation.
+It shares the original 30-second stopwatch with welcome and Skip, with no fresh
+budget, polling loop, pattern/coordinate fallback, or action retry. It performs
+at most one confirmation action and one subsequent readonly page read. The
+existing non-atomic retained-COM/provider and read-fallback limitations still
+apply; a returned receipt is not proof of the destination. Any later failure
+retains action uncertainty and stops.
+
+The first two results and screenshots remain separate. The additional fixed
+`liveWelcome.skipConfirmation` result/diagnostic and
+`official-window-after-skip-confirmation.png` show the third stage. A protected or
+unchanged screen, uncertain result, or missing verified capture prevents overall
+success without discarding prior evidence. Any other resulting page is explicitly
+**unreviewed**, and no further input is sent. The readonly markers, legacy helper,
+production Go, accepted pins, native four-turn exclusion and 180-second fixture
+lifetime are unchanged. Offline confirmation fixtures are synthetic; only the
+subsequent Windows run can establish the real UIA fields and next screen.

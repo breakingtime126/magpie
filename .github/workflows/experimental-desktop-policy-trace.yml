@@ -764,6 +764,7 @@ jobs:
             ${{ runner.temp }}/desktop-cold-start-report/official-window.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-welcome.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-skip.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-after-skip-confirmation.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-inspection.png
           if-no-files-found: error
           retention-days: 7
