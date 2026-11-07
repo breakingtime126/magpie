@@ -1393,7 +1393,12 @@ once after a safely validated Desktop capture and confirmed activation-process
 exit. A later strict Desktop auth, feature or config compatibility failure does
 not suppress this independent native slice. It still remains a Desktop failure;
 there is no synthetic replacement for Desktop evidence and no extra Desktop
-launch.
+launch. Read-only winapp inspection is explicitly excluded from this native-turn
+slice, even with valid capture and cleanup; it reports `not-run` instead. The
+profile source contract retains one guarded invocation after cleanup and tests
+all 32 combinations of profile, inspection, capture, exit and cleanup flags.
+Negative fixtures reject removal of the inspection exclusion or inner safety
+decision without launching native processes.
 
 The explicit `captureValidated` flag starts false. It becomes true only after
 the signed-package, visible-window and identified-child checks and the complete

@@ -1500,6 +1500,38 @@ Expect-Reject 'native failure cannot become success' {
     $value = New-NativeControlSuccess; $value.status = 'failed'
     ConvertTo-DesktopNativeControlEvidence $value
 }
+function Assert-NativeSliceAdmission([scriptblock]$ProfileCondition, [scriptblock]$EligibilityCondition) {
+    # Execute only the exact reviewed Boolean conditions and the pure decision
+    # helper. A counter stands in for native invocation; no harness body runs.
+    foreach ($EnableReviewedLaunchCompatibility in @($false, $true)) {
+        foreach ($EnableReadOnlyWinAppInspection in @($false, $true)) {
+            foreach ($captureState in @($false, $true)) {
+                foreach ($activationState in @($false, $true)) {
+                    foreach ($cleanupError in @($false, $true)) {
+                        $nativeRunDecision = Get-DesktopNativeRunDecision $EnableReviewedLaunchCompatibility `
+                            $captureState $activationState $cleanupError
+                        $profileAllowed = @(& $ProfileCondition)
+                        $eligible = @(& $EligibilityCondition)
+                        if ($profileAllowed.Count -ne 1 -or $profileAllowed[0] -isnot [bool] -or
+                            $eligible.Count -ne 1 -or $eligible[0] -isnot [bool]) {
+                            throw 'Native admission conditions must each return one Boolean.'
+                        }
+                        $invocations = 0
+                        if ($profileAllowed[0]) {
+                            if ($eligible[0]) { $invocations++ }
+                        }
+                        $expected = $EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection -and
+                            $captureState -and $activationState -and -not $cleanupError
+                        if ($invocations -ne [int]$expected -or
+                            ($EnableReadOnlyWinAppInspection -and $invocations -ne 0)) {
+                            throw 'Native admission bypassed inspection exclusion or capture/cleanup safety.'
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 Expect-Pass 'native slice has one explicit guarded invocation after Desktop cleanup' {
     $calls = @($ast.FindAll({
         param($node)
@@ -1509,12 +1541,18 @@ Expect-Pass 'native slice has one explicit guarded invocation after Desktop clea
     if ($calls.Count -ne 1) { throw 'Native slice must be invoked exactly once.' }
     $guard = $calls[0].Parent
     while ($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]) { $guard = $guard.Parent }
-    if ($null -eq $guard -or $guard.Clauses[0].Item1.Extent.Text -cne '$nativeRunDecision.run') {
+    if ($null -eq $guard -or $guard.Clauses.Count -ne 1 -or
+        $guard.Clauses[0].Item1.Extent.Text -cne '$nativeRunDecision.run' -or
+        $guard.Clauses[0].Item2.Extent.StartOffset -gt $calls[0].Extent.StartOffset -or
+        $guard.Clauses[0].Item2.Extent.EndOffset -lt $calls[0].Extent.EndOffset) {
         throw 'Native slice bypassed the independent capture/cleanup eligibility decision.'
     }
     $outer = $guard.Parent
     while ($null -ne $outer -and $outer -isnot [Management.Automation.Language.IfStatementAst]) { $outer = $outer.Parent }
-    if ($null -eq $outer -or $outer.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLaunchCompatibility') {
+    if ($null -eq $outer -or $outer.Clauses.Count -ne 1 -or
+        $outer.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection' -or
+        $outer.Clauses[0].Item2.Extent.StartOffset -gt $guard.Extent.StartOffset -or
+        $outer.Clauses[0].Item2.Extent.EndOffset -lt $guard.Extent.EndOffset) {
         throw 'Native slice bypassed the explicit profile gate.'
     }
     $cleanup = @($ast.FindAll({
@@ -1525,6 +1563,14 @@ Expect-Pass 'native slice has one explicit guarded invocation after Desktop clea
     if ($cleanup.Count -ne 1 -or $cleanup[0].Extent.EndOffset -ge $calls[0].Extent.StartOffset) {
         throw 'Native slice started before actual Desktop cleanup.'
     }
+    Assert-NativeSliceAdmission ([scriptblock]::Create($outer.Clauses[0].Item1.Extent.Text)) `
+        ([scriptblock]::Create($guard.Clauses[0].Item1.Extent.Text))
+}
+Expect-Reject 'read-only inspection cannot admit native turns when its exclusion is removed' {
+    Assert-NativeSliceAdmission { $EnableReviewedLaunchCompatibility } { $nativeRunDecision.run }
+}
+Expect-Reject 'native admission cannot bypass the capture and cleanup decision' {
+    Assert-NativeSliceAdmission { $EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection } { $true }
 }
 
 
