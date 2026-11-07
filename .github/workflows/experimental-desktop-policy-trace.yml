@@ -2,6 +2,19 @@ name: Experimental Desktop policy trace
 
 on:
   workflow_dispatch:
+    inputs:
+      inspection_mode:
+        description: Explicitly select the read-only official winapp diagnostic
+        type: choice
+        required: true
+        default: disabled
+        options:
+          - disabled
+          - winapp-inspection-v0.7.1
+      expected_sha:
+        description: Full commit SHA expected for this diagnostic
+        type: string
+        required: true
   push:
     branches:
       - experiment/app-server-bridge-v0.1.3035
@@ -41,6 +54,23 @@ jobs:
       GOFLAGS: -mod=readonly
       GOTELEMETRY: 'off'
     steps:
+      - name: Validate explicit dispatch before checkout
+        shell: bash
+        env:
+          TRIGGER_EVENT: ${{ github.event_name }}
+          DISPATCH_INSPECTION_MODE: ${{ inputs.inspection_mode }}
+          DISPATCH_EXPECTED_SHA: ${{ inputs.expected_sha }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$TRIGGER_EVENT" == 'workflow_dispatch' ]]; then
+            if [[ "$DISPATCH_INSPECTION_MODE" != 'winapp-inspection-v0.7.1' ||
+                  ! "$DISPATCH_EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ||
+                  "$DISPATCH_EXPECTED_SHA" != "$TRIGGER_SHA" ]]; then
+              echo 'Explicit inspection mode and matching full expected SHA are required.' >&2
+              exit 1
+            fi
+          fi
       - name: Check out the exact experimental commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -555,7 +585,7 @@ jobs:
       GOTOOLCHAIN: local
       GOFLAGS: -mod=readonly
       GOTELEMETRY: 'off'
-      MAGPIE_WINAPP_INSPECTION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && 'winapp-inspection-v0.7.1' || '' }}
+      MAGPIE_WINAPP_INSPECTION: ${{ ((github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]')) || (github.event_name == 'workflow_dispatch' && inputs.inspection_mode == 'winapp-inspection-v0.7.1' && inputs.expected_sha == github.sha)) && 'winapp-inspection-v0.7.1' || '' }}
     defaults:
       run:
         shell: powershell

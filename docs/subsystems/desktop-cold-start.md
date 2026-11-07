@@ -1621,6 +1621,16 @@ native-entry cases. The older cold-start/native-entry jobs are skipped for that
 marked push, not reported as passed. Existing policy-trace unit, profile,
 redaction and bridge build checks remain. Unmarked behavior is unchanged.
 
+An explicit dispatch of this policy-trace workflow also supports the diagnostic:
+select `inspection_mode=winapp-inspection-v0.7.1` and supply `expected_sha` equal
+to the workflow's full 40-character lowercase `github.sha`. The mode defaults
+to `disabled`. The first observer-unit step checks these values before checkout,
+using environment bindings rather than interpolating inputs into shell source.
+A default, unknown-mode, missing-SHA or mismatched-SHA dispatch fails that step;
+the dependent Windows job cannot run or fall through to welcome actions.
+Dispatch selects only this existing workflow. Marked and unmarked push behavior,
+repository/branch guards, permissions and all later checks are unchanged.
+
 [desktop-winapp-inspect.ps1](../../build/desktop-winapp-inspect.ps1) downloads the
 official Microsoft [winappCli v0.7.1 release](https://github.com/microsoft/winappCli/releases/tag/v0.7.1)
 into fresh private scratch. Before any tool execution it requires the x64 ZIP's
