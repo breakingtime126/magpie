@@ -306,6 +306,13 @@ function Invoke-RendererMenuReview {
         if ($evidence.schema -ne 1 -or $evidence.scope -cne 'public-static-renderer-menu-excerpts' -or
             $evidence.archiveSha256 -cne $pins.archiveSha256) { throw 'Renderer review output identity mismatch.' }
         [IO.File]::WriteAllText((Join-Path $out 'renderer-menu-excerpts.json'),$text,[Text.UTF8Encoding]::new($false))
+        if ($evidence.PSObject.Properties.Name -ccontains 'status') {
+            if ($evidence.status -cne 'blocked') { throw 'Unknown renderer evidence status.' }
+            # Node completed a bounded diagnostic, not source extraction. Persist
+            # its fixed code/index metadata, then fail this job without retry.
+            $report.rendererFailure=$evidence.failure
+            throw 'Renderer source inspection blocked; fixed diagnostic retained.'
+        }
         $report.status=$(if ($evidence.requiredAnchorsPresent) { 'observed' } else { 'partial-missing-anchors' })
         $report.anchors=$evidence.anchors; $report.coverage=$evidence.coverage
         $succeeded=$true

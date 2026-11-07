@@ -94,6 +94,7 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
   if (!record(header) || !record(header.files)) fail('invalid_header_root');
   const selected = new Map();
   const publicSources = new Map();
+  const menuHtml = new Map(); const menuLinks = new Map();
   const sourceCoverage = { dependencyFilesExcluded: 0, nonJavaScriptFilesExcluded: 0 };
   const sourcePath = relative => rendererMenu ? rendererMenuSourcePath(relative) : publicSourcePath(relative);
   let publicRootBlocked = false;
@@ -116,6 +117,10 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
       if (includePublicSources && sourcePath(relative)) {
         publicSources.set(relative, { status: 'link_not_read' });
       }
+      if (rendererMenu && !relative.split('/').includes('node_modules')) {
+        menuLinks.set(relative, { status: 'link_not_read' });
+        if (/\.html?$/.test(relative)) menuHtml.set(relative, { status: 'link_not_read' });
+      }
       continue;
     }
     if (own(node, 'files')) {
@@ -137,9 +142,13 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
       if (relative.split('/').includes('node_modules')) sourceCoverage.dependencyFilesExcluded++;
       else if (!rendererMenuSourcePath(relative)) sourceCoverage.nonJavaScriptFilesExcluded++;
     }
+    if (rendererMenu && !relative.split('/').includes('node_modules') && /\.html?$/.test(relative)) {
+      // Index metadata only: never read HTML, follow its imports, or open an unpacked file.
+      menuHtml.set(relative, { status: unpacked ? 'unpacked_not_read' : 'packed', size: node.size });
+    }
     if (unpacked) {
       if (targets.includes(relative)) selected.set(relative, { status: 'unpacked_not_read' });
-      if (includePublicSources && sourcePath(relative)) publicSources.set(relative, { status: 'unpacked_not_read' });
+      if (includePublicSources && sourcePath(relative)) publicSources.set(relative, { status: 'unpacked_not_read', ...(rendererMenu ? { size: node.size } : {}) });
       continue;
     }
     if (typeof node.offset !== 'string' || !/^(0|[1-9][0-9]{0,19})$/.test(node.offset)) {
@@ -162,7 +171,7 @@ export function readIndex(fd, size, includePublicSources = false, reviewedBuild 
       }
     }
   }
-  return { selected, entries, publicSources, publicRootBlocked, ...(rendererMenu ? { sourceCoverage } : {}) };
+  return { selected, entries, publicSources, publicRootBlocked, ...(rendererMenu ? { sourceCoverage, menuHtml, menuLinks } : {}) };
 }
 
 // A conservative lexical reader, not a JavaScript parser. It skips comments,

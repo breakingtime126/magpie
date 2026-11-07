@@ -71,4 +71,12 @@ Check ($source.Contains("if (`$Run -and `$RendererMenuOnly) { throw 'Contract re
 Check ($source.Contains('if ($RendererMenuOnly) { Invoke-RendererMenuReview }') -and
     $source.Contains('elseif ($Run) { Invoke-DesktopContractReview }')) 'static selector does not fall through to native'
 Check ($staticSource.IndexOf('Assert-ContractReviewIdentity $identity') -lt $staticSource.IndexOf('Export-ContractReviewInputs $package $work -ArchiveOnly')) 'static trust before extraction'
+Check ($staticSource.IndexOf("[IO.File]::WriteAllText((Join-Path `$out 'renderer-menu-excerpts.json')") -lt
+    $staticSource.IndexOf('$report.rendererFailure=$evidence.failure')) 'persist bounded blocked evidence before failing'
+Check ($staticSource.Contains("if (`$evidence.PSObject.Properties.Name -ccontains 'status')") -and
+    $staticSource.Contains("if (`$evidence.status -cne 'blocked') { throw 'Unknown renderer evidence status.' }")) 'only explicit blocked diagnostic branch is accepted'
+Check ($staticSource.Contains("throw 'Renderer source inspection blocked; fixed diagnostic retained.'") -and
+    $staticSource.IndexOf("throw 'Renderer source inspection blocked; fixed diagnostic retained.'") -lt
+    $staticSource.IndexOf('$succeeded=$true') -and
+    $staticSource.Contains("if (-not `$succeeded) { throw 'Static renderer review stopped; see fixed-stage report.' }")) 'blocked diagnostic cannot mark scan or job successful'
 Write-Output ('CONTRACT_REVIEW_OFFLINE_CHECKS='+$script:checks)

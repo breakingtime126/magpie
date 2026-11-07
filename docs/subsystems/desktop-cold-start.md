@@ -3294,3 +3294,52 @@ archive and size/count tests runs before the static command. PowerShell gates
 check static/native mode separation and exact archive-only/command bindings.
 Local Node fixtures are executable; PowerShell and the real signed-package
 extraction remain unrun until this specific CI job is deliberately published.
+
+
+### Preserve the static renderer guard failure, not another blind scan
+
+The actual 208035af static run 42394449869 / job 128468712219 passed the exact
+MSIX signature, manifest/backend/ASAR pins and archive-only extraction. The
+761,023,153-byte ASAR matched the same reviewed digest. Node then exited 1 with
+no timeout or output overflow and zero stdout. Its generic stderr was discarded,
+so that result does **not** establish whether an index error, link/unpacked
+candidate, 16 MiB file cap, 128 MiB total cap, or another guard caused the stop.
+It provides no new evidence of the renderer's model filtering expression.
+
+The same static-only marker pair now retains a bounded failure envelope rather
+than dropping this distinction. Only `--renderer-menu` catches known internal
+reader errors into fixed codes; unrecognized exceptions become
+`io_or_inspection_failed`, never raw messages, stacks or stderr. A completed
+failure envelope is Node exit 0 because diagnostic serialization completed,
+**not** a successful source scan. PowerShell saves it in the existing
+renderer-menu-excerpts.json and `report.rendererFailure`, keeps report status
+`blocked`, and throws so the CI job still fails. Native/archive/schema modes and
+the command supervisor keep their previous error behavior. A process crash,
+timeout or output overflow may still have no structured diagnostic.
+
+Only after the exact ASAR hash and complete index validation, the failure can
+include index/candidate counts; packed total/maximum sizes; unpacked, linked and
+oversized counts; the current candidate; and at most eight candidate examples
+(blockers first, then largest packed entries). It also records at most eight
+`.html`/`.htm` entry examples derived from that same validated index outside
+node_modules, with explicit omitted counts. These are **entry-point leads**,
+not proof of renderer ownership or a parsed HTML import graph. Metadata includes
+status, size when available and path length. Only archive-relative ASCII paths
+of at most 192 characters are retained; other names are suppressed. Link targets,
+HTML contents, source bodies and machine paths are not included. Changed or
+unverifiable archive identity suppresses all indexed path metadata. If index
+validation itself fails, no partial index is called valid or published.
+
+No scan range, file/count/byte limit, unreadable-source behavior, source excerpt
+budget, execution permission or production setting is changed. Links/unpacked
+files are still never read, and a guard failure cannot yield a partial successful
+search. This permits at most one further purposeful static run to identify the
+actual guard and available HTML leads; it does not authorize speculative directory
+changes or an ongoing diagnostic loop. The current menu filter remains unknown
+until bounded current-source evidence is actually obtained and reviewed.
+
+Pure synthetic tests exercise specific header/hash/IO/UTF-8/count/file/total
+failures, bounded path metadata, suppressed link/body canaries and changed
+identity, plus successful extraction and unchanged legacy CLI failure. Local Node
+checks are executable; PowerShell and the real Windows/ASAR follow-up remain
+unrun at source review.

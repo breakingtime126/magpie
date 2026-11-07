@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { readIndex } from './inspect-desktop-static-metadata.mjs';
+import { readIndex, InspectionError } from './inspect-desktop-static-metadata.mjs';
 
 export const ARCHIVE_SHA = 'fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa';
 export const ANCHORS = Object.freeze([
@@ -18,7 +18,52 @@ export const MENU_ANCHORS = Object.freeze([
   'modelProvider', 'model_provider', 'isCustomProvider', 'customProvider',
 ]);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const fail = () => { throw new Error('Public contract evidence is unavailable.'); };
+class ContractReadError extends Error {
+  constructor(code) { super('Public contract evidence is unavailable.'); this.code = code; }
+}
+const fail = (code = 'contract_evidence_unavailable') => { throw new ContractReadError(code); };
+// Only codes emitted by the bounded shared index reader, never exception text.
+const INDEX_FAILURE_CODES = new Set([
+  'invalid_arguments', 'truncated_archive', 'archive_too_large', 'unsupported_asar_prefix',
+  'invalid_header_size', 'header_too_large', 'truncated_header', 'invalid_header_pickle',
+  'invalid_json_size', 'invalid_header_padding', 'invalid_utf8', 'invalid_header_json',
+  'invalid_header_root', 'invalid_header_entry', 'invalid_unpacked_flag', 'invalid_link_entry',
+  'invalid_directory', 'header_too_deep', 'too_many_entries', 'invalid_entry_path',
+  'entry_path_too_long', 'invalid_file_size', 'invalid_file_offset', 'file_outside_archive',
+]);
+function menuEntryMetadata([name, entry]) {
+  // Only validated public archive-relative paths, never machine paths or link destinations.
+  return { path: name.length <= 192 && /^[A-Za-z0-9_./@+() -]+$/.test(name) ? name : null,
+    pathCharacters: name.length, status: entry.status, bytes: entry.size ?? null };
+}
+function menuIndexMetadata(index) {
+  const files = [...index.publicSources];
+  const packed = files.filter(([, e]) => e.status === 'packed');
+  const blocked = new Map([...index.menuLinks, ...files.filter(([, e]) => e.status !== 'packed' || e.size > 16 * 1024 ** 2)]);
+  const candidates = new Map([...blocked, ...packed.sort((a, b) => b[1].size - a[1].size)]);
+  return { entries: index.entries, ...index.sourceCoverage, rootLinkBlocked: index.publicRootBlocked,
+    candidateFiles: files.length, packedFiles: packed.length,
+    unpackedFiles: files.filter(([, e]) => e.status === 'unpacked_not_read').length,
+    linkEntries: index.menuLinks.size, oversizedFiles: packed.filter(([, e]) => e.size > 16 * 1024 ** 2).length,
+    packedBytes: packed.reduce((n, [, e]) => n + e.size, 0), maxPackedFileBytes: packed.reduce((n, [, e]) => Math.max(n, e.size), 0),
+    candidateExamples: [...candidates].slice(0, 8).map(menuEntryMetadata), candidateExamplesOmitted: Math.max(0, candidates.size - 8),
+    htmlEntries: index.menuHtml.size, htmlExamples: [...index.menuHtml].slice(0, 8).map(menuEntryMetadata),
+    htmlExamplesOmitted: Math.max(0, index.menuHtml.size - 8), htmlContentsRead: false,
+    rendererOwnershipProven: false };
+}
+// Only the static menu CLI uses this evidence envelope. A completed diagnostic
+// serializes with exit 0, but status=blocked makes its PowerShell job fail.
+// Legacy archive/schema CLI errors still use their unchanged nonzero path.
+export function rendererMenuEvidence(file, expected = ARCHIVE_SHA) {
+  const diagnostic = { archiveHashMatched: false, archiveIdentityUnchanged: false, indexValidated: false, index: null, currentSource: null };
+  try { return inspectContractArchive(file, expected, true, diagnostic); }
+  catch (error) {
+    const code = error instanceof ContractReadError ? error.code :
+      error instanceof InspectionError && INDEX_FAILURE_CODES.has(error.code) ? error.code : 'io_or_inspection_failed';
+    return { schema: 1, scope: 'public-static-renderer-menu-excerpts', archiveSha256: expected,
+      status: 'blocked', failure: { code, ...diagnostic }, menuContractProven: false };
+  }
+}
 const utf8 = bytes => new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 function unchanged(a, b) { return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs; }
 function read(fd, count, position) {
@@ -73,34 +118,41 @@ export function trimMenuExcerpts(sources) {
   return { textBytes, textBudgetBytes: 16384, deduplicated, budgetOmitted,
     remainingCandidatesOmitted: [...candidates.values()].reduce((n, entries) => n + entries.length, 0) };
 }
-export function inspectContractArchive(file, expected = ARCHIVE_SHA, rendererMenu = false) {
+export function inspectContractArchive(file, expected = ARCHIVE_SHA, rendererMenu = false, diagnostic = null) {
   if (typeof rendererMenu !== 'boolean') fail();
   const anchors = rendererMenu ? MENU_ANCHORS : ANCHORS;
   if (!path.isAbsolute(file) || fs.realpathSync(file) !== file || !fs.lstatSync(file).isFile()) fail();
-  const fd = fs.openSync(file, 'r');
+  const fd = fs.openSync(file, 'r'); let before;
   try {
-    const before = fs.fstatSync(fd); if (before.size > 2 * 1024 ** 3) fail();
+    before = fs.fstatSync(fd); if (before.size > 2 * 1024 ** 3) fail('archive_too_large');
     const digest = createHash('sha256'); let position = 0;
     while (position < before.size) { const b = read(fd, Math.min(65536, before.size - position), position); digest.update(b); position += b.length; }
-    if (digest.digest('hex') !== expected) fail();
-    const index = readIndex(fd, before.size, true, rendererMenu ? 'desktop-4239' : '', rendererMenu); if (index.publicRootBlocked) fail();
+    if (digest.digest('hex') !== expected) fail('archive_hash_mismatch');
+    if (diagnostic) diagnostic.archiveHashMatched = true;
+    const index = readIndex(fd, before.size, true, rendererMenu ? 'desktop-4239' : '', rendererMenu);
+    if (diagnostic) { diagnostic.index = menuIndexMetadata(index); diagnostic.indexValidated = true; }
+    if (index.publicRootBlocked) fail('source_link_blocked');
     const entries = [...index.publicSources.entries()].sort(([a], [b]) => {
       // Preserve old ordering by default; menu review spends excerpt quotas on
       // sources outside the already-reviewed main-process directory first.
       if (rendererMenu && a.startsWith('.vite/build/') !== b.startsWith('.vite/build/')) return a.startsWith('.vite/build/') ? 1 : -1;
       return a < b ? -1 : a > b ? 1 : 0;
     });
-    if (!entries.length || entries.length > 4096) fail();
+    if (!entries.length) fail('source_candidates_missing');
+    if (entries.length > 4096) fail('source_count_bound');
     const remaining = Object.fromEntries(anchors.map(a => [a, 8])); const counts = Object.fromEntries(anchors.map(a => [a, 0]));
     const sources = []; let scannedBytes = 0;
     for (const [name, entry] of entries) {
-      if (entry.status !== 'packed' || entry.size > 16 * 1024 ** 2) fail();
-      scannedBytes += entry.size; if (scannedBytes > 128 * 1024 ** 2) fail();
+      if (diagnostic) diagnostic.currentSource = menuEntryMetadata([name, entry]);
+      if (entry.status !== 'packed') fail(entry.status === 'unpacked_not_read' ? 'source_unpacked_blocked' : 'source_link_blocked');
+      if (entry.size > 16 * 1024 ** 2) fail('source_file_bound');
+      scannedBytes += entry.size; if (scannedBytes > 128 * 1024 ** 2) fail('source_total_bound');
       const bytes = read(fd, entry.size, entry.start);
-      const result = sourceExcerpts(utf8(bytes), name, hash(bytes), remaining, anchors, rendererMenu ? 900 : 1600, rendererMenu);
+      let source; try { source = utf8(bytes); } catch { fail('source_invalid_utf8'); }
+      const result = sourceExcerpts(source, name, hash(bytes), remaining, anchors, rendererMenu ? 900 : 1600, rendererMenu);
       if (result) { sources.push(result); for (const match of result.matches) counts[match.anchor] += match.count; }
     }
-    if (!unchanged(before, fs.fstatSync(fd)) || !unchanged(before, fs.statSync(file))) fail();
+    if (!unchanged(before, fs.fstatSync(fd)) || !unchanged(before, fs.statSync(file))) fail('archive_identity_changed');
     const publication = rendererMenu ? trimMenuExcerpts(sources) : null;
     const retained = anchor => rendererMenu ? sources.flatMap(s => s.matches).filter(m => m.anchor === anchor).reduce((n, m) => n + m.excerpts.length, 0) : 8 - remaining[anchor];
     const result = { schema: 1, scope: rendererMenu ? 'public-static-renderer-menu-excerpts' : 'public-static-source-excerpts', archiveSha256: expected,
@@ -112,9 +164,16 @@ export function inspectContractArchive(file, expected = ARCHIVE_SHA, rendererMen
         eligiblePackedJavaScriptScanComplete: true, allPackageFilesCovered: false,
         limits: { files: 4096, fileBytes: 16 * 1024 ** 2, totalBytes: 128 * 1024 ** 2, excerptsPerAnchor: 2, contextCharactersEachSide: 900, excerptTextBytes: 16384, outputBytes: 1024 ** 2 },
         negativeSearchProvesAbsence: false, publication } } : {}) };
-    if (Buffer.byteLength(JSON.stringify(result)) >= 1024 ** 2) fail();
+    if (Buffer.byteLength(JSON.stringify(result)) >= 1024 ** 2) fail('source_output_bound');
     return result;
-  } finally { fs.closeSync(fd); }
+  } finally {
+    if (diagnostic) {
+      try { diagnostic.archiveIdentityUnchanged = Boolean(before && unchanged(before, fs.fstatSync(fd)) && unchanged(before, fs.statSync(file))); }
+      catch { diagnostic.archiveIdentityUnchanged = false; }
+      if (!diagnostic.archiveIdentityUnchanged) { diagnostic.indexValidated = false; diagnostic.index = null; diagnostic.currentSource = null; }
+    }
+    fs.closeSync(fd);
+  }
 }
 
 // Keep every generated schema, including referenced definitions. No remote refs
@@ -168,7 +227,8 @@ export function validateSchemas(root) {
 function main() {
   try {
     if (process.argv.length !== 4 || !['--archive', '--schemas', '--renderer-menu'].includes(process.argv[2])) fail();
-    const result = process.argv[2] === '--schemas' ? validateSchemas(process.argv[3]) : inspectContractArchive(process.argv[3], ARCHIVE_SHA, process.argv[2] === '--renderer-menu');
+    const result = process.argv[2] === '--schemas' ? validateSchemas(process.argv[3]) :
+      process.argv[2] === '--renderer-menu' ? rendererMenuEvidence(process.argv[3]) : inspectContractArchive(process.argv[3]);
     process.stdout.write(JSON.stringify(result) + '\n');
   } catch { process.stderr.write('Public contract evidence is unavailable.\n'); process.exitCode = 1; }
 }

@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { ANCHORS, MENU_ANCHORS, trimMenuExcerpts, sourceExcerpts, inspectContractArchive, validateSchemas } from './review-desktop-contract.mjs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { ANCHORS, MENU_ANCHORS, trimMenuExcerpts, sourceExcerpts, inspectContractArchive, rendererMenuEvidence, validateSchemas } from './review-desktop-contract.mjs';
 
 // Synthetic safety fixtures, not captured Codex output or proof of its behavior.
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -168,4 +170,101 @@ test('renderer excerpts keep valid Unicode and count UTF-8 text bytes', () => {
   const publication = trimMenuExcerpts([found]);
   assert.equal(publication.textBytes, Buffer.byteLength(e.text, 'utf8'));
   assert.ok(publication.textBytes > e.text.length);
+});
+
+// These failures are synthetic guard evidence, not the cause of run 42394449869.
+test('renderer failure publishes fixed code and validated index without reading unpacked or linked content', t => {
+  const file = path.join(scratch(t), 'app.asar');
+  for (const [extra, code] of [[{ unpacked: true }, 'source_unpacked_blocked'], [{ link: 'PRIVATE_DESTINATION_CANARY' }, 'source_link_blocked']]) {
+    const bytes = pack([['web/menu.js', 'PRIVATE_SOURCE_CANARY', extra],
+      ['web/index.html', 'PRIVATE_HTML_CANARY'], ['web/other.htm', '', { unpacked: true }]]);
+    fs.writeFileSync(file, bytes);
+    const result = rendererMenuEvidence(file, hash(bytes));
+    assert.equal(result.status, 'blocked'); assert.equal(result.failure.code, code);
+    assert.equal(result.failure.archiveHashMatched, true); assert.equal(result.failure.indexValidated, true);
+    assert.equal(result.failure.archiveIdentityUnchanged, true);
+    assert.equal(result.failure.index.htmlEntries, 2); assert.equal(result.failure.index.htmlContentsRead, false);
+    assert.equal(result.failure.index.rendererOwnershipProven, false);
+    assert.equal(result.failure.index.candidateFiles, 1);
+    assert.ok(result.failure.index.candidateExamples.some(e => e.path === 'web/menu.js' && e.status !== 'packed'));
+    assert.ok(!JSON.stringify(result).includes('PRIVATE_')); assert.ok(!Object.hasOwn(result, 'sources'));
+  }
+});
+test('renderer invalid header, hash, IO and UTF8 remain distinct without raw exception leakage', t => {
+  const file = path.join(scratch(t), 'app.asar'); const valid = pack([['web/menu.js', Buffer.from([255])]]);
+  fs.writeFileSync(file, valid);
+  const invalidSource = rendererMenuEvidence(file, hash(valid));
+  assert.equal(invalidSource.failure.code, 'source_invalid_utf8');
+  assert.equal(invalidSource.failure.currentSource.path, 'web/menu.js');
+  assert.equal(rendererMenuEvidence(file, '0'.repeat(64)).failure.code, 'archive_hash_mismatch');
+  assert.equal(rendererMenuEvidence(file, '0'.repeat(64)).failure.index, null);
+  const bad = Buffer.from(valid); bad.writeUInt32LE(5, 0); fs.writeFileSync(file, bad);
+  const result = rendererMenuEvidence(file, hash(bad));
+  assert.equal(result.failure.code, 'unsupported_asar_prefix'); assert.equal(result.failure.indexValidated, false);
+  assert.equal(result.failure.index, null);
+  const absent = rendererMenuEvidence(path.join(path.dirname(file), 'PRIVATE_PATH_CANARY'));
+  assert.equal(absent.failure.code, 'io_or_inspection_failed'); assert.ok(!JSON.stringify(absent).includes('PRIVATE_'));
+});
+test('renderer candidate count and file bounds produce evidence rather than successful scan', t => {
+  const file = path.join(scratch(t), 'app.asar');
+  for (const [entries, code] of [[Array.from({length: 4097}, (_, i) => [`web/f${i}.js`, '']), 'source_count_bound'],
+    [[['web/big.js', Buffer.alloc(16 * 1024 ** 2 + 1)]], 'source_file_bound']]) {
+    const bytes = pack(entries); fs.writeFileSync(file, bytes);
+    const result = rendererMenuEvidence(file, hash(bytes));
+    assert.equal(result.status, 'blocked'); assert.equal(result.failure.code, code);
+    assert.ok(result.failure.index.candidateExamples.length <= 8);
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) < 16384);
+    assert.ok(!Object.hasOwn(result, 'requiredAnchorsPresent'));
+  }
+});
+test('renderer cumulative cap still blocks, with total and current source metadata', t => {
+  const file = path.join(scratch(t), 'app.asar');
+  // Multiple validated entries share the same synthetic packed byte range.
+  const entries = Array.from({length: 9}, (_, i) => [`web/f${i}.js`, '', {offset:'0',size:16 * 1024 ** 2}]);
+  entries.push(['node_modules/backing.js', Buffer.alloc(16 * 1024 ** 2, 32)]);
+  const bytes = pack(entries); fs.writeFileSync(file, bytes);
+  const result = rendererMenuEvidence(file, hash(bytes));
+  assert.equal(result.failure.code, 'source_total_bound');
+  assert.equal(result.failure.index.packedBytes, 144 * 1024 ** 2);
+  assert.equal(result.failure.currentSource.path, 'web/f8.js');
+  assert.ok(!Object.hasOwn(result, 'sources'));
+});
+test('index samples cap counts and suppress long or non-ASCII paths, never HTML body or link destination', t => {
+  const file = path.join(scratch(t), 'app.asar');
+  const entries = Array.from({length: 12}, (_, i) => [`web/p${i}.html`, 'PRIVATE_HTML_CANARY']);
+  entries.push(['web/' + 'x'.repeat(200) + '.js', 'PRIVATE_SOURCE_CANARY', {unpacked:true}], ['web/菜单.js', '', {unpacked:true}]);
+  const bytes = pack(entries); fs.writeFileSync(file, bytes);
+  const result = rendererMenuEvidence(file, hash(bytes));
+  assert.equal(result.failure.index.htmlExamples.length, 8); assert.equal(result.failure.index.htmlExamplesOmitted, 4);
+  assert.ok(result.failure.index.candidateExamples.every(e => e.path === null && e.pathCharacters > 0));
+  assert.ok(!JSON.stringify(result).includes('PRIVATE_')); assert.ok(!JSON.stringify(result).includes('菜单'));
+});
+test('renderer diagnostic does not mask successful excerpts or change legacy errors', t => {
+  const file = path.join(scratch(t), 'app.asar'); const bytes = pack([['web/menu.js', MENU_ANCHORS.join(';')]]);
+  fs.writeFileSync(file, bytes);
+  assert.deepEqual(rendererMenuEvidence(file, hash(bytes)), inspectContractArchive(file, hash(bytes), true));
+  const script = new URL('./review-desktop-contract.mjs', import.meta.url);
+  const run = mode => spawnSync(process.execPath, [fileURLToPath(script), mode, file], {encoding:'utf8'});
+  const menu = run('--renderer-menu');
+  assert.equal(menu.status, 0); assert.equal(menu.stderr, '');
+  const diagnostic = JSON.parse(menu.stdout); assert.equal(diagnostic.status, 'blocked');
+  assert.equal(diagnostic.failure.code, 'archive_hash_mismatch'); assert.equal(diagnostic.failure.archiveHashMatched, false);
+  const legacy = run('--archive'); assert.equal(legacy.status, 1); assert.equal(legacy.stdout, '');
+});
+
+test('changed archive identity suppresses indexed paths and source metadata', t => {
+  const file = path.join(scratch(t), 'app.asar'); const bytes = pack([['web/menu.js', 'model_catalog_json', {unpacked:true}]]);
+  fs.writeFileSync(file, bytes);
+  const original = fs.statSync;
+  try {
+    fs.statSync = function (target, ...args) {
+      const stat = original.call(this, target, ...args);
+      if (target === file) stat.mtimeMs++;
+      return stat;
+    };
+    const result = rendererMenuEvidence(file, hash(bytes));
+    assert.equal(result.status, 'blocked'); assert.equal(result.failure.archiveIdentityUnchanged, false);
+    assert.equal(result.failure.indexValidated, false); assert.equal(result.failure.index, null);
+    assert.equal(result.failure.currentSource, null);
+  } finally { fs.statSync = original; }
 });
