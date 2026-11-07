@@ -71,7 +71,7 @@ function Copy-Snapshot($Snapshot) {
     }
     return $copy
 }
-# The entry opt-in uses only the pre-existing pinned genuine startup comparison.
+# Entry defaults to startup comparison; its separate compatibility profile reuses reviewed modes.
 $settingsFunction=@($ast.FindAll({param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'New-DesktopBridgeSettings'
 },$true))
@@ -271,6 +271,38 @@ Reject { New-DesktopBridgeSettings $backends $true $false 'codex-cli 0.167.0-alp
 Reject { New-DesktopBridgeSettings $backends $false $false 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash '' $false $true } '4239 entry cannot skip genuine startup comparison'
 Reject { New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $false $true } '4239 entry cannot select launch compatibility'
 Reject { New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $true $true } '4239 entry cannot combine with the UI build profile'
+# Separate normal-entry compatibility admission; none of the UI/fixture opt-ins are accepted.
+$entryCompatMarker='user-aumid-4239-compat-v1'
+Assert-EntryOptions 'treatment' 'bridge' $false $entry4239Workflow $true $entryCompatMarker $true
+Pass $true 'explicit normal-entry compatibility profile admitted'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $false $entry4239Workflow $true $entry4239Marker $true } 'old marker cannot enable entry compatibility'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $false $entry4239Workflow $true $entryCompatMarker } 'compatibility marker cannot enable modes without switch'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $false $workflow $false '' $true } 'entry compatibility cannot escape into old workflow'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $false $entry4239Workflow $false $entryCompatMarker $true } 'entry compatibility cannot omit exact build selection'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $true $entry4239Workflow $true $entryCompatMarker $true } 'entry compatibility cannot combine UI or other opt-ins'
+Reject { Assert-EntryOptions 'treatment' 'bridge' $false $workflow $true $entryCompatMarker $true } 'entry compatibility retains exact workflow'
+foreach ($case in @('', 'baseline','restore-before-activation','alias-control','freshness-observation','unknown')) {
+    Reject { Assert-EntryOptions $case 'bridge' $false $entry4239Workflow $true $entryCompatMarker $true } 'entry compatibility remains single treatment'
+}
+foreach ($mode in @('baseline','observe')) {
+    Reject { Assert-EntryOptions 'treatment' $mode $false $entry4239Workflow $true $entryCompatMarker $true } 'entry compatibility cannot select observer or baseline'
+}
+foreach ($marker in @('', 'wrong')) {
+    Reject { Assert-EntryOptions 'treatment' 'bridge' $false $entry4239Workflow $true $marker $true } 'entry compatibility requires its exact marker'
+}
+$entryCompatSettings=New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $false $true $true
+$aliasCompatSettings=New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $true
+Pass (($entryCompatSettings | ConvertTo-Json -Depth 6 -Compress) -ceq ($aliasCompatSettings | ConvertTo-Json -Depth 6 -Compress)) 'entry reuses exact reviewed alias compatibility settings and both native pins'
+Pass ($entryCompatSettings.control_home -ceq 'C:\control' -and $entryCompatSettings.gateway_oauth_provider_name -ceq 'CI alpha launch-only') 'entry uses separate owned home and matching fail-local provider name'
+Reject { New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $false $false $true } 'entry compatibility settings cannot omit entry profile'
+Reject { New-DesktopBridgeSettings $backends $true $false 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $false $true $true } 'entry compatibility switch cannot silently omit modes'
+Reject { New-DesktopBridgeSettings $backends $false $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $false $true $true } 'entry compatibility cannot omit startup comparison'
+Reject { New-DesktopBridgeSettings $backends $true $true 'other-version' $entry4239Hash 'C:\control' $false $true $true } 'entry compatibility requires exact native version'
+Reject { New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' (Get-EntryNativeHash) 'C:\control' $false $true $true } 'entry compatibility requires exact 4239 native hash'
+Reject { New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash 'C:\control' $true $true $true } 'entry compatibility cannot combine build UI profile'
+foreach ($control in @('', $backends[0].home, $backends[0].codex_home, $backends[1].home, $backends[1].codex_home)) {
+    Reject { New-DesktopBridgeSettings $backends $true $true 'codex-cli 0.167.0-alpha.3.2' $entry4239Hash $control $false $true $true } 'entry compatibility requires fresh separate control home'
+}
 $before=New-Snapshot
 Assert-EntryFresh $before $false $false $false $false
 foreach ($position in 0..3) {

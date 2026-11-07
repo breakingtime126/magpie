@@ -100,13 +100,13 @@ jobs:
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           go build -trimpath -tags nogui -o $bridge ./cmd/magpie-codex-bridge
           if ($LASTEXITCODE -ne 0) { throw 'Bridge build failed.' }
-      - name: Run one original AUMID treatment and verify persistent rollback
+      - name: Run one original AUMID with reviewed compatibility and verify persistent rollback
         shell: powershell
         env:
-          MAGPIE_NATIVE_ENTRY_PROFILE: user-aumid-4239-v1
+          MAGPIE_NATIVE_ENTRY_PROFILE: user-aumid-4239-compat-v1
         run: |
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
-          ./build/test-desktop-cold-start.ps1 -Mode bridge -BridgeExecutable $bridge -NativeEntryCase treatment -EnableReviewedEntry4239
+          ./build/test-desktop-cold-start.ps1 -Mode bridge -BridgeExecutable $bridge -NativeEntryCase treatment -EnableReviewedEntry4239 -EnableReviewedEntryCompatibility
       - name: Preserve fixed safety diagnostics and sanitized treatment evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

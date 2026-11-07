@@ -1,10 +1,13 @@
 # CI-only native package entry helpers. Dot-sourcing has no side effects.
 function Get-EntryVariableNames { return @('CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG') }
 function Assert-EntryOptions([string]$Case, [string]$Mode, [bool]$OtherOptIn, [string]$WorkflowRef,
-    [bool]$Entry4239=$false, [string]$ProfileMarker='') {
+    [bool]$Entry4239=$false, [string]$ProfileMarker='', [bool]$EntryCompatibility=$false) {
+    if ($EntryCompatibility -and -not $Entry4239) { throw 'Entry compatibility requires the reviewed 4239 treatment.' }
     if ($Entry4239) {
+        $expectedMarker='user-aumid-4239-v1'
+        if ($EntryCompatibility) { $expectedMarker='user-aumid-4239-compat-v1' }
         if ($Case -cne 'treatment' -or $Mode -cne 'bridge' -or $OtherOptIn -or
-            $ProfileMarker -cne 'user-aumid-4239-v1' -or
+            $ProfileMarker -cne $expectedMarker -or
             $WorkflowRef -cne 'breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry-4239.yml@refs/heads/experiment/app-server-bridge-v0.1.3035') {
             throw 'Reviewed 4239 entry requires its exclusive single-treatment workflow.'
         }

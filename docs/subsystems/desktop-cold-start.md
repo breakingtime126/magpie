@@ -621,19 +621,21 @@ held-process cleanup are unchanged; the unresolved timeout is not relabeled fixe
 
 `-EnableReviewedEntry4239` is default-off and requires `-Mode bridge`,
 `-NativeEntryCase treatment`, the exact dedicated workflow path and the
-`MAGPIE_NATIVE_ENTRY_PROFILE=user-aumid-4239-v1` marker. It rejects every other
-experiment opt-in, including `-EnableReviewedBuild4239`. The existing 4239 UI
+`MAGPIE_NATIVE_ENTRY_PROFILE=user-aumid-4239-v1` marker for selection-only, or
+the separate compatibility selection described below. It rejects other
+experiment opt-ins, including `-EnableReviewedBuild4239`. The existing 4239 UI
 profile's exclusive admission, static-reader propagation and alias-cleanup
 distinctions are unchanged. The shared signed-package identity reader must
 establish the [reviewed 4239 tuple](#reviewed-4239-bridge-observation-profile)
 before installation. The installed native version/hash check and both live
 and event-based child-image checks select that same native digest.
 
-`New-DesktopBridgeSettings` has a separate entry selector which permits only
-the existing genuine startup comparison with two exact native executables.
-It does not enable launch compatibility, attestation, gateway OAuth, synthetic
-auth, control-plane configuration, live fixtures or UI input. The old observer
-fixture package pin and native inference slice remain unchanged because neither
+Without the separate compatibility switch, `New-DesktopBridgeSettings`' entry
+selector still permits only the existing genuine startup comparison with two
+exact native executables. Startup comparison alone does not enable launch
+compatibility, attestation, gateway OAuth or control-plane configuration.
+Neither entry profile enables live fixtures, synthetic auth or UI input. The old
+observer fixture package pin and native inference slice remain unchanged because neither
 is a 4239 treatment runtime path.
 
 The actual treatment reuses the strict fresh-state predicate, two USER
@@ -649,8 +651,80 @@ Success means only that the original AUMID activation selected the exact bridge
 image and persistent USER state was restored, with the held activation root
 confirmed exited. It is not literal Start/taskbar click evidence, config-path
 consumption proof, full process-family exit, same-session runtime rollback,
-successful account login or a dual-provider conversation. This new lane and its
-Windows prerequisites have not been run while authoring the candidate.
+successful account login or a dual-provider conversation. The 62f run established
+that selection-only contract but displayed a startup failure, as detailed below.
+
+### Explicit normal-entry startup compatibility
+
+The [62f54e7e run](https://github.com/breakingtime126/magpie/actions/runs/42363040123/job/128375204240)
+proved one original AUMID activation selected the exact bridge image, restored
+the two USER values to prior absence and confirmed the held activation root's
+exit. Its screenshot nevertheless shows startup code 1 and
+`magpie-codex-bridge: app-server bridge failed`. Selection success is not
+startup success. The configuration selected only startup comparison, with
+`launchCompatibilityEnabled=false`; no argv or JSONL trace was retained.
+That exact message comes from `main.go` after `RunWithOptions` returns an
+error, not the distinct argument-parser or configuration-load failure paths.
+
+In `RunWithOptions`, the exact codex-app-tools argv override is rejected before
+backend creation unless `desktop_plugin_override` is configured. Separately,
+initialize capabilities `requestAttestation=true` and
+`explicitGatewayOauth=true` are rejected without their reviewed modes. All
+three inputs were observed in the earlier 8f24eccb alias welcome trace, whose
+configuration selected the reviewed modes. They were not captured in 62f, so
+these are code-supported rejection candidates, not an observed exact cause.
+The alias run also used live synthetic loopback fixtures; it does not prove
+normal-entry startup with the discard endpoints below.
+
+`-EnableReviewedEntryCompatibility` is a separate default-off switch. It
+requires `-EnableReviewedEntry4239`, the same treatment/bridge/workflow guards,
+and `MAGPIE_NATIVE_ENTRY_PROFILE=user-aumid-4239-compat-v1`. A missing or mismatched
+switch/marker fails; the old `user-aumid-4239-v1` selection-only profile remains
+startup-only. The existing single-treatment workflow explicitly selects the
+new pair. Its push marker, path filters, branch, sibling-lane exclusions,
+safety suites, Windows VM count and no-retry policy are unchanged.
+
+Only bridge settings, their fresh distinct `control_home`, and corresponding
+report fields use this switch. `New-DesktopBridgeSettings` reuses exactly the
+reviewed 4239 alias modes: exact plugin override forwarding, unavailable
+attestation, primary native gateway-status read, genuine primary no-auth status,
+paired requirements comparison, paired feature pages and bridge-owned routing
+configuration. It does not set the separate global launch-compatibility flag,
+start a fixture server, run the native inference slice, load an observer,
+perform UI actions or fabricate an auth/policy result. The two new native homes
+retain fail-local `http://127.0.0.1:9/v1` endpoints and no credentials. The
+provider display name remains `CI alpha launch-only`, matching their actual
+configuration, not the alias fixture's different provider name.
+
+All production protocol validation is unchanged: startup results must genuinely
+match and be unrestricted; requirements must genuinely return null from both
+native children; auth status must genuinely be null/null/false from the primary;
+unknown, non-null, unequal or failed responses remain rejected. Attestation is
+an explicit RPC failure, not a fabricated token. The signed MSIX/native/ASAR
+pins, packaged-service verification, held identities, fresh-state guards,
+exactly one AUMID call, override-free caller, process supervision and USER
+readback/finally restoration remain unchanged. Private scratch, including the
+new control home, is retained in the disposable VM while full descendant exit
+is unproven.
+
+`bridge.launchCompatibilityEnabled` and `compatibilityModes` describe the
+actual settings even though the global UI flag remains false. Native-entry
+`startupCompatibility` remains `not-verified-review-screenshot`; the existing
+selection result does not promote it to a pass. The unchanged bounded log scan
+also recognizes the fixed generic bridge-failure string, without retaining log
+lines, argv, RPC bodies, paths or credentials. Its absence is not proof of
+success. Review `official-window.png` and any fixed failure markers from the
+new VM before assessing startup. No literal Start/taskbar click, login, model
+selection, chat, whole-family exit or post-restoration activation is claimed.
+
+The focused tests cover both profile markers, omitted/mixed opt-ins, exact
+version/hash and separate control-home rejection, and equality of entry settings
+to the existing reviewed alias settings. Static AST checks cover the selected
+settings/report paths and absence of global UI flag reassignment. PowerShell,
+Windows runtime and the new actual compatibility treatment were not run during
+local authoring; the existing dual-host safety and profile gates remain the
+required next execution before one new-VM treatment.
+
 
 ## Policy-read diagnostic
 

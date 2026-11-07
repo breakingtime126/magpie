@@ -16,6 +16,7 @@ param(
     [switch]$EnableReviewedBuild4239,
     [switch]$EnableRendererAccessibility,
     [switch]$EnableReviewedEntry4239,
+    [switch]$EnableReviewedEntryCompatibility,
     [switch]$InspectPackageIdentityOnly,
     [switch]$InspectStaticLauncher,
     [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
@@ -1016,7 +1017,7 @@ function Wait-DesktopRegistration(
 function New-DesktopBridgeSettings(
     $Backends, [bool]$StartupProbe, [bool]$LaunchCompatibility,
     [string]$VersionText, [string]$BackendHash, [string]$ControlHome = '', [bool]$Build4239=$false,
-    [bool]$Entry4239=$false
+    [bool]$Entry4239=$false, [bool]$EntryCompatibility=$false
 ) {
     if ($LaunchCompatibility -and -not $StartupProbe) {
         throw 'Reviewed launch compatibility requires the separate exact-version startup opt-in.'
@@ -1024,8 +1025,11 @@ function New-DesktopBridgeSettings(
     if ($Build4239 -and (-not $StartupProbe -or -not $LaunchCompatibility)) {
         throw 'Reviewed 4239 settings require both explicit compatibility gates.'
     }
-    if ($Entry4239 -and ($Build4239 -or -not $StartupProbe -or $LaunchCompatibility)) {
-        throw 'Reviewed 4239 entry settings require startup comparison only.'
+    if ($EntryCompatibility -and -not $Entry4239) {
+        throw 'Reviewed entry compatibility requires the separate 4239 entry profile.'
+    }
+    if ($Entry4239 -and ($Build4239 -or -not $StartupProbe -or ($LaunchCompatibility -ne $EntryCompatibility))) {
+        throw 'Reviewed 4239 entry settings require startup comparison and explicit compatibility selection.'
     }
     # Copy only the caller's fresh test configuration; no filesystem or environment access.
     $copies = @()
@@ -1754,12 +1758,12 @@ if ($EnableReadOnlyWinAppInspection) {
     Assert-WinAppOptions $true $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
         $EnableReviewedLiveWelcome $NativeEntryCase $env:MAGPIE_WINAPP_INSPECTION
 }
-if ($NativeEntryCase -or $EnableReviewedEntry4239) {
+if ($NativeEntryCase -or $EnableReviewedEntry4239 -or $EnableReviewedEntryCompatibility) {
     . (Join-Path $PSScriptRoot 'desktop-native-entry.ps1')
     Assert-EntryOptions -Case $NativeEntryCase -Mode $Mode `
         -OtherOptIn ($EnableReviewedStartupProbe -or $EnableReviewedLaunchCompatibility -or $useLiveFixtures -or $InspectStaticLauncher -or
             $EnableReviewedBuild4239 -or $EnableNativeReadOnlyInspection -or $InspectPackageIdentityOnly) `
-        -WorkflowRef $env:GITHUB_WORKFLOW_REF -Entry4239 $EnableReviewedEntry4239 -ProfileMarker $env:MAGPIE_NATIVE_ENTRY_PROFILE
+        -WorkflowRef $env:GITHUB_WORKFLOW_REF -Entry4239 $EnableReviewedEntry4239 -ProfileMarker $env:MAGPIE_NATIVE_ENTRY_PROFILE -EntryCompatibility $EnableReviewedEntryCompatibility
     $entryNativeHash = Get-EntryNativeHash -Entry4239 $EnableReviewedEntry4239
 }
 if ($useLiveFixtures) {
@@ -1846,7 +1850,9 @@ try {
     if ($NativeEntryCase) {
         $report.nativeEntry = [ordered]@{
             case=$NativeEntryCase; scope='disposable-native-entry-only'; selection='not-observed'
-            reviewedProfile=$(if ($EnableReviewedEntry4239) { 'user-aumid-4239-v1' } else { 'desktop-3517' })
+            reviewedProfile=$(if ($EnableReviewedEntryCompatibility) { 'user-aumid-4239-compat-v1' }
+                elseif ($EnableReviewedEntry4239) { 'user-aumid-4239-v1' } else { 'desktop-3517' })
+            startupCompatibility='not-verified-review-screenshot'
             apiActivationIsNotLiteralClick=$true; callerOverridesAbsent=$false
             bridgeConfigInheritance='not-directly-observed'; processFamilyExit='not-proven'
             postRestoreActivation='not-attempted'; persistentRestoration='not-yet-verified'
@@ -2461,7 +2467,7 @@ requires_openai_auth = false
         if ($EnableReviewedStartupProbe -or $NativeEntryCase) {
             $actualBackendHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $officialBackend.FullName).Hash.ToLowerInvariant()
         }
-        if ($EnableReviewedLaunchCompatibility) {
+        if ($EnableReviewedLaunchCompatibility -or $EnableReviewedEntryCompatibility) {
             $controlHome = Join-Path $env:RUNNER_TEMP ('desktop-control-home-' + [guid]::NewGuid().ToString('N'))
             try { New-Item -ItemType Directory -Path $controlHome | Out-Null }
             catch { Block 'The separate bridge-owned home could not be created.' }
@@ -2505,7 +2511,7 @@ requires_openai_auth = false
             } catch { Block 'The live fixture could not establish its bounded reviewed contract.' }
         }
         $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe ($EnableReviewedStartupProbe -or [bool]$NativeEntryCase) `
-            -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome -Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239
+            -LaunchCompatibility ($EnableReviewedLaunchCompatibility -or $EnableReviewedEntryCompatibility) -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome -Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239 -EntryCompatibility $EnableReviewedEntryCompatibility
         if ($useLiveFixtures) {
             $bridgeSettings.working_directory = $liveWorkspace
             $bridgeSettings.gateway_oauth_provider_name = 'Synthetic alpha_provider'
@@ -2526,8 +2532,8 @@ requires_openai_auth = false
             $report.bridge.configuration = 'Two empty homes, loopback discard endpoints, exact-version SHA-pinned startup inspection only; no authentication or JSONL policy opt-in.'
             $report.bridge.startupInspectionLimits = 'Both official one-shot results must match completely and be genuinely unrestricted. Non-null requirements remain unsupported, never replaced by null. No login or inference; no zero-egress claim.'
         }
-        $report.bridge.launchCompatibilityEnabled = [bool]$EnableReviewedLaunchCompatibility
-        if ($EnableReviewedLaunchCompatibility) {
+        $report.bridge.launchCompatibilityEnabled = ($EnableReviewedLaunchCompatibility -or $EnableReviewedEntryCompatibility)
+        if ($EnableReviewedLaunchCompatibility -or $EnableReviewedEntryCompatibility) {
             $report.bridge.configuration = 'Two empty homes and loopback discard endpoints; exact-version SHA-pinned startup and separately selected launch compatibility modes.'
             $report.bridge.compatibilityModes = [ordered]@{
                 desktop_plugin_override = $bridgeSettings.desktop_plugin_override
@@ -2964,7 +2970,8 @@ requires_openai_auth = false
         if ($report.bridge.sha256After -ne $report.bridge.sha256) { Block 'Bridge bytes changed during the probe.' }
         $report.bridge.diagnosticMarkers = @()
         $markers = @('magpie startup probe unavailable', 'unsupported arguments; use --help',
-            'unsupported startup sign-out', 'invalid or unreadable bridge configuration')
+            'unsupported startup sign-out', 'invalid or unreadable bridge configuration',
+            'magpie-codex-bridge: app-server bridge failed')
         # Inspect only fresh test-app .log files, emit exact static marker names, never log lines or auth files.
         $logRoots = @((Join-Path $env:LOCALAPPDATA ('Packages\' + $app.PackageFamilyName + '\LocalCache')),
             (Join-Path $env:APPDATA 'Codex'), (Join-Path $env:APPDATA 'ChatGPT'))
@@ -3758,7 +3765,7 @@ if ($NativeEntryCase) {
     $report.nativeEntry.privateScratchRetained=$true
     if ($outcome -cin @('original-native-observed','bridge-image-observed')) {
         $report.status='observed'; $report.stage='native-entry-selection-observed'
-        $report.reason='Only the exact selected child image and activation-root exit are established; see nativeEntry limits.'
+        $report.reason='Only the exact selected child image and activation-root exit are established. Startup is not verified: review official-window.png and fixed diagnostic markers; see nativeEntry limits.'
         $exitCode=0
     } else {
         if ($report.nativeEntry.primaryOutcome.exitCode -eq 0) {

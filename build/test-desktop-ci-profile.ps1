@@ -2325,7 +2325,7 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
     $guard=$proof[0].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
     if ($guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedBuild4239 -or $EnableReviewedEntry4239') { throw '4239 proof escaped the two independent opt-ins.' }
     $selectedCalls=@{
-        'New-DesktopBridgeSettings'='-Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239'
+        'New-DesktopBridgeSettings'='-Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239 -EntryCompatibility $EnableReviewedEntryCompatibility'
         'Assert-DesktopCompatibilityPackage'='-Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)'
         'Wait-LiveReady'='-Build4239 $EnableReviewedBuild4239'
         'Complete-LiveFixture'='-Build4239 $EnableReviewedBuild4239'
@@ -2339,11 +2339,11 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
 
 Expect-Pass '4239 native entry preserves independent authority and every image oracle' {
     $entryCalls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-EntryOptions'},$true))
-    if ($entryCalls.Count -ne 1 -or -not $entryCalls[0].Extent.Text.EndsWith('-WorkflowRef $env:GITHUB_WORKFLOW_REF -Entry4239 $EnableReviewedEntry4239 -ProfileMarker $env:MAGPIE_NATIVE_ENTRY_PROFILE')) {
+    if ($entryCalls.Count -ne 1 -or -not $entryCalls[0].Extent.Text.EndsWith('-WorkflowRef $env:GITHUB_WORKFLOW_REF -Entry4239 $EnableReviewedEntry4239 -ProfileMarker $env:MAGPIE_NATIVE_ENTRY_PROFILE -EntryCompatibility $EnableReviewedEntryCompatibility')) {
         throw 'Entry options lost their explicit workflow and profile authority.'
     }
     $guard=$entryCalls[0].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
-    if ($guard.Clauses[0].Item1.Extent.Text -cne '$NativeEntryCase -or $EnableReviewedEntry4239') { throw 'An entry flag without a case can evade admission.' }
+    if ($guard.Clauses[0].Item1.Extent.Text -cne '$NativeEntryCase -or $EnableReviewedEntry4239 -or $EnableReviewedEntryCompatibility') { throw 'An entry flag without a case can evade admission.' }
     $other=@($entryCalls[0].CommandElements | Where-Object { $_.Extent.Text.StartsWith('($EnableReviewedStartupProbe') })
     $otherText='($EnableReviewedStartupProbe -or $EnableReviewedLaunchCompatibility -or $useLiveFixtures -or $InspectStaticLauncher -or $EnableReviewedBuild4239 -or $EnableNativeReadOnlyInspection -or $InspectPackageIdentityOnly)'
     if ($other.Count -ne 1 -or ($other[0].Extent.Text -replace '\s+',' ') -cne $otherText) { throw 'Entry accepted another experiment opt-in.' }
@@ -2418,6 +2418,34 @@ Expect-Pass 'renderer accessibility has one default-off preflight and only feeds
     $assignments=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
         $n.Left.Extent.Text -ceq '$desktopAccessibilityArguments'},$true))
     if ($assignments.Count -ne 1) { throw 'Accessibility arguments can be overwritten.' }
+}
+
+Expect-Pass 'normal-entry compatibility remains default-off and settings-only' {
+    $parameter=@($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -ceq 'EnableReviewedEntryCompatibility' })
+    if ($parameter.Count -ne 1 -or $null -ne $parameter[0].DefaultValue -or
+        $parameter[0].StaticType -ne [Management.Automation.SwitchParameter]) { throw 'Entry compatibility is not default-off.' }
+    $settings=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'New-DesktopBridgeSettings'},$true))
+    if ($settings.Count -ne 1 -or -not $settings[0].Extent.Text.Contains('-LaunchCompatibility ($EnableReviewedLaunchCompatibility -or $EnableReviewedEntryCompatibility)')) {
+        throw 'Actual entry configuration did not select the reviewed modes.'
+    }
+    $homes=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$controlHome' -and $n.Right.Extent.Text.StartsWith('Join-Path')},$true))
+    if ($homes.Count -ne 1) { throw 'Separate control home creation is not unique.' }
+    $guard=$homes[0].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
+    if ($guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLaunchCompatibility -or $EnableReviewedEntryCompatibility') { throw 'Entry modes lack their fresh owned control home.' }
+    $reported=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$report.bridge.launchCompatibilityEnabled'},$true))
+    if ($reported.Count -ne 1 -or $reported[0].Right.Extent.Text -cne '($EnableReviewedLaunchCompatibility -or $EnableReviewedEntryCompatibility)') { throw 'Report does not reflect actual selected modes.' }
+    $globalWrites=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$EnableReviewedLaunchCompatibility'},$true))
+    if ($globalWrites.Count -ne 0) { throw 'Entry escalated to the separate UI/fixture compatibility workflow.' }
+    $workflow=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '../.github/workflows/experimental-desktop-native-entry-4239.yml'))
+    if (-not $workflow.Contains('MAGPIE_NATIVE_ENTRY_PROFILE: user-aumid-4239-compat-v1') -or
+        -not $workflow.Contains('-NativeEntryCase treatment -EnableReviewedEntry4239 -EnableReviewedEntryCompatibility') -or
+        $workflow.Contains('-EnableReviewedLaunchCompatibility')) { throw 'Workflow does not select the independent entry compatibility contract.' }
+    if (-not $ast.Extent.Text.Contains("startupCompatibility='not-verified-review-screenshot'") -or
+        -not $ast.Extent.Text.Contains("'magpie-codex-bridge: app-server bridge failed'")) { throw 'Startup result lost its honest review limit or existing fixed failure marker.' }
 }
 
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
