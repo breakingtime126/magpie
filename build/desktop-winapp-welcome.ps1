@@ -100,8 +100,15 @@ function Get-WinAppWelcomeSelectorKind($Node) {
     if ($Node.AutomationId -and $Node.Selector -ceq $Node.AutomationId) { return 'promoted_id' }
     return 'unsupported'
 }
-function Read-WinAppWelcomeResolvedTarget([string]$Text,$Original,[System.Collections.IDictionary]$Binding,[string]$FixtureProfile='') {
+function Read-WinAppWelcomeResolvedTarget([string]$Text,$Original,[System.Collections.IDictionary]$Binding,[string]$FixtureProfile='',
+    [string]$SelectionProfile='') {
     $modelNames=Get-WinAppModelNames $FixtureProfile
+    $selectionBinding=$SelectionProfile -cne ''
+    if ($selectionBinding) {
+        Assert-WinAppModelSelectionProfile $SelectionProfile $FixtureProfile
+        if ($Original.Name -cnotin @('Synthetic Alpha [alpha]','Synthetic Beta [beta]') -or
+            $Original.Type -cnotin @('RadioButton','MenuItem')) { throw 'Unreviewed selection binding.' }
+    }
     $Binding.reason='resolution_schema_invalid'
     $value=ConvertFrom-LiveJSON $Text 262144
     Assert-WinAppFields $value @('elementId','element','properties')
@@ -126,7 +133,7 @@ function Read-WinAppWelcomeResolvedTarget([string]$Text,$Original,[System.Collec
         if (@('on','off') -cnotcontains $element.toggleState -or $element.toggleState -cne $toggle) { throw 'Resolved toggle state changed.' }
     }
     $expand=''
-    if (($Original.Name -replace '\s+',' ').Trim() -cin $modelNames.Expanded -and $Original.Type -cin @('Button','MenuItem')) {
+    if (-not $selectionBinding -and ($Original.Name -replace '\s+',' ').Trim() -cin $modelNames.Expanded -and $Original.Type -cin @('Button','MenuItem')) {
         $Binding.reason='resolution_expand_state_unavailable'
         Assert-LiveStrings $element @('expandState')
         if ($Original.ExpandState -cne 'collapsed' -or $element.expandState -cne 'collapsed') { throw 'Resolved model menu state changed.' }
@@ -187,7 +194,7 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
     return Read-WinAppWelcomeResolvedTarget $text $node $binding -FixtureProfile $FixtureProfile
 }
 function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha','focused','model-tab','model-enter','resolve-selection-alpha','resolve-selection-beta','resolve-selection-beta-menu')][string]$Operation,[string]$Selector='',[string]$FixtureProfile='',[string]$SelectionProfile='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha','focused','model-tab','model-enter','resolve-selection-alpha','resolve-selection-beta','resolve-selection-beta-menu','resolve-selection-alpha-menuitem','resolve-selection-beta-menuitem')][string]$Operation,[string]$Selector='',[string]$FixtureProfile='',[string]$SelectionProfile='') {
     $modelNames=Get-WinAppModelNames $FixtureProfile
     if ($Operation -clike 'resolve-selection-*') {
         Assert-WinAppModelSelectionProfile $SelectionProfile $FixtureProfile
@@ -207,7 +214,9 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
             if ($Selector) { throw 'Selection resolution does not accept an arbitrary target.' }
             $spec=@{'resolve-selection-alpha'=@('Synthetic Alpha [alpha]','RadioButton');
                 'resolve-selection-beta'=@('Synthetic Beta [beta]','RadioButton');
-                'resolve-selection-beta-menu'=@('Synthetic Beta [beta] None','Button')}[$Operation]
+                'resolve-selection-beta-menu'=@('Synthetic Beta [beta] None','Button');
+                'resolve-selection-alpha-menuitem'=@('Synthetic Alpha [alpha]','MenuItem');
+                'resolve-selection-beta-menuitem'=@('Synthetic Beta [beta]','MenuItem')}[$Operation]
             $arguments+=@('get-property',$spec[0],'--type',$spec[1],'--property','AutomationId')
         } elseif ($Operation -ceq 'search-alpha') {
             if ($Selector) { throw 'Model evidence search does not accept a selector.' }
@@ -229,6 +238,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
             $arguments+=@('get-property',$spec[0],'--type',$spec[1],'--property','AutomationId')
         } else {
             $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn';skip='(?:btn|lnk)';'confirm-skip'='(?:btn|lnk)';'open-model-menu'='btn';'open-model-submenu'='(?:btn|mnu)'}[$Operation]
+            if ($SelectionProfile -ceq 'bridge-owned-model-selection-4239' -and $Operation -cin @('selected','select')) { $prefix='(?:rdo|mnu)' }
             if ($Selector -cnotmatch ('\A'+$prefix+'-[a-z0-9]{1,15}-[a-f0-9]{4}\z')) { throw 'Invalid welcome selector.' }
             if ($Operation -ceq 'selected') { $arguments+=@('get-property',$Selector,'--property','IsSelected') }
             else {
@@ -243,7 +253,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
 }
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha','focused','model-tab','model-enter','resolve-selection-alpha','resolve-selection-beta','resolve-selection-beta-menu')][string]$Operation,[string]$Selector='',[string]$FixtureProfile='',[string]$SelectionProfile='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha','focused','model-tab','model-enter','resolve-selection-alpha','resolve-selection-beta','resolve-selection-beta-menu','resolve-selection-alpha-menuitem','resolve-selection-beta-menuitem')][string]$Operation,[string]$Selector='',[string]$FixtureProfile='',[string]$SelectionProfile='') {
     $modelNames=Get-WinAppModelNames $FixtureProfile
     $remaining=30000-[int]$Deadline.ElapsedMilliseconds
     if ($remaining -le 0) { throw 'Welcome deadline exceeded.' }
@@ -812,30 +822,66 @@ function Assert-WinAppModelSelectionProfile([string]$Profile,[string]$FixturePro
         throw 'Explicit owned model-selection profile required.'
     }
 }
-function ConvertTo-WinAppModelSelectionSnapshot([string]$Text,[long]$WindowHandle) {
+function ConvertTo-WinAppModelSelectionSnapshot([string]$Text,[long]$WindowHandle,[System.Collections.IDictionary]$Result=$null) {
+    # Only fixed-name statistics leave this function. Until base validation and
+    # the complete scan succeed, zero counts do not mean a target was absent.
+    $snapshot=[ordered]@{stage='base_schema';baseValidated=$false;statsComplete=$false;headingCount=0;protectedScreen=$false;
+        names=[ordered]@{}}
+    $names=[ordered]@{'Synthetic Alpha [alpha]'='alpha';'Synthetic Beta [beta]'='beta';
+        'Synthetic Alpha [alpha] None'='currentAlpha';'Synthetic Beta [beta] None'='currentBeta'}
+    foreach ($key in $names.Values) {
+        $snapshot.names[$key]=[ordered]@{total=0;hidden=0;disabled=0;directInvokable=0;radioButton=0;menuItem=0;button=0;text=0;other=0}
+    }
+    if ($null -ne $Result) { $Result.snapshotObservation=$snapshot;$Result.reason='selection_snapshot_base_unavailable' }
     $page=ConvertTo-WinAppWelcomeSnapshot $Text $WindowHandle -FixtureProfile 'bridge-owned-catalog-4239'
+    $snapshot.baseValidated=$true
+    $snapshot.headingCount=@($page.Nodes | Where-Object { $_.Name -ceq 'What should we build?' }).Count
+    $snapshot.protectedScreen=$page.Decision -ceq 'protected_screen'
+    $snapshot.stage='name_scan'
+    if ($null -ne $Result) { $Result.reason='selection_snapshot_names_unavailable' }
     $value=ConvertFrom-LiveJSON $Text 262144
     $pending=[Collections.Generic.Stack[object]]::new()
     foreach ($node in $value.windows[0].elements) { $pending.Push($node) }
-    $counts=@{}
-    $names=@('Synthetic Alpha [alpha]','Synthetic Beta [beta]','Synthetic Alpha [alpha] None','Synthetic Beta [beta] None')
     while ($pending.Count) {
         $node=$pending.Pop()
-        if ($node.PSObject.Properties['name'] -and $node.name -cin $names) {
-            if ($counts.ContainsKey($node.name) -or $node.isOffscreen -or -not $node.isEnabled) { throw 'Selection target is hidden disabled or duplicated.' }
-            $counts[$node.name]=1
+        if ($node.PSObject.Properties['name'] -and $node.name -cin @($names.Keys)) {
+            $count=$snapshot.names[$names[$node.name]]
+            $count.total++
+            if ($node.isOffscreen) { $count.hidden++ }
+            if (-not $node.isEnabled) { $count.disabled++ }
+            if ($node.isInvokable) { $count.directInvokable++ }
+            switch -CaseSensitive ($node.type) {
+                'RadioButton' { $count.radioButton++ }
+                'MenuItem' { $count.menuItem++ }
+                'Button' { $count.button++ }
+                'Text' { $count.text++ }
+                default { $count.other++ }
+            }
         }
         if ($node.PSObject.Properties['children']) { foreach ($child in $node.children) { $pending.Push($child) } }
     }
-    if ($page.Decision -ceq 'protected_screen' -or @($page.Nodes | Where-Object { $_.Name -ceq 'What should we build?' }).Count -ne 1) {
-        throw 'Selection scene unavailable.'
+    $snapshot.statsComplete=$true;$snapshot.stage='name_guard'
+    if ($null -ne $Result) { $Result.reason='selection_snapshot_target_guard_unavailable' }
+    # Only the two pending model targets are gated here. Current-model Button
+    # state is checked if it later becomes an actual Expand action target.
+    foreach ($key in @('alpha','beta')) {
+        $count=$snapshot.names[$key]
+        if ($count.total -gt 1 -or $count.hidden -gt 0 -or $count.disabled -gt 0) {
+            throw 'Selection target is hidden disabled or duplicated.'
+        }
     }
+    $snapshot.stage='scene'
+    if ($null -ne $Result) { $Result.reason='selection_snapshot_scene_unavailable' }
+    if ($snapshot.protectedScreen -or $snapshot.headingCount -ne 1) { throw 'Selection scene unavailable.' }
+    $snapshot.stage='ready'
+    $page | Add-Member -NotePropertyName SelectionSnapshot -NotePropertyValue $snapshot
     return $page
 }
 function Get-WinAppModelSelectionTarget($Page,[string]$Name,[string]$Type,[scriptblock]$Resolve,
     [string]$SelectionProfile,[string]$FixtureProfile,[System.Collections.IDictionary]$Observation=$null) {
     Assert-WinAppModelSelectionProfile $SelectionProfile $FixtureProfile
     if (@('Synthetic Alpha [alpha]|RadioButton','Synthetic Beta [beta]|RadioButton',
+        'Synthetic Alpha [alpha]|MenuItem','Synthetic Beta [beta]|MenuItem',
         'Synthetic Alpha [alpha] None|Button','Synthetic Beta [beta] None|Button') -cnotcontains ($Name+'|'+$Type)) {
         throw 'Unreviewed model-selection target.'
     }
@@ -856,6 +902,11 @@ function Get-WinAppModelSelectionTarget($Page,[string]$Name,[string]$Type,[scrip
         throw 'Selection target must be an exact unique enabled direct control.'
     }
     $target=$matches[0]
+    if ($Type -ceq 'Button') {
+        $key=$(if ($Name -ceq 'Synthetic Alpha [alpha] None') { 'currentAlpha' } else { 'currentBeta' })
+        $counts=$Page.SelectionSnapshot.names[$key]
+        if ($counts.total -ne 1 -or $counts.hidden -ne 0 -or $counts.disabled -ne 0) { throw 'Expand target is hidden disabled or duplicated.' }
+    }
     if ($Type -ceq 'Button' -and $target.ExpandState -cne 'collapsed') { throw 'Selection opener is not collapsed.' }
     $kind=Get-WinAppWelcomeSelectorKind $target
     if ($kind -ceq 'promoted_id') {
@@ -870,7 +921,8 @@ function Get-WinAppModelSelectionTarget($Page,[string]$Name,[string]$Type,[scrip
             }
             $resolvedExpand=$resolved.element.expandState
         }
-        $target=Read-WinAppWelcomeResolvedTarget $text $target $binding -FixtureProfile $FixtureProfile
+        $bindingProfile=$(if ($Type -cin @('RadioButton','MenuItem')) { $SelectionProfile } else { '' })
+        $target=Read-WinAppWelcomeResolvedTarget $text $target $binding -FixtureProfile $FixtureProfile -SelectionProfile $bindingProfile
         if ($Type -ceq 'Button') { $target.ExpandState=$resolvedExpand }
     } elseif ($kind -cne 'runtime_slug') { throw 'Exact selection runtime identity unavailable.' }
     if ($Type -ceq 'Button' -and $target.ExpandState -cne 'collapsed') { throw 'Resolved selection opener is not collapsed.' }
@@ -878,7 +930,7 @@ function Get-WinAppModelSelectionTarget($Page,[string]$Name,[string]$Type,[scrip
 }
 function Read-WinAppModelSelected([string]$Text,$Target,[System.Collections.IDictionary]$Observation=$null) {
     if ($null -ne $Observation) { $Observation.selectionState='unavailable';$Observation.patternConfirmed=$false }
-    if ($Target.Type -cne 'RadioButton' -or $Target.Name -cnotin @('Synthetic Alpha [alpha]','Synthetic Beta [beta]')) {
+    if ($Target.Type -cnotin @('RadioButton','MenuItem') -or $Target.Name -cnotin @('Synthetic Alpha [alpha]','Synthetic Beta [beta]')) {
         throw 'Unreviewed selected-state target.'
     }
     $value=ConvertFrom-LiveJSON $Text 262144
@@ -889,7 +941,7 @@ function Read-WinAppModelSelected([string]$Text,$Target,[System.Collections.IDic
     $element=$value.element
     if ($element -isnot [pscustomobject]) { throw 'Selected-state element unavailable.' }
     Assert-LiveStrings $element @('type','name','selector')
-    if ($element.type -cne 'RadioButton' -or $element.name -cne $Target.Name -or
+    if ($element.type -cne $Target.Type -or $element.name -cne $Target.Name -or
         $element.isEnabled -isnot [bool] -or -not $element.isEnabled -or
         $element.isOffscreen -isnot [bool] -or $element.isOffscreen -or
         $value.elementId -cne $element.selector -or $element.selector -cne $Target.Selector -or
@@ -907,7 +959,7 @@ function Invoke-WinAppModelSelection($Tool,[long]$WindowHandle,[scriptblock]$Che
     $result=[ordered]@{schema=1;scope='bridge-owned-current-draft-selection-only';status='stopped';reason='selection_profile_unavailable';
         selectionAttempts=0;confirmedSelections=0;menuReopens=0;initialAlphaSelected=$false;
         betaSelected=$false;alphaSelected=$false;betaLabelMatched=$false;alphaLabelMatched=$false;betaCaptured=$false;alphaCaptured=$false;
-        lastObservation=[ordered]@{target='none';matches=0;controlType='absent';enabled=$false;selectorKind='not_observed';selectionState='not_read';patternConfirmed=$false}}
+        lastObservation=[ordered]@{target='none';matches=0;controlType='absent';enabled=$false;selectorKind='not_observed';selectionState='not_read';patternConfirmed=$false};snapshotObservation=$null}
     $Diagnostic.commands=@();$Diagnostic.partialActionUncertain=$false;$Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
     $deadline=[Diagnostics.Stopwatch]::StartNew()
     try {
@@ -921,27 +973,37 @@ function Invoke-WinAppModelSelection($Tool,[long]$WindowHandle,[scriptblock]$Che
                 -FixtureProfile $FixtureProfile -SelectionProfile $SelectionProfile
         }
         function Selection-Page {
-            ConvertTo-WinAppModelSelectionSnapshot (Selection-Command 'read') $WindowHandle
+            $result.reason='selection_read_unavailable';$result.snapshotObservation=$null
+            $text=Selection-Command 'read'
+            ConvertTo-WinAppModelSelectionSnapshot $text $WindowHandle $result
         }
         function Selection-Target($Page,[string]$Name,[string]$Type) {
+            if ($Type -ceq 'Model') {
+                $matches=@($Page.Nodes | Where-Object { $_.Name -ceq $Name })
+                $Type='RadioButton'
+                if ($matches.Count -eq 1 -and $matches[0].Type -cin @('RadioButton','MenuItem')) { $Type=$matches[0].Type }
+            }
             $resolve={param($original)
-                $operation=$(if ($original.Type -ceq 'RadioButton') {
-                    if ($original.Name -ceq 'Synthetic Alpha [alpha]') { 'resolve-selection-alpha' } else { 'resolve-selection-beta' }
+                $operation=$(if ($original.Type -cin @('RadioButton','MenuItem')) {
+                    if ($original.Type -ceq 'MenuItem') {
+                        if ($original.Name -ceq 'Synthetic Alpha [alpha]') { 'resolve-selection-alpha-menuitem' } else { 'resolve-selection-beta-menuitem' }
+                    } elseif ($original.Name -ceq 'Synthetic Alpha [alpha]') { 'resolve-selection-alpha' } else { 'resolve-selection-beta' }
                 } elseif ($original.Name -ceq 'Synthetic Alpha [alpha] None') { 'resolve-model-effort' } else { 'resolve-selection-beta-menu' })
                 Selection-Command $operation
             }
             Get-WinAppModelSelectionTarget $Page $Name $Type $resolve $SelectionProfile $FixtureProfile $result.lastObservation
         }
         function Selection-Pair($Page,[bool]$AlphaExpected) {
-            $alpha=Selection-Target $Page 'Synthetic Alpha [alpha]' 'RadioButton'
+            $alpha=Selection-Target $Page 'Synthetic Alpha [alpha]' 'Model'
             $a=Read-WinAppModelSelected (Selection-Command 'selected' $alpha.Selector) $alpha $result.lastObservation
-            $beta=Selection-Target $Page 'Synthetic Beta [beta]' 'RadioButton'
+            $beta=Selection-Target $Page 'Synthetic Beta [beta]' 'Model'
             $b=Read-WinAppModelSelected (Selection-Command 'selected' $beta.Selector) $beta $result.lastObservation
             if ($a -ne $AlphaExpected -or $b -eq $AlphaExpected) { throw 'SelectionItem state does not match the expected pair.' }
             return [pscustomobject]@{Alpha=$alpha;Beta=$beta}
         }
         $result.reason='initial_selection_unavailable'
         $page=Selection-Page
+        $result.reason='initial_selection_unavailable'
         $pair=Selection-Pair $page $true
         $result.initialAlphaSelected=$true
         foreach ($owner in @('beta','alpha')) {
@@ -956,9 +1018,10 @@ function Invoke-WinAppModelSelection($Tool,[long]$WindowHandle,[scriptblock]$Che
             $result.reason='selection_receipt_invalid';Assert-WinAppWelcomeAction $text $WindowHandle $target 'select'
             $result.reason='selected_label_unavailable'
             $page=Selection-Page
+            $result.reason='selected_label_unavailable'
             $name=$(if ($owner -ceq 'beta') { 'Synthetic Beta [beta] None' } else { 'Synthetic Alpha [alpha] None' })
             $buttons=@($page.Nodes | Where-Object { $_.Type -ceq 'Button' -and $_.Name -cin @('Synthetic Alpha [alpha] None','Synthetic Beta [beta] None') })
-            if ($buttons.Count -ne 1 -or $buttons[0].Name -cne $name -or -not $buttons[0].Enabled -or -not $buttons[0].Invokable) {
+            if ($buttons.Count -ne 1 -or $buttons[0].Name -cne $name) {
                 throw 'Current draft model button did not match the selection.'
             }
             $result[($owner+'LabelMatched')]=$true
@@ -972,7 +1035,7 @@ function Invoke-WinAppModelSelection($Tool,[long]$WindowHandle,[scriptblock]$Che
             } elseif ($buttons[0].ExpandState -cne 'expanded') { throw 'Selected menu expansion state unavailable.' }
             $result.reason='selected_label_unavailable'
             $current=@($page.Nodes | Where-Object { $_.Type -ceq 'Button' -and $_.Name -cin @('Synthetic Alpha [alpha] None','Synthetic Beta [beta] None') })
-            if ($current.Count -ne 1 -or $current[0].Name -cne $name -or -not $current[0].Enabled -or -not $current[0].Invokable) {
+            if ($current.Count -ne 1 -or $current[0].Name -cne $name) {
                 throw 'Current draft label changed during selected-state verification.'
             }
             $result.reason='selected_pair_unavailable'

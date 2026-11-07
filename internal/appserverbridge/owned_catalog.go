@@ -324,7 +324,10 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		}
 		if r.ownedCatalog.refreshing {
 			m, _ := parseObject(line)
-			if _, request := m["id"]; request && text(m, "method") != "" {
+			// This existing primary-only read does not use model routes or the
+			// session config. Keep its normal mode, params, limits and result
+			// validation below; all catalog-dependent requests remain blocked.
+			if _, request := m["id"]; request && text(m, "method") != "" && !(r.auth.authStatusNoAuth && text(m, "method") == "getAuthStatus") {
 				return []Delivery{fail(m["id"], -32000, "bridge model catalog refresh is in progress")}, nil
 			}
 		}

@@ -376,6 +376,13 @@ $selectionResult=[pscustomobject]@{schema=1;scope='bridge-owned-current-draft-se
     selectionAttempts=2;confirmedSelections=2;menuReopens=2;initialAlphaSelected=$true;betaSelected=$true;alphaSelected=$true;
     betaLabelMatched=$true;alphaLabelMatched=$true;betaCaptured=$true;alphaCaptured=$true;
     lastObservation=[pscustomobject]@{target='beta';matches=1;controlType='RadioButton';enabled=$true;selectorKind='runtime_slug';selectionState='unselected';patternConfirmed=$true}}
+$selectionResult | Add-Member -NotePropertyName snapshotObservation -NotePropertyValue ([pscustomobject]@{
+    stage='ready';baseValidated=$true;statsComplete=$true;headingCount=1;protectedScreen=$false;
+    names=[pscustomobject]@{
+        alpha=[pscustomobject]@{total=1;hidden=0;disabled=0;directInvokable=1;radioButton=1;menuItem=0;button=0;text=0;other=0};
+        beta=[pscustomobject]@{total=1;hidden=0;disabled=0;directInvokable=1;radioButton=1;menuItem=0;button=0;text=0;other=0};
+        currentAlpha=[pscustomobject]@{total=1;hidden=0;disabled=0;directInvokable=1;radioButton=0;menuItem=0;button=1;text=0;other=0};
+        currentBeta=[pscustomobject]@{total=0;hidden=0;disabled=0;directInvokable=0;radioButton=0;menuItem=0;button=0;text=0;other=0}}})
 Assert-ModelSelectionResult $selectionResult
 foreach ($mutation in @(
     {param($v) $v.selectionAttempts=3},
@@ -387,6 +394,16 @@ foreach ($mutation in @(
     {param($v) $v.scope='self-authored-model-menu-only'},
     {param($v) $v.lastObservation.controlType='PRIVATE_CANARY'},
     {param($v) $v.lastObservation.selectionState=$false},
+    {param($v) $v.snapshotObservation=$null},
+    {param($v) $v.snapshotObservation.stage='PRIVATE_CANARY'},
+    {param($v) $v.snapshotObservation.baseValidated=$false},
+    {param($v) $v.snapshotObservation.statsComplete=$false},
+    {param($v) $v.snapshotObservation.protectedScreen=$true},
+    {param($v) $v.snapshotObservation.headingCount=0},
+    {param($v) $v.snapshotObservation.names.alpha.total=501},
+    {param($v) $v.snapshotObservation.names.alpha.menuItem=1},
+    {param($v) $v.snapshotObservation.names.alpha.hidden=2},
+    {param($v) $v.snapshotObservation.names.alpha | Add-Member -NotePropertyName rawName -NotePropertyValue 'PRIVATE_CANARY'},
     {param($v) $v | Add-Member -NotePropertyName path -NotePropertyValue 'PRIVATE_CANARY'}
 )) {
     $bad=($selectionResult | ConvertTo-Json -Depth 8 -Compress) | ConvertFrom-Json; & $mutation $bad

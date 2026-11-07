@@ -1225,7 +1225,7 @@ function Get-DesktopNoAuthStatusEvidence([object[]]$Records) {
             throw 'No-auth status evidence has ambiguous correlation.'
         }
         if (-not $event.PSObject.Properties['method'] -or $event.method -cne 'getAuthStatus') { continue }
-        if (-not $event.PSObject.Properties['kind'] -or $event.kind -cne 'rpc' -or
+        if (-not $event.PSObject.Properties['kind'] -or $event.kind -cnotin @('rpc','rpc_error') -or
             -not $event.PSObject.Properties['pid'] -or
             -not $event.PSObject.Properties['correlation'] -or
             -not $event.PSObject.Properties['direction'] -or
@@ -1237,6 +1237,17 @@ function Get-DesktopNoAuthStatusEvidence([object[]]$Records) {
             throw 'No-auth status evidence has invalid correlation.'
         }
         $key = [string]$event.pid + ':' + [string]$event.correlation
+        if ($event.kind -ceq 'rpc_error') {
+            Assert-PublicShape $event @('seq','pid','kind','direction','method','correlation','code','class')
+            Assert-PublicInteger $event.seq 1 4294967296
+            Assert-PublicInteger $event.code -4294967296 4294967296
+            if ($event.direction -cne 'from_bridge' -or $event.class -isnot [string] -or -not $pending.ContainsKey($key)) {
+                throw 'No-auth status evidence has an unmatched RPC error.'
+            }
+            # Fixed failure only. Do not infer a cause from a generic code/class,
+            # count this as a successful null result, or echo native error data.
+            throw ('No-auth status received a correlated RPC error (code ' + [string]$event.code + ').')
+        }
         if ($event.direction -ceq 'to_bridge' -and $event.class -ceq 'request') {
             if ($seen.ContainsKey($key) -or
                 -not $event.PSObject.Properties['authParamsValid'] -or $event.authParamsValid -isnot [bool] -or -not $event.authParamsValid -or

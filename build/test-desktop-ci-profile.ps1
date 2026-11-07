@@ -265,6 +265,22 @@ Expect-Pass 'native no-auth evidence includes unchanged token-request intent' {
         throw 'Wrong no-auth evidence counts.'
     }
 }
+Expect-Pass 'correlated native auth RPC failure is not mislabeled missing correlation' {
+    $request=New-NoAuthRequest 8648 88 $true
+    $failure=[pscustomobject]@{seq=183;pid=8648;kind='rpc_error';direction='from_bridge';method='getAuthStatus';correlation=88;code=-32000;class='unknown'}
+    $message=''
+    try { $null=Get-DesktopNoAuthStatusEvidence @($request,$failure) } catch { $message=$_.Exception.Message }
+    if ($message -cne 'No-auth status received a correlated RPC error (code -32000).') { throw 'Correlated auth RPC error was hidden or converted into success.' }
+    foreach ($field in @('raw','message','data')) {
+        $bad=($failure | ConvertTo-Json -Compress) | ConvertFrom-Json
+        $bad | Add-Member -NotePropertyName $field -NotePropertyValue 'PRIVATE_CANARY'
+        Expect-Reject 'auth RPC failure rejects unsanitized extra fields' { Get-DesktopNoAuthStatusEvidence @($request,$bad) }
+    }
+    $failure.correlation=89
+    $message=''
+    try { $null=Get-DesktopNoAuthStatusEvidence @($request,$failure) } catch { $message=$_.Exception.Message }
+    if ($message -cne 'No-auth status evidence has an unmatched RPC error.') { throw 'Wrong request auth error was treated as correlated.' }
+}
 Expect-Reject 'no observed native status requests' { Get-DesktopNoAuthStatusEvidence @() }
 Expect-Reject 'only false includeToken does not verify actual Desktop requirement' {
     Get-DesktopNoAuthStatusEvidence @((New-NoAuthRequest 1 1 $false), (New-NoAuthResponse 1 1))

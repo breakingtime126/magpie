@@ -601,8 +601,8 @@ separate stage run, with its own bounded 30-second budget, at most two explicit
 SelectionItem `select` attempts and at most two ExpandCollapse `expand` calls.
 No action is retried. The sequence is fixed Beta then Alpha.
 
-Every target must be the exact unique visible enabled RadioButton and have a
-valid runtime selector, or obtain one through an exact typed readonly lookup.
+Every model target must be the exact unique visible enabled RadioButton or
+MenuItem and have a valid runtime selector, or obtain one through an exact typed readonly lookup.
 Before any selection, a live `IsSelected` read must return precisely the string
 `True` or `False` with the same identity. The pinned official tool obtains this
 property from SelectionItemPattern; missing support can return null even with
@@ -614,8 +614,8 @@ limitations rather than claiming an action-instant proof.
 
 A successful action receipt is insufficient. A fresh tree must show the exact
 current-model Button (`Synthetic Beta [beta] None`, then
-`Synthetic Alpha [alpha] None`). If collapsed, that unique enabled Button may
-be reopened once through explicit Expand; if already expanded it is not acted
+`Synthetic Alpha [alpha] None`). For this read-only label check the Button need not be enabled or invokable.
+If collapsed, that unique enabled, directly invokable Button may be reopened once through explicit Expand; if already expanded it is not acted
 on. Another fresh pair of IsSelected reads must show the chosen model true and
 the other false, followed by a verified screenshot. The Beta button spelling is
 an exact prospective assertion, not a previously established UI fact. Any
@@ -632,3 +632,42 @@ write and other RPC denials remain unchanged; existing terminal sanitized RPC
 traces record them without claiming they were caused by a selection. There is
 no runtime trace polling or new observation framework. Menu evidence, selection
 evidence and the separate native four-turn acceptance remain distinct.
+
+#### Selection snapshot stop and narrow role compatibility
+
+Run [42423425288](https://github.com/breakingtime126/magpie/actions/runs/42423425288)
+at `9ed91ec7849aa07e97c2f501008cd0ee8edc3691` again captured both menu labels,
+but selection stopped after its first successful tree read: zero selections,
+zero reopens, and no target or IsSelected read. Its default target observation
+is not evidence of a missing RadioButton or missing SelectionItemPattern. Equal
+stdout byte counts in consecutive reads do not prove identical content, and the
+raw tree was not retained. The precise failure remains unknown.
+
+The bounded follow-up distinguishes the read, common schema, fixed-name scan,
+pending-target guard, and scene stages. Only counts for the four already-known
+names leave the helper: total, hidden, disabled, direct-invokable and fixed
+RadioButton/MenuItem/Button/Text/other counts, plus heading/protected flags.
+Incomplete statistics are explicitly marked, not interpreted as absent targets.
+The first snapshot gates only the two model targets; a current-model opener is
+not an action target at that point. A hidden/disabled/duplicate current opener
+therefore does not prevent model-state reads. Actual collapsed-button reopening
+still requires its exact unique visible enabled directly invokable identity and
+explicit Expand. An already-expanded button is only read for its label, including
+when disabled; it is never acted on in that state.
+
+The public pinned official tool selects through SelectionItemPattern rather than
+requiring one UIA control type. This profile therefore admits an actual unique
+RadioButton or MenuItem, preserves that exact type/name/runtime slug through
+state reads, and requires literal IsSelected True/False before the same explicit
+Select. A MenuItem without the pattern is still rejected. Only two fixed typed
+MenuItem resolvers are added; the legacy welcome/menu-only command path cannot
+use MenuItem selected/select commands. There is no Invoke, keyboard, coordinate,
+ancestor or action-retry fallback. This is a source-justified compatibility fix,
+not a claim that either role or the opener guard caused the observed stop.
+
+Pure fixtures cover both roles, promoted identities, absent patterns, changed
+type/slug, unavailable pending targets, non-action opener variants, actual Expand
+rejection, an expanded disabled opener, bounded diagnostics and two-selection
+limits. Local PowerShell/Windows/GUI execution remains unavailable; these tests
+must run in CI before any new acceptance is claimed. Other evidence and the
+original failed report are unchanged.

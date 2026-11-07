@@ -411,11 +411,12 @@ function Invoke-LiveWelcome($Start, [System.Collections.IDictionary]$Diagnostic 
 
 function Assert-ModelSelectionResult($Value) {
     Assert-LiveShape $Value @('schema','scope','status','reason','selectionAttempts','confirmedSelections','menuReopens',
-        'initialAlphaSelected','betaSelected','alphaSelected','betaLabelMatched','alphaLabelMatched','betaCaptured','alphaCaptured','lastObservation')
+        'initialAlphaSelected','betaSelected','alphaSelected','betaLabelMatched','alphaLabelMatched','betaCaptured','alphaCaptured','lastObservation','snapshotObservation')
     Assert-LiveInteger $Value.schema 1 1
     Assert-LiveStrings $Value @('scope','status','reason')
     if ($Value.scope -cne 'bridge-owned-current-draft-selection-only' -or $Value.status -cnotin @('observed','stopped') -or
-        $Value.reason -cnotin @('selection_profile_unavailable','prior_menu_unavailable','initial_selection_unavailable',
+        $Value.reason -cnotin @('selection_profile_unavailable','prior_menu_unavailable','initial_selection_unavailable','selection_read_unavailable',
+            'selection_snapshot_base_unavailable','selection_snapshot_names_unavailable','selection_snapshot_target_guard_unavailable','selection_snapshot_scene_unavailable',
             'preselection_state_unavailable','selection_action_unavailable','selection_receipt_invalid','selected_label_unavailable',
             'selection_reopen_unavailable','selected_pair_unavailable','selection_capture_unavailable','both_current_draft_selections_verified')) {
         throw 'Invalid fixed selection outcome.'
@@ -433,6 +434,29 @@ function Assert-ModelSelectionResult($Value) {
         $o.selectorKind -cnotin @('not_observed','runtime_slug','promoted_id','unsupported','missing') -or
         $o.selectionState -cnotin @('not_read','unavailable','selected','unselected') -or
         $o.enabled -isnot [bool] -or $o.patternConfirmed -isnot [bool]) { throw 'Invalid bounded selection observation.' }
+    $snapshot=$Value.snapshotObservation
+    if ($null -ne $snapshot) {
+        Assert-LiveShape $snapshot @('stage','baseValidated','statsComplete','headingCount','protectedScreen','names')
+        Assert-LiveStrings $snapshot @('stage'); Assert-LiveInteger $snapshot.headingCount 0 500
+        if ($snapshot.stage -cnotin @('base_schema','name_scan','name_guard','scene','ready') -or
+            $snapshot.baseValidated -isnot [bool] -or $snapshot.statsComplete -isnot [bool] -or $snapshot.protectedScreen -isnot [bool]) {
+            throw 'Invalid fixed snapshot stage.'
+        }
+        Assert-LiveShape $snapshot.names @('alpha','beta','currentAlpha','currentBeta')
+        foreach ($name in @('alpha','beta','currentAlpha','currentBeta')) {
+            $counts=$snapshot.names.$name
+            $fields=@('total','hidden','disabled','directInvokable','radioButton','menuItem','button','text','other')
+            Assert-LiveShape $counts $fields
+            foreach ($key in $fields) { Assert-LiveInteger $counts.$key 0 500 }
+            if ($counts.hidden -gt $counts.total -or $counts.disabled -gt $counts.total -or $counts.directInvokable -gt $counts.total -or
+                ($counts.radioButton+$counts.menuItem+$counts.button+$counts.text+$counts.other) -ne $counts.total) { throw 'Inconsistent fixed snapshot counts.' }
+        }
+        if (($snapshot.stage -cne 'base_schema' -and -not $snapshot.baseValidated) -or
+            ($snapshot.stage -cin @('name_guard','scene','ready') -and -not $snapshot.statsComplete)) { throw 'Incomplete snapshot stage proof.' }
+    }
+    if ($Value.status -ceq 'observed' -and ($null -eq $snapshot -or $snapshot.stage -cne 'ready' -or
+        $snapshot.protectedScreen -or $snapshot.headingCount -ne 1 -or $snapshot.names.alpha.total -ne 1 -or
+        $snapshot.names.beta.total -ne 1)) { throw 'Missing final snapshot validation.' }
     if ($Value.status -ceq 'observed' -and ($Value.reason -cne 'both_current_draft_selections_verified' -or
         $Value.selectionAttempts -ne 2 -or $Value.confirmedSelections -ne 2 -or -not $Value.initialAlphaSelected -or
         -not $Value.betaSelected -or -not $Value.alphaSelected -or -not $Value.betaLabelMatched -or -not $Value.alphaLabelMatched -or
