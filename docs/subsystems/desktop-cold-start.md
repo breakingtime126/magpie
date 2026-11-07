@@ -1378,8 +1378,12 @@ particular, `control_home` does not authorize reading a config file there.
 Existing public-catalog/provenance tests remain intact. New synthetic
 PowerShell fixtures cover all target enums, sort relationships, trace,
 correlation, missing/wrong-cased/duplicate fields, invalid-only shapes,
-redaction, explicit root provenance and root bounds. Their source definitions
-are not a claim that execution passed.
+redaction, explicit root provenance and root bounds. The source contract retains
+one runtime declaration seam and one explicit live-fixture selector for welcome
+or read-only inspection. Its four flag combinations must select exactly one
+owned workspace; both enabled still fail the separate inspection option gate.
+Source mutations cover welcome-only drift, unvalidated roots and duplicated
+declarations. Their source definitions are not a claim that execution passed.
 
 ### Separate native end-to-end slice, one Windows job
 

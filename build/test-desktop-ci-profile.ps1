@@ -1264,14 +1264,14 @@ Expect-Reject 'aggregate root JSON bound' {
 Expect-Reject 'root references cannot omit a disposable backend' {
     New-DesktopReadTargetEnvironment @((New-RootBackends)[0]) 'C:\fixture\work' 'C:\fixture\package'
 }
-Expect-Pass 'runtime root construction has one explicit harness provenance seam' {
+$runtimeRootContract = {
     $calls = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.CommandAst] -and
         $node.GetCommandName() -ceq 'New-DesktopReadTargetEnvironment'
     }, $true))
     $expected = @('New-DesktopReadTargetEnvironment', '-Backends', '$backends', '-Workspace',
-        '$(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work })',
+        '$(if ($useLiveFixtures) { $liveWorkspace } else { $work })',
         '-VerifiedPackage', '$app.InstallLocation', '-ControlHome', '$controlHome')
     if ($calls.Count -ne 1 -or $calls[0].CommandElements.Count -ne $expected.Count) {
         throw 'Runtime root references lost their explicit provenance.'
@@ -1281,8 +1281,21 @@ Expect-Pass 'runtime root construction has one explicit harness provenance seam'
             throw 'Runtime root references lost their explicit provenance.'
         }
     }
+    $fixtureAssignments = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -ceq '$useLiveFixtures'
+    }, $true))
+    if ($fixtureAssignments.Count -ne 1 -or
+        $fixtureAssignments[0].Operator -ne [Management.Automation.Language.TokenKind]::Equals -or
+        $fixtureAssignments[0].Right.Extent.Text -cne '$EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection' -or
+        -not [object]::ReferenceEquals($fixtureAssignments[0].Parent, $ast.EndBlock) -or
+        $fixtureAssignments[0].Extent.EndOffset -ge $calls[0].Extent.StartOffset) {
+        throw 'Live fixture selection lost its unique explicit opt-in assignment.'
+    }
 }
-Expect-Pass 'runtime workspace alternatives retain their exact owned provenance' {
+Expect-Pass 'runtime root construction has one explicit harness provenance seam' $runtimeRootContract
+$runtimeWorkspaceContract = {
     # The argument above is exact syntax, not an arbitrary expression allowance.
     # Exercise it without invoking the harness, provider, filesystem or a process.
     $call = @($ast.FindAll({
@@ -1291,12 +1304,28 @@ Expect-Pass 'runtime workspace alternatives retain their exact owned provenance'
         $node.GetCommandName() -ceq 'New-DesktopReadTargetEnvironment'
     }, $true))[0]
     $selectWorkspace = [scriptblock]::Create($call.CommandElements[4].Extent.Text)
+    $fixtureAssignment = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -ceq '$useLiveFixtures'
+    }, $true))[0]
+    $selectFixtures = [scriptblock]::Create($fixtureAssignment.Right.Extent.Text)
     $work = 'C:\fixture\original-owned-work'
     $liveWorkspace = 'C:\fixture\live-owned-workspace'
-    foreach ($enabled in @($false, $true)) {
-        $EnableReviewedLiveWelcome = $enabled
+    # Both flags still select one owned root here, not a fallback or duplicate.
+    # This tests selection only; the inspection option validator rejects both flags.
+    foreach ($case in @(
+        @($false, $false, $false), @($true, $false, $true),
+        @($false, $true, $true), @($true, $true, $true)
+    )) {
+        $EnableReviewedLiveWelcome = $case[0]
+        $EnableReadOnlyWinAppInspection = $case[1]
+        $fixtureSelection = @(& $selectFixtures)
+        if ($fixtureSelection.Count -ne 1 -or $fixtureSelection[0] -isnot [bool] -or
+            $fixtureSelection[0] -ne $case[2]) { throw 'Fixture selection changed the explicit opt-in modes.' }
+        $useLiveFixtures = $fixtureSelection[0]
         $selected = @(& $selectWorkspace)
-        $expectedRoot = $(if ($enabled) { $liveWorkspace } else { $work })
+        $expectedRoot = $(if ($case[2]) { $liveWorkspace } else { $work })
         if ($selected.Count -ne 1 -or $selected[0] -cne $expectedRoot) {
             throw 'Opt-in changed the wrong workspace provenance branch.'
         }
@@ -1321,12 +1350,48 @@ Expect-Pass 'runtime workspace alternatives retain their exact owned provenance'
         $guard = $assignments[0].Parent
         while ($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]) { $guard = $guard.Parent }
         if ($null -eq $guard -or $guard.Clauses.Count -ne 1 -or
-            $guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLiveWelcome' -or
+            $guard.Clauses[0].Item1.Extent.Text -cne '$useLiveFixtures' -or
+            $fixtureAssignment.Extent.EndOffset -ge $guard.Extent.StartOffset -or
             $guard.Clauses[0].Item2.Extent.StartOffset -gt $assignments[0].Extent.StartOffset -or
             $guard.Clauses[0].Item2.Extent.EndOffset -lt $assignments[0].Extent.EndOffset) {
             throw 'Live workspace provenance is outside the explicit opt-in branch.'
         }
         $lastEnd = $assignments[0].Extent.EndOffset
+    }
+}
+Expect-Pass 'runtime workspace alternatives retain their exact owned provenance' $runtimeWorkspaceContract
+# Mutate source only, never execute the harness. The same contracts must reject
+# welcome-only drift, arbitrary root authority and duplicate provenance seams.
+foreach ($mutation in @(
+    @('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection',
+        '$useLiveFixtures = $EnableReviewedLiveWelcome'),
+    @('$(if ($useLiveFixtures) { $liveWorkspace } else { $work })',
+        '$(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work })'),
+    @('        if ($useLiveFixtures) {', '        if ($EnableReviewedLiveWelcome) {'),
+    @('$liveWorkspace = $liveOwned.Workspace', '$liveWorkspace = $liveConfig.workspace'),
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName',
+        '$liveOwned = $liveConfig'),
+    @('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection',
+        ('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection' + "`n" + '$useLiveFixtures = $true')),
+    @('New-DesktopReadTargetEnvironment `', 'New-DesktopReadTargetEnvironment; New-DesktopReadTargetEnvironment `')
+)) {
+    if ($mutation[0] -ceq '        if ($useLiveFixtures) {') {
+        # The first indented guard owns fixture setup. Replace only that guard,
+        # not later report guards or workspace subexpressions, on LF or CRLF.
+        $guardOffset = $ast.Extent.Text.IndexOf($mutation[0], [StringComparison]::Ordinal)
+        if ($guardOffset -lt 0) { throw 'FAIL: fixture setup guard mutation target missing' }
+        $mutatedSource = $ast.Extent.Text.Remove($guardOffset, $mutation[0].Length).Insert($guardOffset, $mutation[1])
+    } else {
+        $mutatedSource = $ast.Extent.Text.Replace($mutation[0], $mutation[1])
+    }
+    if ($mutatedSource -ceq $ast.Extent.Text) { throw 'FAIL: root provenance mutation did not change source' }
+    $mutationTokens = $null; $mutationErrors = $null
+    $mutatedAst = [Management.Automation.Language.Parser]::ParseInput($mutatedSource, [ref]$mutationTokens, [ref]$mutationErrors)
+    if ($mutationErrors.Count -ne 0) { throw 'FAIL: root provenance mutation must remain valid syntax' }
+    Expect-Reject 'runtime root provenance contract rejects source mutation' {
+        $ast = $mutatedAst
+        & $runtimeRootContract
+        & $runtimeWorkspaceContract
     }
 }
 Expect-Pass 'uninformative optional caller scan is not executed again' {
