@@ -74,32 +74,87 @@ function Test-EntryMachineOverride {
         return $false
     } finally { if ($null -ne $key) { $key.Dispose() } }
 }
+function Get-EntryHelperPhase([string]$Text) {
+    $phase='not-reported'
+    # Only complete, exact fixed marker lines count. Never publish arbitrary output.
+    $lines=$Text -split "`n"
+    for ($index=0; $index -lt $lines.Count-1; $index++) {
+        $line=$lines[$index].TrimEnd([char]13)
+        if ($line -cmatch '^ENTRY_PHASE=(started|input_validated|interop_ready|record_started|record_finished|output_ready)$') {
+            $phase=$Matches[1]
+        } else { break }
+    }
+    return $phase
+}
+function Test-EntryHelperSucceeded([bool]$WaitExpired, [bool]$Drained, [bool]$TimedOut, [bool]$Overflow, [int]$ExitCode) {
+    return (-not $WaitExpired -and $Drained -and -not $TimedOut -and -not $Overflow -and $ExitCode -eq 0)
+}
 function Invoke-EntryBoundedHelper($Start, [int]$Milliseconds, [int]$MaxBytes = 512) {
     if ($MaxBytes -notin @(512,4096)) { throw 'Unreviewed helper output bound.' }
-    # Reuse the existing byte-bounded held-process supervisor; this selects no welcome behavior.
-    . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
-    Initialize-LiveSupervisor
-    $child=$null
+    $child=$null; $output=$null; $failed=$false
+    $evidence=[ordered]@{start='not-attempted';waitExpired=$false;timerExpired=$false;
+        overflowOrReadError=$false;streamsCompleted=$false;exit='unavailable';
+        phase='not-reported';cleanup='not-attempted'}
     try {
+        # Reuse the existing byte-bounded held-process supervisor; this selects no welcome behavior.
+        . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
+        Initialize-LiveSupervisor
+        # These helpers accept no stdin. Own and close it rather than inheriting runner input.
+        $Start.RedirectStandardInput=$true
+        # Construction can throw after Process.Start but before returning ownership.
+        $evidence.start='uncertain'
         $child=[DesktopLive.BoundedProcess]::new($Start,$MaxBytes,$Milliseconds)
+        $evidence.start='confirmed'
+        $child.CloseInput()
         if (-not $child.Wait($Milliseconds)) {
+            $evidence.waitExpired=$true
             $child.Stop()
             if (-not $child.Wait(5000)) { $script:entryHelperExitUnconfirmed=$true; throw 'Native entry helper exit unconfirmed.' }
         }
         if (-not $child.Exited) { $script:entryHelperExitUnconfirmed=$true; throw 'Native entry helper exit unconfirmed.' }
         $watch=[Diagnostics.Stopwatch]::StartNew()
         while (-not $child.Drained -and $watch.Elapsed.TotalSeconds -lt 2) { Start-Sleep -Milliseconds 20 }
-        if (-not $child.Drained -or $child.TimedOut -or $child.Overflow -or $child.ExitCode -ne 0) {
+        if (-not (Test-EntryHelperSucceeded $evidence.waitExpired $child.Drained $child.TimedOut $child.Overflow $child.ExitCode)) {
             throw 'Native entry helper failed or exceeded its deadline/output bound.'
         }
-        return $child.Output.Trim()
+        $output=$child.Output.Trim()
+    } catch {
+        # The exception may contain private paths or child output. Publish only fixed evidence.
+        $failed=$true
     } finally {
         if ($null -ne $child) {
-            $child.Stop()
-            if (-not $child.Wait(5000) -or -not $child.Exited) { $script:entryHelperExitUnconfirmed=$true }
-            $child.Dispose()
+            try {
+                $child.Stop()
+                if (-not $child.Wait(5000) -or -not $child.Exited) {
+                    $script:entryHelperExitUnconfirmed=$true; $failed=$true; $evidence.cleanup='unconfirmed'
+                } else { $evidence.cleanup='exit-confirmed' }
+            } catch {
+                $script:entryHelperExitUnconfirmed=$true; $failed=$true; $evidence.cleanup='unconfirmed'
+            } finally {
+                try {
+                    $evidence.timerExpired=$child.TimedOut
+                    # The shared supervisor uses this bit for overflow OR a stream read exception.
+                    $evidence.overflowOrReadError=$child.Overflow
+                    $evidence.streamsCompleted=$child.Drained
+                    if ($child.Exited) { $evidence.exit=$(if ($child.ExitCode -eq 0) { 'zero' } else { 'nonzero' }) }
+                    $evidence.phase=Get-EntryHelperPhase $child.Output
+                } catch {
+                    $failed=$true
+                } finally {
+                    try { $child.Dispose() } catch { $failed=$true; $evidence.cleanup='unconfirmed' }
+                }
+            }
+        } elseif ($evidence.start -ceq 'uncertain') {
+            # No returned handle: do not guess a PID or claim that no process was started.
+            $script:entryHelperExitUnconfirmed=$true; $failed=$true; $evidence.cleanup='unconfirmed'
         }
+        $script:entryLastHelperEvidence=$evidence
     }
+    if ($failed) {
+        Write-Host ('ENTRY_HELPER_FAILURE='+($evidence | ConvertTo-Json -Compress))
+        throw 'Native entry helper failed; see fixed supervision evidence.'
+    }
+    return $output
 }
 function Send-EntryEnvironmentChange {
     # SendMessageTimeout's timeout is per window, not total. Bound the helper instead.

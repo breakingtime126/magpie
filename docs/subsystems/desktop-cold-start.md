@@ -186,16 +186,15 @@ the guard.
 most four matching PIDs through a bounded private input file. A separate
 allowlisted helper has a 30-second execution deadline and a 4 KiB output bound;
 input is capped at 16 KiB. Each opened process handle requests only query-limited
-and synchronize rights. Package identity, creation time and executable image
+and synchronize rights. Package identity and executable image
 come from that same held handle. PIDs are reopened after the initial guard scan,
 so these records describe the current process at each matching PID, not proof
 of the original scanned generation. `originalGenerationVerified` is always
 false; no causal attribution or exemption follows from PID reuse assumptions. An `observed` record requires the expected
 package to be revalidated and the process to stay alive throughout the reads.
-A parent PID is queried while that child is pinned and alive, then the parent
-is separately pinned. Parent creation must predate the child and both must
-remain alive; a newer reused PID is unverified. An exact match to the harness's
-PID and full creation time is a separate fixed relation label.
+This minimal observation does not query CIM, parent PIDs, creation times or
+lineage. Those fields were removed because identifying the exact current
+package-associated image does not require them and cannot grant any exemption.
 
 Only closed labels, booleans and counts leave the helper. Image labels compare
 exact paths under the verified install root against the three pinned manifest
@@ -214,10 +213,36 @@ identify the observed process. Deciding whether a package-associated broker can
 coexist with a genuine fresh Desktop launch requires interpreting this one result,
 not automatically excluding it. New fixtures cover exact-path classification,
 manifest changes, raw-field rejection, portable Int32/Int64 JSON integers
-(with bool/double/string rejected), stale parent generations, query-only
+(with bool/double/string rejected), forbidden parent/raw fields, query-only
 native interop, the complete bounded helper against an owned non-package test
 process, the observation cap and unconditional stops before activation
 or environment writes. These new changes still need exact-head Windows execution.
+
+At `062aaa9a`, the first PowerShell 7 safety invocation stopped in the bounded
+helper's shared failure check before the observation VM could run. The old log
+did not separate deadline, stream completion, overflow or nonzero exit, so its
+roughly 37-second elapsed interval does not identify the failing operation.
+The helper now emits only fixed supervision evidence: start state, wait/timer
+deadline flags, stream completion, zero/nonzero/unavailable exit and confirmed
+cleanup. The shared supervisor's overflow bit also covers stream read errors,
+so it is explicitly named `overflowOrReadError`, not asserted to prove excess
+bytes. No raw child output, stderr, exception text, process input or path is logged.
+If supervisor construction throws before returning a held object, start and
+cleanup remain uncertain and the exit-unconfirmed flag is set. The caller does
+not infer a harmless pre-start failure or search for a PID to terminate.
+Fixed fixture labels locate a failing safety check. Ordered observation phase
+frames distinguish input validation, native interop, held-image/package reads and
+report completion; only a strict frame grammar followed by the original
+canonical validated JSON can succeed. Partial markers are not completed phases.
+All deadlines and byte limits remain unchanged. An expired bounded wait cannot
+pass because a process later exits zero before
+the timer callback fires. No-input helpers now receive
+explicit stdin EOF; this is lifecycle hygiene, not an established explanation
+for the failed run. Removing the unnecessary parent/CIM reads reduces scope;
+it does not establish that those reads caused the prior failure. Fixtures cover
+EOF, nonzero exit, deadline and byte overflow,
+redaction and malformed frames. Exact-head Windows execution remains required;
+no observation, environment inheritance or successful activation is claimed.
 
 The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
 allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving

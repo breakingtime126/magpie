@@ -200,8 +200,15 @@ Pass ((Get-EntryOutcome 'treatment' 1 1 0 $true $false $false $true) -ceq 'clean
 Pass ((Get-EntryOutcome 'treatment' 1 1 0 $true $true $true $true) -ceq 'cleanup-unconfirmed') 'cleanup error cannot pass'
 Pass ((Get-EntryOutcome 'treatment' 1 1 0 $true $true $false $false) -ceq 'capture-failed') 'earlier observation failure cannot pass'
 # Exercise real bounded helper lifecycle without registry, package, network or UI operations.
+Pass (Test-EntryHelperSucceeded $false $true $false $false 0) 'completed zero exit within every bound is accepted'
+Pass (-not (Test-EntryHelperSucceeded $true $true $false $false 0)) 'expired bounded wait rejects later zero exit even if timer callback is delayed'
+Pass (-not (Test-EntryHelperSucceeded $false $false $false $false 0)) 'unfinished streams reject zero exit'
+Pass (-not (Test-EntryHelperSucceeded $false $true $true $false 0)) 'timer deadline rejects zero exit'
+Pass (-not (Test-EntryHelperSucceeded $false $true $false $true 0)) 'overflow or read error rejects zero exit'
+Pass (-not (Test-EntryHelperSucceeded $false $true $false $false 7)) 'nonzero exit rejects otherwise complete helper'
 $hostPath=(Get-Process -Id $PID).Path
-foreach ($fixture in @('normal','overflow','timeout')) {
+foreach ($fixture in @('normal','stdin-eof','nonzero','overflow','timeout')) {
+    Write-Output ('ENTRY_SAFETY_FIXTURE=bounded-'+$fixture)
     $start=New-Object Diagnostics.ProcessStartInfo
     $start.FileName=$hostPath; $start.UseShellExecute=$false; $start.CreateNoWindow=$true
     $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
@@ -211,17 +218,53 @@ foreach ($fixture in @('normal','overflow','timeout')) {
         if ($value) { $start.EnvironmentVariables[$name]=$value }
     }
     $command="[Console]::WriteLine('fixture-ok')"; $deadline=10000
+    if ($fixture -ceq 'stdin-eof') { $command="if ([Console]::In.ReadToEnd().Length -ne 0) { exit 2 }; [Console]::WriteLine('fixture-eof')" }
+    if ($fixture -ceq 'nonzero') { $command="[Console]::Out.WriteLine('private-output-fixture'); [Console]::Error.WriteLine('private-error-fixture'); exit 7" }
     if ($fixture -ceq 'overflow') { $command="[Console]::Write(('x' * 4096))" }
     if ($fixture -ceq 'timeout') { $command='Start-Sleep -Seconds 30'; $deadline=1000 }
     $start.Arguments='-NoProfile -NonInteractive -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $script:entryHelperExitUnconfirmed=$false
     if ($fixture -ceq 'normal') { Pass ((Invoke-EntryBoundedHelper $start $deadline) -ceq 'fixture-ok') 'bounded helper normal output' }
+    elseif ($fixture -ceq 'stdin-eof') { Pass ((Invoke-EntryBoundedHelper $start $deadline) -ceq 'fixture-eof') 'no-input helper receives EOF rather than runner stdin' }
     else { Reject { Invoke-EntryBoundedHelper $start $deadline } ('bounded helper rejects '+$fixture) }
     Pass (-not $script:entryHelperExitUnconfirmed) 'owned helper exit confirmed after success or failure'
+    $helperEvidence=$script:entryLastHelperEvidence
+    Pass ($helperEvidence.Count -eq 8 -and $helperEvidence.start -ceq 'confirmed' -and $helperEvidence.cleanup -ceq 'exit-confirmed' -and
+        $helperEvidence.phase -ceq 'not-reported' -and $helperEvidence.streamsCompleted) 'helper records fixed lifecycle evidence'
+    Pass (($helperEvidence | ConvertTo-Json -Compress) -notmatch 'private-output-fixture|private-error-fixture|FileName|Arguments') 'helper diagnostics exclude raw output and process inputs'
+    if ($fixture -cin @('normal','stdin-eof','nonzero')) {
+        Pass (-not $helperEvidence.waitExpired -and -not $helperEvidence.timerExpired -and -not $helperEvidence.overflowOrReadError) 'normal and nonzero exits are not relabeled deadline or overflow'
+        $expectedExit='zero'; if ($fixture -ceq 'nonzero') { $expectedExit='nonzero' }
+        Pass ($helperEvidence.exit -ceq $expectedExit) 'helper zero and nonzero exits stay distinct'
+    } elseif ($fixture -ceq 'overflow') {
+        Pass $helperEvidence.overflowOrReadError 'real byte overflow retains its dedicated flag'
+    } else {
+        Pass ($helperEvidence.waitExpired -or $helperEvidence.timerExpired) 'timeout retains wait or timer deadline evidence'
+        Pass (-not $helperEvidence.overflowOrReadError) 'timeout is not reported as byte overflow'
+    }
 }
+Write-Output 'ENTRY_SAFETY_FIXTURE=helper-construction-boundary'
+$script:entryHelperExitUnconfirmed=$false
+Reject { Invoke-EntryBoundedHelper ([pscustomobject]@{}) 10000 } 'pre-construction setup failure is sanitized'
+Pass ($script:entryLastHelperEvidence.start -ceq 'not-attempted' -and
+    $script:entryLastHelperEvidence.cleanup -ceq 'not-attempted' -and -not $script:entryHelperExitUnconfirmed) 'failure before construction does not claim a child'
+$missingStart=New-Object Diagnostics.ProcessStartInfo
+$missingStart.FileName=Join-Path ([IO.Path]::GetTempPath()) ('entry-missing-'+[guid]::NewGuid().ToString('N')+'.exe')
+$missingStart.UseShellExecute=$false; $missingStart.RedirectStandardOutput=$true; $missingStart.RedirectStandardError=$true
+$missingStart.EnvironmentVariables.Clear()
+Pass (-not (Test-Path -LiteralPath $missingStart.FileName)) 'constructor-failure fixture executable is absent'
+Reject { Invoke-EntryBoundedHelper $missingStart 10000 } 'constructor failure is sanitized'
+Pass ($script:entryLastHelperEvidence.start -ceq 'uncertain' -and
+    $script:entryLastHelperEvidence.cleanup -ceq 'unconfirmed' -and $script:entryHelperExitUnconfirmed) 'constructor failure cannot prove no process started or cleaned up'
+# This fixture verified an absent executable, so no actual process was created.
+# Only its conservative wrapper flag is reset; no unknown process is queried or killed.
+$script:entryHelperExitUnconfirmed=$false
+Pass ((Get-EntryHelperPhase "ENTRY_PHASE=started`nENTRY_PHASE=input_validated`nENTRY_PHASE=interop") -ceq 'input_validated') 'partial marker cannot imply completed phase'
+Pass ((Get-EntryHelperPhase "ENTRY_PHASE=started`nprivate-output-fixture`nENTRY_PHASE=output_ready`n") -ceq 'started') 'phase scan stops before arbitrary output'
 # Compile and exercise the actual Windows observer in the matrix's host. The fixture
 # waits for stdin EOF instead of racing a short sleep; all handles/processes are owned.
 if ($PSVersionTable.PSEdition -ceq 'Desktop') {
+    Write-Output 'ENTRY_SAFETY_FIXTURE=image-observer'
     Initialize-EntryImageObserver
     $observer=$null; $fixtureProcess=$null
     try {
@@ -269,13 +312,31 @@ Pass ((Get-EntryImageLabel 'C:\unreported-private-path\RuntimeBroker.exe' $image
 $applications[0].executable='app/unknown.exe'
 Reject { Get-EntryKnownImages 'C:\fixture-package' 'C:\Windows' $applications } 'changed manifest path rejected'
 $applications[0].executable='app/ChatGPT.exe'
-Pass ((Get-EntryParentRelation 200 100 $true $true 42 42 100) -ceq 'harness') 'exact harness parent generation'
-Pass ((Get-EntryParentRelation 200 100 $true $true 43 42 100) -ceq 'held-parent-predates-child') 'held parent existed before child'
-Pass ((Get-EntryParentRelation 200 300 $true $true 42 42 100) -ceq 'unverified') 'reused newer parent PID is not lineage'
-Pass ((Get-EntryParentRelation 200 200 $true $true 42 42 100) -ceq 'unverified') 'equal creation timestamps cannot prove parent generation'
-Pass ((Get-EntryParentRelation 200 100 $false $true 42 42 100) -ceq 'unverified') 'exited child prevents parent proof'
-$observation='{"schema":1,"scope":"freshness-observation-only","matches":1,"truncated":false,"originalGenerationVerified":false,"records":[{"status":"observed","image":"windows_runtime_broker","package":"expected","liveThroughout":true,"parentImage":"windows_service_host","parentPackage":"none","parentRelation":"held-parent-predates-child"}]}' | ConvertFrom-Json
+$observation='{"schema":1,"scope":"freshness-observation-only","matches":1,"truncated":false,"originalGenerationVerified":false,"records":[{"status":"observed","image":"windows_runtime_broker","package":"expected","liveThroughout":true}]}' | ConvertFrom-Json
 Assert-EntryObservation $observation 1
+$canonical=$observation | ConvertTo-Json -Depth 6 -Compress
+$prefix="ENTRY_PHASE=started`nENTRY_PHASE=input_validated`nENTRY_PHASE=interop_ready`n"
+$recordFrames="ENTRY_PHASE=record_started`nENTRY_PHASE=record_finished`n"
+$framed=$prefix+$recordFrames+"ENTRY_PHASE=output_ready`n"+$canonical
+Pass ((ConvertFrom-EntryObservationOutput $framed 1).records[0].image -ceq 'windows_runtime_broker') 'ordered phase frames preserve the canonical validated report'
+$invalidJsonError=''
+try { $null=ConvertFrom-EntryObservationOutput ($prefix+$recordFrames+"ENTRY_PHASE=output_ready`n"+'{"private-output-fixture":') 1 }
+catch { $invalidJsonError=$_.Exception.Message }
+Pass ($invalidJsonError -ceq 'Invalid observation JSON.') 'JSON parser failure cannot publish raw helper output'
+foreach ($invalidFrames in @(
+    $framed.Replace('ENTRY_PHASE=interop_ready','ENTRY_PHASE=private-unreported'),
+    $framed.Replace("ENTRY_PHASE=interop_ready`n", "ENTRY_PHASE=interop_ready`nENTRY_PHASE=interop_ready`n"),
+    $framed.Replace("ENTRY_PHASE=record_finished`n",''),
+    ("private-output-fixture`n"+$framed), ($framed+"`nprivate-output-fixture"),
+    $framed.Replace($canonical,(' '+$canonical)),
+    ($prefix+"ENTRY_PHASE=output_ready`n"+$canonical))) {
+    Reject { ConvertFrom-EntryObservationOutput $invalidFrames 1 } 'unknown reordered missing or raw output frames fail closed'
+}
+$four=$canonical | ConvertFrom-Json
+$four.matches=4; $four.records=@($four.records[0],$four.records[0],$four.records[0],$four.records[0])
+$fourFrames=$prefix+($recordFrames*4)+"ENTRY_PHASE=output_ready`n"+($four | ConvertTo-Json -Depth 6 -Compress)
+Pass ([Text.Encoding]::UTF8.GetByteCount($fourFrames) -lt 4096 -and
+    (ConvertFrom-EntryObservationOutput $fourFrames 4).records.Count -eq 4) 'four complete phase records fit the unchanged output bound'
 foreach ($invalidInteger in @([double]1,'1',$true)) {
     $observation.schema=$invalidInteger; Reject { Assert-EntryObservation $observation 1 } 'JSON schema rejects floating string and boolean types'
     $observation.schema=[long]1; $observation.matches=$invalidInteger
@@ -288,15 +349,15 @@ Reject { Assert-EntryObservation $observation 1 } 'reopened PID cannot claim ori
 $observation.originalGenerationVerified=$false
 $observation.records[0].image=@('windows_runtime_broker')
 Reject { Assert-EntryObservation $observation 1 } 'label array is not a fixed string'
-$observation.records[0].image='windows_runtime_broker'; $observation.records[0].parentRelation='unverified'
-Reject { Assert-EntryObservation $observation 1 } 'unverified parent cannot retain classified metadata'
-$observation.records[0].parentRelation='held-parent-predates-child'
 $observation.records[0].image='C:\unreported-private-path'; Reject { Assert-EntryObservation $observation 1 } 'observation rejects raw image path'
 $observation.records[0].image='windows_runtime_broker'; $observation.records[0].package='other'
 Reject { Assert-EntryObservation $observation 1 } 'observed matched package must be revalidated through held handle'
 $observation.records[0].package='expected'; $observation.records[0].liveThroughout=$false
 Reject { Assert-EntryObservation $observation 1 } 'exit before metadata completion remains unavailable'
 $observation.records[0].liveThroughout=$true
+$observation.records[0] | Add-Member NoteProperty parentRelation 'unverified'
+Reject { Assert-EntryObservation $observation 1 } 'parent metadata is outside the minimal observation contract'
+$observation.records[0].PSObject.Properties.Remove('parentRelation')
 $observation.records[0] | Add-Member NoteProperty commandLine 'unreported'
 Reject { Assert-EntryObservation $observation 1 } 'observation rejects extra private fields'
 $matchedIds=[Collections.Generic.List[int]]::new()
@@ -307,8 +368,7 @@ Initialize-EntryHeldObservation
 $heldSelf=$null
 try {
     $heldSelf=[DesktopEntryReadOnly.Held]::new($PID)
-    Pass ($heldSelf.Alive -and $heldSelf.ImagePath -ieq $hostPath -and
-        $heldSelf.CreatedTicks -eq (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks) 'query-only held handle captures exact current process metadata'
+    Pass ($heldSelf.Alive -and $heldSelf.ImagePath -ieq $hostPath) 'query-only held handle captures exact current image metadata'
     Pass ($heldSelf.PackageRelation('fixture.package') -cin @('none','other')) 'package query does not invent expected identity'
 } finally { if ($null -ne $heldSelf) { $heldSelf.Dispose() } }
 # Exercise the complete helper/JSON path against only this owned test process.
@@ -317,11 +377,13 @@ try {
 $observationScratch=Join-Path ([IO.Path]::GetTempPath()) ('entry-observation-test-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $observationScratch | Out-Null
 try {
+    Write-Output 'ENTRY_SAFETY_FIXTURE=observation-owned-process'
     $selfIds=[Collections.Generic.List[int]]::new(); $selfIds.Add($PID)
     $selfObservation=Invoke-EntryFreshnessObservation $selfIds 1 'OpenAI.Codex_26.1103.3517.0_x64__2p2nqsd0c76g0' `
         'C:\fixture-package' $applications $observationScratch
     Pass ($selfObservation.records.Count -eq 1 -and $selfObservation.records[0].status -ceq 'unavailable' -and
         $selfObservation.records[0].package -cin @('none','other') -and -not $selfObservation.originalGenerationVerified) 'complete bounded observation helper preserves unavailable package identity'
+    Pass ($script:entryLastHelperEvidence.phase -ceq 'output_ready' -and $script:entryLastHelperEvidence.exit -ceq 'zero') 'real helper completes the fixed observation protocol'
 } finally { Remove-Item -LiteralPath $observationScratch -Recurse -Force }
 # Observation-only mode has two unconditional stop paths before environment writes or activation.
 $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'))
@@ -335,6 +397,7 @@ Pass ($observationOffset -gt 0 -and $strictBlock -gt $observationOffset -and $ze
 # A separate live fixture remains a blocker, and is never passed to that cleanup.
 $exitedFixture=$null; $liveFixture=$null
 try {
+    Write-Output 'ENTRY_SAFETY_FIXTURE=owned-probe-lifetime'
     $lifetimeStart=New-Object Diagnostics.ProcessStartInfo
     $lifetimeStart.FileName=$hostPath; $lifetimeStart.UseShellExecute=$false; $lifetimeStart.CreateNoWindow=$true
     $lifetimeStart.RedirectStandardInput=$true

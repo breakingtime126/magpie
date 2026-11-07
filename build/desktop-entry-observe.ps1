@@ -40,13 +40,6 @@ function Get-EntryImageLabel([string]$Path, $Images) {
     }
     return 'other'
 }
-function Get-EntryParentRelation([long]$ChildCreated, [long]$ParentCreated, [bool]$ChildAlive,
-    [bool]$ParentAlive, [int]$ParentId, [int]$HarnessId, [long]$HarnessCreated) {
-    if (-not $ChildAlive -or -not $ParentAlive -or $ParentCreated -le 0 -or
-        $ChildCreated -le 0 -or $ParentCreated -ge $ChildCreated) { return 'unverified' }
-    if ($ParentId -eq $HarnessId -and $ParentCreated -eq $HarnessCreated) { return 'harness' }
-    return 'held-parent-predates-child'
-}
 function Initialize-EntryHeldObservation {
     if ('DesktopEntryReadOnly.Held' -as [type]) { return }
     Add-Type -TypeDefinition @'
@@ -59,7 +52,6 @@ namespace DesktopEntryReadOnly {
   [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint id);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr value);
   [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr value,uint milliseconds);
-  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetProcessTimes(IntPtr value,out long created,out long exited,out long kernel,out long user);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
   static extern bool QueryFullProcessImageName(IntPtr value,uint flags,StringBuilder path,ref uint size);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode)]
@@ -71,11 +63,6 @@ namespace DesktopEntryReadOnly {
    if(handle==IntPtr.Zero)throw new InvalidOperationException();
   }
   public bool Alive {get {return handle!=IntPtr.Zero && WaitForSingleObject(handle,0)==258;}}
-  public long CreatedTicks {get {
-   long created,exited,kernel,user;
-   if(!GetProcessTimes(handle,out created,out exited,out kernel,out user))throw new InvalidOperationException();
-   return DateTime.FromFileTimeUtc(created).Ticks;
-  }}
   public string ImagePath {get {
    uint size=32768;var path=new StringBuilder((int)size);
    if(!QueryFullProcessImageName(handle,0,path,ref size) || size==0)throw new InvalidOperationException();
@@ -94,41 +81,27 @@ namespace DesktopEntryReadOnly {
 }
 '@
 }
-function Read-EntryMatchedProcess([int]$ProcessId, [string]$Package, $Images, [int]$HarnessId, [long]$HarnessCreated) {
-    $record=[ordered]@{status='unavailable';image='unavailable';package='unavailable';liveThroughout=$false;
-        parentImage='unavailable';parentPackage='unavailable';parentRelation='unverified'}
-    $child=$null; $parent=$null
+function Write-EntryObservationPhase([string]$Phase) {
+    if ($Phase -cnotin @('started','input_validated','interop_ready','record_started','record_finished','output_ready')) {
+        throw 'Invalid observation phase.'
+    }
+    [Console]::Out.WriteLine('ENTRY_PHASE='+$Phase)
+    [Console]::Out.Flush()
+}
+function Read-EntryMatchedProcess([int]$ProcessId, [string]$Package, $Images, [switch]$ReportPhase) {
+    $record=[ordered]@{status='unavailable';image='unavailable';package='unavailable';liveThroughout=$false}
+    $child=$null
     try {
+        if ($ReportPhase) { Write-EntryObservationPhase 'record_started' }
         $child=[DesktopEntryReadOnly.Held]::new($ProcessId)
         if (-not $child.Alive) { throw 'Process observation unavailable.' }
         $record.image=Get-EntryImageLabel $child.ImagePath $Images
         $record.package=$child.PackageRelation($Package)
-        # Read parent ID while the child handle is pinned and confirmed alive before/after.
-        $rows=@(Get-CimInstance Win32_Process -Filter ("ProcessId="+$ProcessId) -OperationTimeoutSec 3 -ErrorAction Stop)
-        if ($rows.Count -ne 1 -or -not $child.Alive) { throw 'Process observation unavailable.' }
-        try {
-            $parent=[DesktopEntryReadOnly.Held]::new([int]$rows[0].ParentProcessId)
-            $relation=Get-EntryParentRelation $child.CreatedTicks $parent.CreatedTicks $child.Alive $parent.Alive `
-                ([int]$rows[0].ParentProcessId) $HarnessId $HarnessCreated
-            if ($relation -cne 'unverified') {
-                $record.parentImage=Get-EntryImageLabel $parent.ImagePath $Images
-                $record.parentPackage=$parent.PackageRelation($Package)
-                # Recheck liveness after all metadata reads; no cached PID-only identity.
-                if ($child.Alive -and $parent.Alive) { $record.parentRelation=$relation }
-            }
-        } catch { }
-        $record.package=$child.PackageRelation($Package)
         $record.liveThroughout=$child.Alive
-        if (-not $record.liveThroughout) { $record.parentRelation='unverified' }
         if ($record.liveThroughout -and $record.package -ceq 'expected') { $record.status='observed' }
     } catch { }
-    finally {
-        try { if ($null -ne $parent) { $parent.Dispose() } }
-        finally { if ($null -ne $child) { $child.Dispose() } }
-    }
-    if ($record.status -cne 'observed' -or $record.parentRelation -ceq 'unverified') {
-        $record.parentRelation='unverified'; $record.parentImage='unavailable'; $record.parentPackage='unavailable'
-    }
+    finally { if ($null -ne $child) { $child.Dispose() } }
+    if ($ReportPhase) { Write-EntryObservationPhase 'record_finished' }
     return $record
 }
 function Test-EntryIntegralRange($Value, [long]$Minimum, [long]$Maximum) {
@@ -149,24 +122,33 @@ function Assert-EntryObservation($Value, [int]$ExpectedMatches) {
         'package_codex_executable','windows_runtime_broker','windows_background_task_host','windows_application_frame_host',
         'windows_service_host','windows_com_surrogate','windows_explorer')
     foreach ($record in $Value.records) {
-        Shape $record @('status','image','package','liveThroughout','parentImage','parentPackage','parentRelation')
-        foreach ($field in @('status','image','package','parentImage','parentPackage','parentRelation')) {
+        Shape $record @('status','image','package','liveThroughout')
+        foreach ($field in @('status','image','package')) {
             if ($record.$field -isnot [string]) { throw 'Invalid observation label type.' }
         }
-        if (($record.parentRelation -ceq 'unverified' -and
-            ($record.parentImage -cne 'unavailable' -or $record.parentPackage -cne 'unavailable')) -or
-            ($record.parentRelation -cne 'unverified' -and
-            ($record.status -cne 'observed' -or -not $record.liveThroughout -or $record.parentImage -ceq 'unavailable'))) {
-            throw 'Unverified parent metadata cannot imply a verified relationship.'
-        }
         if (@('observed','unavailable') -cnotcontains $record.status -or $labels -cnotcontains $record.image -or
-            $labels -cnotcontains $record.parentImage -or @('expected','other','none','unavailable') -cnotcontains $record.package -or
-            @('expected','other','none','unavailable') -cnotcontains $record.parentPackage -or
-            @('unverified','harness','held-parent-predates-child') -cnotcontains $record.parentRelation -or
+            @('expected','other','none','unavailable') -cnotcontains $record.package -or
             $record.liveThroughout -isnot [bool] -or ($record.status -ceq 'observed' -and (-not $record.liveThroughout -or $record.package -cne 'expected' -or $record.image -ceq 'unavailable'))) {
             throw 'Invalid fixed observation labels.'
         }
     }
+}
+function ConvertFrom-EntryObservationOutput([string]$Text, [int]$ExpectedMatches) {
+    # Ordered fixed frames followed by exactly one canonical JSON line. Unknown, repeated,
+    # reordered or raw lines cannot become part of the published report.
+    $record='ENTRY_PHASE=record_started\r?\nENTRY_PHASE=record_finished\r?\n'
+    $pattern='\AENTRY_PHASE=started\r?\nENTRY_PHASE=input_validated\r?\nENTRY_PHASE=interop_ready\r?\n(?<records>(?:'+$record+'){0,4})ENTRY_PHASE=output_ready\r?\n(?<json>[^\r\n]+)\z'
+    if ([Text.Encoding]::UTF8.GetByteCount($Text) -gt 4096) { throw 'Observation output exceeds its bound.' }
+    $frames=[regex]::Match($Text,$pattern)
+    if (-not $frames.Success -or [regex]::Matches($frames.Groups['records'].Value,'ENTRY_PHASE=record_started').Count -ne [Math]::Min(4,$ExpectedMatches)) {
+        throw 'Invalid fixed observation frames.'
+    }
+    $json=$frames.Groups['json'].Value
+    try { $value=$json | ConvertFrom-Json }
+    catch { throw 'Invalid observation JSON.' }
+    Assert-EntryObservation $value $ExpectedMatches
+    if (($value | ConvertTo-Json -Depth 6 -Compress) -cne $json) { throw 'Noncanonical observation output.' }
+    return $value
 }
 function Invoke-EntryFreshnessObservation($ProcessIds, [int]$Matches, [string]$Package, [string]$PackageRoot,
     $Applications, [string]$Work) {
@@ -174,21 +156,19 @@ function Invoke-EntryFreshnessObservation($ProcessIds, [int]$Matches, [string]$P
     $inputValue=[ordered]@{schema=1;processIds=@($ProcessIds | ForEach-Object { [int]$_ });matches=$Matches;package=$Package;
         packageRoot=$PackageRoot;windowsRoot=$env:SystemRoot;applications=@($Applications | ForEach-Object {
             [ordered]@{id=$_.id;executable=$_.executable}
-        });harnessId=$PID;harnessCreated=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks}
+        })}
     [IO.File]::WriteAllText($inputFile,($inputValue | ConvertTo-Json -Depth 6 -Compress),(New-Object Text.UTF8Encoding($false)))
     $script=Join-Path $PSScriptRoot 'desktop-entry-observe.ps1'
     if ($inputFile.Contains('"')) { throw 'Invalid owned observation input.' }
     $start=New-EntryActivationStart $script 'OpenAI.Codex_test!Test'
     $start.Arguments='-NoProfile -NonInteractive -File "'+$script+'" -InputPath "'+$inputFile+'"'
     $text=Invoke-EntryBoundedHelper $start 30000 4096
-    $value=$text | ConvertFrom-Json
-    Assert-EntryObservation $value $Matches
-    if (($value | ConvertTo-Json -Depth 6 -Compress) -cne $text) { throw 'Noncanonical observation output.' }
-    return $value
+    return ConvertFrom-EntryObservationOutput $text $Matches
 }
 if ([string]::IsNullOrEmpty($InputPath)) { return }
 $ErrorActionPreference='Stop'
 try {
+    Write-EntryObservationPhase 'started'
     $file=Get-Item -LiteralPath $InputPath
     if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -lt 1 -or $file.Length -gt 16384) { throw 'input' }
     $stream=[IO.File]::OpenRead($InputPath)
@@ -204,17 +184,19 @@ try {
     if (-not (Test-EntryIntegralRange $inputValue.schema 1 1) -or $inputValue.package -cne 'OpenAI.Codex_26.1103.3517.0_x64__2p2nqsd0c76g0' -or
         $inputValue.windowsRoot -ine $env:SystemRoot -or -not (Test-EntryIntegralRange $inputValue.matches 0 65536) -or
         $inputValue.processIds -isnot [array] -or
-        $inputValue.processIds.Count -ne [Math]::Min(4,$inputValue.matches) -or
-        -not (Test-EntryIntegralRange $inputValue.harnessId 1 2147483647) -or
-        -not (Test-EntryIntegralRange $inputValue.harnessCreated 1 ([DateTime]::MaxValue.Ticks))) { throw 'input' }
+        $inputValue.processIds.Count -ne [Math]::Min(4,$inputValue.matches)) { throw 'input' }
     foreach ($processId in $inputValue.processIds) { if (-not (Test-EntryIntegralRange $processId 1 2147483647)) { throw 'input' } }
     $images=Get-EntryKnownImages $inputValue.packageRoot $inputValue.windowsRoot $inputValue.applications
+    Write-EntryObservationPhase 'input_validated'
     Initialize-EntryHeldObservation
+    Write-EntryObservationPhase 'interop_ready'
     $records=@(foreach ($processId in $inputValue.processIds) {
-        Read-EntryMatchedProcess $processId $inputValue.package $images $inputValue.harnessId $inputValue.harnessCreated
+        Read-EntryMatchedProcess $processId $inputValue.package $images -ReportPhase
     })
     $result=[ordered]@{schema=1;scope='freshness-observation-only';matches=$inputValue.matches;
         truncated=($inputValue.matches -gt 4);originalGenerationVerified=$false;records=$records}
-    $result | ConvertTo-Json -Depth 6 -Compress
+    $json=$result | ConvertTo-Json -Depth 6 -Compress
+    Write-EntryObservationPhase 'output_ready'
+    [Console]::Out.WriteLine($json)
     exit 0
 } catch { Write-Output 'freshness-observation-unavailable'; exit 1 }
