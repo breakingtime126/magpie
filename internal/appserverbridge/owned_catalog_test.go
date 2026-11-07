@@ -35,6 +35,17 @@ func ownedTestSetup(t *testing.T) (*Router, string, []object) {
 	if err := os.WriteFile(path, raw(object{"models": raw(models)}), 0600); err != nil {
 		t.Fatal(err)
 	}
+	created, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows may expand a short temp-directory name or normalize its case.
+	// Derive the expected published spelling independently of the loader.
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedPath := filepath.Join(parent, filepath.Base(path))
 	backends := []Backend{{ID: "one", Provider: "native_one"}, {ID: "two", Provider: "native_two"}}
 	r, err := NewRouter(backends)
 	if err != nil {
@@ -44,11 +55,14 @@ func ownedTestSetup(t *testing.T) (*Router, string, []object) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if r.ownedCatalog.path != expectedPath || !os.SameFile(created, r.ownedCatalog.identity) {
+		t.Fatal("loaded owned catalog does not name the original fixture file")
+	}
 	if err := r.enableControlPlane167(); err != nil {
 		t.Fatal(err)
 	}
 	r.phase = "ready"
-	return r, path, models
+	return r, expectedPath, models
 }
 
 // These fixed wire fixtures are independently authored from the public c407
