@@ -131,7 +131,8 @@ function ConvertTo-WinAppSummary([string]$Text,[long]$RequestedWindow) {
         headingExactCount=0;headingWhitespaceNormalizedCount=0;engineeringCount=0;suggestionsCount=0;continueCount=0;
         headingVisibleCount=0;engineeringVisibleCount=0;suggestionsVisibleCount=0;continueVisibleCount=0;
         engineeringInvokableCount=0;suggestionsInvokableCount=0;continueInvokableCount=0;loginMarkerCount=0;protectedMarkerCount=0;errorMarkerCount=0;
-        requiredTargetStatus='missing';requiredTargetVisibility='missing-or-offscreen'}
+        requiredTargetStatus='missing';requiredTargetVisibility='missing-or-offscreen';
+        loginAssessment='unknown-requires-visual-review'}
     $pending=[Collections.Generic.Stack[object]]::new()
     foreach ($node in $win.elements) { $pending.Push(@($node,0)) }
     $optional=@('name','automationId','className','selector','value','toggleState','expandState','scrollDir','children','hasMoreChildren')
@@ -184,6 +185,9 @@ function ConvertTo-WinAppSummary([string]$Text,[long]$RequestedWindow) {
         }
     }
     if ($summary.nodeCount -ne $win.elementCount) { throw 'Inspection node count mismatch.' }
+    # Names may be omitted, incomplete, or from the CLI's fallback root. Zero
+    # matched names cannot establish that the visible window has no login UI.
+    if ($summary.loginMarkerCount -gt 0) { $summary.loginAssessment='login-marker-observed' }
     if ($summary.headingExactCount -gt 0 -and $summary.engineeringCount -gt 0 -and
         $summary.suggestionsCount -gt 0 -and $summary.continueCount -gt 0) { $summary.requiredTargetStatus='present' }
     if ($summary.headingVisibleCount -gt 0 -and $summary.engineeringVisibleCount -gt 0 -and

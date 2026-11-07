@@ -4,6 +4,30 @@ This CI-only program exercises the compiled production adapter against the
 unmodified Windows `codex-cli 0.167.0-alpha.3.2` executable bundled with the
 verified Desktop package. It is separate from the retained Linux 0.166 tests.
 
+## Separately reviewed Desktop fixture build
+
+The independent four-turn acceptance described below remains pinned to the
+original native SHA-256 `40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39`.
+Its arguments do not accept a build override.
+
+Only `-desktop-fixtures` accepts the explicit option
+`-reviewed-build desktop-4239`. It selects native SHA-256
+`4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382`
+from the independently reviewed signed Desktop 26.1103.4239.0 package. An empty
+option retains the old pin; every other value fails before fixture setup.
+The helper verifies file bytes before `--version`, retains the exact
+`codex-cli 0.167.0-alpha.3.2` check, and includes the selected hash in both
+backend configuration records and readiness. The caller must separately
+verify the package/native/ASAR tuple and require the same selected pin when
+reading these records. No caller-supplied hash is accepted as a profile.
+
+This option only prepares the existing private loopback fixtures for an
+explicit zero-input Desktop bridge observation. It does not exercise the
+independent four-turn inference or tool-acceptance sequence, establish new
+binary inference compatibility, or broaden any bridge protocol/policy gate.
+See [the Desktop build review](../../docs/subsystems/desktop-cold-start.md#reviewed-4239-bridge-observation-profile)
+for the exact opt-ins and limits.
+
 ## Inputs and invocation
 
 Build `go build -trimpath -tags nogui -o control-plane-native.exe ./build/control-plane-native`.

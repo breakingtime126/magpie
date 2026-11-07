@@ -12,6 +12,7 @@ param(
     [switch]$EnableReviewedLiveWelcome,
     [switch]$EnableReadOnlyWinAppInspection,
     [switch]$EnableNativeReadOnlyInspection,
+    [switch]$EnableReviewedBuild4239,
     [switch]$InspectPackageIdentityOnly,
     [switch]$InspectStaticLauncher,
     [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
@@ -866,7 +867,30 @@ function Assert-DesktopCIOptions(
         throw 'Reviewed launch compatibility requires the separate exact-version startup opt-in.'
     }
 }
-function Assert-DesktopCompatibilityPackage([bool]$LaunchCompatibility, [string]$DesktopVersion, [string]$PackageHash) {
+function Assert-Desktop4239Options([bool]$Enabled,[string]$Mode,[bool]$Startup,[bool]$Compatibility,
+    [bool]$Inspection,[bool]$Welcome,[bool]$Original,[bool]$PackageOnly,[string]$EntryCase,[string]$Marker) {
+    if ($Enabled -and ($Mode -cne 'observe' -or -not $Startup -or -not $Compatibility -or -not $Inspection -or
+        $Welcome -or $Original -or $PackageOnly -or $EntryCase -or $Marker -cne 'bridge-ui-4239-v1')) {
+        throw 'Reviewed 4239 build requires its exclusive zero-action bridge inspection mode.'
+    }
+}
+function Assert-Desktop4239Identity($Evidence) {
+    if ($Evidence.status -cne 'observed' -or $Evidence.manifest.version -cne '26.1103.4239.0' -or
+        $Evidence.packageSha256 -cne '9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c' -or
+        $Evidence.backend.sha256 -cne '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' -or
+        $Evidence.archive.sha256 -cne 'fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa') {
+        throw 'Reviewed 4239 package and native/source identities do not match.'
+    }
+}
+function Assert-DesktopCompatibilityPackage([bool]$LaunchCompatibility, [string]$DesktopVersion, [string]$PackageHash,
+    [bool]$Build4239=$false) {
+    if ($Build4239) {
+        if (-not $LaunchCompatibility -or $DesktopVersion -cne '26.1103.4239.0' -or
+            $PackageHash -cne '9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c') {
+            throw 'Reviewed 4239 compatibility package mismatch.'
+        }
+        return
+    }
     if (-not $LaunchCompatibility) { return }
     if ($DesktopVersion -cne '26.1103.3517.0' -or
         $PackageHash -cne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
@@ -935,10 +959,13 @@ function Wait-DesktopRegistration(
 
 function New-DesktopBridgeSettings(
     $Backends, [bool]$StartupProbe, [bool]$LaunchCompatibility,
-    [string]$VersionText, [string]$BackendHash, [string]$ControlHome = ''
+    [string]$VersionText, [string]$BackendHash, [string]$ControlHome = '', [bool]$Build4239=$false
 ) {
     if ($LaunchCompatibility -and -not $StartupProbe) {
         throw 'Reviewed launch compatibility requires the separate exact-version startup opt-in.'
+    }
+    if ($Build4239 -and (-not $StartupProbe -or -not $LaunchCompatibility)) {
+        throw 'Reviewed 4239 settings require both explicit compatibility gates.'
     }
     # Copy only the caller's fresh test configuration; no filesystem or environment access.
     $copies = @()
@@ -951,6 +978,7 @@ function New-DesktopBridgeSettings(
     if ($StartupProbe) {
         $expectedVersion = 'codex-cli 0.167.0-alpha.3.2'
         $expectedBackendHash = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+        if ($Build4239) { $expectedBackendHash = '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' }
         if ($VersionText -cne $expectedVersion -or $BackendHash -cne $expectedBackendHash -or $copies.Count -ne 2) {
             throw 'Reviewed startup inspection requires two exact verified official backends.'
         }
@@ -1631,6 +1659,9 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
     -LaunchCompatibility $EnableReviewedLaunchCompatibility -StaticLauncher $InspectStaticLauncher `
     -Actions $env:GITHUB_ACTIONS -RunnerEnvironment $env:RUNNER_ENVIRONMENT `
     -Repository $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF
+Assert-Desktop4239Options $EnableReviewedBuild4239 $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
+    $EnableReadOnlyWinAppInspection $EnableReviewedLiveWelcome $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly `
+    $NativeEntryCase $env:MAGPIE_REVIEWED_BUILD
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
 $useWinAppInspection = $EnableReadOnlyWinAppInspection -or $EnableNativeReadOnlyInspection
 if ($EnableNativeReadOnlyInspection) {
@@ -1943,11 +1974,17 @@ namespace DesktopColdProbe {
         # Unconditional, including when the URL returns the old reviewed hash.
         Block 'Read-only package identity mode stops before installation or execution; package remains unapproved.'
     }
+    if ($EnableReviewedBuild4239) {
+        $report.reviewedBuildIdentity = Get-DesktopPackageIdentityEvidence $package $report.download.packageSha256 `
+            $signatureExit $report.signature.authenticodeStatus $report.signature.signerSubject
+        Assert-Desktop4239Identity $report.reviewedBuildIdentity
+        $report.reviewedBuildScope = 'Exact 4239 CI diagnostic input only. Same version is not semantic or Desktop acceptance; existing strict runtime gates remain authoritative.'
+    }
     if ($EnableNativeReadOnlyInspection) {
         $report.nativePackageIdentity = Get-DesktopPackageIdentityEvidence $package $report.download.packageSha256 `
             $signatureExit $report.signature.authenticodeStatus $report.signature.signerSubject
         $report.nativePackageIdentityLimit = 'Actual signed package identity only; no bridge protocol or compatibility acceptance.'
-    } else {
+    } elseif (-not $EnableReviewedBuild4239) {
         if ($report.download.packageSha256 -ne 'ca7c8896e11145b9c34ec8ed6e701b7f62d229fe05cd01d2542064b49f1cd643') {
             if ($EnableReviewedLaunchCompatibility) {
                 Block 'Reviewed launch compatibility package hash mismatch; inspect the changed floating download before running.'
@@ -1986,7 +2023,7 @@ namespace DesktopColdProbe {
         Block 'Unexpected official package identity or architecture; inspect evidence before proceeding.'
     }
     Assert-DesktopCompatibilityPackage -LaunchCompatibility ($EnableReviewedLaunchCompatibility -or [bool]$NativeEntryCase) `
-        -DesktopVersion $report.manifest.version -PackageHash $report.download.packageSha256
+        -DesktopVersion $report.manifest.version -PackageHash $report.download.packageSha256 -Build4239 $EnableReviewedBuild4239
     # Exact Desktop executable observed in the verified 26.1103.3517.0 package.
     # The two other applications are native Chrome host and command runner, not Desktop.
     $desktopApps = @($apps | Where-Object {
@@ -2362,17 +2399,18 @@ requires_openai_auth = false
                 Initialize-LiveSupervisor
                 $liveScratch = Join-Path $env:RUNNER_TEMP ('desktop-live-fixture-' + [guid]::NewGuid().ToString('N'))
                 New-Item -ItemType Directory -Path $liveScratch | Out-Null
-                $liveStart = New-LiveStart -Executable $NativeControlExecutable -Directory $liveScratch -Arguments @(
-                    '-desktop-fixtures','-codex',$officialBackend.FullName,'-catalog',$NativeControlCatalog,'-scratch-parent',$liveScratch)
+                $liveArguments = @('-desktop-fixtures','-codex',$officialBackend.FullName,'-catalog',$NativeControlCatalog,'-scratch-parent',$liveScratch)
+                if ($EnableReviewedBuild4239) { $liveArguments += @('-reviewed-build','desktop-4239') }
+                $liveStart = New-LiveStart -Executable $NativeControlExecutable -Directory $liveScratch -Arguments $liveArguments
                 $liveFixture = [DesktopLive.BoundedProcess]::new($liveStart,16384,30000)
-                $liveFixtureReport.readiness = Wait-LiveReady $liveFixture
+                $liveFixtureReport.readiness = Wait-LiveReady $liveFixture -Build4239 $EnableReviewedBuild4239
                 # Bounded private input, then exact fields and reconstructed owned paths.
                 $liveConfigPath = Join-Path $liveScratch 'bridge.json'
                 Assert-PublicRegularPath $liveConfigPath
                 $liveInfo = Get-Item -LiteralPath $liveConfigPath
                 if ($liveInfo.Length -lt 1 -or $liveInfo.Length -gt 16384) { throw 'Invalid internal live configuration size.' }
                 $liveConfig = Read-LiveConfig $liveConfigPath
-                $liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName
+                $liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239
                 foreach ($path in @($liveScratch,$liveOwned.Workspace,$liveOwned.ControlHome) + @($liveOwned.Backends | ForEach-Object { $_.home; $_.codex_home })) {
                     $info = Get-Item -LiteralPath $path
                     if (-not $info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid live owned directory.' }
@@ -2384,7 +2422,7 @@ requires_openai_auth = false
             } catch { Block 'The live fixture could not establish its bounded reviewed contract.' }
         }
         $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe ($EnableReviewedStartupProbe -or [bool]$NativeEntryCase) `
-            -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome
+            -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome -Build4239 $EnableReviewedBuild4239
         if ($useLiveFixtures) {
             $bridgeSettings.working_directory = $liveWorkspace
             $bridgeSettings.gateway_oauth_provider_name = 'Synthetic alpha_provider'
@@ -3443,7 +3481,7 @@ requires_openai_auth = false
             # Normally EOF follows exact activation exit. If cleanup failed, stop
             # the held fixture anyway, report failure, and retain private scratch.
             if (-not $activationExitConfirmed) { $liveFixture.Stop() }
-            $audit = Complete-LiveFixture $liveFixture
+            $audit = Complete-LiveFixture $liveFixture -Build4239 $EnableReviewedBuild4239
             $liveFixtureReport.fixtureAudit = $audit
             $liveFixtureStopped = $activationExitConfirmed -and $audit.status -ceq 'stopped'
         } catch { $liveFixtureReport.fixtureAudit = [ordered]@{status='unavailable';reason='fixture_supervision_failed'} }

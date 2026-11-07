@@ -48,13 +48,17 @@ function Assert-LiveUniqueJSON($Element) {
         foreach ($item in $Element.EnumerateArray()) { Assert-LiveUniqueJSON $item }
     }
 }
-function Assert-LiveReady($Value) {
+function Get-LiveNativeSHA([bool]$Build4239=$false) {
+    if ($Build4239) { return '4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382' }
+    return '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
+}
+function Assert-LiveReady($Value,[bool]$Build4239=$false) {
     Assert-LiveShape $Value @('schema','scope','status','lifetime_seconds','native_sha256','catalog_blob')
     Assert-LiveInteger $Value.schema 1 1
     Assert-LiveInteger $Value.lifetime_seconds 180 180
     Assert-LiveStrings $Value @('scope','status','native_sha256','catalog_blob')
     if ($Value.scope -cne 'desktop-loopback-fixtures-only' -or $Value.status -cne 'ready' -or
-        $Value.native_sha256 -cne '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39' -or
+        $Value.native_sha256 -cne (Get-LiveNativeSHA $Build4239) -or
         $Value.catalog_blob -cne '489ebe3f2483348641a16160ce8491dd077eabca') { throw 'Invalid live readiness.' }
 }
 function Assert-LiveAudit($Value, [int]$ExitCode) {
@@ -74,7 +78,7 @@ function Assert-LiveAudit($Value, [int]$ExitCode) {
         if ($ExitCode -ne 1 -or $failures -cnotcontains $Value.failure) { throw 'Invalid failed audit.' }
     } else { throw 'Invalid live audit status.' }
 }
-function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex) {
+function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex, [bool]$Build4239=$false) {
     Assert-LiveShape $Value @('backends','working_directory','control_plane','control_home')
     Assert-LiveStrings $Value @('working_directory','control_plane','control_home')
     $workspace = Join-Path $Scratch 'workspace'; $control = Join-Path $Scratch 'control-home'
@@ -89,7 +93,7 @@ function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex) {
         Assert-LiveStrings $b @('id','provider','command','home','codex_home','startup_probe_sha256')
         if ($b.id -cne $id -or $b.provider -cne ($id + '_provider') -or $b.command -cne $Codex -or
             $b.home -cne $backendHome -or $b.codex_home -cne $ch -or
-            $b.startup_probe_sha256 -cne '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39') { throw 'Invalid live backend authority.' }
+            $b.startup_probe_sha256 -cne (Get-LiveNativeSHA $Build4239)) { throw 'Invalid live backend authority.' }
         # Reconstruct, never copy command/path authority from the helper's JSON.
         $backends += [ordered]@{ id=$id; provider=($id+'_provider'); command=$Codex; home=$backendHome; codex_home=$ch }
     }
@@ -275,14 +279,14 @@ function New-LiveStart([string]$Executable, [string[]]$Arguments, [string]$Direc
     else { foreach ($key in @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','CODEX_HOME')) { $start.Environment[$key]=$Directory } }
     return $start
 }
-function Wait-LiveReady($Process) {
+function Wait-LiveReady($Process,[bool]$Build4239=$false) {
     $watch=[Diagnostics.Stopwatch]::StartNew()
     while ($watch.Elapsed.TotalSeconds -lt 25 -and -not $Process.TimedOut -and -not $Process.Overflow) {
         $text=$Process.Output
         if ($text.Contains("`n")) {
             $lines=@($text.TrimEnd("`r","`n") -split "`r?`n")
             if ($lines.Count -ne 1 -or $Process.Exited) { throw 'Live fixture did not remain ready.' }
-            $ready=ConvertFrom-LiveJSON $lines[0]; Assert-LiveReady $ready
+            $ready=ConvertFrom-LiveJSON $lines[0]; Assert-LiveReady $ready -Build4239 $Build4239
             $Process.Deadline(180000)
             return $ready
         }
@@ -290,7 +294,7 @@ function Wait-LiveReady($Process) {
     }
     throw 'Live fixture readiness unavailable.'
 }
-function Complete-LiveFixture($Process) {
+function Complete-LiveFixture($Process,[bool]$Build4239=$false) {
     $Process.CloseInput()
     if (-not $Process.Wait(10000)) { $Process.Stop(); if (-not $Process.Wait(5000)) { throw 'Live helper exit unconfirmed.' } }
     $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -298,7 +302,7 @@ function Complete-LiveFixture($Process) {
     if ($Process.TimedOut -or $Process.Overflow -or -not $Process.Drained) { throw 'Live fixture supervision failed.' }
     $lines=@($Process.Output.TrimEnd("`r","`n") -split "`r?`n")
     if ($lines.Count -ne 2) { throw 'Invalid live fixture records.' }
-    Assert-LiveReady (ConvertFrom-LiveJSON $lines[0])
+    Assert-LiveReady (ConvertFrom-LiveJSON $lines[0]) -Build4239 $Build4239
     $audit=ConvertFrom-LiveJSON $lines[1]; Assert-LiveAudit $audit $Process.ExitCode
     return $audit
 }

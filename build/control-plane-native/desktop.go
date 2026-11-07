@@ -29,6 +29,19 @@ type desktopAudit struct {
 	FixtureErrors int    `json:"fixture_errors"`
 }
 
+// These pins select a CI fixture runtime, not a Desktop compatibility verdict.
+// The independent four-turn acceptance continues to require nativeSHA.
+func desktopFixtureSHA(build string) (string, error) {
+	switch build {
+	case "":
+		return nativeSHA, nil
+	case "desktop-4239":
+		return "4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382", nil
+	default:
+		return "", failure("input_invalid")
+	}
+}
+
 func desktopFixturesMain(args []string) {
 	report := desktopAudit{Schema: 1, Scope: "desktop-loopback-fixtures-only", Status: "failed"}
 	err := runDesktopFixtures(args, os.Stdin, os.Stdout, &report)
@@ -47,14 +60,19 @@ func desktopFixturesMain(args []string) {
 }
 
 func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report *desktopAudit) (runErr error) {
-	var codex, catalogPath, scratch string
+	var codex, catalogPath, scratch, reviewedBuild string
 	flags := flag.NewFlagSet("desktop-fixtures", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&codex, "codex", "", "")
 	flags.StringVar(&catalogPath, "catalog", "", "")
 	flags.StringVar(&scratch, "scratch-parent", "", "")
+	flags.StringVar(&reviewedBuild, "reviewed-build", "", "")
 	if flags.Parse(args) != nil || flags.NArg() != 0 {
 		return failure("input_invalid")
+	}
+	pinnedSHA, err := desktopFixtureSHA(reviewedBuild)
+	if err != nil {
+		return err
 	}
 	if runtime.GOOS != "windows" {
 		return failure("platform_rejected")
@@ -70,7 +88,7 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	if err := emptyDirectory(scratch); err != nil {
 		return err
 	}
-	if err := verifyBinary(codex); err != nil {
+	if err := verifyBinaryHash(codex, pinnedSHA); err != nil {
 		return err
 	}
 	data, err := readBounded(catalogPath, 10<<20)
@@ -88,8 +106,7 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	if err != nil {
 		return err
 	}
-	control, err := mkdir(root, "control-home")
-	if err != nil {
+	if _, err := mkdir(root, "control-home"); err != nil {
 		return err
 	}
 	versionHome, err := mkdir(root, "version-home")
@@ -121,32 +138,12 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 			runErr = failure("fixture_rejected_request")
 		}
 	}()
-	backends := []map[string]any{}
-	for _, f := range []*fixture{alpha, beta} {
-		home, err := mkdir(root, f.name+"-home")
-		if err != nil {
-			return err
-		}
-		ch, err := mkdir(root, f.name+"-codex")
-		if err != nil {
-			return err
-		}
-		config, err := nativeConfig(f.name+"_provider", f.server.URL, selected)
-		if err != nil {
-			return err
-		}
-		if err := writeNew(filepath.Join(ch, "config.toml"), config); err != nil {
-			return err
-		}
-		backends = append(backends, map[string]any{"id": f.name, "provider": f.name + "_provider", "command": codex, "home": home, "codex_home": ch, "startup_probe_sha256": nativeSHA})
-	}
-	config := map[string]any{"backends": backends, "working_directory": cwd, "control_plane": controlMode, "control_home": control}
-	if err := writeNew(filepath.Join(scratch, "bridge.json"), jsonBytes(config)); err != nil {
+	if err := writeDesktopFixtureConfig(root, codex, selected, pinnedSHA, alpha, beta); err != nil {
 		return err
 	}
 	// No paths, payloads, URLs, or IDs are emitted into public diagnostics.
-	if _, err := io.WriteString(out, "{\"schema\":1,\"scope\":\"desktop-loopback-fixtures-only\",\"status\":\"ready\",\"lifetime_seconds\":180,\"native_sha256\":\"40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39\",\"catalog_blob\":\"489ebe3f2483348641a16160ce8491dd077eabca\"}\n"); err != nil {
-		return failure("output_failed")
+	if err := writeDesktopFixtureReady(out, pinnedSHA); err != nil {
+		return err
 	}
 	done := make(chan error, 1)
 	finished := make(chan struct{})
@@ -174,6 +171,37 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	_, be := beta.counts()
 	if ae+be != 0 {
 		return failure("fixture_rejected_request")
+	}
+	return nil
+}
+
+func writeDesktopFixtureConfig(root, codex, selected, pinnedSHA string, fixtures ...*fixture) error {
+	backends := []map[string]any{}
+	for _, f := range fixtures {
+		home, err := mkdir(root, f.name+"-home")
+		if err != nil {
+			return err
+		}
+		ch, err := mkdir(root, f.name+"-codex")
+		if err != nil {
+			return err
+		}
+		config, err := nativeConfig(f.name+"_provider", f.server.URL, selected)
+		if err != nil {
+			return err
+		}
+		if err := writeNew(filepath.Join(ch, "config.toml"), config); err != nil {
+			return err
+		}
+		backends = append(backends, map[string]any{"id": f.name, "provider": f.name + "_provider", "command": codex, "home": home, "codex_home": ch, "startup_probe_sha256": pinnedSHA})
+	}
+	config := map[string]any{"backends": backends, "working_directory": filepath.Join(root, "workspace"), "control_plane": controlMode, "control_home": filepath.Join(root, "control-home")}
+	return writeNew(filepath.Join(root, "bridge.json"), jsonBytes(config))
+}
+
+func writeDesktopFixtureReady(out io.Writer, pinnedSHA string) error {
+	if _, err := fmt.Fprintf(out, "{\"schema\":1,\"scope\":\"desktop-loopback-fixtures-only\",\"status\":\"ready\",\"lifetime_seconds\":180,\"native_sha256\":%q,\"catalog_blob\":%q}\n", pinnedSHA, catalogBlob); err != nil {
+		return failure("output_failed")
 	}
 	return nil
 }

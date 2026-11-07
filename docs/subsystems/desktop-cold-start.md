@@ -1876,3 +1876,130 @@ admission/identities, generated size bounds, unchanged trust-before-execute
 ordering and no activation/startup probe. Synthetic checks are not runtime
 evidence. Authoring local Node checks passed; PowerShell, Windows and actual
 package/backend execution remain for CI at the reviewed commit.
+
+### Reviewed 4239 bridge observation profile
+
+The actual `native-contract-review` artifact from commit
+`341298e1515298c6f8714509c78324f7f38dbe12` independently verified this input:
+
+- Signed Desktop version: `26.1103.4239.0`.
+- MSIX SHA-256: `9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c`.
+- Native `app/resources/codex.exe` SHA-256:
+  `4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382`.
+- ASAR SHA-256: `fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa`.
+- Actual version output: `codex-cli 0.167.0-alpha.3.2`.
+- Full experimental schema: 470 files, 4,654,630 bytes; each matched its
+  generated manifest hash and size. Version/help/schema commands exited zero
+  within the retained limits and confirmed owned-process exit.
+
+The unchanged version string does not prove unchanged behavior. Comparison of
+21 selected old nonexperimental schemas found 16 structurally identical and
+five differences consisting of experimental fields already present in old
+source `openai/codex@c40729ea5cf8e947481b130c59807273eda2f8e9`. The old exporter
+intentionally omitted legacy `getAuthStatus`; its absence from the new JSON
+schema is not proof of removal. Actual runtime initialize, legacy no-auth,
+requirements/config/catalog and response validators remain authoritative.
+
+The bounded actual frontend excerpts support the retained Windows stdio
+launch contract: `hostConfig.codex_cli_command` takes executable/arguments
+precedence; `CODEX_CLI_PATH` is handled and sanitized before spawn, while
+`CODEX_APP_RUNTIME_CLI_PATH` is propagated separately. Startup probing still
+uses `--print-startup-config` and `--startup-client-info`. The separate sign-out
+transport descriptor is not permission to invoke it. Actual initialize
+construction retains experimental API, local gateway-OAuth capability,
+attestation/form/extensions and notification opt-outs. This is source evidence,
+not evidence that any unsupported capability was safely negotiated.
+
+The helper-availability branch can emit either boolean for
+`plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled`.
+The bridge continues accepting only the previously reviewed exact `true`
+leaf, not `false` or arbitrary config overrides. Refreshing credentials,
+non-null requirements, non-null config cwd, unreviewed initialize fields,
+and unsupported thread scopes still fail closed. No production bridge parser,
+auth behavior, attestation behavior, policy projection or allowlist changes
+are part of this profile.
+
+`-EnableReviewedBuild4239` is default-off and exclusive to the existing
+`observe` bridge mode with startup/launch-compatibility/read-only-inspection
+opt-ins. Live welcome, original-native observation, package-only inspection
+and native-entry cases are rejected when combined with it. The GitHub-hosted
+repository/branch restriction remains unchanged. Before installation, the
+existing signature and bounded ZIP reader must establish the exact tuple
+above; any changed floating download stops. Both fixture backend records,
+initial/final readiness, installed backend check and generated startup pins must then use
+the selected new digest. The old profile remains the default, not a fallback
+for a failed new profile.
+
+To select one new bridge-context inspection, the substantive experimental
+branch push must contain both `[bridge-ui-4239-v1]` and
+`[winapp-inspection-v0.7.1]`, and no `[package-identity-only-v1]`,
+`[native-ui-inspection-v1]` or `[native-contract-review-v1]` marker. The first
+Linux step rejects conflicting/missing marker pairs before checkout. The
+independent original-native and contract jobs explicitly exclude the 4239
+marker, so an invalid mixed marker cannot rerun either diagnostic. The
+Windows job depends on that step and its existing tests. Its offline Windows
+checks also run the native-tree login-evidence fixtures, without activating
+the original-native lane or performing input actions. Dispatch defaults
+remain fail-closed; dispatch does not select the 4239 build. The common winapp
+marker continues skipping the old cold-start/native-entry runtime lanes.
+This does not repeat the completed original-native window observation.
+
+The existing reader performs at most one HWND-requested inspection in the
+new bridge context, with zero input actions, retained before/after ownership
+checks, fixed summaries, and a screenshot. Same-PID fallback and an unresolved
+HWND race remain disclosed; this is not strict root identity proof. Missing
+controls, login/protected/error evidence, changed identity, timeout, overflow
+or uncertain cleanup stop the diagnostic. Zero matched login names do not
+prove absence of a visible login screen. Actual bridge/trace outcomes and
+pixels must be reviewed separately from schema evidence and the completed
+original-native sign-in-screen observation.
+
+The independent four-turn native inference/tool-acceptance slice is not run
+in read-only inspection mode and remains pinned to the old native hash.
+Neither this profile nor schema review validates inference on the new binary,
+Desktop chat usability, persistent normal-entry routing, model switching,
+or a successful bridge-mediated UI workflow. Those remain separate work.
+
+Offline tests cover mode exclusivity, crossed build tuples, unchanged default
+pins and policy settings, actual fixture config/readiness serialization, file
+hash checking, owned-root provenance and no native-turn admission. Authoring
+checks are source/truth-table checks only; PowerShell, Go and actual new
+bridge-context Windows execution were not run while authoring this change.
+
+### Native window evidence and unknown login state
+
+The actual native-original observation at commit
+`341298e1515298c6f8714509c78324f7f38dbe12` completed one read-only winapp
+inspection. Its report recorded 13 rendered nodes, zero input actions, one
+inspection attempt, confirmed held-tool exit, and confirmed owned Desktop
+activation exit. The published `official-window-after-inspection.png` visibly
+shows "Sign in to ChatGPT", "Continue to sign in", "Sign in another way", and
+"Sign up". This is a sign-in screen, not completed onboarding or bridge use.
+
+The same report recorded `loginMarkerCount: 0` and `protectedMarkerCount: 0`.
+This discrepancy does not prove a label-regex bug: the existing sign-in regex
+already matches all three sign-in phrases when exposed in an element's `name`,
+and the protected regex matches "Sign up". The private raw tree was not
+published, so the evidence does not establish whether names were unavailable,
+the CLI selected a fallback root, or the window changed between observations.
+Do not reconstruct a captured UIA tree from the screenshot or claim one of
+these possible causes was observed.
+
+`ConvertTo-WinAppSummary` now includes the fixed `loginAssessment` enum.
+`login-marker-observed` means a recognized name was present and inspection
+stops as before. `unknown-requires-visual-review` means no sign-in name matched;
+it never means signed in, no login screen, or permission to interact. A
+protected marker such as "Sign up" still stops inspection independently.
+Native-original `observed` continues to mean a valid nonempty bounded read,
+not a UI safety clearance. Review the screenshot before drawing a UI-state
+conclusion; this run must be described as stopped at the visible sign-in screen.
+The original report remains unmodified historical evidence.
+
+Offline fixtures in `build/desktop-winapp-inspect.native.tests.ps1` use the
+four screenshot labels as synthetic names, not captured tool output. They
+also cover empty names, omitted names, value-only labels, redaction, the
+unknown assessment, and the unchanged zero-action/one-attempt stop behavior.
+No raw UI text or values are added to the public summary. This correction
+does not alter selectors, traversal, tool invocations, bridge admission,
+workflow markers, login handling, or input permissions, and does not request
+another UI run. PowerShell and runtime fixtures were not run while authoring.

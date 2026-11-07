@@ -8,7 +8,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
-foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
+foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
@@ -1334,7 +1334,7 @@ $runtimeWorkspaceContract = {
     # before the one declaration seam. JSON cannot supply arbitrary path authority.
     $lastEnd = -1
     foreach ($spec in @(
-        @('$liveOwned', 'ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName'),
+        @('$liveOwned', 'ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239'),
         @('$liveWorkspace', '$liveOwned.Workspace')
     )) {
         $assignments = @($ast.FindAll({
@@ -1369,7 +1369,7 @@ foreach ($mutation in @(
         '$(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work })'),
     @('        if ($useLiveFixtures) {', '        if ($EnableReviewedLiveWelcome) {'),
     @('$liveWorkspace = $liveOwned.Workspace', '$liveWorkspace = $liveConfig.workspace'),
-    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName',
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239',
         '$liveOwned = $liveConfig'),
     @('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection',
         ('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection' + "`n" + '$useLiveFixtures = $true')),
@@ -2100,7 +2100,7 @@ foreach ($options in @(
 Expect-Pass 'package identity always stops before the unchanged pin and installation gates' {
     $reads = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
         $n.GetCommandName() -ceq 'Get-DesktopPackageIdentityEvidence'}, $true))
-    if ($reads.Count -ne 2) { throw 'Package identity modes lost their two explicit trust reads.' }
+    if ($reads.Count -ne 3) { throw 'Package identity modes lost their three explicit trust reads.' }
     $reads = @($reads | Where-Object {
         $branch=$_.Parent
         while ($null -ne $branch -and $branch -isnot [Management.Automation.Language.IfStatementAst]) { $branch=$branch.Parent }
@@ -2172,5 +2172,83 @@ Expect-Pass 'package-only not-started evidence cannot manufacture activation exi
         $n.Left.Extent.Text -ceq '$activationExitConfirmed' -and $n.Right.Extent.Text -ceq '$true'}, $true))
     if ($fabricated.Count -ne 0) { throw 'Activation exit was fabricated.' }
 }
+# New build admission is a CI input profile, never a wider protocol/policy mode.
+Expect-Pass '4239 mode requires exactly read-only bridge inspection and all existing opt-ins' {
+    for ($mask=0; $mask -lt 128; $mask++) {
+        $flags=@(); for($bit=0; $bit -lt 6; $bit++) { $flags += [bool]($mask -band (1 -shl $bit)) }
+        $entry=$(if ($mask -band 64) { 'baseline' } else { '' })
+        $accepted=$true
+        try { Assert-Desktop4239Options $true 'observe' $flags[0] $flags[1] $flags[2] $flags[3] $flags[4] $flags[5] $entry 'bridge-ui-4239-v1' }
+        catch { $accepted=$false }
+        if ($accepted -ne ($mask -eq 7)) { throw '4239 accepted a conflicting or missing mode.' }
+    }
+    Assert-Desktop4239Options $false 'baseline' $false $false $false $false $false $false '' ''
+}
+foreach ($badMode in @('baseline','bridge')) {
+    Expect-Reject '4239 outside observed bridge mode' { Assert-Desktop4239Options $true $badMode $true $true $true $false $false $false '' 'bridge-ui-4239-v1' }
+}
+Expect-Reject '4239 marker required' { Assert-Desktop4239Options $true 'observe' $true $true $true $false $false $false '' '' }
+$newPackage='9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c'
+$newBackend='4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382'
+$newArchive='fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa'
+Expect-Pass 'new exact tuple is accepted only by selected diagnostic profile' {
+    Assert-DesktopCompatibilityPackage $true '26.1103.4239.0' $newPackage $true
+    $e=[pscustomobject]@{status='observed';manifest=[pscustomobject]@{version='26.1103.4239.0'};packageSha256=$newPackage;backend=[pscustomobject]@{sha256=$newBackend};archive=[pscustomobject]@{sha256=$newArchive}}
+    Assert-Desktop4239Identity $e
+    foreach ($field in @('status','version','package','backend','archive')) {
+        $bad=$e|ConvertTo-Json -Depth 6|ConvertFrom-Json
+        switch($field) {
+            status {$bad.status='unavailable'}
+            version {$bad.manifest.version='26.1103.3517.0'}
+            package {$bad.packageSha256=$packageHash}
+            backend {$bad.backend.sha256=$hash}
+            archive {$bad.archive.sha256='0'*64}
+        }
+        $rejected=$false; try { Assert-Desktop4239Identity $bad } catch { $rejected=$true }
+        if (-not $rejected) { throw 'Cross-paired or unavailable signed identity admitted.' }
+    }
+}
+Expect-Reject 'old default cannot admit new package' { Assert-DesktopCompatibilityPackage $true '26.1103.4239.0' $newPackage }
+Expect-Reject 'new profile cannot admit old package' { Assert-DesktopCompatibilityPackage $true $packageVersion $packageHash $true }
+Expect-Reject 'new version cannot pair with old package' { Assert-DesktopCompatibilityPackage $true '26.1103.4239.0' $packageHash $true }
+Expect-Reject 'new package cannot pair with old version' { Assert-DesktopCompatibilityPackage $true $packageVersion $newPackage $true }
+Expect-Reject 'new profile never disables compatibility' { Assert-DesktopCompatibilityPackage $false '26.1103.4239.0' $newPackage $true }
+Expect-Pass '4239 bridge settings change only the exact native digest' {
+    $old=New-DesktopBridgeSettings (New-Backends) $true $true $version $hash 'fixture-control-home'
+    $new=New-DesktopBridgeSettings (New-Backends) $true $true $version $newBackend 'fixture-control-home' $true
+    if (@($new.backends).Count -ne 2) { throw 'Backend count changed.' }
+    foreach($b in $new.backends) {
+        if ($b.startup_probe_sha256 -cne $newBackend) { throw 'New backend lost its exact pin.' }
+        $b.startup_probe_sha256=$hash
+    }
+    if (($old|ConvertTo-Json -Depth 6 -Compress) -cne ($new|ConvertTo-Json -Depth 6 -Compress)) { throw '4239 changed a protocol/policy mode.' }
+}
+foreach($badHash in @($hash,('0'*64),'')) {
+    Expect-Reject 'same-version wrong binary rejected in 4239 profile' { New-DesktopBridgeSettings (New-Backends) $true $true $version $badHash 'fixture-control-home' $true }
+}
+Expect-Reject 'old settings never accept new binary by version alone' { New-DesktopBridgeSettings (New-Backends) $true $true $version $newBackend 'fixture-control-home' }
+Expect-Reject '4239 settings cannot skip startup policy proof' { New-DesktopBridgeSettings (New-Backends) $false $true $version $newBackend 'fixture-control-home' $true }
+Expect-Reject '4239 settings cannot skip compatibility gate' { New-DesktopBridgeSettings (New-Backends) $true $false $version $newBackend 'fixture-control-home' $true }
+Expect-Pass 'new identity proof and exact native pins precede owned runtime seams' {
+    $options=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-Desktop4239Options'},$true))
+    $expected=@('Assert-Desktop4239Options','$EnableReviewedBuild4239','$Mode','$EnableReviewedStartupProbe',
+        '$EnableReviewedLaunchCompatibility','$EnableReadOnlyWinAppInspection','$EnableReviewedLiveWelcome',
+        '$EnableNativeReadOnlyInspection','$InspectPackageIdentityOnly','$NativeEntryCase','$env:MAGPIE_REVIEWED_BUILD')
+    if ($options.Count -ne 1 -or $options[0].CommandElements.Count -ne $expected.Count) { throw '4239 lost its one explicit option gate.' }
+    for($i=0;$i -lt $expected.Count;$i++) {
+        if ($options[0].CommandElements[$i].Extent.Text -cne $expected[$i]) { throw '4239 option authority changed.' }
+    }
+    $proof=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-Desktop4239Identity'},$true))
+    $installs=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Add-AppxProvisionedPackage'},$true))
+    if ($proof.Count -ne 1 -or $proof[0].Extent.Text -cne 'Assert-Desktop4239Identity $report.reviewedBuildIdentity' -or $proof[0].Extent.EndOffset -ge $installs[0].Extent.StartOffset) { throw '4239 trust proof lost its unique pre-install seam.' }
+    if ($options[0].Extent.EndOffset -ge $proof[0].Extent.StartOffset) { throw '4239 options no longer guard package admission.' }
+    $guard=$proof[0].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
+    if ($guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedBuild4239') { throw '4239 proof escaped opt-in.' }
+    foreach($name in @('New-DesktopBridgeSettings','Wait-LiveReady','Complete-LiveFixture','ConvertTo-LiveConfiguration','Assert-DesktopCompatibilityPackage')) {
+        $call=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq $name},$true))
+        if ($call.Count -ne 1 -or -not $call[0].Extent.Text.EndsWith('-Build4239 $EnableReviewedBuild4239')) { throw 'Selected build lost its exact runtime propagation.' }
+    }
+}
+
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
 

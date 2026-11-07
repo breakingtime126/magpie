@@ -147,6 +147,10 @@ func readBounded(path string, limit int64) ([]byte, error) {
 }
 
 func verifyBinary(path string) error {
+	return verifyBinaryHash(path, nativeSHA)
+}
+
+func verifyBinaryHash(path, expected string) error {
 	if err := regularFile(path, 512<<20); err != nil {
 		return err
 	}
@@ -157,7 +161,7 @@ func verifyBinary(path string) error {
 	defer f.Close()
 	h := sha256.New()
 	n, err := io.Copy(h, io.LimitReader(f, (512<<20)+1))
-	if err != nil || n > 512<<20 || hex.EncodeToString(h.Sum(nil)) != nativeSHA {
+	if err != nil || n > 512<<20 || hex.EncodeToString(h.Sum(nil)) != expected {
 		return failure("native_hash_mismatch")
 	}
 	return nil

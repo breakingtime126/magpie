@@ -37,6 +37,13 @@ Reject { Assert-LiveWelcomeOptions $true 'observe' $false $true } 'startup guard
 Reject { Assert-LiveWelcomeOptions $true 'observe' $true $false } 'compatibility guard'
 $ready=ConvertFrom-LiveJSON '{"schema":1,"scope":"desktop-loopback-fixtures-only","status":"ready","lifetime_seconds":180,"native_sha256":"40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39","catalog_blob":"489ebe3f2483348641a16160ce8491dd077eabca"}'
 Assert-LiveReady $ready
+$newNativeSHA='4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382'
+$oldNativeSHA=$ready.native_sha256
+Reject { Assert-LiveReady $ready -Build4239 $true } '4239 cannot admit old readiness'
+$ready.native_sha256=$newNativeSHA
+Assert-LiveReady $ready -Build4239 $true
+Reject { Assert-LiveReady $ready } 'old default cannot admit 4239 readiness'
+$ready.native_sha256=$oldNativeSHA
 $ready.lifetime_seconds=181; Reject { Assert-LiveReady $ready } 'readiness bound'; $ready.lifetime_seconds=180
 $ready.native_sha256='bad'; Reject { Assert-LiveReady $ready } 'native pin'
 Reject { ConvertFrom-LiveJSON '{"schema":1,"schema":1}' } 'duplicate metadata'
@@ -48,11 +55,54 @@ Reject { Assert-LiveAudit $audit 1 } 'audit exit status'
 $audit.alpha_requests=17; Reject { Assert-LiveAudit $audit 0 } 'audit request bound'; $audit.alpha_requests=0
 $audit.fixture_errors=1; Reject { Assert-LiveAudit $audit 0 } 'audit error cannot stop'; $audit.fixture_errors=0
 $audit.status='passed'; Reject { Assert-LiveAudit $audit 0 } 'fixture never conversation pass'
+function New-LiveFinalizationFixture([string]$Pin) {
+    $readyRecord=[ordered]@{schema=1;scope='desktop-loopback-fixtures-only';status='ready';lifetime_seconds=180;
+        native_sha256=$Pin;catalog_blob='489ebe3f2483348641a16160ce8491dd077eabca'}
+    $auditRecord=[ordered]@{schema=1;scope='desktop-loopback-fixtures-only';status='stopped';failure='';
+        alpha_requests=0;beta_requests=0;fixture_errors=0}
+    $fixture=[pscustomobject]@{Output=(($readyRecord|ConvertTo-Json -Compress)+"`n"+($auditRecord|ConvertTo-Json -Compress)+"`n");
+        ExitCode=0;TimedOut=$false;Overflow=$false;Drained=$true;CloseCalls=0;WaitCalls=0;StopCalls=0;ExitConfirmed=$true}
+    $fixture|Add-Member ScriptMethod CloseInput { $this.CloseCalls++ }
+    $fixture|Add-Member ScriptMethod Wait { param($Milliseconds) $this.WaitCalls++; return $this.ExitConfirmed }
+    $fixture|Add-Member ScriptMethod Stop { $this.StopCalls++ }
+    return $fixture
+}
+foreach($build4239 in @($false,$true)) {
+    $selectedPin=$(if($build4239){$newNativeSHA}else{$oldNativeSHA})
+    $fixture=New-LiveFinalizationFixture $selectedPin
+    $result=Complete-LiveFixture $fixture -Build4239 $build4239
+    Pass ($result.status -ceq 'stopped' -and $result.fixture_errors -eq 0 -and $fixture.CloseCalls -eq 1 -and
+        $fixture.WaitCalls -eq 1 -and $fixture.StopCalls -eq 0) 'finalization revalidates the selected readiness and audit'
+    $otherPin=$(if($build4239){$oldNativeSHA}else{$newNativeSHA})
+    Reject { Complete-LiveFixture (New-LiveFinalizationFixture $otherPin) -Build4239 $build4239 } 'finalization rejects a crossed profile'
+    foreach($fault in @('TimedOut','Overflow','ExitCode','ExitConfirmed')) {
+        $fixture=New-LiveFinalizationFixture $selectedPin
+        if($fault -ceq 'ExitCode'){$fixture.ExitCode=1}
+        elseif($fault -ceq 'ExitConfirmed'){$fixture.ExitConfirmed=$false}
+        else{$fixture.$fault=$true}
+        Reject { Complete-LiveFixture $fixture -Build4239 $build4239 } 'selected finalization preserves supervision failure'
+    }
+    $fixture=New-LiveFinalizationFixture $selectedPin
+    $fixture.Output=$fixture.Output.Replace('"fixture_errors":0','"fixture_errors":1')
+    Reject { Complete-LiveFixture $fixture -Build4239 $build4239 } 'selected finalization rejects a failed stopped audit'
+}
+$fixture=New-LiveFinalizationFixture $oldNativeSHA
+Pass ((Complete-LiveFixture $fixture).status -ceq 'stopped') 'default finalization retains old native pin'
+Reject { Complete-LiveFixture (New-LiveFinalizationFixture $newNativeSHA) } 'default finalization cannot admit new readiness'
 $scratch=Join-Path ([IO.Path]::GetTempPath()) 'synthetic-private-root'; $exe=Join-Path $scratch 'codex.exe'
 $backends=@(); foreach ($id in @('alpha','beta')) { $backends += [pscustomobject]@{id=$id;provider=($id+'_provider');command=$exe;home=(Join-Path $scratch ($id+'-home'));codex_home=(Join-Path $scratch ($id+'-codex'));startup_probe_sha256='40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'} }
 $config=[pscustomobject]@{backends=$backends;working_directory=(Join-Path $scratch 'workspace');control_plane='routing-v0.167.0-alpha.3.2';control_home=(Join-Path $scratch 'control-home')}
 $owned=ConvertTo-LiveConfiguration $config $scratch $exe
 Pass ($owned.Backends[0].command -ceq $exe) 'reconstructed executable'
+Reject { ConvertTo-LiveConfiguration $config $scratch $exe -Build4239 $true } '4239 rejects old config authority'
+foreach($b in $config.backends) { $b.startup_probe_sha256=$newNativeSHA }
+$newOwned=ConvertTo-LiveConfiguration $config $scratch $exe -Build4239 $true
+Pass (($owned|ConvertTo-Json -Depth 6 -Compress) -ceq ($newOwned|ConvertTo-Json -Depth 6 -Compress)) '4239 reconstructs identical owned paths'
+Reject { ConvertTo-LiveConfiguration $config $scratch $exe } 'old default rejects 4239 config'
+$config.backends[1].startup_probe_sha256=$oldNativeSHA
+Reject { ConvertTo-LiveConfiguration $config $scratch $exe -Build4239 $true } 'cross-paired native authority rejected'
+$config.backends[0].startup_probe_sha256=$oldNativeSHA
+
 $config.backends[0].command='other.exe'; Reject { ConvertTo-LiveConfiguration $config $scratch $exe } 'reject arbitrary executable'; $config.backends[0].command=$exe
 $config.backends[1].home=$scratch; Reject { ConvertTo-LiveConfiguration $config $scratch $exe } 'reject path authority'; $config.backends[1].home=Join-Path $scratch 'beta-home'
 $config.backends[0].provider='foreign'; Reject { ConvertTo-LiveConfiguration $config $scratch $exe } 'reject provider authority'; $config.backends[0].provider='alpha_provider'

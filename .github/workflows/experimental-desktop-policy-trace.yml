@@ -65,6 +65,8 @@ jobs:
           TRIGGER_SHA: ${{ github.sha }}
           PUSH_PACKAGE_IDENTITY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
           PUSH_WINAPP_MARKER: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') }}
+          PUSH_BUILD_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') }}
+          PUSH_OTHER_DIAGNOSTIC: ${{ github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]')) }}
         run: |
           set -euo pipefail
           if [[ "$TRIGGER_EVENT" == 'workflow_dispatch' ]]; then
@@ -75,6 +77,11 @@ jobs:
               echo 'Explicit inspection mode and matching full expected SHA are required.' >&2
               exit 1
             fi
+          fi
+          if [[ "$PUSH_BUILD_4239" == 'true' && ( "$PUSH_WINAPP_MARKER" != 'true' ||
+                  "$PUSH_PACKAGE_IDENTITY" == 'true' || "$PUSH_OTHER_DIAGNOSTIC" == 'true' ) ]]; then
+            echo '4239 bridge review requires only its marker and the read-only winapp marker.' >&2
+            exit 1
           fi
           if [[ "$PUSH_PACKAGE_IDENTITY" == 'true' && "$PUSH_WINAPP_MARKER" != 'true' ]]; then
             echo 'Package identity pushes also require the existing Desktop-lane exclusion marker.' >&2
@@ -595,6 +602,7 @@ jobs:
       GOFLAGS: -mod=readonly
       GOTELEMETRY: 'off'
       MAGPIE_WINAPP_INSPECTION: ${{ ((github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]')) || (github.event_name == 'workflow_dispatch' && inputs.inspection_mode == 'winapp-inspection-v0.7.1' && inputs.expected_sha == github.sha)) && 'winapp-inspection-v0.7.1' || '' }}
+      MAGPIE_REVIEWED_BUILD: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && 'bridge-ui-4239-v1' || '' }}
       MAGPIE_PACKAGE_IDENTITY_ONLY: ${{ ((github.event_name == 'push' && contains(github.event.head_commit.message, '[package-identity-only-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]')) || (github.event_name == 'workflow_dispatch' && inputs.inspection_mode == 'package-identity-only-v1' && inputs.expected_sha == github.sha)) && 'package-identity-only-v1' || '' }}
     defaults:
       run:
@@ -710,6 +718,8 @@ jobs:
           $global:LASTEXITCODE=0
           ./build/desktop-winapp-inspect.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Official-tool observation fixtures failed.' }
+          ./build/desktop-winapp-inspect.native.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Native-tree login evidence fixtures failed.' }
       - name: Observe the explicitly selected disposable Desktop slice
         shell: pwsh
         run: |
@@ -719,7 +729,8 @@ jobs:
           $catalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
           $inspection = $env:MAGPIE_WINAPP_INSPECTION -ceq 'winapp-inspection-v0.7.1'
           $packageIdentity = $env:MAGPIE_PACKAGE_IDENTITY_ONLY -ceq 'package-identity-only-v1'
-          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(!$inspection -and !$packageIdentity) -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity) -InspectPackageIdentityOnly:$packageIdentity -InspectStaticLauncher
+          $build4239 = $env:MAGPIE_REVIEWED_BUILD -ceq 'bridge-ui-4239-v1'
+          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(!$inspection -and !$packageIdentity) -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -InspectStaticLauncher
       - name: Upload only sanitized diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -735,7 +746,7 @@ jobs:
           retention-days: 7
 
   native-original-ui:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]')
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]')
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -782,7 +793,7 @@ jobs:
 
 
   native-contract-review:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]')
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]')
     runs-on: windows-2025
     timeout-minutes: 12
     env:

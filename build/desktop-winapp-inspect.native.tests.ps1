@@ -63,7 +63,7 @@ Pass ($p.CloseCalls -eq 0 -and $p.KillCalls -eq 0) 'foreign PID untouched'
 
 # AST boundaries complement behavior tests. Never execute the harness body.
 $reads=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Get-DesktopPackageIdentityEvidence'},$true))
-Pass ($reads.Count -eq 2) 'separate package-only/native trust reads'
+Pass ($reads.Count -eq 3) 'separate package-only/native/reviewed-build trust reads'
 $nativeRead=@($reads|Where-Object {
     $branch=$_.Parent;while($null -ne $branch -and $branch -isnot [Management.Automation.Language.IfStatementAst]){$branch=$branch.Parent}
     $null -ne $branch -and $branch.Clauses[0].Item1.Extent.Text -ceq '$EnableNativeReadOnlyInspection'
@@ -99,21 +99,46 @@ try {
     Reject { Get-DesktopPackageIdentityEvidence $fixture.path $fixture.sha256 0 'NotSigned' 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B' } 'unsigned package cannot reach installation'
     Initialize-LiveSupervisor
     $hostExecutable=(Get-Process -Id $PID).Path
-    function New-NativeTreeChild([string]$Label) {
+    function New-NativeTreeText([string]$Label,[switch]$OmitName,[switch]$ValueOnly) {
         $node=[ordered]@{type='Text';name=$Label;isEnabled=$true;isOffscreen=$false;isInvokable=$false;x=0;y=0;width=10;height=10}
+        if ($OmitName -or $ValueOnly) { $node.Remove('name') }
+        if ($ValueOnly) { $node.value=$Label }
         $tree=[ordered]@{depth=8;interactive=$false;hideDisabled=$false;hideOffscreen=$false;windows=@(
             [ordered]@{hwnd=123;elementCount=1;elements=@($node);windowDpi=96;scale=1;dpiAwareness='per-monitor-aware';coordinateSpace='physical-screen-pixels'})}
-        $text=$tree|ConvertTo-Json -Depth 12 -Compress
+        return ($tree|ConvertTo-Json -Depth 12 -Compress)
+    }
+    function New-NativeTreeChild([string]$Label,[switch]$OmitName) {
+        $text=New-NativeTreeText $Label -OmitName:$OmitName
         $file=Join-Path $temporary ([guid]::NewGuid().ToString('N')+'.ps1')
         [IO.File]::WriteAllText($file,"[Console]::Out.WriteLine('"+$text.Replace("'","''")+"')")
         return (New-LiveStart -Executable $hostExecutable -Directory $temporary -Welcome -Arguments @('-NoProfile','-NonInteractive','-File',$file))
     }
     $r=Invoke-WinAppInspection (New-NativeTreeChild 'PRIVATE_NATIVE_SENTINEL') 123 {} -NativeOriginal
     Pass ($r.status -ceq 'observed' -and $r.reason -ceq 'native_original_tree_observed' -and $r.summary.requiredTargetStatus -ceq 'missing' -and $r.actions -eq 0 -and $r.attempts -eq 1 -and $r.processExitConfirmed) 'native tree observation is not a required-controls claim'
+    Pass ($r.summary.Contains('loginAssessment') -and $r.summary.loginMarkerCount -eq 0 -and $r.summary.loginAssessment -ceq 'unknown-requires-visual-review') 'unmatched names never establish absence of login'
     Pass (($r|ConvertTo-Json -Depth 12 -Compress) -notmatch 'PRIVATE_NATIVE') 'raw UI names remain private'
-    foreach($case in @(@('Sign in','login_marker_observed'),@('Allow access','protected_marker_observed'),@('Something went wrong','error_marker_observed'))) {
+    # Labels transcribed from the public 341298e1 screenshot, not captured UIA
+    # output. The original three sign-in variants already match the regex.
+    foreach ($label in @('Sign in to ChatGPT','Continue to sign in','Sign in another way')) {
+        $s=ConvertTo-WinAppSummary (New-NativeTreeText $label) 123
+        Pass ($s.loginMarkerCount -eq 1 -and $s.loginAssessment -ceq 'login-marker-observed') 'visible sign-in wording matches when exposed as a name'
+        Pass (($s|ConvertTo-Json -Depth 12 -Compress) -notmatch [regex]::Escape($label)) 'observed label remains private'
+    }
+    $s=ConvertTo-WinAppSummary (New-NativeTreeText 'Sign up') 123
+    Pass ($s.protectedMarkerCount -eq 1 -and $s.loginAssessment -ceq 'unknown-requires-visual-review') 'sign-up is a protected marker, not an authenticated-state inference'
+    foreach ($text in @((New-NativeTreeText ''),(New-NativeTreeText 'Sign in to ChatGPT' -OmitName),
+        (New-NativeTreeText 'Sign in to ChatGPT' -ValueOnly))) {
+        $s=ConvertTo-WinAppSummary $text 123
+        Pass ($s.loginMarkerCount -eq 0 -and $s.loginAssessment -ceq 'unknown-requires-visual-review') 'empty, omitted or value-only name leaves login unknown'
+        Pass (($s|ConvertTo-Json -Depth 12 -Compress) -notmatch 'Sign in to ChatGPT') 'no raw value fallback is published'
+    }
+    $r=Invoke-WinAppInspection (New-NativeTreeChild 'Sign in to ChatGPT' -OmitName) 123 {} -NativeOriginal
+    Pass ($r.status -ceq 'observed' -and $r.summary.loginAssessment -ceq 'unknown-requires-visual-review' -and $r.actions -eq 0 -and $r.attempts -eq 1 -and $r.processExitConfirmed) 'nameless tree only proves a read, with visual review still required'
+    foreach($case in @(@('Sign in','login_marker_observed'),@('Sign in to ChatGPT','login_marker_observed'),
+        @('Continue to sign in','login_marker_observed'),@('Sign in another way','login_marker_observed'),
+        @('Sign up','protected_marker_observed'),@('Allow access','protected_marker_observed'),@('Something went wrong','error_marker_observed'))) {
         $r=Invoke-WinAppInspection (New-NativeTreeChild $case[0]) 123 {} -NativeOriginal
-        Pass ($r.status -ceq 'stopped' -and $r.reason -ceq $case[1] -and $r.actions -eq 0) 'native login/permission/error stops without action'
+        Pass ($r.status -ceq 'stopped' -and $r.reason -ceq $case[1] -and $r.actions -eq 0 -and $r.attempts -eq 1 -and $r.processExitConfirmed) 'native login/permission/error stops without action'
     }
 } finally { Remove-Item -LiteralPath $temporary -Recurse -Force }
 Write-Output ('PASS: '+$count+' native-original safety assertions.')
