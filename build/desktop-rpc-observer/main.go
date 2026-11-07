@@ -33,6 +33,8 @@ const (
 // path or stderr. Strings are fixed labels or the verified public dictionary's
 // digest; dynamic public key matches expose only bounded dictionary indices.
 type event struct {
+	ModelCatalog *modelCatalogObservation `json:"modelCatalog,omitempty"`
+
 	Sequence                  uint64   `json:"seq"`
 	PID                       int      `json:"pid"`
 	Kind                      string   `json:"kind"`
@@ -92,8 +94,9 @@ type pendingKey struct {
 	digest    [32]byte
 }
 type pendingRequest struct {
-	correlation uint64
-	method      string
+	correlation          uint64
+	method               string
+	modelCatalogEligible bool
 }
 type observer struct {
 	mu                  sync.Mutex
@@ -265,7 +268,8 @@ func (o *observer) line(direction string, b []byte) {
 				o.quarantined[key] = true
 				e.Class = "duplicate_id"
 			} else if len(o.pending)+len(o.quarantined) < maxPending {
-				o.pending[key] = pendingRequest{e.Correlation, e.Method}
+				o.pending[key] = pendingRequest{correlation: e.Correlation, method: e.Method,
+					modelCatalogEligible: direction == "to_bridge" && method == "model/list" && modelCatalogRequestEligible(b)}
 			} else {
 				// Losing tracking state must not create later false matches.
 				o.correlationDisabled = true
@@ -326,6 +330,9 @@ func (o *observer) line(direction string, b []byte) {
 				e.Correlation, e.Method = p.correlation, p.method
 				e.Class = "response"
 				delete(o.pending, key)
+				if direction == "from_bridge" && result && p.modelCatalogEligible {
+					e.ModelCatalog = observedModelCatalog(b)
+				}
 			}
 		}
 		if failure {

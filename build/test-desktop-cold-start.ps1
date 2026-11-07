@@ -89,6 +89,39 @@ function ConvertFrom-PublicRPCMethodFacts([byte[]]$bytes) {
     }
     return $facts
 }
+# Optional TEST-ONLY model/list page facts. This is not a routing/UI verdict.
+function Assert-PublicModelCatalogEvent($record) {
+    if (-not $record.PSObject.Properties['modelCatalog']) { return }
+    Assert-PublicShape $record @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class', 'modelCatalog')
+    foreach ($key in @('seq', 'pid', 'correlation')) { Assert-PublicInteger $record.$key 1 4294967296 }
+    foreach ($key in @('kind', 'direction', 'method', 'class')) {
+        if ($record.$key -isnot [string]) { throw 'Invalid model catalog label.' }
+    }
+    if ($record.kind -cne 'rpc' -or $record.direction -cne 'from_bridge' -or
+        $record.method -cne 'model/list' -or $record.class -cne 'response') { throw 'Invalid model catalog context.' }
+    $summary = $record.modelCatalog
+    if ($null -eq $summary -or $summary -isnot [pscustomobject] -or
+        -not $summary.PSObject.Properties['status'] -or $summary.status -isnot [string] -or
+        @('observed', 'partial', 'unavailable', 'limit') -cnotcontains $summary.status) {
+        throw 'Invalid model catalog status.'
+    }
+    if ($summary.status -cin @('unavailable', 'limit')) {
+        Assert-PublicShape $summary @('schema', 'status')
+        Assert-PublicInteger $summary.schema 1 1
+        return
+    }
+    Assert-PublicShape $summary @('schema', 'status', 'counts')
+    Assert-PublicInteger $summary.schema 1 1
+    $counts = $summary.counts
+    $fields = @('items', 'alpha', 'alphaHidden', 'alphaDefault', 'beta', 'betaHidden', 'betaDefault', 'unknown')
+    Assert-PublicShape $counts ($fields + @('hasMore'))
+    foreach ($key in $fields) { Assert-PublicInteger $counts.$key 0 32 }
+    if ($counts.hasMore -isnot [bool] -or $counts.items -ne ($counts.alpha + $counts.beta + $counts.unknown) -or
+        $counts.alphaHidden -gt $counts.alpha -or $counts.alphaDefault -gt $counts.alpha -or
+        $counts.betaHidden -gt $counts.beta -or $counts.betaDefault -gt $counts.beta) { throw 'Invalid model catalog counts.' }
+    $partial = $counts.unknown -gt 0 -or $counts.hasMore
+    if (($summary.status -ceq 'partial') -ne $partial) { throw 'Invalid model catalog completeness.' }
+}
 function Get-PublicRPCMethods([string]$DictionaryPath = '') {
     try {
         $path = $DictionaryPath
@@ -3080,7 +3113,7 @@ requires_openai_auth = false
             if ($report.observer.sha256After -ne $report.observer.sha256) { Block 'Observer bytes changed during the diagnostic.' }
             # Only the observer's fixed metadata schema is eligible for publication.
             # Unknown fields or values fail closed without copying or printing the record.
-            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class',
+            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class', 'modelCatalog',
                 'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
                 'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
@@ -3468,6 +3501,7 @@ requires_openai_auth = false
                         $record = $line | ConvertFrom-Json
                         Assert-PublicCanonicalJSON $line $record
                     } catch { Block 'Observer metadata is not canonical valid JSON.' }
+                    Assert-PublicModelCatalogEvent $record
                     Assert-PublicAuthRequestEvent $record
                     Assert-PublicReadRequestEvent $record
                     Assert-PublicPluginShapeEvent $record
@@ -3475,7 +3509,10 @@ requires_openai_auth = false
                     foreach ($property in $record.PSObject.Properties) {
                         if ($keys -cnotcontains $property.Name) { Block 'Observer emitted an unexpected metadata field.' }
                         $value = $property.Value
-                        if ($numericKeys -ccontains $property.Name) {
+                        if ($property.Name -ceq 'modelCatalog') {
+                            # The nested fixed schema was validated before publication.
+                            continue
+                        } elseif ($numericKeys -ccontains $property.Name) {
                             $isNumber = $value -is [int] -or $value -is [long] -or $value -is [uint32] -or
                                 $value -is [uint64] -or $value -is [double] -or $value -is [decimal]
                             if (-not $isNumber -or [double]$value -ne [Math]::Truncate([double]$value) -or

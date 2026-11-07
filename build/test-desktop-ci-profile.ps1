@@ -10,7 +10,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile(
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
-    'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
+    'Assert-PublicModelCatalogEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
     'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
     $definitions = @($ast.FindAll({
@@ -62,6 +62,44 @@ function New-Backends {
         [ordered]@{ id = 'alpha'; provider = 'alpha_provider'; command = 'fixture-codex.exe'; home = 'fixture-alpha-home'; codex_home = 'fixture-alpha-codex' },
         [ordered]@{ id = 'beta'; provider = 'beta_provider'; command = 'fixture-codex.exe'; home = 'fixture-beta-home'; codex_home = 'fixture-beta-codex' }
     )
+}
+function New-ModelCatalogEvent {
+    return ('{"seq":2,"pid":1,"kind":"rpc","direction":"from_bridge","method":"model/list","correlation":1,"class":"response",' +
+        '"modelCatalog":{"schema":1,"status":"observed","counts":{"items":2,"alpha":1,"alphaHidden":0,"alphaDefault":1,"beta":1,"betaHidden":0,"betaDefault":0,"unknown":0,"hasMore":false}}}') | ConvertFrom-Json
+}
+Expect-Pass 'model catalog fixed counts only' { Assert-PublicModelCatalogEvent (New-ModelCatalogEvent) }
+Expect-Pass 'legacy event without model catalog unchanged' { Assert-PublicModelCatalogEvent ([pscustomobject]@{kind='rpc'}) }
+foreach ($status in @('unavailable', 'limit')) {
+    Expect-Pass ('model catalog honest missing evidence ' + $status) {
+        $event = New-ModelCatalogEvent; $event.modelCatalog = [pscustomobject]@{schema=1;status=$status}
+        Assert-PublicModelCatalogEvent $event
+    }
+}
+Expect-Pass 'model catalog unreviewed tuple is partial' {
+    $event = New-ModelCatalogEvent; $event.modelCatalog.status='partial'
+    $event.modelCatalog.counts.beta=0; $event.modelCatalog.counts.unknown=1
+    Assert-PublicModelCatalogEvent $event
+}
+Expect-Pass 'model catalog pagination is partial' {
+    $event = New-ModelCatalogEvent; $event.modelCatalog.status='partial'; $event.modelCatalog.counts.hasMore=$true
+    Assert-PublicModelCatalogEvent $event
+}
+foreach ($mutation in @(
+    {param($e) $e.method='account/read'}, {param($e) $e.direction='to_bridge'},
+    {param($e) $e.class='unmatched_response'}, {param($e) $e.correlation=0},
+    {param($e) $e.modelCatalog.schema=2}, {param($e) $e.modelCatalog.status='PRIVATE_CANARY'},
+    {param($e) $e.modelCatalog.counts.items=33}, {param($e) $e.modelCatalog.counts.items=1},
+    {param($e) $e.modelCatalog.counts.alpha=-1}, {param($e) $e.modelCatalog.counts.betaHidden=2},
+    {param($e) $e.modelCatalog.counts.alphaDefault='1'}, {param($e) $e.modelCatalog.counts.hasMore=1},
+    {param($e) $e.modelCatalog.counts.hasMore=$true}, {param($e) $e.modelCatalog.status='partial'},
+    {param($e) $e.modelCatalog.status='unavailable'},
+    {param($e) $e.modelCatalog.counts | Add-Member -NotePropertyName raw -NotePropertyValue 'PRIVATE_CANARY'},
+    {param($e) $e.modelCatalog | Add-Member -NotePropertyName name -NotePropertyValue 'PRIVATE_CANARY'},
+    {param($e) $e | Add-Member -NotePropertyName body -NotePropertyValue 'PRIVATE_CANARY'}
+)) {
+    Expect-Reject 'model catalog invalid context/shape cannot publish' {
+        $event=New-ModelCatalogEvent; & $mutation $event; Assert-PublicModelCatalogEvent $event
+    }
 }
 $version = 'codex-cli 0.167.0-alpha.3.2'
 $hash = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'

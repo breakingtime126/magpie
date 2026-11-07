@@ -3191,3 +3191,41 @@ labels still require actual final read/pixel review, and neither dual selection
 nor inference is claimed. Pure fixtures cover key routing, non-model navigation,
 four-Tab cap, protected/missing focus, malformed receipts and stop-without-retry.
 PowerShell/Windows/live keyboard execution remains CI work.
+
+
+### Test-only model catalog page observation
+
+The CI observer can attach `modelCatalog` schema 1 only to a successful,
+uniquely correlated `from_bridge` `model/list` response. The eligible request
+and response envelopes reject duplicate fields; wrong IDs, directions,
+methods and quarantined IDs cannot supply catalog evidence. The existing
+64 KiB input-line/trace limits, 256 pending-ID bound, exclusive trace slots,
+and byte-for-byte forwarding are unchanged. This does not modify production
+routing, provider selection, model discovery, UI steps, or the method dictionary.
+
+Only fixed counts are retained: total items; exact synthetic alpha/beta tuple
+matches; their hidden/default counts; unknown tuple count; and a next-page
+boolean. A known tuple requires `id == model == magpie/<backend>/gpt-5.5` and
+`displayName == GPT-5.5 [<backend>]`. No arbitrary name, ID, cursor, description,
+request parameter, or raw response body is published. Unknown tuples or a
+next cursor yield `partial`, malformed/missing required facts `unavailable`,
+and more than 32 items `limit`. Unavailable/limit contain no counts. An oversized
+wire line retains the existing `oversized` event and supplies no model facts.
+`observed` means this one bounded page was classified, not that both models
+exist, the whole session was captured, or Desktop displayed/selected a model.
+Absent metadata is missing evidence, never an empty directory.
+
+The side tap runs `p.feed` before `dst.Write`: these facts prove only that the
+observer read the bridge-to-client page, not that Desktop received or consumed
+it. Assess transport evidence alongside `copy_error` and output EOF, and seek
+Desktop's corresponding `response_routed` evidence before claiming client
+receipt. None of those transport/routing facts proves menu rendering or model
+selection; that still requires the actual UI evidence. No delivery-ack mechanism
+is added by this change.
+
+The real d713 UI run opened Select model with one Tab and one Enter and showed
+only alpha; its successful `model/list` record did not retain result contents.
+The visible “Legacy coding model.” tooltip is a lead for static review, not proof
+that `model_provider=magpie_bridge` caused filtering. No provider is changed by
+this diagnostic. The independent 4239 native acceptance must remain distinct
+from the actual Desktop's catalog and UI result.
