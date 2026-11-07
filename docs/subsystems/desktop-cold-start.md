@@ -1611,3 +1611,88 @@ The parent continues to report a failed live slice. If one capture does not
 identify a concrete harmless mismatch for separate review, stop this lane
 rather than repeating diagnostics or expanding onboarding behavior.
 
+
+## One-off official winapp read-only comparison
+
+A push to the existing experimental branch whose head commit message contains
+`[winapp-inspection-v0.7.1]` selects `EnableReadOnlyWinAppInspection` in the
+policy-trace job. It is mutually exclusive with the welcome action helper and
+native-entry cases. The older cold-start/native-entry jobs are skipped for that
+marked push, not reported as passed. Existing policy-trace unit, profile,
+redaction and bridge build checks remain. Unmarked behavior is unchanged.
+
+[desktop-winapp-inspect.ps1](../../build/desktop-winapp-inspect.ps1) downloads the
+official Microsoft [winappCli v0.7.1 release](https://github.com/microsoft/winappCli/releases/tag/v0.7.1)
+into fresh private scratch. Before any tool execution it requires the x64 ZIP's
+published size 99,013,508 and SHA-256
+`d925d1e32cdc320b6d271f653fd2cd3c05b5d7558deb20d1b548bead77900fcf`, then a valid
+embedded Authenticode signature with Microsoft Corporation as signer
+organization on `winapp.exe`. It records the actual executable digest and signer
+thumbprint, and verifies all extracted file digests and the executable signature
+again before and after inspection. An unavailable/invalid signature stops, with
+no unsigned or alternate-tool fallback. The tool's source license is MIT; no
+installer, init, update, run, debug, pack, global PATH or system-setting command
+is used. Zip paths and expanded size are bounded before extraction.
+
+The existing fresh signed Desktop package, native backend hashes, empty-account
+checks, reviewed startup/profile gates, loopback fixture setup, held activation
+process, screenshot and cleanup remain. The only UI command is exactly
+`ui inspect -w <verified HWND> --depth 8 --json`. Held process start time,
+PID, session, package, executable and current requested-window ownership are
+rechecked before and after the invocation. This requests the existing HWND; it
+is **not** strict proof of the inspected root or PID exclusion. The pinned
+source can fall back to a same-PID root, and an unresolved HWND reuse race
+remains. The explicit HWND avoids `-a PID`'s intentional extra owned-dialog
+walk. Depth 8 bounds rendered output only: AutomationId promotion can read
+full descendants. No subsequent input action is authorized by the result.
+
+The shared bounded child supervisor imposes 30 seconds and 256 KiB per output
+stream. Raw JSON is reduced only in private memory, and stderr is discarded.
+One invocation is attempted, with no retry on missing, malformed, unavailable,
+nonzero, timed-out, oversized, changed-identity or uncertain output. Cleanup
+explicitly checks held-child exit; unconfirmed exit/disposal or constructor
+failure after a possible start cannot succeed. The shared supervisor constructor
+validates bounds before starting and transactionally stops/reaps only its own
+held Process on any later constructor exception, disposing partial resources.
+A fixture injects failure after stream readers start but before timer creation
+and independently holds that same child to verify exit. Process termination/drain may
+need up to five/two additional seconds; this is not extra inspection time.
+
+Only fixed counts, booleans and enums enter `report.nativeInspection`: exact
+and whitespace-normalized heading counts, the three target-label counts and
+invokable-label counts, node/truncation counts, rendered depth, required-target
+presence and UIA offscreen-based visibility, protected-label counts and supervisor outcome.
+The visibility enum reflects UIA properties, not independent pixel validation. Missing target names
+are `stopped/required_targets_missing`; offscreen targets are
+`stopped/required_targets_offscreen`, never observed visible controls. Login,
+permission, authorization, account, payment, terms, privacy and security markers
+stop without an action. These fixed marker checks are not a complete semantic
+classification of arbitrary UI. Unknown output schema also stops.
+
+`WINAPP_UI_LOCK_DIRECTORY` and `WINAPP_CLI_CACHE_DIRECTORY` are set only in the
+cleared child environment, to new nonexistent local scratch paths. Existing
+runner profile directories are neither overridden nor repaired. The official
+tool creates its own restricted coordination directories there. No
+`WINAPP_UI_WORKFLOW_ID` is inherited. Exact `--json` bypasses first-run notice
+and update checking; `WINAPP_CLI_TELEMETRY_OPTOUT=1` disables upload-tagged
+telemetry, while local ETW and named session-event bookkeeping remain. This is
+not a zero-egress or filesystem-read-only claim.
+
+The original screenshot is retained; an after-inspection screenshot is taken
+only when the tool result and requested-window identity checks passed. It uses
+the existing screen-pixel capture, never winapp's focus/restore screenshot
+command. Pixels may be occluded and require review. `inspectionFixture` reports
+only the existing loopback helper lifetime; no welcome result is fabricated.
+Independent native four-turn acceptance is `not-run/read_only_inspection_only`.
+Earlier .NET UIA counts are historical, not a simultaneous same-window sample.
+A completed observation is not onboarding, model selection or Desktop chat.
+
+Offline verification: `pwsh -NoProfile -File build/desktop-winapp-inspect.tests.ps1`.
+The `-BreakRedaction` mutation must fail exactly the raw-UI-text exclusion
+assertion before the normal suite passes. Fixtures are explicitly
+schema-derived synthetic data, not captured official-tool output. They exercise
+option/signature/schema/label/privacy rules, injected cleanup uncertainty, and
+real bounded child stdout/stderr/timeout behavior without downloading or
+activating Desktop. Actual CLI serialization/signature/runtime compatibility
+remains to be checked by the single marked Windows job. Focused checks never
+replace the retained repository checks or actual Windows run.

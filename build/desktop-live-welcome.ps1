@@ -204,11 +204,39 @@ namespace DesktopLive {
   public int ExitCode { get { return process.ExitCode; } }
   public string Output { get { lock(gate) return output.ToString(); } }
   public bool Drained { get { return stdout.IsCompleted && stderr.IsCompleted; } }
-  public BoundedProcess(ProcessStartInfo start, int maxBytes, int milliseconds) {
-   limit=maxBytes; process=new Process(); process.StartInfo=start;
-   if(!process.Start()) throw new Exception("start failed"); var held=process.Handle;
-   stdout=Task.Run(()=>Drain(process.StandardOutput,true)); stderr=Task.Run(()=>Drain(process.StandardError,false));
-   timer=new Timer(_=>{ timedOut=true; Stop(); },null,milliseconds,Timeout.Infinite);
+  public BoundedProcess(ProcessStartInfo start, int maxBytes, int milliseconds)
+   : this(start,maxBytes,milliseconds,null) {}
+  // Offline fixture seam: observe the started PID, then fail before the timer exists.
+  public static void TestFailureAfterStart(ProcessStartInfo start, Action<int> observeStarted) {
+   if(observeStarted==null) throw new ArgumentNullException("observeStarted");
+   using(var unexpected=new BoundedProcess(start,8192,30000,observeStarted)) {
+    throw new InvalidOperationException("Constructor failure fixture did not fail.");
+   }
+  }
+  BoundedProcess(ProcessStartInfo start, int maxBytes, int milliseconds, Action<int> failAfterStart) {
+   if(start==null || maxBytes<=0 || milliseconds<=0) throw new ArgumentException("Invalid bounded process inputs.");
+   limit=maxBytes; process=new Process(); process.StartInfo=start; bool started=false;
+   try {
+    if(!process.Start()) throw new InvalidOperationException("Process did not start.");
+    started=true; var held=process.Handle;
+    stdout=Task.Run(()=>Drain(process.StandardOutput,true)); stderr=Task.Run(()=>Drain(process.StandardError,false));
+    if(failAfterStart!=null) { failAfterStart(process.Id); throw new InvalidOperationException("Injected constructor failure."); }
+    timer=new Timer(_=>{ timedOut=true; Stop(); },null,milliseconds,Timeout.Infinite);
+   } catch {
+    bool reaped=!started;
+    try { if(timer!=null) timer.Dispose(); } catch {}
+    if(started) {
+     try { if(!process.HasExited) process.Kill(); reaped=process.WaitForExit(5000); } catch { reaped=false; }
+    }
+    if(reaped) {
+     try { if(stdout!=null) stdout.Wait(2000); } catch {}
+     try { if(stderr!=null) stderr.Wait(2000); } catch {}
+    }
+    try { process.Dispose(); } catch {}
+    throw new InvalidOperationException(reaped
+     ? "Bounded process construction failed; owned process exit confirmed."
+     : "Bounded process construction failed; owned process exit unconfirmed.");
+   }
   }
   void Drain(StreamReader reader,bool retain) {
    try { var buffer=new char[1]; int count,total=0;

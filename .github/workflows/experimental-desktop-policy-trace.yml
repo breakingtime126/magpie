@@ -10,6 +10,7 @@ on:
       - build/desktop-rpc-observer/**
       - build/control-plane-native/**
       - build/desktop-live-welcome*.ps1
+      - build/desktop-winapp-inspect*.ps1
       - build/desktop-welcome-step*.ps1
       - build/test-desktop-cold-start.ps1
       - build/test-desktop-public-catalog.ps1
@@ -554,6 +555,7 @@ jobs:
       GOTOOLCHAIN: local
       GOFLAGS: -mod=readonly
       GOTELEMETRY: 'off'
+      MAGPIE_WINAPP_INSPECTION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && 'winapp-inspection-v0.7.1' || '' }}
     defaults:
       run:
         shell: powershell
@@ -653,14 +655,30 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Live welcome integration fixtures failed.' }
           powershell -NoProfile -NonInteractive -File build/desktop-welcome-step.tests.ps1 -CheckNativeInterop
           if ($LASTEXITCODE -ne 0) { throw 'Welcome policy fixtures failed.' }
-      - name: Observe one welcome transition and isolated native text turns
+      - name: Check official-tool observation fixtures offline
+        shell: pwsh
+        run: |
+          $savedNativePreference=$PSNativeCommandUseErrorActionPreference
+          try {
+            $PSNativeCommandUseErrorActionPreference=$false
+            $mutation=& pwsh -NoProfile -File build/desktop-winapp-inspect.tests.ps1 -BreakRedaction 2>&1
+            $mutationExit=$LASTEXITCODE
+          } finally { $PSNativeCommandUseErrorActionPreference=$savedNativePreference }
+          if ($mutationExit -eq 0 -or ($mutation|Out-String) -notlike '*FAIL: raw UI text never enters public summary*') {
+            throw 'Redaction mutation did not fail its behavior assertion.'
+          }
+          $global:LASTEXITCODE=0
+          ./build/desktop-winapp-inspect.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Official-tool observation fixtures failed.' }
+      - name: Observe the explicitly selected disposable Desktop slice
         shell: pwsh
         run: |
           $bridge = Join-Path $env:RUNNER_TEMP ('magpie-ci-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $observer = Join-Path $env:RUNNER_TEMP ('magpie-observer-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $native = Join-Path $env:RUNNER_TEMP ('magpie-control-native-' + $env:GITHUB_SHA.Substring(0, 8) + '.exe')
           $catalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'
-          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome -InspectStaticLauncher
+          $inspection = $env:MAGPIE_WINAPP_INSPECTION -ceq 'winapp-inspection-v0.7.1'
+          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(!$inspection) -EnableReadOnlyWinAppInspection:$inspection -InspectStaticLauncher
       - name: Upload only sanitized diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -671,6 +689,7 @@ jobs:
             ${{ runner.temp }}/desktop-cold-start-report/static-launcher-metadata.json
             ${{ runner.temp }}/desktop-cold-start-report/official-window.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-welcome.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-after-inspection.png
           if-no-files-found: error
           retention-days: 7
 

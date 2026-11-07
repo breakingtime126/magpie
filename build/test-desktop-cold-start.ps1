@@ -10,6 +10,7 @@ param(
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
+    [switch]$EnableReadOnlyWinAppInspection,
     [switch]$InspectStaticLauncher,
     [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
 )
@@ -1557,13 +1558,19 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
     -LaunchCompatibility $EnableReviewedLaunchCompatibility -StaticLauncher $InspectStaticLauncher `
     -Actions $env:GITHUB_ACTIONS -RunnerEnvironment $env:RUNNER_ENVIRONMENT `
     -Repository $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF
+$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
+if ($EnableReadOnlyWinAppInspection) {
+    . (Join-Path $PSScriptRoot 'desktop-winapp-inspect.ps1')
+    Assert-WinAppOptions $true $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
+        $EnableReviewedLiveWelcome $NativeEntryCase $env:MAGPIE_WINAPP_INSPECTION
+}
 if ($NativeEntryCase) {
     . (Join-Path $PSScriptRoot 'desktop-native-entry.ps1')
     Assert-EntryOptions -Case $NativeEntryCase -Mode $Mode `
-        -OtherOptIn ($EnableReviewedStartupProbe -or $EnableReviewedLaunchCompatibility -or $EnableReviewedLiveWelcome -or $InspectStaticLauncher) `
+        -OtherOptIn ($EnableReviewedStartupProbe -or $EnableReviewedLaunchCompatibility -or $useLiveFixtures -or $InspectStaticLauncher) `
         -WorkflowRef $env:GITHUB_WORKFLOW_REF
 }
-if ($EnableReviewedLiveWelcome) {
+if ($useLiveFixtures) {
     . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
     Assert-LiveWelcomeOptions -Enabled $true -Mode $Mode -Startup $EnableReviewedStartupProbe -Compatibility $EnableReviewedLaunchCompatibility
 }
@@ -1586,6 +1593,8 @@ $eventSource = 'MagpieDesktopProcessStart'
 $subscription = $null
 $exitCode = 1
 $liveFixture = $null
+$liveFixtureReport = $null
+$winAppTool = $null
 $liveWelcome = $null
 $liveFixtureStopped = $false
 $liveAfterCaptured = $false
@@ -1619,6 +1628,17 @@ See the report artifact for public package, session, and process evidence.
 "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
 }
 try {
+    if ($EnableReadOnlyWinAppInspection) {
+        $report.nativeInspection=[ordered]@{
+            scope='hwnd-requested-read-only';status='not-run';reason='tool_provenance_pending';actions=0
+            limits=@('The CLI may fall back to a same-PID root; HWND reuse remains a race. No strict root or PID exclusion proof.',
+                'Depth 8 bounds rendered output only. The official tool may inspect deeper descendants.',
+                'One invocation only, externally bounded to 30 seconds and 256 KiB per stream. Raw tree and stderr stay private.',
+                'Upload-tagged telemetry disabled; local ETW and named session-event bookkeeping remain.',
+                'Tool coordination and cache use fresh private scratch. No input action or acceptance of onboarding, models or chat.')
+        }
+
+    }
     if ($NativeEntryCase) {
         $report.nativeEntry = [ordered]@{
             case=$NativeEntryCase; scope='disposable-native-entry-only'; selection='not-observed'
@@ -1671,6 +1691,13 @@ try {
     if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\auth.json')) { Block 'Unexpected existing Codex authentication file.' }
     $existing = @(Get-AppxPackage -Name 'OpenAI.Codex')
     if ($existing.Count -ne 0) { Block 'Unexpected existing OpenAI.Codex registration; baseline must be fresh.' }
+    if ($EnableReadOnlyWinAppInspection) {
+        $report.reason='tool_provenance_unavailable'
+        $winAppTool=Initialize-WinAppTool (Join-Path $work 'winapp-inspection')
+        $report.nativeInspection.provenance=$winAppTool.Provenance
+        $report.Remove('reason')
+        $report.nativeInspection.reason='owned_window_pending'
+    }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     Add-Type -AssemblyName System.Drawing
@@ -1737,6 +1764,12 @@ namespace DesktopColdProbe {
       var obj = new ApplicationActivationManager();
       try { return ((IApplicationActivationManager)obj).ActivateApplication(aumid, "", 0, out pid); }
       finally { Marshal.ReleaseComObject(obj); }
+    }
+    public static WindowInfo Window(long handle) {
+      IntPtr h = new IntPtr(handle); uint pid; Rect r;
+      if (!IsWindowVisible(h) || GetWindowThreadProcessId(h, out pid) == 0 || !GetWindowRect(h, out r)) return null;
+      return new WindowInfo { Handle=handle, ProcessId=pid, Left=r.Left, Top=r.Top,
+        Width=r.Right-r.Left, Height=r.Bottom-r.Top };
     }
     public static WindowInfo[] Windows() {
       var found = new List<WindowInfo>();
@@ -2184,11 +2217,17 @@ requires_openai_auth = false
             try { New-Item -ItemType Directory -Path $controlHome | Out-Null }
             catch { Block 'The separate bridge-owned home could not be created.' }
         }
-        if ($EnableReviewedLiveWelcome) {
-            $report.liveWelcome = [ordered]@{
+        if ($useLiveFixtures) {
+            $liveFixtureReport = [ordered]@{
                 scope = 'synthetic-welcome-only'; status = 'not-run'; reason = 'fixture_setup_pending'
                 privateScratchRetained = $true; wholeProcessFamilyExitProven = $false
                 limit = 'One welcome transition only. No full onboarding, composer, model use or conversation claim. Private scratch is never uploaded or deleted while descendants may remain.'
+            }
+            if ($EnableReviewedLiveWelcome) { $report.liveWelcome=$liveFixtureReport }
+            else {
+                $liveFixtureReport.scope='synthetic-inspection-fixture-only'
+                $liveFixtureReport.limit='Fixture lifetime only. No welcome action, onboarding or Desktop conversation is attempted.'
+                $report.inspectionFixture=$liveFixtureReport
             }
             try {
                 Initialize-LiveSupervisor
@@ -2197,7 +2236,7 @@ requires_openai_auth = false
                 $liveStart = New-LiveStart -Executable $NativeControlExecutable -Directory $liveScratch -Arguments @(
                     '-desktop-fixtures','-codex',$officialBackend.FullName,'-catalog',$NativeControlCatalog,'-scratch-parent',$liveScratch)
                 $liveFixture = [DesktopLive.BoundedProcess]::new($liveStart,16384,30000)
-                $report.liveWelcome.readiness = Wait-LiveReady $liveFixture
+                $liveFixtureReport.readiness = Wait-LiveReady $liveFixture
                 # Bounded private input, then exact fields and reconstructed owned paths.
                 $liveConfigPath = Join-Path $liveScratch 'bridge.json'
                 Assert-PublicRegularPath $liveConfigPath
@@ -2212,12 +2251,12 @@ requires_openai_auth = false
                 foreach ($backend in $liveOwned.Backends) { Assert-PublicRegularPath (Join-Path $backend.codex_home 'config.toml') }
                 $backends = $liveOwned.Backends; $controlHome = $liveOwned.ControlHome
                 $liveWorkspace = $liveOwned.Workspace
-                $report.liveWelcome.status = 'ready'; $report.liveWelcome.reason = 'welcome_not_attempted'
+                $liveFixtureReport.status = 'ready'; $liveFixtureReport.reason = 'welcome_not_attempted'
             } catch { Block 'The live fixture could not establish its bounded reviewed contract.' }
         }
         $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe ($EnableReviewedStartupProbe -or [bool]$NativeEntryCase) `
             -LaunchCompatibility $EnableReviewedLaunchCompatibility -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome
-        if ($EnableReviewedLiveWelcome) {
+        if ($useLiveFixtures) {
             $bridgeSettings.working_directory = $liveWorkspace
             $bridgeSettings.gateway_oauth_provider_name = 'Synthetic alpha_provider'
         }
@@ -2292,7 +2331,7 @@ requires_openai_auth = false
             }
         }
         $report.bridge.configurationValidated = $true
-        if ($EnableReviewedLiveWelcome) {
+        if ($useLiveFixtures) {
             $report.bridge.configuration = 'Two owned native homes with real read-only approval-never configs and live loopback synthetic Responses fixtures; genuine startup policy checks retained.'
         }
         $launchExecutable = $BridgeExecutable
@@ -2364,7 +2403,7 @@ requires_openai_auth = false
     } else {
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = $alias; $start.UseShellExecute = $false
-        $start.WorkingDirectory = $(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work })
+        $start.WorkingDirectory = $(if ($useLiveFixtures) { $liveWorkspace } else { $work })
         # Explicit non-secret Windows environment only; no runner tokens or shell-wide override.
         $start.EnvironmentVariables.Clear()
         foreach ($name in @('SystemRoot', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
@@ -2382,7 +2421,7 @@ requires_openai_auth = false
             $start.EnvironmentVariables['MAGPIE_CI_REAL_BRIDGE'] = $BridgeExecutable
             $start.EnvironmentVariables['MAGPIE_CI_TRACE_FILE'] = $tracePrefix
             $start.EnvironmentVariables['MAGPIE_CI_READ_TARGET_ROOTS'] = New-DesktopReadTargetEnvironment `
-                -Backends $backends -Workspace $(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work }) -VerifiedPackage $app.InstallLocation -ControlHome $controlHome
+                -Backends $backends -Workspace $(if ($useLiveFixtures) { $liveWorkspace } else { $work }) -VerifiedPackage $app.InstallLocation -ControlHome $controlHome
             if ($null -ne $publicPluginEnvironment) {
                 $start.EnvironmentVariables['MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES'] = $publicPluginEnvironment
             }
@@ -2496,6 +2535,22 @@ requires_openai_auth = false
     if ([DesktopColdProbe.Native]::PackageFor([uint32]$window.ProcessId) -ne $app.PackageFullName) {
         Block 'Window owner changed before capture.'
     }
+    if ($EnableReadOnlyWinAppInspection) {
+        $checkInspectionIdentity={
+            if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
+                $ownedActivationProcess.Id -ne $activationPid -or $window.ProcessId -ne $activationPid -or
+                $ownedActivationProcess.StartTime.ToUniversalTime().ToString('o') -cne $ownedActivationCreatedUtc -or
+                $ownedActivationProcess.SessionId -ne $processSession -or
+                [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName -or
+                $ownedActivationProcess.MainModule.FileName -ine (Get-LiveDesktopExecutable $app.InstallLocation $desktopApp.GetAttribute('Executable'))) {
+                throw 'Inspection owner identity unavailable.'
+            }
+            $currentWindow=[DesktopColdProbe.Native]::Window($window.Handle)
+            if ($null -eq $currentWindow -or $currentWindow.ProcessId -ne $activationPid -or
+                $currentWindow.Width -lt 1 -or $currentWindow.Height -lt 1) { throw 'Inspection window identity unavailable.' }
+        }
+        & $checkInspectionIdentity
+    }
     $left = [Math]::Max(0, $window.Left); $top = [Math]::Max(0, $window.Top)
     $right = [Math]::Min($report.session.screenWidth, $window.Left + $window.Width)
     $bottom = [Math]::Min($report.session.screenHeight, $window.Top + $window.Height)
@@ -2512,6 +2567,38 @@ requires_openai_auth = false
         Write-Output ('DESKTOP_SCREENSHOT_PNG=' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($capturePath)))
     }
     $report.capture = 'official-window.png; screen pixels may contain occlusion and require visual review'
+    if ($EnableReadOnlyWinAppInspection) {
+        $report.nativeInspection.reason='inspection_setup_unavailable'
+        try {
+            if ($liveFixture.Exited -or $liveFixture.TimedOut -or $liveFixture.Overflow) { throw 'Fixture unavailable.' }
+            Assert-WinAppFiles $winAppTool
+            $inspectionStart=New-WinAppStart $winAppTool $window.Handle
+            $inspection=Invoke-WinAppInspection $inspectionStart $window.Handle $checkInspectionIdentity
+            $report.nativeInspection.result=$inspection
+            $report.nativeInspection.status=$inspection.status;$report.nativeInspection.reason=$inspection.reason
+            if ($inspection.status -cne 'observed') { Block 'The one read-only native inspection stopped; no retry or UI action.' }
+            Assert-WinAppFiles $winAppTool
+            # No second UIA read. Screenshot only after the same owned process/window recheck.
+            & $checkInspectionIdentity
+            $currentWindow=[DesktopColdProbe.Native]::Window($window.Handle)
+            $left=[Math]::Max(0,$currentWindow.Left);$top=[Math]::Max(0,$currentWindow.Top)
+            $right=[Math]::Min($report.session.screenWidth,$currentWindow.Left+$currentWindow.Width)
+            $bottom=[Math]::Min($report.session.screenHeight,$currentWindow.Top+$currentWindow.Height)
+            if ($right -le $left -or $bottom -le $top) { throw 'Inspection screenshot outside screen.' }
+            $bitmap=New-Object Drawing.Bitmap(($right-$left),($bottom-$top));$graphics=[Drawing.Graphics]::FromImage($bitmap)
+            try {
+                $graphics.CopyFromScreen($left,$top,0,0,$bitmap.Size)
+                $bitmap.Save((Join-Path $out 'official-window-after-inspection.png'),[Drawing.Imaging.ImageFormat]::Png)
+            } finally { $graphics.Dispose();$bitmap.Dispose() }
+            & $checkInspectionIdentity
+            $report.nativeInspection.afterCapture='official-window-after-inspection.png; screen pixels may contain occlusion and require visual review'
+        } catch {
+            if ($report.nativeInspection.status -cne 'stopped') {
+                $report.nativeInspection.status='stopped';$report.nativeInspection.reason='inspection_setup_or_identity_unavailable'
+            }
+        }
+        if ($report.nativeInspection.status -cne 'observed') { Block 'The one read-only native inspection stopped; no retry or UI action.' }
+    }
     if ($EnableReviewedLiveWelcome) {
         # Exactly one attempt, never retry after missing output or uncertain UI action.
         $welcomeDiagnostic=[ordered]@{stage='fixture_liveness';reason='fixture_unavailable';partialActionUncertain=$false;exitCode=$null;stdoutBytes=0;outputLimitExceeded=$false}
@@ -2536,14 +2623,14 @@ requires_openai_auth = false
                 '-OwnerStartUtcTicks',[string]$ownedActivationProcess.StartTime.ToUniversalTime().Ticks,
                 '-OwnerExecutable',$ownerExecutable,'-PackageFullName',$app.PackageFullName,'-SessionId',[string]$processSession)
             $liveWelcome = Invoke-LiveWelcome $welcomeStart -Diagnostic $welcomeDiagnostic
-            $report.liveWelcome.result = $liveWelcome
-            $report.liveWelcome.status = $liveWelcome.status; $report.liveWelcome.reason = $liveWelcome.reason
+            $liveFixtureReport.result = $liveWelcome
+            $liveFixtureReport.status = $liveWelcome.status; $liveFixtureReport.reason = $liveWelcome.reason
         } catch {
             $liveWelcome=$null
-            $report.liveWelcome.status = 'stopped'; $report.liveWelcome.reason = $welcomeDiagnostic.reason
+            $liveFixtureReport.status = 'stopped'; $liveFixtureReport.reason = $welcomeDiagnostic.reason
         }
-        $report.liveWelcome.parentDiagnostic=$welcomeDiagnostic
-        $report.liveWelcome.partialActionUncertain=$welcomeDiagnostic.partialActionUncertain
+        $liveFixtureReport.parentDiagnostic=$welcomeDiagnostic
+        $liveFixtureReport.partialActionUncertain=$welcomeDiagnostic.partialActionUncertain
         # Capture again even on a stopped result, but only the original owned HWND/PID.
         try {
             if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
@@ -2561,8 +2648,8 @@ requires_openai_auth = false
                 $bitmap.Save((Join-Path $out 'official-window-after-welcome.png'),[Drawing.Imaging.ImageFormat]::Png)
             } finally { $graphics.Dispose(); $bitmap.Dispose() }
             $liveAfterCaptured=$true
-            $report.liveWelcome.afterCapture='official-window-after-welcome.png; screen pixels may contain occlusion and require review'
-        } catch { $report.liveWelcome.afterCapture='unavailable' }
+            $liveFixtureReport.afterCapture='official-window-after-welcome.png; screen pixels may contain occlusion and require review'
+        } catch { $liveFixtureReport.afterCapture='unavailable' }
     }
     if ($Mode -ne 'baseline') {
         $bridgeStarts = @($report.processStarts | Where-Object {
@@ -3216,17 +3303,17 @@ requires_openai_auth = false
     if ($EnableReviewedLaunchCompatibility -or $NativeEntryCase) {
         $report.desktopActivationExited = [bool]$activationExitConfirmed
     }
-    if ($EnableReviewedLiveWelcome -and $null -ne $liveFixture) {
+    if ($useLiveFixtures -and $null -ne $liveFixture) {
         try {
             # Normally EOF follows exact activation exit. If cleanup failed, stop
             # the held fixture anyway, report failure, and retain private scratch.
             if (-not $activationExitConfirmed) { $liveFixture.Stop() }
             $audit = Complete-LiveFixture $liveFixture
-            $report.liveWelcome.fixtureAudit = $audit
+            $liveFixtureReport.fixtureAudit = $audit
             $liveFixtureStopped = $activationExitConfirmed -and $audit.status -ceq 'stopped'
-        } catch { $report.liveWelcome.fixtureAudit = [ordered]@{status='unavailable';reason='fixture_supervision_failed'} }
+        } catch { $liveFixtureReport.fixtureAudit = [ordered]@{status='unavailable';reason='fixture_supervision_failed'} }
         finally {
-            try { $liveFixture.Dispose() } catch { $liveFixtureStopped=$false; $report.liveWelcome.fixtureDisposal='unconfirmed' }
+            try { $liveFixture.Dispose() } catch { $liveFixtureStopped=$false; $liveFixtureReport.fixtureDisposal='unconfirmed' }
         }
     }
 }
@@ -3234,7 +3321,7 @@ requires_openai_auth = false
 # Same Windows job, after safe Desktop capture and exact activation-process exit.
 # Native evidence stays separate: a later Desktop compatibility failure remains
 # the original failure even when the isolated native slice can still be exercised.
-if ($EnableReviewedLaunchCompatibility) {
+if ($EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection) {
     $desktopOutcome = [pscustomobject][ordered]@{
         status = $report.status; stage = $report.stage; reason = $report.reason; exitCode = $exitCode
     }
@@ -3294,6 +3381,19 @@ if ($EnableReviewedLiveWelcome) {
     $prior = [pscustomobject]@{status=$report.status;stage=$report.stage;reason=$report.reason;exitCode=$exitCode}
     $liveOutcome = Get-LiveWelcomeOutcome $prior $liveFixtureStopped $liveWelcome $liveAfterCaptured
     $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode
+}
+if ($EnableReadOnlyWinAppInspection) {
+    $report.nativeControlPlane=[ordered]@{status='not-run';reason='read_only_inspection_only'}
+    $report.nativeInspection.priorOutcome=[ordered]@{status=$report.status;stage=$report.stage;reason=$report.reason;exitCode=$exitCode}
+    if ($exitCode -eq 0 -and $liveFixtureStopped -and $activationExitConfirmed -and
+        -not $report.Contains('cleanupErrorType') -and $report.nativeInspection.status -ceq 'observed' -and
+        $report.nativeInspection.Contains('afterCapture')) {
+        $report.status='observed';$report.stage='native-read-only-inspection'
+        $report.reason='One bounded HWND-requested read-only inspection and screenshot completed; no strict root/PID proof, UI action, onboarding or Desktop conversation acceptance.'
+    } else {
+        $report.status='blocked';$exitCode=1
+        if ($report.nativeInspection.status -ceq 'observed') { $report.nativeInspection.cleanupOrPriorCheck='not-accepted' }
+    }
 }
 if ($NativeEntryCase) {
     $outcome = Get-EntryOutcome -Case $NativeEntryCase -BridgeStarts $entryBridgeStarts.Count `
