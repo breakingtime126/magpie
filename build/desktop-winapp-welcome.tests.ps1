@@ -204,6 +204,14 @@ try {
         $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
         Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'confirmation uses only fixed typed reads or explicit Invoke'
     }
+    foreach ($spec in @(@('open-model-menu','btn-55alphamedium-abcd','ui invoke btn-55alphamedium-abcd --action invoke -w 123 --json'),
+        @('resolve-model-short','','ui get-property 5.5 [alpha] --type Button --property AutomationId -w 123 --json'),
+        @('resolve-model-effort','','ui get-property 5.5 [alpha] Medium --type Button --property AutomationId -w 123 --json'))) {
+        $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
+        Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'model menu uses fixed typed reads and one explicit Button Invoke only'
+    }
+    Reject { New-WinAppWelcomeStart $tool 123 'open-model-menu' '5.5 [alpha]' } 'model menu cannot invoke a text query'
+    Reject { New-WinAppWelcomeStart $tool 123 'resolve-model-effort' 'Try again' } 'model menu resolver cannot target setup'
     Reject { New-WinAppWelcomeStart $tool 123 'confirm-skip' 'Go to ChatGPT' } 'confirmation never invokes text or promoted selectors'
     Reject { New-WinAppWelcomeStart $tool 123 'resolve-confirm-button' 'PRIVATE_CANARY' } 'confirmation resolver never accepts arbitrary query input'
     Reject { New-WinAppWelcomeStart $tool 123 'toggle' 'rdo-engineering-abcd' } 'operation cannot use another target type'
@@ -426,6 +434,7 @@ foreach ($confirmationMode in @('normal','link','promoted','duplicate-title','di
     $identity={if ($script:confirmationMode -ceq 'final-identity' -and $script:confirmationPostRead) { throw 'Synthetic changed identity.' }}
     $confirmation=Invoke-WinAppSkipConfirmation $null 123 $identity $confirmationWatch $confirmedSkip $diagnostic
     Pass ($confirmationActions -le 1) 'confirmation is never retried'
+    if ($confirmationMode -ceq 'normal') { $confirmedConfirmation=$confirmation }
     if ($confirmationMode -ceq 'duplicate-title') {
         Pass ($confirmation.lastObservation.titleCount -eq 3 -and $confirmation.lastObservation.targetInteractiveCount -eq 1 -and
             $confirmation.status -ceq 'observed' -and $confirmationActions -eq 1) 'repeated non-action title names do not make the unique confirmation action ambiguous'
@@ -452,4 +461,96 @@ $stopped=Invoke-WinAppSkipConfirmation $null 123 {} $confirmationWatch $null $di
 Pass ($stopped.actions -eq 0 -and $confirmationOperations.Count -eq 0) 'missing successful prior Skip never starts confirmation'
 $prior=[pscustomobject]@{status='blocked';stage='earlier-failure';reason='fixed';exitCode=1}
 Pass ((Get-WinAppSkipConfirmationOutcome $prior $null $false $true).stage -ceq 'earlier-failure') 'confirmation never hides an earlier failure'
+# Synthetic UIA fields around exact public fixture names and screenshot labels.
+function ModelPage([switch]$Short,[switch]$Opened,[switch]$MissingBeta) {
+    $page=Page -Next
+    $name=$(if($Short){'5.5 [alpha]'}else{'5.5 [alpha] Medium'})
+    $slug=$(if($Short){'btn-55alpha-abcd'}else{'btn-55alphamedium-abcd'})
+    $page.windows[0].elements=@((Node 'What should we build?' 'Text'),(Node $name 'Button' $slug),
+        (Node "Couldn't check Windows setup" 'Text'),(Node 'Try again' 'Button' 'btn-tryagain-abcd'))
+    if ($Opened) {
+        $page.windows[0].elements+=@(Node 'GPT-5.5 [alpha]' 'Text')
+        if (-not $MissingBeta) { $page.windows[0].elements+=@(Node '5.5 [beta]' 'MenuItem') }
+    }
+    $page.windows[0].elementCount=$page.windows[0].elements.Count
+    return $page
+}
+$menuCalls=@($harness.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-WinAppModelMenu'},$true))
+Pass ($menuCalls.Count -eq 1 -and $menuCalls[0].Extent.Text -ceq 'Invoke-WinAppModelMenu $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveSkipConfirmation $modelMenuDiagnostic') 'model menu shares original window guard and deadline once'
+$menuGuard=$menuCalls[0].Parent
+while ($null -ne $menuGuard -and $menuGuard -isnot [Management.Automation.Language.IfStatementAst]) { $menuGuard=$menuGuard.Parent }
+Pass ($menuGuard.Clauses[0].Item1.Extent.Text.Contains('$confirmationAfterCaptured') -and
+    $menuGuard.Clauses[0].Item1.Extent.Text.Contains('-not $liveFixtureReport.partialActionUncertain')) 'model menu follows only captured certain confirmation'
+foreach ($variant in @('missing-heading','wrong-name','wrong-type','duplicate-target','already-open','disabled','offscreen','no-pattern','protected')) {
+    $page=ModelPage
+    switch($variant) {
+        'missing-heading' { $page.windows[0].elements[0].name='Other scene' }
+        'wrong-name' { $page.windows[0].elements[1].name='5.5 unrelated' }
+        'wrong-type' { $page.windows[0].elements[1].type='Hyperlink' }
+        'duplicate-target' { $page.windows[0].elements+=@(Node '5.5 [alpha]' 'Button' 'btn-55alpha-ffff') }
+        'already-open' { $page.windows[0].elements+=@(Node '5.5 [beta]' 'MenuItem') }
+        'disabled' { $page.windows[0].elements[1].isEnabled=$false }
+        'offscreen' { $page.windows[0].elements[1].isOffscreen=$true }
+        'no-pattern' { $page.windows[0].elements[1].isInvokable=$false }
+        'protected' { $page.windows[0].elements+=@(Node 'Permission required' 'Text' '' $false);$page.windows[0].elements[-1].isOffscreen=$true }
+    }
+    $page.windows[0].elementCount=$page.windows[0].elements.Count
+    Pass ((Get-WinAppModelMenuObservation (ConvertTo-WinAppWelcomeSnapshot (Json $page) 123)).decision -cne 'ready') 'unreviewed ambiguous unavailable or protected model entry stops'
+}
+$menuPage=ConvertTo-WinAppWelcomeSnapshot (Json (ModelPage)) 123
+Reject { Get-WinAppWelcomeTarget $menuPage '5.5 [alpha] Medium' 'Button' } 'model entry requires its own admitted scene'
+$menuPage.Decision='model_menu_ready'
+foreach ($name in @('Try again','5.5 [beta]','Send','Sign in')) {
+    Reject { Get-WinAppWelcomeTarget $menuPage $name 'Button' } 'no setup model-selection send or account target is authorized'
+}
+function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
+    [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,[string]$Operation,[string]$Selector='') {
+    Pass ([object]::ReferenceEquals($Deadline,$script:menuWatch)) 'menu commands retain the original total budget'
+    & $CheckIdentity;$script:menuOperations+=,$Operation
+    if ($Operation -ceq 'open-model-menu') {
+        $script:menuActions++
+        if ($script:menuMode -ceq 'uncertain') { throw 'Synthetic uncertain menu action.' }
+        return Json ([ordered]@{elementId=$Selector;pattern='InvokePattern';requestedAction='invoke';performedAction='invoke';hwnd=123})
+    }
+    if ($Operation -ceq 'resolve-model-effort') { return Json (Resolution '5.5 [alpha] Medium' 'Button' 'modelmenu' 'btn-modelmenu-abcd') }
+    if ($Operation -cne 'read') { throw 'No selection send or setup operation allowed.' }
+    if ($script:menuActions -gt 0) {
+        $script:menuPostRead=$true
+        $page=ModelPage -Opened -MissingBeta:($script:menuMode -ceq 'missing-beta')
+        if ($script:menuMode -ceq 'next-protected') { $page.windows[0].elements[0].name='Sign in to ChatGPT' }
+        return Json $page
+    }
+    $page=ModelPage -Short:($script:menuMode -ceq 'short')
+    if ($script:menuMode -ceq 'promoted') { $page.windows[0].elements[1].automationId='modelmenu';$page.windows[0].elements[1].selector='modelmenu' }
+    if ($script:menuMode -ceq 'disabled') { $page.windows[0].elements[1].isEnabled=$false }
+    return Json $page
+}
+foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','missing-beta','next-protected','final-identity')) {
+    $script:menuMode=$menuMode;$script:menuActions=0;$script:menuOperations=@();$script:menuPostRead=$false
+    $script:menuWatch=[Diagnostics.Stopwatch]::StartNew();$diagnostic=[ordered]@{}
+    $identity={if ($script:menuMode -ceq 'final-identity' -and $script:menuPostRead) { throw 'Synthetic identity change.' }}
+    $menu=Invoke-WinAppModelMenu $null 123 $identity $menuWatch $confirmedConfirmation $diagnostic
+    Pass ($menuActions -le 1) 'model menu never retries or selects an item'
+    Pass ((Json $menu) -notmatch 'btn-|5.5|Try again|Sign in|What should') 'menu report contains fixed enums and counts, not raw UI text'
+    if ($menuMode -cin @('normal','short','promoted','missing-beta','next-protected')) {
+        $expected=$(if($menuMode -ceq 'promoted'){'read,resolve-model-effort,open-model-menu,read'}else{'read,open-model-menu,read'})
+        Pass ($menu.status -ceq 'observed' -and $menu.actions -eq 1 -and -not $diagnostic.partialActionUncertain -and
+            ($menuOperations -join ',') -ceq $expected) 'one bounded menu invocation followed only by a read'
+        if ($menuMode -ceq 'missing-beta') { Pass ($menu.labels.betaVisibleCount -eq 0) 'alpha entry alone is not beta evidence' }
+    } elseif ($menuMode -ceq 'disabled') {
+        Pass ($menu.actions -eq 0 -and ($menuOperations -join ',') -ceq 'read') 'disabled entry never invokes'
+    } else {
+        Pass ($menu.status -ceq 'stopped' -and $menu.actions -eq 1 -and $diagnostic.partialActionUncertain -and $null -eq $menu.labels) 'uncertain menu or final identity never commits label acceptance'
+        if ($menuMode -ceq 'uncertain') { Pass (($menuOperations -join ',') -ceq 'read,open-model-menu') 'uncertain menu action stops without retry' }
+    }
+    $prior=[pscustomobject]@{status='observed';stage='confirmation';reason='fixed';exitCode=0}
+    Pass (((Get-WinAppModelMenuOutcome $prior $menu $true $diagnostic.partialActionUncertain).exitCode -eq 0) -eq
+        ($menuMode -cin @('normal','short','promoted'))) 'only both known labels and confirmed capture complete the menu observation'
+    Pass ((Get-WinAppModelMenuOutcome $prior $menu $false $false).exitCode -eq 1) 'missing menu pixels blocks completion'
+}
+$script:menuOperations=@();$diagnostic=[ordered]@{}
+$stopped=Invoke-WinAppModelMenu $null 123 {} $menuWatch $null $diagnostic
+Pass ($stopped.actions -eq 0 -and $menuOperations.Count -eq 0) 'missing confirmed onboarding never starts menu commands'
+$prior=[pscustomobject]@{status='blocked';stage='earlier-failure';reason='fixed';exitCode=1}
+Pass ((Get-WinAppModelMenuOutcome $prior $null $false $true).stage -ceq 'earlier-failure') 'menu never hides earlier failure'
 Write-Output ('WINAPP_WELCOME_OFFLINE_CHECKS='+$checks)

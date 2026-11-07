@@ -102,12 +102,12 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
         if (-not $Diagnostic.Contains('bindings')) { $Diagnostic.bindings=@() }
         $Diagnostic.bindings+=,$binding
     }
-    if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button','Skip|Button','Skip|Hyperlink','Go to ChatGPT|Button','Go to ChatGPT|Hyperlink') -cnotcontains ($Name+'|'+$Type)) {
+    if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button','Skip|Button','Skip|Hyperlink','Go to ChatGPT|Button','Go to ChatGPT|Hyperlink','5.5 [alpha]|Button','5.5 [alpha] Medium|Button') -cnotcontains ($Name+'|'+$Type)) {
         throw 'Unreviewed welcome action target.'
     }
-    $binding.target=@{Engineering='engineering';'Suggest personalized tasks'='suggestions';Continue='continue';Skip='skip';'Go to ChatGPT'='confirm_skip'}[$Name]
+    $binding.target=@{Engineering='engineering';'Suggest personalized tasks'='suggestions';Continue='continue';Skip='skip';'Go to ChatGPT'='confirm_skip';'5.5 [alpha]'='model_menu';'5.5 [alpha] Medium'='model_menu'}[$Name]
     $binding.reason='scene_unavailable'
-    $expectedScene=$(if ($Name -ceq 'Go to ChatGPT') { 'confirm_skip_ready' } elseif ($Name -ceq 'Skip') { 'skip_ready' } else { 'welcome' })
+    $expectedScene=$(if ($Name -cin @('5.5 [alpha]','5.5 [alpha] Medium')) { 'model_menu_ready' } elseif ($Name -ceq 'Go to ChatGPT') { 'confirm_skip_ready' } elseif ($Name -ceq 'Skip') { 'skip_ready' } else { 'welcome' })
     if ($Snapshot.Decision -cne $expectedScene) { throw 'Welcome page not reviewed.' }
     $matches=@($Snapshot.Nodes | Where-Object { $_.Name -ceq $Name -and $_.Type -ceq $Type })
     $binding.reason='target_not_unique'
@@ -128,7 +128,7 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
     return Read-WinAppWelcomeResolvedTarget $text $node $binding
 }
 function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort')][string]$Operation,[string]$Selector='') {
     $directory=Join-Path $Tool.Directory ('welcome-'+[guid]::NewGuid().ToString('N'))
     if (Test-Path -LiteralPath $directory) { throw 'Welcome tool scratch not fresh.' }
     [void][IO.Directory]::CreateDirectory($directory)
@@ -136,19 +136,20 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
     $start=New-WinAppStart $localTool $WindowHandle -RenderedDepth 16
     if ($Operation -cne 'read') {
         $arguments=@('ui')
-        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link','resolve-confirm-button','resolve-confirm-link')) {
+        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link','resolve-confirm-button','resolve-confirm-link','resolve-model-short','resolve-model-effort')) {
             if ($Selector) { throw 'Readonly target resolution does not accept a selector.' }
             $spec=@{'resolve-engineering'=@('Engineering','RadioButton');
                 'resolve-suggestions'=@('Suggest personalized tasks','CheckBox');'resolve-continue'=@('Continue','Button');
                 'resolve-skip-button'=@('Skip','Button');'resolve-skip-link'=@('Skip','Hyperlink');
-                'resolve-confirm-button'=@('Go to ChatGPT','Button');'resolve-confirm-link'=@('Go to ChatGPT','Hyperlink')}[$Operation]
+                'resolve-confirm-button'=@('Go to ChatGPT','Button');'resolve-confirm-link'=@('Go to ChatGPT','Hyperlink');
+                'resolve-model-short'=@('5.5 [alpha]','Button');'resolve-model-effort'=@('5.5 [alpha] Medium','Button')}[$Operation]
             $arguments+=@('get-property',$spec[0],'--type',$spec[1],'--property','AutomationId')
         } else {
-            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn';skip='(?:btn|lnk)';'confirm-skip'='(?:btn|lnk)'}[$Operation]
+            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn';skip='(?:btn|lnk)';'confirm-skip'='(?:btn|lnk)';'open-model-menu'='btn'}[$Operation]
             if ($Selector -cnotmatch ('\A'+$prefix+'-[a-z0-9]{1,15}-[a-f0-9]{4}\z')) { throw 'Invalid welcome selector.' }
             if ($Operation -ceq 'selected') { $arguments+=@('get-property',$Selector,'--property','IsSelected') }
             else {
-                $action=$(if ($Operation -cin @('continue','skip','confirm-skip')) { 'invoke' } else { $Operation })
+                $action=$(if ($Operation -cin @('continue','skip','confirm-skip','open-model-menu')) { 'invoke' } else { $Operation })
                 $arguments+=@('invoke',$Selector,'--action',$action)
             }
         }
@@ -159,7 +160,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
 }
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort')][string]$Operation,[string]$Selector='') {
     $remaining=30000-[int]$Deadline.ElapsedMilliseconds
     if ($remaining -le 0) { throw 'Welcome deadline exceeded.' }
     $record=[ordered]@{operation=$Operation;status='stopped';reason='identity_unavailable';exitCode=$null;
@@ -450,4 +451,87 @@ function Get-WinAppSkipConfirmationOutcome($Prior,$Confirmation,[bool]$Captured,
         return [pscustomobject]@{status='blocked';stage='welcome-skip-confirmation-stopped';reason='The ordinary Skip confirmation stopped, reached a protected screen, remained unchanged or lacks confirmed capture. Prior welcome and Skip evidence is retained.';exitCode=1}
     }
     return [pscustomobject]@{status='observed';stage='welcome-skip-confirmation-observed';reason='Welcome, Skip and its ordinary confirmation completed with next-screen pixels. The resulting page is unreviewed; no model, conversation or normal-entry acceptance is established.';exitCode=0}
+}
+
+# Only the catalog-backed synthetic alpha entry visible in 0d3's screenshot.
+# Neither setup controls nor any model item is an authorized action target.
+function Get-WinAppModelMenuObservation($Page) {
+    $nodes=$Page.Nodes
+    $targets=@($nodes | Where-Object { $_.Name -cin @('5.5 [alpha]','5.5 [alpha] Medium') -and $_.Interactive })
+    $type='absent';$enabled=$null;$invokable=$null;$label='absent'
+    if ($targets.Count -gt 1) { $type='ambiguous';$label='ambiguous' }
+    elseif ($targets.Count -eq 1) {
+        $type=$(if ($targets[0].Type -ceq 'Button') { 'button' } else { 'other' })
+        $enabled=$targets[0].Enabled;$invokable=$targets[0].Invokable
+        $label=$(if ($targets[0].Name -ceq '5.5 [alpha]') { 'model_only' } else { 'model_and_medium' })
+    }
+    $observation=[ordered]@{decision='scene_changed';headingCount=@($nodes | Where-Object { $_.Name -ceq 'What should we build?' }).Count;
+        targetInteractiveCount=$targets.Count;targetType=$type;labelKind=$label;enabled=$enabled;directInvokable=$invokable}
+    if ($Page.Decision -ceq 'protected_screen') { $observation.decision='protected_screen';return $observation }
+    if ($observation.headingCount -lt 1) { return $observation }
+    if ((Get-WinAppModelMenuLabels $Page).betaVisibleCount -gt 0) { $observation.decision='menu_already_visible';return $observation }
+    if ($type -cin @('ambiguous','other')) { $observation.decision='ambiguous_target';return $observation }
+    $observation.decision='target_not_ready'
+    if ($targets.Count -eq 1 -and $enabled -and $invokable) { $observation.decision='ready' }
+    return $observation
+}
+function Get-WinAppModelMenuLabels($Page) {
+    # Exact public catalog display names, plus the observed Desktop prefix removal.
+    # These are visible label counts, not a selection or semantic menu-root proof.
+    $alpha=@($Page.Nodes | Where-Object { $_.Name -cin @('GPT-5.5 [alpha]','5.5 [alpha]') })
+    $beta=@($Page.Nodes | Where-Object { $_.Name -cin @('GPT-5.5 [beta]','5.5 [beta]') })
+    return [ordered]@{alphaVisibleCount=$alpha.Count;betaVisibleCount=$beta.Count;
+        alphaInteractiveCount=@($alpha | Where-Object { $_.Interactive }).Count;
+        betaInteractiveCount=@($beta | Where-Object { $_.Interactive }).Count;
+        protectedScreen=($Page.Decision -ceq 'protected_screen')}
+}
+function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,[Diagnostics.Stopwatch]$Deadline,
+    $PriorConfirmation,[System.Collections.IDictionary]$Diagnostic) {
+    $result=[ordered]@{schema=1;scope='synthetic-model-menu-only';status='stopped';reason='prior_confirmation_unavailable';
+        actions=0;menuInvoked=$false;nextScreen='not_observed';lastObservation=$null;labels=$null}
+    $Diagnostic.commands=@();$Diagnostic.bindings=@();$Diagnostic.partialActionUncertain=$false
+    $Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
+    try {
+        if ($null -eq $PriorConfirmation -or $PriorConfirmation.status -cne 'observed' -or $PriorConfirmation.actions -ne 1 -or
+            -not $PriorConfirmation.confirmationInvoked -or $PriorConfirmation.nextScreen -cne 'unreviewed_screen' -or $null -eq $Deadline) { throw 'Prior confirmation unavailable.' }
+        Assert-WinAppFiles $Tool
+        $result.reason='menu_read_unavailable'
+        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
+        $page=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
+        $result.lastObservation=Get-WinAppModelMenuObservation $page
+        if ($result.lastObservation.decision -cne 'ready') { $result.reason=$result.lastObservation.decision;throw 'Model menu target unavailable.' }
+        $result.reason='target_binding_unavailable';$page.Decision='model_menu_ready'
+        $name=$(if ($result.lastObservation.labelKind -ceq 'model_only') { '5.5 [alpha]' } else { '5.5 [alpha] Medium' })
+        $resolve={param($target)
+            $operation=$(if ($target.Name -ceq '5.5 [alpha]') { 'resolve-model-short' } else { 'resolve-model-effort' })
+            Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic $operation
+        }
+        $target=Get-WinAppWelcomeTarget $page $name 'Button' $resolve $Diagnostic
+        $result.reason='menu_action_unavailable';$result.actions=1;$Diagnostic.partialActionUncertain=$true
+        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'open-model-menu' $target.Selector
+        $result.reason='menu_receipt_invalid';Assert-WinAppWelcomeAction $text $WindowHandle $target 'invoke'
+        $result.menuInvoked=$true;$Diagnostic.partialActionUncertain=$false;$result.reason='next_read_unavailable'
+        Start-Sleep -Milliseconds 500
+        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
+        $after=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle
+        $labels=Get-WinAppModelMenuLabels $after
+        $next=$(if ($labels.protectedScreen) { 'protected_screen' }
+            elseif ($labels.alphaVisibleCount -gt 0 -and $labels.betaVisibleCount -gt 0) { 'model_labels_observed' } else { 'model_labels_missing' })
+        Assert-WinAppFiles $Tool; & $CheckIdentity
+        if ($Deadline.ElapsedMilliseconds -ge 30000) { throw 'Model menu deadline exhausted.' }
+        $result.labels=$labels;$result.nextScreen=$next;$result.status='observed';$result.reason='single_menu_invocation_attempted'
+    } catch { $Diagnostic.partialActionUncertain=$Diagnostic.partialActionUncertain -or $result.actions -gt 0 }
+    foreach ($command in $Diagnostic.commands) {
+        $Diagnostic.stdoutBytes+=$command.stdoutBytes
+        $Diagnostic.outputLimitExceeded=$Diagnostic.outputLimitExceeded -or $command.outputLimitExceeded
+    }
+    return [pscustomobject]$result
+}
+function Get-WinAppModelMenuOutcome($Prior,$Menu,[bool]$Captured,[bool]$Uncertain) {
+    if ($Prior.exitCode -ne 0) { return $Prior }
+    if ($null -eq $Menu -or $Menu.status -cne 'observed' -or -not $Captured -or $Uncertain -or
+        $Menu.nextScreen -cne 'model_labels_observed') {
+        return [pscustomobject]@{status='blocked';stage='model-menu-stopped';reason='The bounded model-menu observation stopped, is uncertain, lacks both exact synthetic labels or has no verified capture. Prior onboarding evidence is retained.';exitCode=1}
+    }
+    return [pscustomobject]@{status='observed';stage='synthetic-model-menu-observed';reason='One model-menu invocation and read found exact alpha/beta label candidates; screenshot review is required. No model selection, message, Windows setup or real-provider capability was tested.';exitCode=0}
 }

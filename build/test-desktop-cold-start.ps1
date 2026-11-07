@@ -1801,6 +1801,8 @@ $liveSkip = $null
 $skipAfterCaptured = $false
 $liveSkipConfirmation = $null
 $confirmationAfterCaptured = $false
+$liveModelMenu = $null
+$modelMenuAfterCaptured = $false
 $welcomeDeadline = $null
 $liveFixtureStopped = $false
 $liveAfterCaptured = $false
@@ -2498,7 +2500,7 @@ requires_openai_auth = false
                 limit = 'One welcome transition only. No full onboarding, composer, model use or conversation claim. Private scratch is never uploaded or deleted while descendants may remain.'
             }
             if ($EnableReviewedWelcome4239) {
-                $liveFixtureReport.limit='One welcome sequence, then at most one Skip and its ordinary confirmation in the same owned window. No full onboarding, composer, model use or conversation claim. Private scratch is retained.'
+                $liveFixtureReport.limit='One welcome sequence, then at most one Skip, its ordinary confirmation and a model-menu-only observation in the same owned window. No full onboarding, composer, model use or conversation claim. Private scratch is retained.'
             }
             if ($EnableReviewedLiveWelcome) { $report.liveWelcome=$liveFixtureReport }
             else {
@@ -2970,7 +2972,7 @@ requires_openai_auth = false
         $liveFixtureReport.parentDiagnostic=$welcomeDiagnostic
         $liveFixtureReport.partialActionUncertain=$welcomeDiagnostic.partialActionUncertain
         # All fixed captures keep the original owned HWND/PID and generation.
-        $captureWelcomeWindow={param([ValidateSet('official-window-after-welcome.png','official-window-after-skip.png','official-window-after-skip-confirmation.png')][string]$FileName)
+        $captureWelcomeWindow={param([ValidateSet('official-window-after-welcome.png','official-window-after-skip.png','official-window-after-skip-confirmation.png','official-window-after-model-menu.png')][string]$FileName)
             if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
                 $ownedActivationProcess.StartTime.ToUniversalTime().ToString('o') -cne $ownedActivationCreatedUtc -or
                 [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName) { throw 'After window identity unavailable.' }
@@ -3024,6 +3026,22 @@ requires_openai_auth = false
                     $confirmationAfterCaptured=$true
                     $liveFixtureReport.skipConfirmation.afterCapture='official-window-after-skip-confirmation.png; screen pixels may contain occlusion and require review'
                 } catch { $liveFixtureReport.skipConfirmation.afterCapture='unavailable' }
+            }
+            $modelMenuDiagnostic=[ordered]@{commands=@();bindings=@();partialActionUncertain=$false}
+            $liveFixtureReport.modelMenu=[ordered]@{status='not-run';reason='prior_confirmation_or_capture_unavailable'}
+            if ($null -ne $liveSkipConfirmation -and $liveSkipConfirmation.status -ceq 'observed' -and
+                $liveSkipConfirmation.nextScreen -ceq 'unreviewed_screen' -and $confirmationAfterCaptured -and
+                -not $liveFixtureReport.partialActionUncertain) {
+                $liveModelMenu=Invoke-WinAppModelMenu $winAppTool $window.Handle $checkInspectionIdentity $welcomeDeadline $liveSkipConfirmation $modelMenuDiagnostic
+                $liveFixtureReport.modelMenu=[ordered]@{status=$liveModelMenu.status;reason=$liveModelMenu.reason;result=$liveModelMenu;parentDiagnostic=$modelMenuDiagnostic}
+                $liveFixtureReport.partialActionUncertain=$liveFixtureReport.partialActionUncertain -or $modelMenuDiagnostic.partialActionUncertain
+                try {
+                    & $checkInspectionIdentity
+                    & $captureWelcomeWindow 'official-window-after-model-menu.png'
+                    & $checkInspectionIdentity
+                    $modelMenuAfterCaptured=$true
+                    $liveFixtureReport.modelMenu.afterCapture='official-window-after-model-menu.png; screen pixels may contain occlusion and require review'
+                } catch { $liveFixtureReport.modelMenu.afterCapture='unavailable' }
             }
         }
     }
@@ -3806,6 +3824,9 @@ if ($EnableReviewedLiveWelcome) {
         $confirmationUncertain=$true
         if ($null -ne $liveSkipConfirmation) { $confirmationUncertain=$confirmationDiagnostic.partialActionUncertain }
         $liveOutcome=Get-WinAppSkipConfirmationOutcome $liveOutcome $liveSkipConfirmation $confirmationAfterCaptured $confirmationUncertain
+        $modelMenuUncertain=$true
+        if ($null -ne $liveModelMenu) { $modelMenuUncertain=$modelMenuDiagnostic.partialActionUncertain }
+        $liveOutcome=Get-WinAppModelMenuOutcome $liveOutcome $liveModelMenu $modelMenuAfterCaptured $modelMenuUncertain
     }
     $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode
 }

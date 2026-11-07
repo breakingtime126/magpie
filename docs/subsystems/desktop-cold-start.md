@@ -2936,3 +2936,53 @@ non-action container/text names now satisfy presence without a guessed maximum.
 Cancel and actionable target uniqueness, whole-tree protection, original-window
 checks and the shared deadline are unchanged. A synthetic three-title fixture
 now expects one confirmation; duplicate actionable targets still fail closed.
+
+### Synthetic model-menu observation after 0d3bf113
+
+The actual `0d3bf113` welcome, Skip and confirmation reached the Codex main
+screen. Its retained `official-window-after-skip-confirmation.png` shows
+**What should we build?**, the input area and **5.5 [alpha] Medium**. It also
+shows **Couldn't check Windows setup** and **Try again**. Those setup controls
+are not targets; this lane neither calls `windowsSandbox/readiness` itself nor
+adds forwarding for it. Its possible security-related side effects remain a
+separate review, and this observation does not authorize setup changes. The
+separate legacy PS5 smoke timed out, so this was not an all-green CI result.
+
+The identity behind the menu is synthetic. The existing native fixture selects
+only `gpt-5.5` from public catalog blob
+`489ebe3f2483348641a16160ce8491dd077eabca`, at OpenAI Codex commit
+`c40729ea5cf8e947481b130c59807273eda2f8e9`. That row's `display_name` is
+`GPT-5.5` and its default reasoning level is `medium`.
+`build/control-plane-native/main.go` verifies that blob and selects the row;
+`desktop.go` connects isolated alpha/beta local Responses fixtures, and
+`internal/appserverbridge/router.go` appends `[alpha]` / `[beta]` to display names.
+These are not live GPT access, AIHub credentials, or real-provider capability.
+The screenshot directly supports Desktop's shorter visible `5.5` presentation.
+
+Only the existing explicit welcome triple-marker profile adds a model-menu
+stage after confirmed onboarding and its verified capture. A fresh read must
+show the exact main-screen heading (presence, not unique non-action labels) and
+one visible enabled directly invokable **Button** across the fixed names
+`5.5 [alpha]` and `5.5 [alpha] Medium`. No partial-name search, arbitrary model
+name, coordinate or ancestor fallback is accepted. If an exact beta label is
+already visible, it stops instead of risking an item selection. A promoted ID may use only
+the existing one-shot exact-checked typed readonly resolver with those fixed
+names. Missing or ambiguous UIA identity stops with fixed target metadata; the
+screenshot alone is not authority for an action. Whole-tree protected/error
+checks and original HWND/package/generation/foreground guards remain unchanged.
+
+`Invoke-WinAppModelMenu` shares the original 30-second stopwatch with all earlier
+stages, without increasing the fixture lifetime or resetting any deadline. It
+invokes only the menu button once, then makes one readonly tree observation and
+captures `official-window-after-model-menu.png`. It does not select alpha/beta,
+change effort, send input, retry setup, or close the menu. Any uncertainty stops
+without retry. Earlier welcome, Skip and confirmation evidence remains intact.
+
+`liveWelcome.modelMenu` publishes fixed status/target metadata and exact visible
+alpha/beta label counts only. Post-read names must equal the catalog display
+name plus backend tag, or its screenshot-evidenced shortened form. Labels are
+not proof of a menu root or model selection, and the image still needs review.
+The alpha entry alone never establishes beta: absent beta, protection, missing
+capture or uncertainty prevents overall menu success. Even both labels establish
+no inference, routing, model-switch, conversation or normal-entry acceptance.
+Readonly markers, production Go and accepted runtime pins are unchanged.
