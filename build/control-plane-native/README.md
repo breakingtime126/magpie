@@ -48,6 +48,18 @@ tool call. Request bodies, native instructions, environment values and native
 errors are not logged or persisted. A schema match alone does not prove
 runtime selection, Desktop visibility, real-model behavior or zero egress.
 
+The self-authored request oracle follows the pinned c407
+[`core/src/client.rs:1000-1019,1075-1085,1156-1163`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/core/src/client.rs#L1000):
+the exact owned sentence appears once as a developer message's sole input_text
+part, not in a top-level instructions field. The other endpoint's sentence,
+wrong roles, duplicates and appended text are rejected. This fixture explicitly
+sets none effort and disables summaries, so its request reasoning must be
+exactly `{"effort":"none"}`; missing/null reasoning and any summary field are
+not alternatives. Other ordinary native context text remains allowed without
+logging it. Existing opaque/tool/media rejection is unchanged; no additional
+output annotations or logprobs forms are admitted. Pure tests cover these wire
+forms, but the corrected oracle still requires actual native acceptance.
+
 Reports retain the existing fixed field/count schema, but their scope is
 `self-authored-models-loopback-only`; old-profile consumers reject that scope,
 and this profile rejects legacy-scope reports. The outer preparation report

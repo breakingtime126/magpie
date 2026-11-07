@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 )
 
 const acceptanceSynthetic4239 = "synthetic-models-4239"
@@ -91,26 +92,26 @@ func selfAuthoredReasoning(defaultEffort, efforts json.RawMessage) bool {
 // input. Tool declarations are not executions; every input item must be a text
 // message, and the fixture only emits the existing assistant-text SSE events.
 func selfAuthoredRequest(req map[string]json.RawMessage, name string) bool {
-	if stringField(req, "instructions") != syntheticInstructions(name) {
+	if name != "alpha" && name != "beta" {
 		return false
 	}
-	if raw := req["reasoning"]; len(raw) != 0 && !bytes.Equal(raw, []byte("null")) {
-		obj, err := object(raw)
-		if err != nil || stringField(obj, "effort") != "none" {
-			return false
-		}
-		for key, value := range obj {
-			if key != "effort" && (key != "summary" || stringField(obj, key) != "none") {
-				return false
-			}
-			if len(value) == 0 {
-				return false
-			}
-		}
+	// c407 places base instructions in a developer input message, not a
+	// top-level field. No alternate envelope or fallback is accepted here.
+	if _, present := req["instructions"]; present {
+		return false
+	}
+	reasoning, err := object(req["reasoning"])
+	if err != nil || len(reasoning) != 1 || stringField(reasoning, "effort") != "none" {
+		return false
 	}
 	var input []map[string]json.RawMessage
 	if json.Unmarshal(req["input"], &input) != nil || len(input) == 0 {
 		return false
+	}
+	instructions := 0
+	other := "alpha"
+	if name == "alpha" {
+		other = "beta"
 	}
 	for _, item := range input {
 		for key := range item {
@@ -147,7 +148,17 @@ func selfAuthoredRequest(req map[string]json.RawMessage, name string) bool {
 			if bytes.Equal(bytes.TrimSpace(part["text"]), []byte("null")) || json.Unmarshal(part["text"], &text) != nil {
 				return false
 			}
+			if strings.Contains(text, syntheticInstructions(other)) {
+				return false
+			}
+			if strings.Contains(text, syntheticInstructions(name)) {
+				if text != syntheticInstructions(name) || stringField(item, "type") != "message" ||
+					stringField(item, "role") != "developer" || stringField(part, "type") != "input_text" || len(content) != 1 {
+					return false
+				}
+				instructions++
+			}
 		}
 	}
-	return true
+	return instructions == 1
 }

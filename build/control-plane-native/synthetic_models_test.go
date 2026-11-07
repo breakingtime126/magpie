@@ -197,10 +197,17 @@ func TestSelfAuthoredConfigAndThreadOraclesUseMatchingAliases(t *testing.T) {
 }
 
 func selfAuthoredRequestBody(name string, n int) map[string]any {
-	return map[string]any{"model": "test-" + name, "stream": true,
-		"instructions": syntheticInstructions(name), "reasoning": map[string]any{"effort": "none"},
-		"input": []any{map[string]any{"type": "message", "role": "user",
-			"content": []any{map[string]any{"type": "input_text", "text": fmt.Sprintf("synthetic-%s-turn-%d", name, n)}}}}}
+	return map[string]any{
+		"model":     "test-" + name,
+		"stream":    true,
+		"reasoning": map[string]any{"effort": "none"},
+		"input": []any{
+			map[string]any{"type": "message", "role": "developer", "id": "msg_fixture",
+				"content": []any{map[string]any{"type": "input_text", "text": syntheticInstructions(name)}}},
+			map[string]any{"type": "message", "role": "user",
+				"content": []any{map[string]any{"type": "input_text", "text": fmt.Sprintf("synthetic-%s-turn-%d", name, n)}}},
+		},
+	}
 }
 
 func TestSelfAuthoredFixturesAcceptOnlyOwnedTextAndFixedResponses(t *testing.T) {
@@ -211,9 +218,6 @@ func TestSelfAuthoredFixturesAcceptOnlyOwnedTextAndFixedResponses(t *testing.T) 
 		t.Cleanup(f.close)
 		for n := 1; n <= 2; n++ {
 			req := selfAuthoredRequestBody(name, n)
-			if n == 2 {
-				delete(req, "reasoning")
-			}
 			response, err := client.Post(f.server.URL+"/v1/responses", "application/json", bytes.NewReader(jsonBytes(req)))
 			if err != nil {
 				t.Fatal("loopback request failed")
@@ -281,7 +285,7 @@ func TestSelfAuthoredRequestRejectsInvalidMessageTypesAndNullText(t *testing.T) 
 		}
 	}
 	req := selfAuthoredRequestBody("alpha", 1)
-	item := req["input"].([]any)[0].(map[string]any)
+	item := req["input"].([]any)[1].(map[string]any)
 	delete(item, "type")
 	raw, err := object(jsonBytes(req))
 	if err != nil || !selfAuthoredRequest(raw, "alpha") {
@@ -291,6 +295,86 @@ func TestSelfAuthoredRequestRejectsInvalidMessageTypesAndNullText(t *testing.T) 
 	raw, err = object(jsonBytes(req))
 	if err != nil || selfAuthoredRequest(raw, "alpha") {
 		t.Fatal("null text accepted")
+	}
+}
+
+func TestSelfAuthoredRequestNativeDeveloperWire(t *testing.T) {
+	for _, name := range []string{"alpha", "beta"} {
+		req := selfAuthoredRequestBody(name, 1)
+		req["input"] = append(req["input"].([]any),
+			map[string]any{"type": "message", "role": "developer",
+				"content": []any{map[string]any{"type": "input_text", "text": "Additional plain native context."}}},
+			map[string]any{"type": "message", "role": "assistant",
+				"content": []any{map[string]any{"type": "output_text", "text": "Prior fixed response."}}})
+		obj, err := object(jsonBytes(req))
+		if err != nil || !selfAuthoredRequest(obj, name) {
+			t.Fatal("native developer base-instructions wire form rejected")
+		}
+	}
+	changes := map[string]func(map[string]any){
+		"top-level exact": func(r map[string]any) { r["instructions"] = syntheticInstructions("alpha") },
+		"top-level null":  func(r map[string]any) { r["instructions"] = nil },
+		"missing base":    func(r map[string]any) { r["input"] = r["input"].([]any)[1:] },
+		"duplicate base": func(r map[string]any) {
+			r["input"] = append(r["input"].([]any), r["input"].([]any)[0])
+		},
+		"foreign base alongside owned": func(r map[string]any) {
+			r["input"] = append(r["input"].([]any), selfAuthoredRequestBody("beta", 1)["input"].([]any)[0])
+		},
+		"missing reasoning": func(r map[string]any) { delete(r, "reasoning") },
+		"null reasoning":    func(r map[string]any) { r["reasoning"] = nil },
+		"empty reasoning":   func(r map[string]any) { r["reasoning"] = map[string]any{} },
+		"null effort":       func(r map[string]any) { r["reasoning"] = map[string]any{"effort": nil} },
+		"summary none": func(r map[string]any) {
+			r["reasoning"] = map[string]any{"effort": "none", "summary": "none"}
+		},
+		"summary null": func(r map[string]any) {
+			r["reasoning"] = map[string]any{"effort": "none", "summary": nil}
+		},
+		"context": func(r map[string]any) {
+			r["reasoning"] = map[string]any{"effort": "none", "context": "all_turns"}
+		},
+	}
+	for label, change := range changes {
+		t.Run(label, func(t *testing.T) {
+			req := selfAuthoredRequestBody("alpha", 1)
+			change(req)
+			obj, err := object(jsonBytes(req))
+			if err != nil || selfAuthoredRequest(obj, "alpha") {
+				t.Fatal("non-native or unowned instruction/reasoning form accepted")
+			}
+		})
+	}
+	for _, role := range []string{"user", "assistant", "system"} {
+		req := selfAuthoredRequestBody("alpha", 1)
+		req["input"].([]any)[0].(map[string]any)["role"] = role
+		obj, err := object(jsonBytes(req))
+		if err != nil || selfAuthoredRequest(obj, "alpha") {
+			t.Fatal("base instructions accepted in wrong role")
+		}
+	}
+	for _, text := range []string{syntheticInstructions("beta"), syntheticInstructions("alpha") + "\n", "prefix " + syntheticInstructions("alpha"), ""} {
+		req := selfAuthoredRequestBody("alpha", 1)
+		req["input"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"] = text
+		obj, err := object(jsonBytes(req))
+		if err != nil || selfAuthoredRequest(obj, "alpha") {
+			t.Fatal("non-exact base instructions accepted")
+		}
+	}
+	for _, change := range []func(map[string]any){
+		func(item map[string]any) { delete(item, "type") },
+		func(item map[string]any) { item["encrypted_content"] = "opaque" },
+		func(item map[string]any) { item["internal_chat_message_metadata_passthrough"] = map[string]any{} },
+		func(item map[string]any) { item["content"].([]any)[0].(map[string]any)["type"] = "output_text" },
+		func(item map[string]any) { item["content"].([]any)[0].(map[string]any)["annotations"] = []any{} },
+		func(item map[string]any) { item["content"] = append(item["content"].([]any), map[string]any{"type": "input_text", "text": "extra"}) },
+	} {
+		req := selfAuthoredRequestBody("alpha", 1)
+		change(req["input"].([]any)[0].(map[string]any))
+		obj, err := object(jsonBytes(req))
+		if err != nil || selfAuthoredRequest(obj, "alpha") {
+			t.Fatal("unsupported base-instructions payload accepted")
+		}
 	}
 }
 
