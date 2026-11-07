@@ -12,6 +12,22 @@ foreach ($welcomePolicyName in @('Get-WelcomeDecision','Get-WelcomeChromeRejecti
     . ([scriptblock]::Create($welcomePolicyDefinition[0].Extent.Text))
 }
 
+function Get-WinAppWelcomeDecision($Nodes,$Summary) {
+    # Scene recognition is not a whole-page action allowlist. Other controls
+    # remain interactive, but cannot become one of the three fixed targets.
+    # Summary covers every returned node, including hidden/disabled text.
+    if ($Summary.protectedMarkerCount -gt 0 -or $Summary.loginMarkerCount -gt 0) { return 'protected_screen' }
+    if ($Summary.headingExactCount -eq 0) { return 'unreviewed_screen' }
+    if ($Summary.headingExactCount -ne 1) { return 'ambiguous_control' }
+    if ($Summary.headingVisibleCount -ne 1) { return 'unreviewed_screen' }
+    foreach ($spec in @(@('Engineering','RadioButton'), @('Suggest personalized tasks','CheckBox'), @('Continue','Button'))) {
+        $matches=@($Nodes | Where-Object { $_.Name -ceq $spec[0] -and $_.Type -ceq $spec[1] })
+        $wrongType=@($Nodes | Where-Object { $_.Name -ceq $spec[0] -and $_.Interactive -and $_.Type -cne $spec[1] })
+        if ($matches.Count -ne 1 -or $wrongType.Count -ne 0) { return 'ambiguous_control' }
+    }
+    return 'welcome'
+}
+
 function ConvertTo-WinAppWelcomeSnapshot([string]$Text,[long]$WindowHandle) {
     # Reuse the complete pinned schema/byte/depth validator. Raw names/selectors stay private.
     $summary=ConvertTo-WinAppSummary $Text $WindowHandle -RenderedDepth 16
@@ -33,12 +49,14 @@ function ConvertTo-WinAppWelcomeSnapshot([string]$Text,[long]$WindowHandle) {
         }
         if ($node.PSObject.Properties['children']) { foreach ($child in $node.children) { $pending.Push($child) } }
     }
-    $decision=Get-WelcomeDecision $nodes.ToArray()
-    if ($summary.protectedMarkerCount -gt 0 -or $summary.loginMarkerCount -gt 0) { $decision='protected_screen' }
+    $decision=Get-WinAppWelcomeDecision $nodes.ToArray() $summary
     if ($summary.errorMarkerCount -gt 0) { throw 'Welcome error marker observed.' }
     return [pscustomobject]@{Nodes=$nodes.ToArray();Decision=$decision}
 }
 function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type) {
+    if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button') -cnotcontains ($Name+'|'+$Type)) {
+        throw 'Unreviewed welcome action target.'
+    }
     if ($Snapshot.Decision -cne 'welcome') { throw 'Welcome page not reviewed.' }
     $matches=@($Snapshot.Nodes | Where-Object { $_.Name -ceq $Name -and $_.Type -ceq $Type })
     if ($matches.Count -ne 1 -or -not $matches[0].Enabled -or -not $matches[0].Invokable) { throw 'Welcome target unavailable.' }

@@ -53,12 +53,45 @@ Pass ((ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123).Decision -ceq 'protected
 $bad=Page;$bad.windows[0].elements[0].name='Permission needed';$bad.windows[0].elements[0].isOffscreen=$true
 Pass ((ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123).Decision -ceq 'protected_screen') 'protected text scanned even when offscreen'
 $bad=Page;$bad.windows[0].elements+=@(Node 'PRIVATE_CANARY' 'Custom');$bad.windows[0].elements[-1].isInvokable=$true;$bad.windows[0].elementCount++
-Pass ((ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123).Decision -ceq 'unreviewed_text') 'unknown invokable custom controls are not treated as harmless prose'
+$auxiliary=ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123
+Pass ($auxiliary.Decision -ceq 'welcome' -and @($auxiliary.Nodes | Where-Object { $_.Name -ceq 'PRIVATE_CANARY' -and $_.Interactive -and $_.Invokable }).Count -eq 1) 'auxiliary invokable controls remain interactive without authorizing input'
+Reject { Get-WinAppWelcomeTarget $auxiliary 'PRIVATE_CANARY' 'Custom' } 'auxiliary invokable control is never an action target'
 foreach ($type in @('Custom','Pane','Text')) {
     $bad=Page;$bad.windows[0].elements+=@(Node 'PRIVATE_CANARY' $type);$bad.windows[0].elementCount++
     Pass ((ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123).Decision -ceq 'welcome') 'noninteractive auxiliary labels remain harmless'
     $bad.windows[0].elements[-1].isInvokable=$true
-    Pass ((ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123).Decision -ceq 'unreviewed_text') 'direct invokable support is interactive regardless of type'
+    $auxiliary=ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123
+    Pass ($auxiliary.Decision -ceq 'welcome' -and @($auxiliary.Nodes | Where-Object { $_.Name -ceq 'PRIVATE_CANARY' -and $_.Interactive }).Count -eq 1) 'direct invokable auxiliary control stays interactive but untargeted'
+}
+$aux=Page;$aux.windows[0].elements+=@(Node 'Describe something else' 'Edit');$aux.windows[0].elementCount++
+$auxiliary=ConvertTo-WinAppWelcomeSnapshot (Json $aux) 123
+Pass ((Get-WelcomeDecision $auxiliary.Nodes) -ceq 'unreviewed_control' -and $auxiliary.Decision -ceq 'welcome') 'unchanged legacy policy rejects the same synthetic auxiliary control that the target-focused policy permits'
+$aux.windows[0].elements+=@(Node 'PRIVATE_CANARY' 'Button' 'btn-privatecanary-9999');$aux.windows[0].elementCount++
+$auxiliary=ConvertTo-WinAppWelcomeSnapshot (Json $aux) 123
+Pass ($auxiliary.Decision -ceq 'welcome') 'unknown auxiliary button also leaves the fixed target contract intact'
+Reject { Get-WinAppWelcomeTarget $auxiliary 'PRIVATE_CANARY' 'Button' } 'even a valid auxiliary button slug never becomes an action target'
+Reject { Get-WinAppWelcomeTarget $auxiliary 'Describe something else' 'Edit' } 'auxiliary edit is not authorized'
+Pass (@($auxiliary.Nodes | Where-Object { $_.Name -ceq 'Describe something else' -and $_.Interactive -and $_.Enabled }).Count -eq 1) 'enabled auxiliary edit was not disguised as noninteractive'
+foreach ($variant in @('missing-heading','duplicate-heading','offscreen-heading','missing-target','duplicate-target','wrong-target-type','wrong-target-case','same-name-wrong-type')) {
+    $bad=Page
+    switch($variant) {
+        'missing-heading' { $bad.windows[0].elements[0].name='Different page' }
+        'duplicate-heading' { $bad.windows[0].elements+=@(Node 'Which best describes your work?' 'Text') }
+        'offscreen-heading' { $bad.windows[0].elements[0].isOffscreen=$true }
+        'missing-target' { $bad.windows[0].elements[1].name='Another role' }
+        'duplicate-target' { $bad.windows[0].elements+=@(Node 'Engineering' 'RadioButton' 'rdo-engineering-9876') }
+        'wrong-target-type' { $bad.windows[0].elements[1].type='Button' }
+        'wrong-target-case' { $bad.windows[0].elements[1].name='engineering' }
+        'same-name-wrong-type' { $bad.windows[0].elements+=@(Node 'Engineering' 'Button' 'btn-engineering-9876') }
+    }
+    $bad.windows[0].elementCount=$bad.windows[0].elements.Count
+    Pass ((ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123).Decision -cne 'welcome') 'scene and exact target ambiguity still stop'
+}
+$bad=Page;$bad.windows[0].elements+=@(Node 'Engineering' 'Text');$bad.windows[0].elementCount++
+Pass ((ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123).Decision -ceq 'welcome') 'noninteractive label duplicate is not a second target'
+foreach ($label in @('Sign in to ChatGPT','Permission required','Terms of service','Password','Security warning')) {
+    $bad=Page;$bad.windows[0].elements+=@(Node $label 'Text' '' $false);$bad.windows[0].elements[-1].isOffscreen=$true;$bad.windows[0].elementCount++
+    Pass ((ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123).Decision -ceq 'protected_screen') 'protected disabled offscreen noninteractive text still blocks'
 }
 $bad=Page;$bad.windows[0].elements[1].isInvokable=$false
 Reject { Get-WinAppWelcomeTarget (ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123) 'Engineering' 'RadioButton' } 'missing action support cannot authorize a command'
@@ -136,17 +169,22 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
         $toggle=$(if($script:reads -eq 1){'on'}else{'off'})
         if ($script:mode -ceq 'indeterminate') { $toggle='indeterminate' }
         if ($script:mode -ceq 'still-on') { $toggle='on' }
-        return Json (Page $toggle ($script:reads -ge 3))
+        $page=Page $toggle ($script:reads -ge 3)
+        if ($script:mode -ceq 'auxiliary') {
+            $page.windows[0].elements+=@((Node 'Describe something else' 'Edit'),(Node 'PRIVATE_CANARY' 'Button' 'btn-privatecanary-9999'))
+            $page.windows[0].elementCount+=2
+        }
+        return Json $page
     }
     if ($Operation -ceq 'selected') { $script:selectedReads++;return Json (Selected ($script:selectedReads -gt 1)) }
     return Json (Action $Operation)
 }
-foreach ($mode in @('normal','uncertain','identity','indeterminate','still-on','final-identity')) {
+foreach ($mode in @('normal','auxiliary','uncertain','identity','indeterminate','still-on','final-identity')) {
     $script:mode=$mode;$script:operations=@();$script:reads=0;$script:selectedReads=0
     $diagnostic=[ordered]@{};$result=Invoke-WinAppWelcome $null 123 {
         if ($script:mode -ceq 'final-identity' -and $script:reads -eq 4) { throw 'Synthetic final identity failure.' }
     } $diagnostic
-    if ($mode -ceq 'normal') {
+    if ($mode -cin @('normal','auxiliary')) {
         Pass ($result.status -ceq 'observed' -and $result.actions -eq 3 -and $result.nextScreen -ceq 'unreviewed_screen') 'one complete fixed welcome transition'
         Pass (($operations -join ',') -ceq 'read,toggle,read,selected,select,read,selected,continue,read') 'each explicit action once with required state reads'
     } elseif ($mode -ceq 'final-identity') {

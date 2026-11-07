@@ -2686,10 +2686,15 @@ can honestly fail; it is not claimed repaired or used to prove this path.
 The orchestrator reads the requested original HWND at rendered depth 16,
 requires a complete (no truncation), bounded 500-node page, exact heading,
 unique exact Name+Type targets and enabled/direct-invokable action targets.
-It reuses the existing page/protected-label policy; a direct `isInvokable`
-node is interactive even with a Custom/Pane type. Protected markers are checked
-over all returned names, including offscreen names. Unknown enabled controls,
-missing/ambiguous targets or unknown state stop before further input.
+Its target-focused page predicate requires exactly one visible exact heading
+and the three unique visible Name+Type targets. Same-name interactive nodes of
+the wrong type still stop; ordinary noninteractive duplicate labels are not
+second targets. Other controls retain their real Interactive/Invokable flags,
+but need not appear in a whole-page action allowlist. Only the three fixed
+Name+Type pairs can pass the target getter. Protected/login/error scans still
+cover all returned names, including noninteractive, disabled and offscreen
+nodes. Missing/ambiguous targets, protected content or unknown action state
+stop before further input. The legacy/shared welcome policy is unchanged.
 
 Only freshly read runtime slugs matching the target type and normalized name/
 automation ID plus four-hex runtime hash are accepted, not promoted IDs or text
@@ -2739,3 +2744,38 @@ Offline JSON fixtures are schema-derived synthetic data, not captured official
 responses. This change does not establish a successful welcome transition,
 model selection, conversation, normal entry or new-native inference acceptance.
 The unrelated four-turn slice remains `not-run / welcome_transition_only`.
+
+
+### Target-focused welcome contract after the official read
+
+The [f34226b4 run](https://github.com/breakingtime126/magpie/actions/runs/42364910645/job/128381568624)
+completed the official read (exit 0, 40568 bytes, confirmed exit, no timeout),
+observed the exact heading and unique expected RadioButton/CheckBox/Button,
+and stopped at `unreviewed_control` before any action. The original welcome
+pixels remained unchanged and `partialActionUncertain=false`. Raw auxiliary
+names were not published, so the actual offending control is unknown. No
+specific info button, free-text field or other label is inferred from that
+reason.
+
+`Get-WinAppWelcomeDecision` now recognizes the scene and authorized targets,
+not every possible unrelated widget. This is a change to the official-tool
+path only: it does not declare unknown controls noninteractive or authorize
+them. The getter rejects every Name+Type pair except Engineering/RadioButton,
+Suggest personalized tasks/CheckBox and Continue/Button, and the fixed caller
+has no action branch for auxiliary controls. Protected content anywhere in the
+returned tree remains a stop. The unchanged action code still requires enabled
+and directly invokable targets, exact runtime selectors/receipts, known toggle
+and selection states, held original window/process/package/foreground checks,
+one total 30-second budget, at most three action attempts and no retry. It does
+not require Continue enabled until Engineering selection has been verified.
+The next screen is still read-only; the documented non-atomic COM/slug and
+owner-dialog limitations are unchanged.
+
+Pure synthetic fixtures contrast the untouched legacy predicate's rejection
+of one auxiliary edit with acceptance by the target-focused predicate. That
+fixture is not a claim about the undisclosed real label. Additional cases keep
+auxiliary Button/Custom controls genuinely interactive and untargetable, reject
+missing/duplicate headings and missing/duplicate/wrong-type/case targets, retain
+protected disabled/offscreen text stops, and run the fixed action sequence with
+auxiliary controls without adding an action. No new observation, deadline,
+workflow gate or diagnostic framework is introduced.
