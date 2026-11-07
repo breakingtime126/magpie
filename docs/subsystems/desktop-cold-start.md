@@ -333,6 +333,37 @@ failure. Both parent hosts must pass the complete existing prerequisites;
 the metadata and process-identity fixtures are not skipped. These new tests
 and the encoding correction still require exact-commit Windows execution.
 
+The [`a823a4cb` entry run](https://github.com/breakingtime126/magpie/actions/runs/42353998804/job/128347964132)
+passed the Core 663, Desktop 667 and profile 1267 assertions, then stopped
+inside the signed-package identity reader before returning identity metadata.
+The downloaded 4239 package digest and signature checks matched; no activation
+or USER write occurred. Its generic error does not identify a failed pin.
+
+The reader now explicitly loads the installed `System.IO.Compression` assembly
+before its first `ZipArchiveMode`/`ZipArchive` use. Loading only the separate
+Framework `System.IO.Compression.FileSystem` assembly is not an explicit load
+of those types. UI tool setup previously used `ZipFile.OpenRead` first, whereas
+the entry path reaches this reader first. This dependency correction does not
+by itself establish the cause of the earlier generic failure.
+
+The existing native-entry safety suite adds two fresh Windows PowerShell
+children under the same bounded helper, cleared environment and held cleanup.
+Each AST-loads only the six required reader functions, writes the same static
+645-byte synthetic ZIP, and calls the real reader without previously using a
+ZIP API. The control removes only the new assembly-load line; the fixed child
+must validate the synthetic package, manifest, backend and archive digests.
+The control reports rejection or success rather than requiring an assumption
+about assemblies preloaded by a particular host. Only an observed rejected
+control plus passing fixed child supports the proposed dependency mechanism
+for that synthetic path. Neither result establishes the prior real failure's
+cause. Fixture signature arguments are supplied test values, not an official
+package, an executable backend, a valid ASAR or real signature verification.
+
+No workflow change is required: both existing host runs execute these cases
+before the real treatment. No pin, size/time bound, freshness or USER rollback
+rule changes. New fresh-host cases and the real signed-package path remain
+unrun while authoring this change; local source/ZIP checks are not Windows proof.
+
 The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
 allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving
 window, so the parent applies a separate ten-second helper deadline and verifies

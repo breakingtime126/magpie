@@ -748,6 +748,7 @@ function Get-DesktopPackageIdentityEvidence([string]$PackagePath, [string]$Packa
         $actualPackage = Get-BoundedStreamDigest $packageStream $packageStream.Length 4294967296 $watch
         if ($actualPackage -cne $PackageSha256) { throw 'Package identity input changed.' }
         $packageStream.Position = 0
+        Add-Type -AssemblyName System.IO.Compression
         $zip = New-Object IO.Compression.ZipArchive($packageStream, [IO.Compression.ZipArchiveMode]::Read, $true)
         Assert-PublicZipIndex $zip
         $manifestHash = Get-PublicZipEntryDigest $zip 'AppxManifest.xml' 262144 $watch
