@@ -109,11 +109,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 		cancel()
 		input.Close()
 		output.Close()
-		for _, child := range children {
-			child.input.Close()
-			child.output.Close()
-		}
-		stopChildren(children)
+		shutdownChildren(children)
 		readers.Wait()
 	}()
 	for _, b := range cfg.Backends {
@@ -291,6 +287,19 @@ func backendEnvironment(b Backend) []string {
 		}
 	}
 	return env
+}
+
+// Close every stdin before waiting for a child to exit. A Windows pipe Close
+// can wait for a concurrent Read, so stdout closure must not prevent the owned
+// tree's stop/reap path from running. Readers are joined by Run after this.
+func shutdownChildren(children map[string]*childServer) {
+	for _, child := range children {
+		child.input.Close()
+	}
+	stopChildren(children)
+	for _, child := range children {
+		child.output.Close()
+	}
 }
 
 // Give an EOF-aware app server a short opportunity to release its own locks.

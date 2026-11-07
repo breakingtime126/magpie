@@ -1986,3 +1986,13 @@ wiring. It does not save/import configuration, change environment/security state
 or claim executable, symlink, policy, authentication or Desktop compatibility
 validation. Compatibility modes stay absent/default-off. This is a developer
 preview slice, not a one-click installer or a production account connection UI.
+
+## Backend shutdown ordering
+
+Shutdown closes all backend stdin streams, gives the existing EOF cleanup
+grace period, then stops/reaps each owned tree before closing backend stdout.
+A concurrent Windows pipe Close must not gate the owned stop/reap path. The
+bridge joins its stream readers before returning. This removes a confirmed
+ordering hazard; it is not proof of the unique cause of the historical Windows
+malformed-output CI hang. The deterministic owned-child close-gate regression
+and original malformed/family cases require actual Windows execution.

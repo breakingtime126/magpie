@@ -101,6 +101,33 @@ jobs:
           grep -F -- '--- FAIL: TestThreadRevertBeforeTurnIDRoutesToOwner' "$isolated/old.log"
           grep -F -- 'native beforeTurnId did not reach its owner:' "$isolated/old.log"
           echo 'The exact baseline rejects native revert boundaries; compile or setup failures do not qualify.'
+      - name: Prove shutdown ordering red and repeated synthetic green
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
+          isolated="$(mktemp -d "$RUNNER_TEMP/bridge-shutdown.XXXXXX")"
+          trap 'chmod -R u+w "$isolated"; rm -rf "$isolated"' EXIT
+          export HOME="$isolated/home" CODEX_HOME="$isolated/codex"
+          export XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache"
+          export XDG_DATA_HOME="$isolated/data" XDG_STATE_HOME="$isolated/state" TMPDIR="$isolated/tmp"
+          mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR" "$isolated/source"
+          git archive HEAD | tar -x -C "$isolated/source"
+          python3 build/mutate-bridge-shutdown-order.py "$isolated/source/internal/appserverbridge/run.go"
+          status=0
+          (cd "$isolated/source" && go test -race -v -count=1 -timeout=2m -tags nogui -run '^TestShutdownChildrenStopsTreeBeforeWaitingForOutputClose$' ./internal/appserverbridge) >"$isolated/red.log" 2>&1 || status=$?
+          cat "$isolated/red.log"
+          test "$status" -eq 1
+          grep -F -- '--- FAIL: TestShutdownChildrenStopsTreeBeforeWaitingForOutputClose' "$isolated/red.log"
+          grep -F -- 'owned backend shutdown waited for output Close before stopping its tree' "$isolated/red.log"
+          if grep -E 'panic:|DATA RACE|\[build failed\]|shutdown regression fixture was not reaped|shutdown regression reader did not finish|shutdown regression fixture did not become ready|Access is denied' "$isolated/red.log"; then
+            echo 'Setup, compile, race, cleanup and package-timeout failures do not qualify as the sequencing red.'
+            exit 1
+          fi
+          go test -race -v -count=5 -timeout=5m -tags nogui -run '^Test(ShutdownChildrenStopsTreeBeforeWaitingForOutputClose|BridgeTimeoutSummaryContainsOnlyFixedCounts|RunFailsClosedWhenEitherBackendDiesOrViolatesProtocol|RunStartsIsolatedPinnedBackendsAndStopsOnClientEOF|RunCancellationClosesBlockedClientRead)$' ./internal/appserverbridge
+          test -z "$(git status --porcelain)"
+
       - name: Test synthetic bridge and probe concurrency
         shell: bash
         run: |
@@ -157,6 +184,76 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Prove Windows shutdown ordering red and repeated synthetic green
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $PSNativeCommandUseErrorActionPreference = $false
+          function Assert-NativeExit([string] $operation) {
+              if ($LASTEXITCODE -ne 0) { throw "$operation failed with exit code $LASTEXITCODE" }
+          }
+          $checkout = (Get-Location).Path
+          $head = (& git rev-parse HEAD).Trim()
+          Assert-NativeExit 'Read source commit'
+          if ($head -ne $env:GITHUB_SHA) { throw 'Checkout does not match the triggering commit.' }
+          $cacheJSON = & go env -json GOPATH GOMODCACHE GOCACHE
+          Assert-NativeExit 'Read Go cache paths'
+          $cache = ($cacheJSON -join "`n") | ConvertFrom-Json
+          $paths = @{
+              HOME = 'home'; USERPROFILE = 'home'; CODEX_HOME = 'codex'
+              APPDATA = 'appdata'; LOCALAPPDATA = 'localappdata'
+              XDG_CONFIG_HOME = 'config'; XDG_CACHE_HOME = 'cache'
+              XDG_DATA_HOME = 'data'; XDG_STATE_HOME = 'state'
+              TEMP = 'tmp'; TMP = 'tmp'; TMPDIR = 'tmp'
+          }
+          $saved = @{}
+          foreach ($name in @($paths.Keys) + @('GOPATH', 'GOMODCACHE', 'GOCACHE')) {
+              $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+          }
+          $isolated = Join-Path $env:RUNNER_TEMP ('bridge-shutdown-' + [Guid]::NewGuid().ToString('N'))
+          $created = $false
+          try {
+              New-Item -ItemType Directory -Path $isolated | Out-Null
+              $created = $true
+              $env:GOPATH = $cache.GOPATH
+              $env:GOMODCACHE = $cache.GOMODCACHE
+              $env:GOCACHE = $cache.GOCACHE
+              foreach ($name in $paths.Keys) {
+                  $value = Join-Path $isolated $paths[$name]
+                  New-Item -ItemType Directory -Path $value -Force | Out-Null
+                  [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+              }
+              $archive = Join-Path $isolated 'source.zip'
+              $mutation = Join-Path $isolated 'source'
+              & git archive --format=zip --output=$archive HEAD
+              Assert-NativeExit 'Archive exact source for shutdown mutation'
+              Expand-Archive -LiteralPath $archive -DestinationPath $mutation
+              & python (Join-Path $checkout 'build/mutate-bridge-shutdown-order.py') (Join-Path $mutation 'internal/appserverbridge/run.go')
+              Assert-NativeExit 'Restore only the old shutdown order'
+              Set-Location -LiteralPath $mutation
+              $red = & go test -v -count=1 -timeout=2m -tags nogui -run '^TestShutdownChildrenStopsTreeBeforeWaitingForOutputClose$' ./internal/appserverbridge 2>&1
+              $redExit = $LASTEXITCODE
+              $red | Write-Output
+              $redText = $red -join "`n"
+              if ($redExit -ne 1 -or
+                  $redText -notmatch '--- FAIL: TestShutdownChildrenStopsTreeBeforeWaitingForOutputClose' -or
+                  $redText -notmatch 'owned backend shutdown waited for output Close before stopping its tree' -or
+                  $redText -match 'panic:|DATA RACE|\[build failed\]|shutdown regression fixture was not reaped|shutdown regression reader did not finish|shutdown regression fixture did not become ready|Access is denied') {
+                  throw 'Shutdown mutation did not produce the expected behavioral failure with completed fixture cleanup.'
+              }
+              Set-Location -LiteralPath $checkout
+              & go test -v -count=5 -timeout=5m -tags nogui -run '^Test(ShutdownChildrenStopsTreeBeforeWaitingForOutputClose|BridgeTimeoutSummaryContainsOnlyFixedCounts|RunFailsClosedWhenEitherBackendDiesOrViolatesProtocol|RunStartsIsolatedPinnedBackendsAndStopsOnClientEOF|RunCancellationClosesBlockedClientRead|RunWindowsReapsStartedBackendFamilies)$' ./internal/appserverbridge
+              Assert-NativeExit 'Repeated Windows shutdown and malformed-output regressions'
+              $dirty = & git status --porcelain
+              Assert-NativeExit 'Check untouched artifact source'
+              if ($dirty) { throw 'Shutdown mutation changed the artifact checkout.' }
+          } finally {
+              Set-Location -LiteralPath $checkout
+              foreach ($name in $saved.Keys) {
+                  [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+              }
+              if ($created) { Remove-Item -LiteralPath $isolated -Recurse -Force }
+          }
       - name: Test and package the experimental command
         run: ./build/package-bridge-windows.ps1
       - name: Upload the unsigned experimental artifact

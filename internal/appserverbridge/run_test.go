@@ -256,6 +256,7 @@ func startFixtureBridge(t *testing.T, cfg Config) *runningBridge {
 		select {
 		case <-r.done:
 		case <-time.After(30 * time.Second):
+			reportBridgeTimeout(t)
 			t.Error("bridge failed to stop and reap its children")
 		}
 	})
@@ -268,8 +269,168 @@ func (r *runningBridge) wait(t *testing.T) error {
 	case <-r.done:
 		return r.err
 	case <-time.After(30 * time.Second):
+		reportBridgeTimeout(t)
 		t.Fatal("bridge did not terminate")
 		return nil
+	}
+}
+
+// Keep timeout evidence useful without logging stack arguments, source paths,
+// environment values or protocol payloads. These are counts, not a root cause.
+func reportBridgeTimeout(t *testing.T) {
+	t.Helper()
+	stack := make([]byte, 1<<20)
+	n := runtime.Stack(stack, true)
+	t.Logf("bridge timeout state: %s stack_truncated=%t", bridgeTimeoutSummary(stack[:n]), n == len(stack))
+}
+
+func bridgeTimeoutSummary(stack []byte) string {
+	symbols := []struct{ label, prefix string }{
+		{"run", "github.com/yetone/magpie/internal/appserverbridge.RunWithOptions("},
+		{"shutdown", "github.com/yetone/magpie/internal/appserverbridge.shutdownChildren("},
+		{"stop", "github.com/yetone/magpie/internal/appserverbridge.stopChildren("},
+		{"scan", "github.com/yetone/magpie/internal/appserverbridge.scanMessages("},
+		{"write", "github.com/yetone/magpie/internal/appserverbridge.writeMessage("},
+		{"start", "github.com/yetone/magpie/internal/proc.startTreeStrict("},
+		{"tree_wait", "github.com/yetone/magpie/internal/proc.(*Tree).Wait("},
+		{"tree_stop", "github.com/yetone/magpie/internal/proc.(*Tree).Stop("},
+		{"exec_wait", "os/exec.(*Cmd).Wait("},
+		{"fd_close", "internal/poll.(*FD).Close("},
+		{"fd_read", "internal/poll.(*FD).Read("},
+		{"fd_write", "internal/poll.(*FD).Write("},
+		{"wait_group", "sync.(*WaitGroup).Wait("},
+	}
+	lines := strings.Split(string(stack), "\n")
+	var summary strings.Builder
+	for i, symbol := range symbols {
+		count := 0
+		for _, line := range lines {
+			if strings.HasPrefix(line, symbol.prefix) {
+				count++
+			}
+		}
+		if i > 0 {
+			summary.WriteByte(' ')
+		}
+		fmt.Fprintf(&summary, "%s=%d", symbol.label, count)
+	}
+	return summary.String()
+}
+
+func TestBridgeTimeoutSummaryContainsOnlyFixedCounts(t *testing.T) {
+	stack := []byte("goroutine 9 [IO wait]:\n" +
+		"internal/poll.(*FD).Read(0x1234, secret-payload)\n" +
+		"\tprivate/source/path.go:99\n" +
+		"github.com/yetone/magpie/internal/appserverbridge.scanMessages(secret-token)\n" +
+		"internal/poll.(*FD).Read(0x5678, private-env)\n" +
+		"created by internal/poll.(*FD).Close(secret)\n")
+	want := "run=0 shutdown=0 stop=0 scan=1 write=0 start=0 tree_wait=0 tree_stop=0 exec_wait=0 fd_close=0 fd_read=2 fd_write=0 wait_group=0"
+	if got := bridgeTimeoutSummary(stack); got != want {
+		t.Fatalf("timeout summary = %q, want only fixed symbol counts", got)
+	}
+}
+
+// Model a pipe Close that cannot return until its outstanding Read finishes.
+// The real fixture stays alive until the owned tree is stopped, not a timer.
+type readCompletionGatedCloser struct {
+	io.ReadCloser
+	readEnded <-chan struct{}
+	closed    chan struct{}
+}
+
+func (r *readCompletionGatedCloser) Close() error {
+	<-r.readEnded
+	err := r.ReadCloser.Close()
+	close(r.closed)
+	return err
+}
+
+func TestShutdownChildrenStopsTreeBeforeWaitingForOutputClose(t *testing.T) {
+	cfg := fixtureConfig(t)
+	backend := cfg.Backends[0]
+	command := proc.CommandContext(context.Background(), backend.Command, "bridge-fixture-descendant")
+	command.Env = backendEnvironment(backend)
+	command.Dir = backend.Home
+	input, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := command.StdoutPipe()
+	if err != nil {
+		input.Close()
+		t.Fatal(err)
+	}
+	tree, err := proc.StartTreeStrict(command)
+	if err != nil {
+		input.Close()
+		output.Close()
+		t.Fatal(err)
+	}
+	readEnded := make(chan struct{})
+	ready := make(chan error, 1)
+	go func() {
+		defer close(readEnded)
+		reader := bufio.NewReader(output)
+		line, err := reader.ReadString('\n')
+		if err == nil && line != "ready\n" {
+			err = errors.New("unexpected shutdown fixture readiness")
+		}
+		ready <- err
+		if err == nil {
+			_, _ = io.Copy(io.Discard, reader)
+		}
+	}()
+	closed := make(chan struct{})
+	gate := &readCompletionGatedCloser{ReadCloser: output, readEnded: readEnded, closed: closed}
+	done := make(chan struct{})
+	startedShutdown := false
+	t.Cleanup(func() {
+		// Release a failing old-order test using only its already-owned tree.
+		// shutdownChildren remains the sole Wait caller once it has started.
+		<-tree.Stop(0)
+		if startedShutdown {
+			select {
+			case <-done:
+			case <-time.After(30 * time.Second):
+				t.Error("shutdown regression fixture was not reaped")
+			}
+		} else {
+			_ = tree.Wait()
+			input.Close()
+			output.Close()
+		}
+		select {
+		case <-readEnded:
+		case <-time.After(30 * time.Second):
+			t.Error("shutdown regression reader did not finish")
+		}
+	})
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("shutdown regression fixture did not become ready")
+	}
+	startedShutdown = true
+	go func() {
+		shutdownChildren(map[string]*childServer{"fixture": {tree: tree, input: input, output: gate}})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		reportBridgeTimeout(t)
+		t.Fatal("owned backend shutdown waited for output Close before stopping its tree")
+	}
+	select {
+	case <-closed:
+	default:
+		t.Fatal("shutdown skipped the child output close")
+	}
+	if command.ProcessState == nil || command.ProcessState.Success() {
+		t.Fatal("shutdown did not stop and reap the stubborn owned fixture")
 	}
 }
 
