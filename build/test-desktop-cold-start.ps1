@@ -13,6 +13,7 @@ param(
     [switch]$EnableReadOnlyWinAppInspection,
     [switch]$EnableNativeReadOnlyInspection,
     [switch]$EnableReviewedBuild4239,
+    [switch]$EnableRendererAccessibility,
     [switch]$EnableReviewedEntry4239,
     [switch]$InspectPackageIdentityOnly,
     [switch]$InspectStaticLauncher,
@@ -875,6 +876,14 @@ function Assert-Desktop4239Options([bool]$Enabled,[string]$Mode,[bool]$Startup,[
         throw 'Reviewed 4239 build requires its exclusive zero-action bridge inspection mode.'
     }
 }
+function Get-DesktopAccessibilityArguments([bool]$Enabled,[bool]$Build4239,[bool]$Entry4239) {
+    if (-not $Enabled) { return '' }
+    # Assert-Desktop4239Options independently restricts this profile to one read-only alias launch.
+    if (-not $Build4239 -or $Entry4239) {
+        throw 'Renderer accessibility requires the reviewed read-only 4239 alias profile.'
+    }
+    return '--force-renderer-accessibility'
+}
 function Get-DesktopStaticEntries([bool]$Build4239=$false) {
     if ($Build4239) {
         return @('.vite/build/early-bootstrap-339-ce026819bf837ba7.js',
@@ -1677,6 +1686,7 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
 Assert-Desktop4239Options $EnableReviewedBuild4239 $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
     $EnableReadOnlyWinAppInspection $EnableReviewedLiveWelcome $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly `
     $NativeEntryCase $env:MAGPIE_REVIEWED_BUILD
+$desktopAccessibilityArguments = Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
 $useWinAppInspection = $EnableReadOnlyWinAppInspection -or $EnableNativeReadOnlyInspection
 if ($EnableNativeReadOnlyInspection) {
@@ -2588,6 +2598,12 @@ requires_openai_auth = false
     } else {
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = $alias; $start.UseShellExecute = $false
+        $start.Arguments = $desktopAccessibilityArguments
+        if ($EnableRendererAccessibility) {
+            $report.rendererAccessibility = [ordered]@{
+                argument = '--force-renderer-accessibility'; status = 'requested-at-launch'; effect = 'unverified'
+            }
+        }
         $start.WorkingDirectory = $(if ($useLiveFixtures) { $liveWorkspace } else { $work })
         # Explicit non-secret Windows environment only; no runner tokens or shell-wide override.
         $start.EnvironmentVariables.Clear()

@@ -730,7 +730,7 @@ jobs:
           $inspection = $env:MAGPIE_WINAPP_INSPECTION -ceq 'winapp-inspection-v0.7.1'
           $packageIdentity = $env:MAGPIE_PACKAGE_IDENTITY_ONLY -ceq 'package-identity-only-v1'
           $build4239 = $env:MAGPIE_REVIEWED_BUILD -ceq 'bridge-ui-4239-v1'
-          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(!$inspection -and !$packageIdentity) -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -InspectStaticLauncher
+          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(!$inspection -and !$packageIdentity) -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
       - name: Upload only sanitized diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

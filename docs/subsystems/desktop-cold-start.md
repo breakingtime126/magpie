@@ -2192,3 +2192,51 @@ Node-to-PowerShell provenance roundtrips, harness option/entry propagation and
 prelaunch versus uncertain activation. Node checks can run locally; PowerShell
 and actual Windows execution still require the reviewed CI commit. No new UI
 read, input action or independent inference acceptance is added.
+
+### Renderer accessibility, one changed launch input
+
+The reviewed 4239 registered-alias attempt at `1c9437c8` displayed the welcome
+page but its one winapp read reported 13 nodes and `required_targets_missing`,
+with zero actions. The original-native sign-in-screen run also reported 13
+nodes; equal counts do not establish equal trees or explain missing controls.
+
+For the next 4239 alias observation, the existing policy job explicitly selects
+`-EnableRendererAccessibility` together with `-EnableReviewedBuild4239`.
+The harness switch is default-off and returns only the fixed
+`--force-renderer-accessibility` argument. Enabling it without the reviewed
+4239 zero-action bridge profile, or with native-entry selection, fails before
+setup. The same two push markers, `[bridge-ui-4239-v1]` and
+`[winapp-inspection-v0.7.1]`, now select this changed-input observation.
+Unmarked/default jobs and the independent AUMID job are unchanged. No additional
+run is selected and the old no-flag 4239 observation is not repeated.
+
+[Chromium's accessibility overview](https://github.com/chromium/chromium/blob/d24bf1f96bd65780e7b93b95a0c6112510607cc0/docs/accessibility/overview.md#command-line-options)
+documents the switch and Windows UI Automation support. Without a value it
+initially requests complete accessibility but permits subsequent mode changes.
+[Electron's accessibility guide](https://github.com/electron/electron/blob/ef2710fa6c10fe56365a9949fa783d26ca1499e5/docs/tutorial/accessibility.md)
+describes automatic accessibility activation and its Chromium tree.
+[Electron's switch reference](https://github.com/electron/electron/blob/ef2710fa6c10fe56365a9949fa783d26ca1499e5/docs/api/command-line-switches.md#chromium-flags)
+warns that Chromium switches are version-dependent. These public sources justify
+the experiment; they do not establish the bundled Electron/Chromium version or
+prove this signed Codex build honors the argument.
+
+The only launch change is `ProcessStartInfo.Arguments` on the existing verified
+registered alias. The official executable and package are not modified. No
+debug port, script injection, browser connection, security setting, persistent
+environment change or input action is added. The fixed
+`rendererAccessibility` report says `requested-at-launch` and
+`effect: unverified`; that does not prove the flag reached or enabled Chromium.
+Read the actual UI counts and screenshot to judge the outcome.
+
+All signed package/backend/ASAR pins, clean child environment, held activation
+process identity, HWND checks, screenshot procedure, single winapp call,
+30-second/256-KiB-per-stream limits, login/protected checks and cleanup remain
+unchanged. A missing tree or target, timeout, overflow or identity uncertainty
+still stops; there is no fallback read, retry, coordinate click, or welcome
+helper action. Even exposed controls would only inform a separately reviewed
+next step, not prove onboarding, model switching or chat. This is alias-context
+UI evidence, separate from normal AUMID inheritance and native inference tests.
+
+The focused profile tests cover the disabled default, sole literal argument,
+wrong profiles and the unique preflight-to-alias assignment. Local source/YAML
+checks do not substitute for PowerShell execution or the actual Windows run.

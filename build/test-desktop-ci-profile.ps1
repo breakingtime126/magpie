@@ -8,7 +8,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
-foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
+foreach ($name in @('Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
@@ -2331,6 +2331,47 @@ Expect-Pass 'static build selection preserves exact old and new source entry set
         $argumentAssignments[1].Right.Extent.Text -cne ''' --reviewed-build desktop-4239''') { throw 'Static CLI path/profile authority changed.' }
     $guard=$argumentAssignments[1].Parent;while($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]){$guard=$guard.Parent}
     if ($guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedBuild4239') { throw 'Static profile escaped explicit opt-in.' }
+}
+
+Expect-Pass 'renderer accessibility is empty by default and one fixed argument when selected' {
+    foreach ($build in @($false,$true)) {
+        foreach ($entry in @($false,$true)) {
+            if ((Get-DesktopAccessibilityArguments $false $build $entry) -cne '') { throw 'Disabled option changed launch arguments.' }
+        }
+    }
+    if ((Get-DesktopAccessibilityArguments $true $true $false) -cne '--force-renderer-accessibility') {
+        throw 'Selected option did not return the sole reviewed switch.'
+    }
+}
+foreach ($pair in @(@($false,$false),@($false,$true),@($true,$true))) {
+    Expect-Reject 'renderer accessibility cannot enter another launch profile' {
+        Get-DesktopAccessibilityArguments $true $pair[0] $pair[1]
+    }
+}
+Expect-Pass 'renderer accessibility has one default-off preflight and only feeds the alias launch' {
+    $parameter=@($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -ceq 'EnableRendererAccessibility' })
+    if ($parameter.Count -ne 1 -or $null -ne $parameter[0].DefaultValue -or
+        $parameter[0].StaticType -ne [Management.Automation.SwitchParameter]) { throw 'Accessibility opt-in is not default-off.' }
+    $calls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Get-DesktopAccessibilityArguments'},$true))
+    if ($calls.Count -ne 1 -or $calls[0].Extent.Text -cne 'Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239') {
+        throw 'Accessibility lost explicit profile selection.'
+    }
+    $authority=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq 'Assert-Desktop4239Options'},$true))
+    $arguments=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$start.Arguments'},$true))
+    if ($authority.Count -ne 1 -or $arguments.Count -ne 1 -or
+        $arguments[0].Right.Extent.Text -cne '$desktopAccessibilityArguments' -or
+        $authority[0].Extent.EndOffset -ge $calls[0].Extent.StartOffset -or
+        $calls[0].Extent.EndOffset -ge $arguments[0].Extent.StartOffset) { throw 'Accessibility authority or sole argv assignment changed.' }
+    $alias=$ast.Extent.Text.IndexOf('$start.FileName = $alias; $start.UseShellExecute = $false',[StringComparison]::Ordinal)
+    $start=$ast.Extent.Text.IndexOf('$started = [Diagnostics.Process]::Start($start)',[StringComparison]::Ordinal)
+    if ($alias -lt 0 -or $start -lt 0 -or $arguments[0].Extent.StartOffset -le $alias -or
+        $arguments[0].Extent.EndOffset -ge $start) { throw 'Accessibility escaped the registered-alias launch.' }
+    $assignments=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$desktopAccessibilityArguments'},$true))
+    if ($assignments.Count -ne 1) { throw 'Accessibility arguments can be overwritten.' }
 }
 
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
