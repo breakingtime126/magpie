@@ -1430,7 +1430,7 @@ function New-NativeControlSuccess {
         schema = 1; scope = 'synthetic-loopback-only'; status = 'passed'; stage = 'complete'; failure = ''
         native_sha256 = '40ecc3d8b6899afd8f935a8cccb7d53ba41ffd7c199f679e186d30ddd0d0bf39'
         binary_verified = $true; version_verified = $true; adapter_clean_exit = $true; cleanup_complete = $true
-        config_reads = 9; layer_reads = 6; stable_layer_rereads = 3; layer_version_changes = 1
+        config_reads = 9; layer_reads = 6; stable_layer_rereads = 3; layer_version_changes = 0
         catalog_models = 2; threads = 2; turns = 4; assistant_messages = 4
         thread_list_queries = 2; thread_list_pages = 4; thread_list_items = 4
         thread_reads = 2; ownership_rejections = 2; alpha_requests = 2; beta_requests = 2

@@ -45,7 +45,7 @@ function Assert-ControlPlaneNativeSummary($Report) {
             $Report.$name -lt 0 -or $Report.$name -gt 2048) { throw 'Invalid native control-plane summary.' }
     }
     if ($Report.status -ceq 'passed') {
-        $expected = @(9, 6, 3, 1, 2, 2, 4, 4, 2, 2, 4, 4, 2, 2, 2, 0, 0)
+        $expected = @(9, 6, 3, 0, 2, 2, 4, 4, 2, 2, 4, 4, 2, 2, 2, 0, 0)
         if ($counts.Count -ne $expected.Count) { throw 'Invalid native control-plane summary.' }
         for ($i = 0; $i -lt $counts.Count; $i++) {
             if ($Report.($counts[$i]) -ne $expected[$i]) { throw 'Invalid native control-plane summary.' }

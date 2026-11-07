@@ -1495,7 +1495,7 @@ function Get-DesktopCombinedOutcome($DesktopOutcome, [string]$NativeStatus, [str
 # real-service or account proof. Retain only the exact reviewed success schema.
 function ConvertTo-DesktopNativeControlEvidence($value) {
     $counts = [ordered]@{
-        config_reads = 9; layer_reads = 6; stable_layer_rereads = 3; layer_version_changes = 1
+        config_reads = 9; layer_reads = 6; stable_layer_rereads = 3; layer_version_changes = 0
         catalog_models = 2; threads = 2; turns = 4
         thread_list_queries = 2; thread_list_pages = 4; thread_list_items = 4
         assistant_messages = 4; thread_reads = 2; ownership_rejections = 2

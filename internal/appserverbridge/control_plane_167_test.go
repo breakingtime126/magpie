@@ -587,7 +587,12 @@ func TestControlPlane167InitializeOwnsFrontendHome(t *testing.T) {
 	if len(reply(t, r, out[0], string(raw(native(r, out[0].Backend))))) != 0 || r.phase == "ready" {
 		t.Fatal("control frontend initialized before both native homes were checked")
 	}
-	done := reply(t, r, out[1], string(raw(native(r, out[1].Backend))))
+	catalog := reply(t, r, out[1], string(raw(native(r, out[1].Backend))))
+	if len(catalog) != 2 || r.phase == "ready" {
+		t.Fatal("control frontend did not await its initial catalog")
+	}
+	reply(t, r, catalog[0], string(raw(object{"data": raw([]json.RawMessage{fixtureModel("gpt", true)}), "nextCursor": raw(nil)})))
+	done := reply(t, r, catalog[1], string(raw(object{"data": raw([]json.RawMessage{fixtureModel("other", true)}), "nextCursor": raw(nil)})))
 	msg, _ := parseObject(done[0].Message)
 	value, _ := child(msg, "result")
 	if len(value) != 4 || text(value, "codexHome") != r.controlHome167 || r.phase != "ready" ||

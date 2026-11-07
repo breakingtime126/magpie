@@ -139,7 +139,7 @@ func validSummary(s summary) bool {
 	if s.Status == "failed" {
 		return s.Failure != ""
 	}
-	want := []int{9, 6, 3, 1, 2, 2, 4, 4, 2, 2, 4, 4, 2, 2, 2, 0, 0}
+	want := []int{9, 6, 3, 0, 2, 2, 4, 4, 2, 2, 4, 4, 2, 2, 2, 0, 0}
 	for i, n := range counts {
 		if n != want[i] {
 			return false

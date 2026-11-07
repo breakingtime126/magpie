@@ -170,7 +170,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	report.Stage = "initial_config"
-	initialVersion, err := readConfig(p, "", report)
+	initialVersion, err := readConfig(p, "magpie/alpha/"+modelName, report)
 	if err != nil {
 		return err
 	}
@@ -189,10 +189,9 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	if err != nil {
 		return err
 	}
-	if initialVersion == resolvedVersion {
+	if initialVersion != resolvedVersion {
 		return failure("config_shape_mismatch")
 	}
-	report.LayerVersionChanges++
 	report.Stage = "threads"
 	var threads [2]string
 	for i, name := range []string{"alpha", "beta"} {

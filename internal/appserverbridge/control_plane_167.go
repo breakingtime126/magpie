@@ -14,6 +14,7 @@ const ControlPlaneRouting167 = "routing-v0.167.0-alpha.3.2"
 
 const controlPlaneProvider167 = "magpie_bridge"
 const controlPlaneUnavailable167 = "bridge routing configuration unavailable"
+const controlPlaneInitUnavailable167 = "bridge control initialization unavailable"
 const controlPlaneReadPendingLimit167 = 4
 
 // The source oracle is openai/codex c40729ea5cf8e947481b130c59807273eda2f8e9,
@@ -279,7 +280,7 @@ func (r *Router) controlPlaneNativeHome167(backend string, encoded json.RawMessa
 func (r *Router) controlPlaneInitialize167(g *request, backend string, line []byte) []Delivery {
 	failInit := func() []Delivery {
 		r.phase = "failed"
-		return r.reject(g, -32000, "bridge control initialization unavailable")
+		return r.reject(g, -32000, controlPlaneInitUnavailable167)
 	}
 	if validateRequirementsJSON(line) != nil || !filepath.IsAbs(r.controlHome167) {
 		return failInit()
@@ -312,8 +313,21 @@ func (r *Router) controlPlaneInitialize167(g *request, backend string, line []by
 	// This caller-created directory is the frontend server's actual state
 	// namespace, not a native home alias, generated config or filesystem grant.
 	first["codexHome"] = raw(r.controlHome167)
-	r.phase = "ready"
-	return r.finish(g, first)
+	// Native initialization is complete; the pinned protocol does not require
+	// an initialized notification before model/list. Hold frontend readiness
+	// until the real complete catalog supplies an explicit visible default.
+	// This prevents early config/read from publishing an unaliased fallback.
+	g.controlInit167 = first
+	g.method = "model/list"
+	g.params = object{}
+	g.results = map[string][]json.RawMessage{}
+	g.seen = map[string]map[string]bool{}
+	g.bytes = 0
+	out, err := r.startList(g)
+	if err != nil {
+		return failInit()
+	}
+	return out
 }
 
 // Rust canonicalization may spell Windows paths with the extended-length

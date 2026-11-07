@@ -69,9 +69,9 @@ owned descendants; this is not a claim of graceful native-process shutdown.
 
 ## Acceptance and boundaries
 
-The logical sequence is initialize (with the actual separate control home),
-config/read before catalog resolution, actual native model/list, config/read
-with its resolved catalog default, two projectless threads selected by their
+The logical sequence is initialize (with the actual separate control home and
+complete initial native catalog), config/read with the genuine catalog default,
+an explicit native model/list refresh, config/read with the same default, two projectless threads selected by their
 alpha/beta aliases, two interleaved assistant-text turns per thread, rejection
 of opposite-backend model overrides, thread/read with logical providers, and
 a final unchanged routing-default read. Each config phase makes separate
@@ -130,13 +130,15 @@ fields, wrong sources, private/native fields and incorrect fingerprints fail.
 This is the bridge's actual frontend session routing authority, consistent with
 the pinned native
 [service-owned session source](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/config/src/thread_config.rs).
-It is not a native backend layer or an invented file. The fingerprint must
-change exactly once when the actual complete model catalog supplies its default.
-All fields and fingerprints must remain stable through the four routed turns.
+It is not a native backend layer or an invented file. The first visible config
+already includes the default supplied by the completed model catalog. Refreshing
+the unchanged default and completing the four routed turns must preserve all
+fields and fingerprints. A genuinely changed catalog default changes the layer
+version, as covered by separate bridge unit tests.
 Every read still requires fresh paired native requirements replies.
 
 The strict success summary now requires `config_reads:9`, `layer_reads:6`,
-`stable_layer_rereads:3` and `layer_version_changes:1`. The existing two catalog
+`stable_layer_rereads:3` and `layer_version_changes:0`. The existing two catalog
 models, two threads, four turns, four audited assistant completions, two thread
 reads and two ownership rejections remain required. Listing additionally requires
 `thread_list_queries:2`, `thread_list_pages:4` and `thread_list_items:4`:
@@ -180,7 +182,9 @@ RPC/tool rejection, bounded protocol and summary privacy. Config tests include
 source, shape, primitive-origin and digest mutations, wrong fingerprints applied
 consistently to all metadata, a changed later read, omission versus null, and
 duplicate/trailing JSON. The hash oracle includes the native source's fixed
-test vector and fixed initial/resolved routing-view fingerprints.
+test vector and fixed routing-view fingerprints. The unchanged native refresh must retain
+the initial resolved layer version; bridge unit tests separately verify that a
+changed real default changes the version.
 Thread-list tests independently check exact query/null filters, cursor-only
 continuations, known IDs, owner/model aliases, nonempty row eligibility,
 missing/duplicate/unknown rows, invalid cursors and immediate native-error

@@ -24,6 +24,7 @@ type request struct {
 	results             map[string][]json.RawMessage
 	seen                map[string]map[string]bool
 	failed              bool
+	controlInit167      object
 	size, bytes         int
 }
 type serverCall struct {
@@ -116,6 +117,10 @@ func (r *Router) finish(g *request, result object) []Delivery {
 	return []Delivery{deliver("", object{"id": g.id, "result": raw(result)})}
 }
 func (r *Router) reject(g *request, code int, message string) []Delivery {
+	if g.controlInit167 != nil {
+		r.phase = "failed"
+		code, message = -32000, controlPlaneInitUnavailable167
+	}
 	out := []Delivery{fail(g.id, code, message)}
 	r.abandon(g)
 	return out
@@ -140,6 +145,7 @@ func (r *Router) abandon(g *request) {
 	g.params = nil
 	g.results = nil
 	g.seen = nil
+	g.controlInit167 = nil
 }
 
 // Client accepts one client JSONL message. Unsupported operations fail
@@ -314,39 +320,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		}
 		r.active[key] = true
 		r.activeBytes += g.size
-		g.remaining = len(r.backends)
-		out := []Delivery{}
-		for _, b := range r.backends {
-			if method == "model/list" && b.Models != nil {
-				for _, row := range b.Models {
-					g.bytes += len(row)
-				}
-				if g.bytes > 16<<20 {
-					return r.reject(g, -32000, "combined list exceeds bridge size limit"), nil
-				}
-				g.results[b.ID] = b.Models
-				g.remaining--
-				continue
-			}
-			params := clone(p)
-			delete(params, "cursor")
-			params["limit"] = raw(100)
-			if exists(p, "excludedThreadIds") {
-				ids, _ := stringList(p["excludedThreadIds"])
-				own := []string{}
-				for _, id := range ids {
-					if r.threads[id] == b.ID {
-						own = append(own, id)
-					}
-				}
-				params["excludedThreadIds"] = raw(own)
-			}
-			out = append(out, r.send(g, b.ID, params))
-		}
-		if g.remaining == 0 {
-			return r.listResult(g)
-		}
-		return out, nil
+		return r.startList(g)
 	case "thread/start":
 		model, e := fieldString(p, "model")
 		if e != nil {
@@ -466,7 +440,7 @@ func (r *Router) clientResponse(m object) ([]Delivery, error) {
 
 // Server accepts a message from the process named backend. A protocol
 // violation is fatal: the runner stops both children and never falls back.
-func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
+func (r *Router) Server(backend string, line []byte) (out []Delivery, err error) {
 	if r.byID[backend].ID == "" {
 		return nil, errors.New("unknown backend")
 	}
@@ -520,6 +494,18 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	}
 	delete(r.pending, key)
 	g := pending.group
+	if g.controlInit167 != nil {
+		defer func() {
+			if err != nil {
+				r.phase = "failed"
+				r.abandon(g)
+				err = errors.New(controlPlaneInitUnavailable167)
+			}
+		}()
+		if exists(m, "error") {
+			return r.reject(g, -32000, controlPlaneInitUnavailable167), nil
+		}
+	}
 	if g.failed {
 		return nil, nil
 	}
@@ -1097,6 +1083,9 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 		}
 	}
 	if g.method == "model/list" {
+		if g.controlInit167 != nil && defaultModel == "" {
+			return r.reject(g, -32000, controlPlaneInitUnavailable167), nil
+		}
 		var session *controlPlaneSession167
 		if r.controlPlaneRouting167 {
 			var err error
@@ -1110,6 +1099,12 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 		r.models = routes
 		r.defaultModel = defaultModel
 		r.controlSession167 = session
+		if g.controlInit167 != nil {
+			result := g.controlInit167
+			g.controlInit167 = nil
+			r.phase = "ready"
+			return r.finish(g, result), nil
+		}
 	} else if g.method == "thread/list" {
 		sortKey := text(g.params, "sortKey")
 		if sortKey == "" {
@@ -1138,6 +1133,44 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 	}
 	limit, _ := pageLimit(g.params)
 	return r.emitPage(g, data, 0, limit), nil
+}
+
+// startList collects all backend pages before atomically publishing a catalog.
+// Initialization uses the same bounds and descriptor handling as model/list.
+func (r *Router) startList(g *request) ([]Delivery, error) {
+	g.remaining = len(r.backends)
+	out := []Delivery{}
+	for _, b := range r.backends {
+		if g.method == "model/list" && b.Models != nil {
+			for _, row := range b.Models {
+				g.bytes += len(row)
+			}
+			if g.bytes > 16<<20 {
+				return r.reject(g, -32000, "combined list exceeds bridge size limit"), nil
+			}
+			g.results[b.ID] = b.Models
+			g.remaining--
+			continue
+		}
+		params := clone(g.params)
+		delete(params, "cursor")
+		params["limit"] = raw(100)
+		if exists(g.params, "excludedThreadIds") {
+			ids, _ := stringList(g.params["excludedThreadIds"])
+			own := []string{}
+			for _, id := range ids {
+				if r.threads[id] == b.ID {
+					own = append(own, id)
+				}
+			}
+			params["excludedThreadIds"] = raw(own)
+		}
+		out = append(out, r.send(g, b.ID, params))
+	}
+	if g.remaining == 0 {
+		return r.listResult(g)
+	}
+	return out, nil
 }
 
 func snapshotBytes(pages map[string]page) int {

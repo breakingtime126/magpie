@@ -1639,9 +1639,11 @@ an empty array. The same published session snapshot supplies all three fields.
 
 - `model_provider: "magpie_bridge"`, the reserved frontend routing authority.
 - Optional `model`, the actual alias in the current complete merged model catalog
-  that the existing router would use for an omitted new-thread model. Before a
-  successful catalog, or when its current result has no default, this field is
-  omitted. It is not fabricated, set to null or resolved by an implicit model read.
+  that the existing router would use for an omitted new-thread model. The first
+  successful control-plane initialization has already committed an explicit
+  catalog default; the initial private model-less snapshot is not exposed to the
+  frontend. A later successful refresh with no default omits this field. It is
+  never fabricated or set to null, and `config/read` itself does not read the catalog.
 - `magpie_bridge`, an explicit extension with `version:1`,
   `view:"routing-defaults"`, `provider_routing:"fixed-per-thread"`,
   `execution_policy:"backend-owned-per-thread"` and `model_catalog:"model/list"`.
@@ -1922,3 +1924,45 @@ are abandoned using the existing bounded late-response tombstones. Trace
 metadata is validated but not propagated across providers. Setup, policy writes,
 and security feature changes remain unsupported. Even a genuine `ready` does
 not establish that a conversation or sandbox command succeeds.
+
+### Initial control-plane catalog barrier
+
+In `routing-v0.167.0-alpha.3.2`, the frontend `initialize` reply now waits for
+both validated native initialize replies **and** a complete initial model
+catalog. It uses the ordinary `model/list` collector, pagination limits,
+descriptor validation and alias/default selection. A visible explicit catalog
+default is required; an empty, hidden-default-only or default-less catalog
+fails initialization instead of inventing a first model. Configured descriptors
+remain declared metadata, not native entitlement.
+
+Routes, the chosen default and the bridge-owned versioned routing layer are
+committed together before the original initialize ID receives the original
+validated frontend initialization result. Internal catalog payloads, errors
+and cursors do not become that result. While pending, other frontend requests
+remain not-initialized; early/delayed `initialized` notifications retain their
+existing forwarding behavior and do not release the barrier. Correlated catalog
+failure clears the owned group and retains only bounded late-response tombstones.
+Outer protocol errors before request association, including malformed envelopes
+or wrong-backend replies, retain the existing fatal connection-close behavior;
+they are not converted into recoverable initialization errors. A stalled
+native catalog holds one bounded initialization group until the existing
+connection/process cancellation closes it; this adds no independent timeout.
+Non-control initialization and later explicit catalog refreshes are unchanged.
+An unchanged routing default keeps the layer version; a changed actual default
+changes it. Every config read still checks fresh real requirements from both
+backends and never copies native configuration or policies.
+
+This moves real catalog work into initialization. The pinned official
+`model/list` path may resolve/refresh gateway credentials and use
+`OnlineIfUncached`; it is **not** a universal local-only or zero-network read.
+This change does not log in, import credentials, select another provider or
+relax authentication. Credential-free disposable tests and configured metadata
+are not proof of account entitlement or production Desktop usability.
+
+The concrete defect addressed is the bridge publishing model-less initial
+routing config before a complete catalog, with no guarantee that a frontend
+re-reads it. The observed `Custom Model Medium` Desktop label is a motivating
+symptom, not a proven causal diagnosis or a claimed fix. Tests cover the
+initial barrier, backend/pagination order, early requests, failure and late
+responses, declared/native mixed catalogs, cancellation and version behavior.
+Actual Desktop validation remains separate from these protocol tests.

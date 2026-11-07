@@ -67,6 +67,11 @@ func controlPlaneFixture() (bool, int) {
 			fmt.Fprintf(os.Stdout, "{\"id\":%s,%s}\n", m["id"], body)
 			continue
 		case "model/list":
+			if _, err := os.Stat(filepath.Join(home, "fixture-control-catalog-stall")); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				return true, 82
+			}
 			result = raw(object{"data": raw([]json.RawMessage{fixtureModel(model, true)}), "nextCursor": raw(nil)})
 		case "thread/start":
 			if text(p, "modelProvider") != provider || text(p, "model") != model {
@@ -157,10 +162,10 @@ func TestRunControlPlane167TwoNativePeersAndFreshReads(t *testing.T) {
 	}
 	first := askConfig(false)
 	result, _ := child(first, "result")
-	controlPlaneCheckLayer167(t, result, "", false)
+	controlPlaneCheckLayer167(t, result, `"magpie/openai/gpt"`, false)
 	config, _ := child(result, "config")
-	if len(config) != 2 || text(config, "model_provider") != controlPlaneProvider167 {
-		t.Fatal("config fabricated a default or policy before native catalog")
+	if len(config) != 3 || text(config, "model_provider") != controlPlaneProvider167 || text(config, "model") != "magpie/openai/gpt" {
+		t.Fatal("initial config did not use the catalog committed before initialization")
 	}
 	catalog := stream.ask(t, bridge, `{"id":"models","method":"model/list","params":{}}`)
 	if !exists(catalog, "result") {
@@ -252,7 +257,7 @@ func TestRunControlPlane167TwoNativePeersAndFreshReads(t *testing.T) {
 				t.Fatal("native provider or permissions changed")
 			}
 		}
-		if counts["configRequirements/read"] != 4 || counts["model/list"] != 1 || counts["thread/start"] != 1 ||
+		if counts["configRequirements/read"] != 4 || counts["model/list"] != 2 || counts["thread/start"] != 1 ||
 			counts["turn/start"] != 2 || counts["thread/read"] != 1 {
 			t.Fatal("native requests were cached, broadcast or retried")
 		}
@@ -297,4 +302,50 @@ func TestRunControlPlane167SoleModePinsAndDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-stream.done
+}
+
+func TestRunControlPlane167InitialCatalogCancellation(t *testing.T) {
+	cfg := controlPlaneRunConfig(t, true)
+	for _, b := range cfg.Backends {
+		if err := os.WriteFile(filepath.Join(b.Home, "fixture-control-catalog-stall"), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bridge := startFixtureBridge(t, cfg)
+	stream := readRequirementsStream(t, bridge)
+	if _, err := fmt.Fprintln(bridge.input, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"fixture","version":"1"}}}`); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		seen := 0
+		for _, b := range cfg.Backends {
+			data, err := os.ReadFile(filepath.Join(b.Home, "fixture-control-requests"))
+			if err == nil && strings.Contains(string(data), `"method":"model/list"`) {
+				seen++
+			}
+		}
+		if seen == len(cfg.Backends) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("native fixture did not reach initial catalog")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	bridge.cancel()
+	if err := bridge.wait(t); err != context.Canceled {
+		t.Fatalf("catalog cancellation did not terminate the bridge: %v", err)
+	}
+	bridge.input.Close()
+	bridge.output.Close()
+	<-stream.done
+	if len(stream.transcript) != 0 {
+		t.Fatal("hung catalog published initialized or partial catalog success")
+	}
+	for _, b := range cfg.Backends {
+		if _, err := os.Stat(filepath.Join(b.Home, "fixture-control-clean-exit")); err != nil {
+			t.Fatal("catalog cancellation did not close/reap the owned native fixture")
+		}
+	}
 }

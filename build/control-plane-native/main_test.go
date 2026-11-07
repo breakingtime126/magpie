@@ -243,7 +243,7 @@ func TestPeerStopsUnreviewedServerRequest(t *testing.T) {
 func passedSummary() summary {
 	return summary{Schema: 1, Scope: "synthetic-loopback-only", Status: "passed", Stage: "complete",
 		NativeSHA256: nativeSHA, BinaryVerified: true, VersionVerified: true, ConfigReads: 9,
-		LayerReads: 6, StableLayerRereads: 3, LayerVersionChanges: 1, CatalogModels: 2,
+		LayerReads: 6, StableLayerRereads: 3, LayerVersionChanges: 0, CatalogModels: 2,
 		Threads: 2, Turns: 4, AssistantMessages: 4, ThreadReads: 2, OwnershipRejections: 2,
 		ThreadListQueries: 2, ThreadListPages: 4, ThreadListItems: 4,
 		AlphaRequests: 2, BetaRequests: 2, AdapterCleanExit: true, CleanupComplete: true}
@@ -255,7 +255,7 @@ func TestSummaryNeverAcceptsWeakenedSuccess(t *testing.T) {
 	for _, change := range []func(*summary){
 		func(s *summary) { s.Turns = 3 }, func(s *summary) { s.FixtureErrors = 1 },
 		func(s *summary) { s.ConfigReads = 3 }, func(s *summary) { s.LayerReads = 5 },
-		func(s *summary) { s.StableLayerRereads = 2 }, func(s *summary) { s.LayerVersionChanges = 0 },
+		func(s *summary) { s.StableLayerRereads = 2 }, func(s *summary) { s.LayerVersionChanges = 1 },
 		func(s *summary) { s.NativeSHA256 = "unverified" }, func(s *summary) { s.CleanupComplete = false },
 		func(s *summary) { s.UnexpectedServerRequests = 1 }, func(s *summary) { s.Stage = "PRIVATE_PATH" },
 		func(s *summary) { s.Failure = "PRIVATE_NATIVE_ERROR" },
