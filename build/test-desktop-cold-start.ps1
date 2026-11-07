@@ -10,6 +10,7 @@ param(
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
+    [switch]$EnableReviewedWelcome4239,
     [switch]$EnableReadOnlyWinAppInspection,
     [switch]$EnableNativeReadOnlyInspection,
     [switch]$EnableReviewedBuild4239,
@@ -871,7 +872,18 @@ function Assert-DesktopCIOptions(
     }
 }
 function Assert-Desktop4239Options([bool]$Enabled,[string]$Mode,[bool]$Startup,[bool]$Compatibility,
-    [bool]$Inspection,[bool]$Welcome,[bool]$Original,[bool]$PackageOnly,[string]$EntryCase,[string]$Marker) {
+    [bool]$Inspection,[bool]$Welcome,[bool]$Original,[bool]$PackageOnly,[string]$EntryCase,[string]$Marker,
+    [bool]$Welcome4239=$false,[string]$WelcomeMarker='',[bool]$RendererAccessibility=$false) {
+    if ($Welcome4239) {
+        if (-not $Enabled -or $Mode -cne 'observe' -or -not $Startup -or -not $Compatibility -or
+            $Inspection -or -not $Welcome -or $Original -or $PackageOnly -or $EntryCase -or
+            $Marker -cne 'bridge-ui-4239-v1' -or $WelcomeMarker -cne 'bridge-welcome-4239-v1' -or
+            -not $RendererAccessibility) {
+            throw 'Reviewed 4239 welcome requires its separate bounded-action profile.'
+        }
+        return
+    }
+    if ($WelcomeMarker) { throw 'Welcome marker requires the explicit welcome action opt-in.' }
     if ($Enabled -and ($Mode -cne 'observe' -or -not $Startup -or -not $Compatibility -or -not $Inspection -or
         $Welcome -or $Original -or $PackageOnly -or $EntryCase -or $Marker -cne 'bridge-ui-4239-v1')) {
         throw 'Reviewed 4239 build requires its exclusive zero-action bridge inspection mode.'
@@ -879,9 +891,9 @@ function Assert-Desktop4239Options([bool]$Enabled,[string]$Mode,[bool]$Startup,[
 }
 function Get-DesktopAccessibilityArguments([bool]$Enabled,[bool]$Build4239,[bool]$Entry4239) {
     if (-not $Enabled) { return '' }
-    # Assert-Desktop4239Options independently restricts this profile to one read-only alias launch.
+    # Assert-Desktop4239Options separately admits read-only or bounded-welcome alias profiles.
     if (-not $Build4239 -or $Entry4239) {
-        throw 'Renderer accessibility requires the reviewed read-only 4239 alias profile.'
+        throw 'Renderer accessibility requires a reviewed 4239 alias profile.'
     }
     return '--force-renderer-accessibility'
 }
@@ -1686,7 +1698,7 @@ Assert-DesktopCIOptions -Mode $Mode -StartupProbe $EnableReviewedStartupProbe `
     -Repository $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF
 Assert-Desktop4239Options $EnableReviewedBuild4239 $Mode $EnableReviewedStartupProbe $EnableReviewedLaunchCompatibility `
     $EnableReadOnlyWinAppInspection $EnableReviewedLiveWelcome $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly `
-    $NativeEntryCase $env:MAGPIE_REVIEWED_BUILD
+    $NativeEntryCase $env:MAGPIE_REVIEWED_BUILD $EnableReviewedWelcome4239 $env:MAGPIE_WELCOME_4239 $EnableRendererAccessibility
 $desktopAccessibilityArguments = Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239
 $winAppRenderedDepth = $(if ($EnableRendererAccessibility) { 16 } else { 8 })
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
@@ -3552,7 +3564,7 @@ if ($EnableNativeReadOnlyInspection) {
 }
 # Native evidence stays separate: a later Desktop compatibility failure remains
 # the original failure even when the isolated native slice can still be exercised.
-if ($EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection) {
+if ($EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection -and -not $EnableReviewedWelcome4239) {
     $desktopOutcome = [pscustomobject][ordered]@{
         status = $report.status; stage = $report.stage; reason = $report.reason; exitCode = $exitCode
     }
@@ -3609,6 +3621,9 @@ if ($EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection
     $exitCode = $combinedOutcome.exitCode
 }
 if ($EnableReviewedLiveWelcome) {
+    if ($EnableReviewedWelcome4239) {
+        $report.nativeControlPlane=[ordered]@{status='not-run';reason='welcome_transition_only'}
+    }
     $prior = [pscustomobject]@{status=$report.status;stage=$report.stage;reason=$report.reason;exitCode=$exitCode}
     $liveOutcome = Get-LiveWelcomeOutcome $prior $liveFixtureStopped $liveWelcome $liveAfterCaptured
     $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode

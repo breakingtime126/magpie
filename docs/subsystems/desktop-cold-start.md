@@ -2343,7 +2343,7 @@ the independent `welcome-helper-offline` job, gated by the same 4239/winapp
 marker pair and `observer-unit`. The real read-only UI job does not depend on
 that sibling job. Its failures remain failures and can make the workflow red;
 there is no `continue-on-error` or claim that all tests passed. The main job
-prints explicit `not_run_read_only_inspection` labels for those two checks.
+prints explicit not-run labels for those two checks.
 Other lanes keep the old default blocking behavior. The three-phase diagnostic
 proposal is not included; helper code, stdin, deadlines and input authority are
 unchanged. This split distinguishes relevant preconditions from an independent
@@ -2376,3 +2376,62 @@ other stop conditions still fail closed; no click or onboarding action follows.
 Existing offline fixtures cover depth 16 at the boundary, rejection at 17,
 crossed envelope/request depths, unchanged default 8, redaction and the shared
 argv/parser selection. These are synthetic schema tests, not captured UI trees.
+
+### Explicit 4239 welcome action after the depth-16 observation
+
+The [8f24eccb run](https://github.com/breakingtime126/magpie/actions/runs/42358144005/job/128361630935)
+completed one zero-action read: 51 nodes, maxRenderedDepth 12, no truncated
+nodes, and one invokable target for each expected label. Engineering and
+suggestions each also had a noninteractive duplicate label. The screenshot
+still showed the reviewed first welcome page, with suggestions checked and
+Continue disabled before selection. This is evidence for attempting the
+existing welcome helper, not proof that .NET UIA exposes its required patterns
+or that the winapp fallback root is safe for input.
+
+A push must add `[bridge-welcome-4239-v1]` to the existing
+`[bridge-ui-4239-v1] [winapp-inspection-v0.7.1]` marker pair to select the separate
+`EnableReviewedWelcome4239` switch. The old pair alone remains read-only. The
+new default-off action profile requires observe mode, reviewed startup and
+compatibility, exact 4239 package/native/source pins, renderer accessibility,
+and `EnableReviewedLiveWelcome`; it rejects winapp inspection, native-original,
+package-only and native-entry combinations. Dispatch cannot select this action
+mode. The historical winapp marker in this three-marker push remains a lane
+exclusion/routing marker, not authority to act on any winapp result. No winapp
+command runs in the action profile.
+
+The same registered alias starts once with `--force-renderer-accessibility`.
+The unchanged `desktop-welcome-step.ps1` obtains its own fresh .NET UIA root
+from the original HWND, holds owner/provider process handles, checks creation
+time, session, executable, package, parent lineage and foreground, and repeats
+those checks before each action. It requires unique exact control names/types,
+enabled targets and the actual Toggle, SelectionItem and Invoke patterns. It
+first disables suggestions if on, selects Engineering if not selected, verifies
+both states, then invokes Continue once. There are at most three attempts,
+with no coordinate clicks, injected input, login or new permission/terms
+acceptance. Known noninteractive duplicate text is allowed; unknown text,
+protected screens, wrong/ambiguous controls, unavailable patterns, changed
+identity or timeout stop the attempt without retries. The inner 20-second
+cooperative budget, parent 30-second deadline, 8192-byte-per-stream cap and
+500-node/depth-20 tree bounds are unchanged.
+
+The zero-context PS5 helper smoke remains in `welcome-helper-offline` and its
+failure remains a workflow failure. It previously timed out before any valid
+JSON, in a path that should reject zero context before loading UIA. The cause
+is unresolved; neither accessible renderer content nor a real-context attempt
+claims to fix it. In the action job, only that launch smoke is separated:
+shared environment/supervisor/deadline/output/config/readiness/finalization
+fixtures and the pure welcome policy plus PS5 native-interop checks must pass
+before the actual single helper call. The skip label is
+`WINDOWS_HELPER_LAUNCH_CHECK=not_run_separate_helper_check`. No stdin or timeout
+change is made. An uncertain helper outcome remains failed and potentially
+partially acted, never a confirmed exit or permission to retry.
+
+The existing helper reads the next screen once and the parent captures
+`official-window-after-welcome.png` from the original owned window even after
+a stop when identity remains valid. Review `liveWelcome.result`,
+`parentDiagnostic`, `partialActionUncertain`, the post-action screenshot and
+cleanup alongside the earlier Desktop/observer evidence. Continue success is
+not full onboarding, model-selection or chat success. An unknown next page is
+not clicked automatically. The unrelated four-turn native synthetic slice is
+explicitly `not-run` / `welcome_transition_only` for this profile; its old pin
+is unchanged and it cannot mask the actual welcome outcome.

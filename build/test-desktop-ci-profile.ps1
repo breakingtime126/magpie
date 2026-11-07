@@ -1505,26 +1505,28 @@ function Assert-NativeSliceAdmission([scriptblock]$ProfileCondition, [scriptbloc
     # helper. A counter stands in for native invocation; no harness body runs.
     foreach ($EnableReviewedLaunchCompatibility in @($false, $true)) {
         foreach ($EnableReadOnlyWinAppInspection in @($false, $true)) {
-            foreach ($captureState in @($false, $true)) {
-                foreach ($activationState in @($false, $true)) {
-                    foreach ($cleanupError in @($false, $true)) {
-                        $nativeRunDecision = Get-DesktopNativeRunDecision $EnableReviewedLaunchCompatibility `
-                            $captureState $activationState $cleanupError
-                        $profileAllowed = @(& $ProfileCondition)
-                        $eligible = @(& $EligibilityCondition)
-                        if ($profileAllowed.Count -ne 1 -or $profileAllowed[0] -isnot [bool] -or
-                            $eligible.Count -ne 1 -or $eligible[0] -isnot [bool]) {
-                            throw 'Native admission conditions must each return one Boolean.'
-                        }
-                        $invocations = 0
-                        if ($profileAllowed[0]) {
-                            if ($eligible[0]) { $invocations++ }
-                        }
-                        $expected = $EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection -and
-                            $captureState -and $activationState -and -not $cleanupError
-                        if ($invocations -ne [int]$expected -or
-                            ($EnableReadOnlyWinAppInspection -and $invocations -ne 0)) {
-                            throw 'Native admission bypassed inspection exclusion or capture/cleanup safety.'
+            foreach ($EnableReviewedWelcome4239 in @($false, $true)) {
+                foreach ($captureState in @($false, $true)) {
+                    foreach ($activationState in @($false, $true)) {
+                        foreach ($cleanupError in @($false, $true)) {
+                            $nativeRunDecision = Get-DesktopNativeRunDecision $EnableReviewedLaunchCompatibility `
+                                $captureState $activationState $cleanupError
+                            $profileAllowed = @(& $ProfileCondition)
+                            $eligible = @(& $EligibilityCondition)
+                            if ($profileAllowed.Count -ne 1 -or $profileAllowed[0] -isnot [bool] -or
+                                $eligible.Count -ne 1 -or $eligible[0] -isnot [bool]) {
+                                throw 'Native admission conditions must each return one Boolean.'
+                            }
+                            $invocations = 0
+                            if ($profileAllowed[0]) {
+                                if ($eligible[0]) { $invocations++ }
+                            }
+                            $expected = $EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection -and -not $EnableReviewedWelcome4239 -and
+                                $captureState -and $activationState -and -not $cleanupError
+                            if ($invocations -ne [int]$expected -or
+                                (($EnableReadOnlyWinAppInspection -or $EnableReviewedWelcome4239) -and $invocations -ne 0)) {
+                                throw 'Native admission bypassed inspection exclusion or capture/cleanup safety.'
+                            }
                         }
                     }
                 }
@@ -1550,7 +1552,7 @@ Expect-Pass 'native slice has one explicit guarded invocation after Desktop clea
     $outer = $guard.Parent
     while ($null -ne $outer -and $outer -isnot [Management.Automation.Language.IfStatementAst]) { $outer = $outer.Parent }
     if ($null -eq $outer -or $outer.Clauses.Count -ne 1 -or
-        $outer.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection' -or
+        $outer.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection -and -not $EnableReviewedWelcome4239' -or
         $outer.Clauses[0].Item2.Extent.StartOffset -gt $guard.Extent.StartOffset -or
         $outer.Clauses[0].Item2.Extent.EndOffset -lt $guard.Extent.EndOffset) {
         throw 'Native slice bypassed the explicit profile gate.'
@@ -1567,10 +1569,13 @@ Expect-Pass 'native slice has one explicit guarded invocation after Desktop clea
         ([scriptblock]::Create($guard.Clauses[0].Item1.Extent.Text))
 }
 Expect-Reject 'read-only inspection cannot admit native turns when its exclusion is removed' {
-    Assert-NativeSliceAdmission { $EnableReviewedLaunchCompatibility } { $nativeRunDecision.run }
+    Assert-NativeSliceAdmission { $EnableReviewedLaunchCompatibility -and -not $EnableReviewedWelcome4239 } { $nativeRunDecision.run }
+}
+Expect-Reject '4239 welcome cannot admit native turns when its exclusion is removed' {
+    Assert-NativeSliceAdmission { $EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection } { $nativeRunDecision.run }
 }
 Expect-Reject 'native admission cannot bypass the capture and cleanup decision' {
-    Assert-NativeSliceAdmission { $EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection } { $true }
+    Assert-NativeSliceAdmission { $EnableReviewedLaunchCompatibility -and -not $EnableReadOnlyWinAppInspection -and -not $EnableReviewedWelcome4239 } { $true }
 }
 
 
@@ -2222,6 +2227,46 @@ foreach ($badMode in @('baseline','bridge')) {
     Expect-Reject '4239 outside observed bridge mode' { Assert-Desktop4239Options $true $badMode $true $true $true $false $false $false '' 'bridge-ui-4239-v1' }
 }
 Expect-Reject '4239 marker required' { Assert-Desktop4239Options $true 'observe' $true $true $true $false $false $false '' '' }
+Expect-Pass '4239 welcome requires the separate explicit bounded-action combination' {
+    for ($mask=0; $mask -lt 512; $mask++) {
+        $flags=@(); for($bit=0; $bit -lt 9; $bit++) { $flags += [bool]($mask -band (1 -shl $bit)) }
+        $entry=$(if ($flags[7]) { 'baseline' } else { '' })
+        $accepted=$true
+        try { Assert-Desktop4239Options $flags[0] 'observe' $flags[1] $flags[2] $flags[3] $flags[4] $flags[5] $flags[6] $entry 'bridge-ui-4239-v1' $true 'bridge-welcome-4239-v1' $flags[8] }
+        catch { $accepted=$false }
+        if ($accepted -ne ($mask -eq 279)) { throw 'Welcome accepted conflicting or missing authority.' }
+    }
+}
+foreach ($badMode in @('baseline','bridge')) {
+    Expect-Reject 'welcome never becomes a normal-entry or baseline action' {
+        Assert-Desktop4239Options $true $badMode $true $true $false $true $false $false '' 'bridge-ui-4239-v1' $true 'bridge-welcome-4239-v1' $true
+    }
+}
+foreach ($badMarker in @('', 'bridge-ui-4239-v1', 'BRIDGE-WELCOME-4239-V1')) {
+    Expect-Reject 'welcome requires its exact separate marker' {
+        Assert-Desktop4239Options $true 'observe' $true $true $false $true $false $false '' 'bridge-ui-4239-v1' $true $badMarker $true
+    }
+}
+Expect-Reject 'welcome marker alone cannot expand the existing read-only profile' {
+    Assert-Desktop4239Options $true 'observe' $true $true $true $false $false $false '' 'bridge-ui-4239-v1' $false 'bridge-welcome-4239-v1' $true
+}
+Expect-Reject 'welcome still requires the reviewed build marker' {
+    Assert-Desktop4239Options $true 'observe' $true $true $false $true $false $false '' '' $true 'bridge-welcome-4239-v1' $true
+}
+Expect-Pass 'welcome action opt-in is default-off and native four-turn status is explicit' {
+    $parameter=@($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -ceq 'EnableReviewedWelcome4239' })
+    if ($parameter.Count -ne 1 -or $null -ne $parameter[0].DefaultValue -or
+        $parameter[0].StaticType -ne [Management.Automation.SwitchParameter]) { throw 'Welcome action opt-in is not default-off.' }
+    $status=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -ceq '$report.nativeControlPlane' -and
+        $n.Right.Extent.Text -ceq "[ordered]@{status='not-run';reason='welcome_transition_only'}"},$true))
+    if ($status.Count -ne 1) { throw 'Welcome must not imply independent native inference ran.' }
+    $guard=$status[0].Parent
+    while ($null -ne $guard -and $guard -isnot [Management.Automation.Language.IfStatementAst]) { $guard=$guard.Parent }
+    if ($null -eq $guard -or $guard.Clauses[0].Item1.Extent.Text -cne '$EnableReviewedWelcome4239') {
+        throw 'Welcome native status escaped its selected profile.'
+    }
+}
 $newPackage='9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c'
 $newBackend='4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382'
 $newArchive='fb47d6491dc3006b708cb1e14de479b882bf50f88b7daa81818f154c253266aa'
@@ -2267,7 +2312,8 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
     $options=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-Desktop4239Options'},$true))
     $expected=@('Assert-Desktop4239Options','$EnableReviewedBuild4239','$Mode','$EnableReviewedStartupProbe',
         '$EnableReviewedLaunchCompatibility','$EnableReadOnlyWinAppInspection','$EnableReviewedLiveWelcome',
-        '$EnableNativeReadOnlyInspection','$InspectPackageIdentityOnly','$NativeEntryCase','$env:MAGPIE_REVIEWED_BUILD')
+        '$EnableNativeReadOnlyInspection','$InspectPackageIdentityOnly','$NativeEntryCase','$env:MAGPIE_REVIEWED_BUILD',
+        '$EnableReviewedWelcome4239','$env:MAGPIE_WELCOME_4239','$EnableRendererAccessibility')
     if ($options.Count -ne 1 -or $options[0].CommandElements.Count -ne $expected.Count) { throw '4239 lost its one explicit option gate.' }
     for($i=0;$i -lt $expected.Count;$i++) {
         if ($options[0].CommandElements[$i].Extent.Text -cne $expected[$i]) { throw '4239 option authority changed.' }

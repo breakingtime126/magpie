@@ -292,7 +292,7 @@ try {
                 $null -eq $smoke.targetObservations -and $null -eq $smoke.initialReadObservation -and $diagnostic.reason -ceq 'helper_result_validated' -and
                 -not $diagnostic.partialActionUncertain) 'real PS5.1 helper rejects zero context before UI'
             Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=invalid_context_verified'
-        } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_read_only_inspection' }
+        } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_separate_helper_check' }
     } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_non_windows' }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
 Write-Output "LIVE_WELCOME_OFFLINE_CHECKS=$count"

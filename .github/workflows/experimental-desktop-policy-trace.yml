@@ -65,6 +65,8 @@ jobs:
           TRIGGER_SHA: ${{ github.sha }}
           PUSH_PACKAGE_IDENTITY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
           PUSH_WINAPP_MARKER: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') }}
+          PUSH_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') }}
+          PUSH_NATIVE_ENTRY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]') }}
           PUSH_BUILD_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') }}
           PUSH_OTHER_DIAGNOSTIC: ${{ github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]')) }}
         run: |
@@ -77,6 +79,12 @@ jobs:
               echo 'Explicit inspection mode and matching full expected SHA are required.' >&2
               exit 1
             fi
+          fi
+          if [[ "$PUSH_WELCOME_4239" == 'true' && ( "$PUSH_BUILD_4239" != 'true' ||
+                  "$PUSH_WINAPP_MARKER" != 'true' || "$PUSH_PACKAGE_IDENTITY" == 'true' ||
+                  "$PUSH_OTHER_DIAGNOSTIC" == 'true' || "$PUSH_NATIVE_ENTRY" == 'true' ) ]]; then
+            echo 'Welcome actions require their own marker plus the exclusive 4239 alias profile.' >&2
+            exit 1
           fi
           if [[ "$PUSH_BUILD_4239" == 'true' && ( "$PUSH_WINAPP_MARKER" != 'true' ||
                   "$PUSH_PACKAGE_IDENTITY" == 'true' || "$PUSH_OTHER_DIAGNOSTIC" == 'true' ) ]]; then
@@ -595,6 +603,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 25
     env:
+      MAGPIE_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && 'bridge-welcome-4239-v1' || '' }}
       CGO_ENABLED: '0'
       GOOS: windows
       GOARCH: amd64
@@ -700,9 +709,10 @@ jobs:
             if ($errors.Count -gt 0) { throw 'Live welcome syntax validation failed.' }
           }
           $readOnly4239 = $env:MAGPIE_REVIEWED_BUILD -ceq 'bridge-ui-4239-v1' -and $env:MAGPIE_WINAPP_INSPECTION -ceq 'winapp-inspection-v0.7.1' -and [string]$env:MAGPIE_PACKAGE_IDENTITY_ONLY -ceq ''
+          $welcome4239 = $env:MAGPIE_WELCOME_4239 -ceq 'bridge-welcome-4239-v1'
           ./build/desktop-live-welcome.tests.ps1 -SkipWindowsHelperSmoke:$readOnly4239
           if ($LASTEXITCODE -ne 0) { throw 'Live welcome integration fixtures failed.' }
-          if ($readOnly4239) {
+          if ($readOnly4239 -and !$welcome4239) {
             Write-Output 'WELCOME_ACTION_POLICY_CHECK=not_run_read_only_inspection'
           } else {
             powershell -NoProfile -NonInteractive -File build/desktop-welcome-step.tests.ps1 -CheckNativeInterop
@@ -735,7 +745,8 @@ jobs:
           $inspection = $env:MAGPIE_WINAPP_INSPECTION -ceq 'winapp-inspection-v0.7.1'
           $packageIdentity = $env:MAGPIE_PACKAGE_IDENTITY_ONLY -ceq 'package-identity-only-v1'
           $build4239 = $env:MAGPIE_REVIEWED_BUILD -ceq 'bridge-ui-4239-v1'
-          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(!$inspection -and !$packageIdentity) -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
+          $welcome4239 = $env:MAGPIE_WELCOME_4239 -ceq 'bridge-welcome-4239-v1'
+          ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -NativeControlCatalog $catalog -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
       - name: Upload only sanitized diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -770,7 +781,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Welcome policy fixtures failed.' }
 
   native-original-ui:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]')
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -817,7 +828,7 @@ jobs:
 
 
   native-contract-review:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]')
     runs-on: windows-2025
     timeout-minutes: 12
     env:
