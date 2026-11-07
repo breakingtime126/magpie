@@ -78,6 +78,37 @@ for($i=0;$i -lt 9;$i++) { $parent=New-Node 'parent';$parent.children=@($deep);$d
 $tree.windows[0].elements=@($deep);$tree.windows[0].elementCount=10
 Reject { ConvertTo-WinAppSummary ($tree|ConvertTo-Json -Depth 30 -Compress) 123 } 'rendered depth bound'
 
+# Synthetic nested schema, not a reconstruction of the private actual tree.
+$deep16=New-Node 'Engineering';$deep16.hasMoreChildren=$true
+for($i=0;$i -lt 16;$i++) { $parent=New-Node 'PRIVATE_DEEP_SENTINEL';$parent.children=@($deep16);$deep16=$parent }
+$tree16=[ordered]@{depth=16;interactive=$false;hideDisabled=$false;hideOffscreen=$false;windows=@(
+    [ordered]@{hwnd=123;windowDpi=96;scale=1;dpiAwareness='per-monitor-aware';coordinateSpace='physical-screen-pixels';elementCount=17;elements=@($deep16)})}
+$text16=$tree16|ConvertTo-Json -Depth 50 -Compress
+$summary16=ConvertTo-WinAppSummary $text16 123 -RenderedDepth 16
+Pass ($summary16.nodeCount -eq 17 -and $summary16.maxRenderedDepth -eq 16 -and
+    $summary16.engineeringCount -eq 1 -and $summary16.truncatedNodeCount -eq 1 -and
+    $summary16.requiredTargetStatus -ceq 'missing') 'selected depth16 reaches boundary without inventing target completeness'
+Pass (($summary16|ConvertTo-Json -Compress) -notmatch 'PRIVATE_') 'expanded output remains redacted'
+Reject { ConvertTo-WinAppSummary $text16 123 } 'default8 rejects depth16 envelope'
+Reject { ConvertTo-WinAppSummary $text 123 -RenderedDepth 16 } 'depth16 rejects depth8 envelope'
+$parent=New-Node 'parent';$parent.children=@($deep16)
+$tree16.windows[0].elements=@($parent);$tree16.windows[0].elementCount=18
+Reject { ConvertTo-WinAppSummary ($tree16|ConvertTo-Json -Depth 50 -Compress) 123 -RenderedDepth 16 } 'depth17 rejected at selected depth16'
+Reject { ConvertTo-WinAppSummary ('x'*262145) 123 -RenderedDepth 16 } 'depth16 keeps byte bound'
+foreach($badDepth in @(0,9,17,128)) {
+    Reject { ConvertTo-WinAppSummary $text 123 -RenderedDepth $badDepth } 'unreviewed rendered depth rejected'
+}
+$depthAssignments=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $n.Left.Extent.Text -ceq '$winAppRenderedDepth'},$true))
+Pass ($depthAssignments.Count -eq 1 -and $depthAssignments[0].Right.Extent.Text -ceq '$(if ($EnableRendererAccessibility) { 16 } else { 8 })') 'expanded depth remains scoped to reviewed accessibility profile'
+foreach($callName in @('New-WinAppStart','Invoke-WinAppInspection')) {
+    $calls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ceq $callName},$true))
+    $expectedSuffix='-RenderedDepth $winAppRenderedDepth'
+    if ($callName -ceq 'Invoke-WinAppInspection') { $expectedSuffix+=' -NativeOriginal:$EnableNativeReadOnlyInspection' }
+    Pass ($calls.Count -eq 1 -and $calls[0].Extent.Text.EndsWith($expectedSuffix)) 'launch and validation use the same selected depth'
+}
+
 $unconfirmed=[pscustomobject]@{Exited=$false;Stopped=$false}
 $unconfirmed|Add-Member ScriptMethod Stop { $this.Stopped=$true }
 $unconfirmed|Add-Member ScriptMethod Wait { param($milliseconds) return $false }
@@ -102,6 +133,8 @@ try {
     $tool=[pscustomobject]@{Executable=$hostExecutable;Directory=$scratch}
     $start=New-WinAppStart $tool 123
     Pass (($start.ArgumentList -join ' ') -ceq 'ui inspect -w 123 --depth 8 --json') 'only requested inspect command'
+    $expandedStart=New-WinAppStart $tool 123 -RenderedDepth 16
+    Pass (($expandedStart.ArgumentList -join ' ') -ceq 'ui inspect -w 123 --depth 16 --json') 'expanded depth changes only the requested output depth'
     Pass ($start.Environment['WINAPP_CLI_TELEMETRY_OPTOUT'] -ceq '1') 'telemetry upload opt-out'
     Pass ($start.Environment['WINAPP_UI_LOCK_DIRECTORY'] -ceq (Join-Path $scratch 'coordination')) 'fresh coordination override'
     Pass (-not $start.Environment.ContainsKey('WINAPP_UI_WORKFLOW_ID') -and -not $start.Environment.ContainsKey('WINAPP_TEST_PRIVATE_SENTINEL')) 'explicit child environment only'

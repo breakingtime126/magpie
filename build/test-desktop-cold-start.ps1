@@ -1688,6 +1688,7 @@ Assert-Desktop4239Options $EnableReviewedBuild4239 $Mode $EnableReviewedStartupP
     $EnableReadOnlyWinAppInspection $EnableReviewedLiveWelcome $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly `
     $NativeEntryCase $env:MAGPIE_REVIEWED_BUILD
 $desktopAccessibilityArguments = Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239
+$winAppRenderedDepth = $(if ($EnableRendererAccessibility) { 16 } else { 8 })
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
 $useWinAppInspection = $EnableReadOnlyWinAppInspection -or $EnableNativeReadOnlyInspection
 if ($EnableNativeReadOnlyInspection) {
@@ -1788,8 +1789,9 @@ try {
     if ($useWinAppInspection) {
         $report.nativeInspection=[ordered]@{
             scope='hwnd-requested-read-only';status='not-run';reason='tool_provenance_pending';actions=0
+            renderedDepth=$winAppRenderedDepth
             limits=@('The CLI may fall back to a same-PID root; HWND reuse remains a race. No strict root or PID exclusion proof.',
-                'Depth 8 bounds rendered output only. The official tool may inspect deeper descendants.',
+                "Depth $winAppRenderedDepth bounds rendered output only. The official tool may inspect deeper descendants.",
                 'One invocation only, externally bounded to 30 seconds and 256 KiB per stream. Raw tree and stderr stay private.',
                 'Upload-tagged telemetry disabled; local ETW and named session-event bookkeeping remain.',
                 'Tool coordination and cache use fresh private scratch. No input action or acceptance of onboarding, models or chat.')
@@ -2775,8 +2777,8 @@ requires_openai_auth = false
         try {
             if (-not $EnableNativeReadOnlyInspection -and ($liveFixture.Exited -or $liveFixture.TimedOut -or $liveFixture.Overflow)) { throw 'Fixture unavailable.' }
             Assert-WinAppFiles $winAppTool
-            $inspectionStart=New-WinAppStart $winAppTool $window.Handle
-            $inspection=Invoke-WinAppInspection $inspectionStart $window.Handle $checkInspectionIdentity -NativeOriginal:$EnableNativeReadOnlyInspection
+            $inspectionStart=New-WinAppStart $winAppTool $window.Handle -RenderedDepth $winAppRenderedDepth
+            $inspection=Invoke-WinAppInspection $inspectionStart $window.Handle $checkInspectionIdentity -RenderedDepth $winAppRenderedDepth -NativeOriginal:$EnableNativeReadOnlyInspection
             $report.nativeInspection.result=$inspection
             $report.nativeInspection.status=$inspection.status;$report.nativeInspection.reason=$inspection.reason
             if ($inspection.status -cne 'observed') { Block 'The one read-only native inspection stopped; no retry or UI action.' }

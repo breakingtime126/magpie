@@ -1896,13 +1896,14 @@ is used. Zip paths and expanded size are bounded before extraction.
 The existing fresh signed Desktop package, native backend hashes, empty-account
 checks, reviewed startup/profile gates, loopback fixture setup, held activation
 process, screenshot and cleanup remain. The only UI command is exactly
-`ui inspect -w <verified HWND> --depth 8 --json`. Held process start time,
+`ui inspect -w <verified HWND> --depth 8 --json` by default. The reviewed
+renderer-accessibility 4239 profile uses depth 16 as described below. Held process start time,
 PID, session, package, executable and current requested-window ownership are
 rechecked before and after the invocation. This requests the existing HWND; it
 is **not** strict proof of the inspected root or PID exclusion. The pinned
 source can fall back to a same-PID root, and an unresolved HWND reuse race
 remains. The explicit HWND avoids `-a PID`'s intentional extra owned-dialog
-walk. Depth 8 bounds rendered output only: AutomationId promotion can read
+walk. The selected depth bounds rendered output only: AutomationId promotion can read
 full descendants. No subsequent input action is authorized by the result.
 
 The shared bounded child supervisor imposes 30 seconds and 256 KiB per output
@@ -2322,3 +2323,31 @@ Other lanes keep the old default blocking behavior. The three-phase diagnostic
 proposal is not included; helper code, stdin, deadlines and input authority are
 unchanged. This split distinguishes relevant preconditions from an independent
 unresolved action-helper test, rather than retrying or hiding its failure.
+
+### Depth 16 after observed output truncation
+
+The actual b2a68442 renderer-accessibility observation reached the signed
+4239 welcome page with zero actions. Its one winapp call exited zero with
+before/after owner checks true and reported 15 nodes, maxRenderedDepth 8 and
+truncatedNodeCount 1. Target counts remained zero. The earlier no-flag read
+reported 13 nodes/depth 6/no truncation, which does not establish equal trees.
+
+In the pinned official [v0.7.1 walker](https://github.com/microsoft/winappCli/blob/e3cd0b94f3e7b776ac51ba0564f4908094e979b5/src/winapp-CLI/WinApp.UIAutomation/Services/UiAutomationService.cs#L2569-L2582),
+reaching maxDepth stops that rendered subtree and a child peek sets
+hasMoreChildren. This supports one new depth-16 observation, not an assumption
+that the hidden descendants contain the expected labels.
+
+Only the already admitted `EnableRendererAccessibility` profile selects 16.
+Other profiles and helper callers retain default 8. The launch argv, expected
+JSON envelope depth and maximum rendered tree depth receive the same selected
+value; only 8 or 16 is accepted. The report records `renderedDepth` separately
+from the observed `maxRenderedDepth` and truncation count. There is no automatic
+depth escalation or retry if the second boundary still truncates.
+
+The 2048-node cap, 256-KiB-per-stream cap, 30-second deadline, one invocation,
+signed identities, HWND checks, telemetry handling, redaction and cleanup are
+unchanged. Depth is not a bound on all upstream UIA work. Missing targets or
+other stop conditions still fail closed; no click or onboarding action follows.
+Existing offline fixtures cover depth 16 at the boundary, rejection at 17,
+crossed envelope/request depths, unchanged default 8, redaction and the shared
+argv/parser selection. These are synthetic schema tests, not captured UI trees.

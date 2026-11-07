@@ -88,13 +88,13 @@ function Assert-WinAppFiles($Tool) {
     }
     Assert-WinAppSignature (Get-AuthenticodeSignature -LiteralPath $Tool.Executable)
 }
-function New-WinAppStart($Tool,[long]$WindowHandle) {
+function New-WinAppStart($Tool,[long]$WindowHandle,[ValidateSet('8','16')][int]$RenderedDepth=8) {
     if ($WindowHandle -le 0) { throw 'Invalid requested window.' }
     $state=Join-Path $Tool.Directory 'coordination'
     $cache=Join-Path $Tool.Directory 'cache'
     if ((Test-Path -LiteralPath $state) -or (Test-Path -LiteralPath $cache)) { throw 'Tool state is not fresh.' }
     $start=New-LiveStart -Executable $Tool.Executable -Directory $Tool.Directory -Welcome -Arguments @(
-        'ui','inspect','-w',$WindowHandle.ToString([Globalization.CultureInfo]::InvariantCulture),'--depth','8','--json')
+        'ui','inspect','-w',$WindowHandle.ToString([Globalization.CultureInfo]::InvariantCulture),'--depth',$RenderedDepth.ToString([Globalization.CultureInfo]::InvariantCulture),'--json')
     $start.Environment['WINAPP_UI_LOCK_DIRECTORY']=$state
     $start.Environment['WINAPP_CLI_CACHE_DIRECTORY']=$cache
     $start.Environment['WINAPP_CLI_TELEMETRY_OPTOUT']='1'
@@ -108,11 +108,11 @@ function Assert-WinAppFields($Value,[string[]]$Required,[string[]]$Optional=@())
         if (($Required+$Optional) -cnotcontains $property.Name) { throw 'Unknown inspection field.' }
     }
 }
-function ConvertTo-WinAppSummary([string]$Text,[long]$RequestedWindow) {
+function ConvertTo-WinAppSummary([string]$Text,[long]$RequestedWindow,[ValidateSet('8','16')][int]$RenderedDepth=8) {
     # Duplicate detection, strict UTF-8 byte bound and parsing use the existing helper.
     $value=ConvertFrom-LiveJSON $Text 262144
     Assert-WinAppFields $value @('depth','interactive','hideDisabled','hideOffscreen','windows')
-    Assert-LiveInteger $value.depth 8 8
+    Assert-LiveInteger $value.depth $RenderedDepth $RenderedDepth
     foreach ($key in @('interactive','hideDisabled','hideOffscreen')) {
         if ($value.$key -isnot [bool] -or $value.$key) { throw 'Unexpected inspection filter.' }
     }
@@ -138,7 +138,7 @@ function ConvertTo-WinAppSummary([string]$Text,[long]$RequestedWindow) {
     $optional=@('name','automationId','className','selector','value','toggleState','expandState','scrollDir','children','hasMoreChildren')
     while ($pending.Count -gt 0) {
         $item=$pending.Pop();$node=$item[0];$depth=[int]$item[1]
-        if ($depth -gt 8 -or $summary.nodeCount -ge 2048) { throw 'Inspection output tree bound exceeded.' }
+        if ($depth -gt $RenderedDepth -or $summary.nodeCount -ge 2048) { throw 'Inspection output tree bound exceeded.' }
         Assert-WinAppFields $node @('type','isEnabled','isOffscreen','isInvokable','x','y','width','height') $optional
         if ($node.type -isnot [string]) { throw 'Invalid inspection type.' }
         foreach ($key in @('isEnabled','isOffscreen','isInvokable')) {
@@ -202,7 +202,8 @@ function Complete-WinAppProcess($Child,[System.Collections.IDictionary]$Result) 
     } catch { $Result.status='stopped';$Result.reason='tool_exit_unconfirmed' }
     try { $Child.Dispose() } catch { $Result.status='stopped';$Result.reason='tool_cleanup_unconfirmed' }
 }
-function Invoke-WinAppInspection($Start,[long]$WindowHandle,[scriptblock]$CheckIdentity,[switch]$NativeOriginal) {
+function Invoke-WinAppInspection($Start,[long]$WindowHandle,[scriptblock]$CheckIdentity,[switch]$NativeOriginal,
+    [ValidateSet('8','16')][int]$RenderedDepth=8) {
     $result=[ordered]@{status='stopped';reason='identity_unavailable';actions=0;attempts=0;
         beforeIdentity=$false;afterIdentity=$false;exitCode=$null;stdoutBytes=0;summary=$null;processExitConfirmed=$null}
     $child=$null
@@ -223,7 +224,7 @@ function Invoke-WinAppInspection($Start,[long]$WindowHandle,[scriptblock]$CheckI
         $result.reason='identity_changed'; & $CheckIdentity; $result.afterIdentity=$true
         if ($child.ExitCode -ne 0) { $result.reason='tool_exit_nonzero';return $result }
         $result.reason='tool_schema_invalid'
-        $result.summary=ConvertTo-WinAppSummary $child.Output $WindowHandle
+        $result.summary=ConvertTo-WinAppSummary $child.Output $WindowHandle -RenderedDepth $RenderedDepth
         if ($result.summary.loginMarkerCount -gt 0) { $result.reason='login_marker_observed';return $result }
         if ($result.summary.protectedMarkerCount -gt 0) { $result.reason='protected_marker_observed';return $result }
         if ($NativeOriginal -and $result.summary.errorMarkerCount -gt 0) { $result.reason='error_marker_observed';return $result }
