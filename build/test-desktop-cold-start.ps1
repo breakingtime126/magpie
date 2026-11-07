@@ -1770,6 +1770,10 @@ if ($useLiveFixtures) {
     . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
     Assert-LiveWelcomeOptions -Enabled $true -Mode $Mode -Startup $EnableReviewedStartupProbe -Compatibility $EnableReviewedLaunchCompatibility
 }
+if ($EnableReviewedWelcome4239) {
+    . (Join-Path $PSScriptRoot 'desktop-winapp-inspect.ps1')
+    . (Join-Path $PSScriptRoot 'desktop-winapp-welcome.ps1')
+}
 $out = Join-Path $env:RUNNER_TEMP 'desktop-cold-start-report'
 $work = Join-Path $env:RUNNER_TEMP ('desktop-cold-start-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $out, $work | Out-Null
@@ -1911,13 +1915,22 @@ try {
     if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\auth.json')) { Block 'Unexpected existing Codex authentication file.' }
     $existing = @(Get-AppxPackage -Name 'OpenAI.Codex')
     if ($existing.Count -ne 0) { Block 'Unexpected existing OpenAI.Codex registration; baseline must be fresh.' }
-    if ($useWinAppInspection) {
+    if ($useWinAppInspection -or $EnableReviewedWelcome4239) {
         if ($EnableNativeReadOnlyInspection) { Initialize-LiveSupervisor }
         $report.reason='tool_provenance_unavailable'
         $winAppTool=Initialize-WinAppTool (Join-Path $work 'winapp-inspection')
-        $report.nativeInspection.provenance=$winAppTool.Provenance
+        if ($useWinAppInspection) {
+            $report.nativeInspection.provenance=$winAppTool.Provenance
+            $report.nativeInspection.reason='owned_window_pending'
+        } else {
+            $report.welcomeTool=[ordered]@{engine='official-winapp-explicit-patterns';provenance=$winAppTool.Provenance;
+                limits=@('Parent held owner/window/package/foreground checks surround each command; not an atomic generation proof.',
+                    'Explicit commands uniquely resolve a runtime slug within requested HWND, then retain COM context; no action-instant Name/Type recheck.',
+                    'Runtime slug hashes are 16-bit; tool owner-dialog acceptance and provider changes are residual non-atomic risks.',
+                    'Read commands may fall back; their selectors alone never authorize an automatic, ancestor or coordinate action.',
+                    'One overall 30-second budget and at most three pattern calls. Uncertain outcomes stop without retry.')}
+        }
         $report.Remove('reason')
-        $report.nativeInspection.reason='owned_window_pending'
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -1948,6 +1961,7 @@ namespace DesktopColdProbe {
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumCallback cb, IntPtr param);
     delegate bool EnumCallback(IntPtr h, IntPtr param);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out Rect rect);
     [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
@@ -2842,7 +2856,7 @@ requires_openai_auth = false
     if ([DesktopColdProbe.Native]::PackageFor([uint32]$window.ProcessId) -ne $app.PackageFullName) {
         Block 'Window owner changed before capture.'
     }
-    if ($useWinAppInspection) {
+    if ($useWinAppInspection -or $EnableReviewedWelcome4239) {
         $checkInspectionIdentity={
             if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
                 $ownedActivationProcess.Id -ne $activationPid -or $window.ProcessId -ne $activationPid -or
@@ -2851,6 +2865,10 @@ requires_openai_auth = false
                 [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName -or
                 $ownedActivationProcess.MainModule.FileName -ine (Get-LiveDesktopExecutable $app.InstallLocation $desktopApp.GetAttribute('Executable'))) {
                 throw 'Inspection owner identity unavailable.'
+            }
+            if ($EnableReviewedWelcome4239 -and
+                [DesktopColdProbe.Native]::GetForegroundWindow().ToInt64() -ne $window.Handle) {
+                throw 'Welcome foreground changed.'
             }
             $currentWindow=[DesktopColdProbe.Native]::Window($window.Handle)
             if ($null -eq $currentWindow -or $currentWindow.ProcessId -ne $activationPid -or
@@ -2920,16 +2938,20 @@ requires_openai_auth = false
             $welcomeDiagnostic.stage='executable_identity'; $welcomeDiagnostic.reason='executable_identity_mismatch'
             $expectedDesktopExecutable = Get-LiveDesktopExecutable $app.InstallLocation $desktopApp.GetAttribute('Executable')
             if ([IO.Path]::GetFullPath($ownerExecutable) -ine $expectedDesktopExecutable) { throw 'Owned executable mismatch.' }
-            $welcomeDiagnostic.stage='helper_host'; $welcomeDiagnostic.reason='helper_host_unavailable'
-            $welcomeHost = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            Assert-PublicRegularPath $welcomeHost
-            $welcomeDiagnostic.stage='helper_arguments'; $welcomeDiagnostic.reason='helper_arguments_invalid'
-            $welcomeStart = New-LiveStart -Executable $welcomeHost -Directory $work -Welcome -Arguments @(
-                '-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'desktop-welcome-step.ps1'),
-                '-WindowHandle',[string]$window.Handle,'-OwnerProcessId',[string]$activationPid,
-                '-OwnerStartUtcTicks',[string]$ownedActivationProcess.StartTime.ToUniversalTime().Ticks,
-                '-OwnerExecutable',$ownerExecutable,'-PackageFullName',$app.PackageFullName,'-SessionId',[string]$processSession)
-            $liveWelcome = Invoke-LiveWelcome $welcomeStart -Diagnostic $welcomeDiagnostic
+            if ($EnableReviewedWelcome4239) {
+                $liveWelcome=Invoke-WinAppWelcome $winAppTool $window.Handle $checkInspectionIdentity $welcomeDiagnostic
+            } else {
+                $welcomeDiagnostic.stage='helper_host'; $welcomeDiagnostic.reason='helper_host_unavailable'
+                $welcomeHost = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+                Assert-PublicRegularPath $welcomeHost
+                $welcomeDiagnostic.stage='helper_arguments'; $welcomeDiagnostic.reason='helper_arguments_invalid'
+                $welcomeStart = New-LiveStart -Executable $welcomeHost -Directory $work -Welcome -Arguments @(
+                    '-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'desktop-welcome-step.ps1'),
+                    '-WindowHandle',[string]$window.Handle,'-OwnerProcessId',[string]$activationPid,
+                    '-OwnerStartUtcTicks',[string]$ownedActivationProcess.StartTime.ToUniversalTime().Ticks,
+                    '-OwnerExecutable',$ownerExecutable,'-PackageFullName',$app.PackageFullName,'-SessionId',[string]$processSession)
+                $liveWelcome = Invoke-LiveWelcome $welcomeStart -Diagnostic $welcomeDiagnostic
+            }
             $liveFixtureReport.result = $liveWelcome
             $liveFixtureReport.status = $liveWelcome.status; $liveFixtureReport.reason = $liveWelcome.reason
         } catch {

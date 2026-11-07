@@ -2662,3 +2662,80 @@ checks remain. These labels are synthetic tests, not fabricated captured UIA
 observations. The same separately marked one-attempt welcome action and
 post-action screenshot remain the next real test; no new diagnostic framework,
 coordinate input, retry or timeout change is introduced.
+
+### Official explicit-pattern welcome path after PS5 host timeouts
+
+This section supersedes the PS5 execution details above **only** for the
+explicit `EnableReviewedWelcome4239` action profile. The three-marker push
+remains `[bridge-welcome-4239-v1] [bridge-ui-4239-v1] [winapp-inspection-v0.7.1]`.
+The old two-marker path stays read-only; dispatch, native-original and normal
+entry do not gain action authority. Package/backend/source admission, alias
+launch and renderer-accessibility selection are unchanged.
+
+The 26c8e57f real-context helper timed out with no stdout and an uncertain
+outcome; its independent zero-context host also timed out. Identical before/
+after pixels do not prove that no action happened. No retry of that attempt is
+made. The selected profile now replaces, rather than stacks onto, the PS5
+helper with `desktop-winapp-welcome.ps1` and the already pinned, hash-checked,
+embedded-Microsoft-signed winapp 0.7.1. Other legacy callers remain unchanged.
+Pure welcome-policy, shared supervisor/environment/identity/cleanup and winapp
+reader tests still block the action job. The new offline orchestrator fixtures
+also block it. PS5-specific smoke/interop remains in its independent job and
+can honestly fail; it is not claimed repaired or used to prove this path.
+
+The orchestrator reads the requested original HWND at rendered depth 16,
+requires a complete (no truncation), bounded 500-node page, exact heading,
+unique exact Name+Type targets and enabled/direct-invokable action targets.
+It reuses the existing page/protected-label policy; a direct `isInvokable`
+node is interactive even with a Custom/Pane type. Protected markers are checked
+over all returned names, including offscreen names. Unknown enabled controls,
+missing/ambiguous targets or unknown state stop before further input.
+
+Only freshly read runtime slugs matching the target type and normalized name/
+automation ID plus four-hex runtime hash are accepted, not promoted IDs or text
+queries. Commands always name the original HWND and an explicit action:
+`ui invoke <slug> -w <HWND> --action toggle|select|invoke --json`.
+On becomes one Toggle and must read back Off; Off is skipped and Indeterminate
+stops. Engineering's `get-property --property IsSelected` must be the exact
+string True/False; False permits one Select, then True and suggestions Off
+are revalidated. Continue gets one Invoke. Automatic patterns, ancestor
+fallback, coordinates, toggle-off's possible second toggle, focus restoration
+and retries are never selected. One next-page read and the existing parent
+`official-window-after-welcome.png` follow; the next page is not acted upon.
+
+One shared 30-second active budget covers the entire sequence (at most nine
+CLI commands), not 30 seconds per command. Each child receives only the
+remaining budget and the unchanged 256-KiB-per-stream limit. Cleanup retains
+its bounded exit-confirmation grace and cannot authorize another action.
+Every command uses fresh private lock/cache paths, exact JSON and documented
+telemetry upload opt-out; local ETW and session-local coordination events
+remain. Raw trees, selectors, properties and stderr stay private. Fixed
+`liveWelcome.parentDiagnostic.commands` records expose operation, completion,
+exit/timeout/overflow, byte count and confirmed exit only. Action counts are
+attempts, not proof of side effects. Unknown output, nonzero exit, timeout,
+changed identity/foreground or unconfirmed cleanup stops without retry and
+preserves `partialActionUncertain` after any action attempt.
+
+The boundary is deliberately non-atomic. Parent checks surround every command
+using the retained original process generation, package, executable, session,
+HWND and foreground. Read APIs may fall back to a same-PID root; their results
+alone never authorize input. Official **explicit** action resolution uniquely
+finds the slug within the requested HWND, without that read fallback, and then
+retains the COM node through the desktop turn. It does not repeat complete
+Name/Type/slug matching at the action instant; the later context check reads
+provider ProcessId. Slugs use a 16-bit runtime hash, not permanent identity.
+The tool also accepts an owner-dialog PID relationship. Parent guards, fresh
+reads and strict receipts narrow these residual races but do not prove provider
+lineage or atomic identity. No same-PID alternative-window search is requested.
+A returned HWND mismatch stops later steps, never proves the prior action did
+not occur. Exit zero and a pattern receipt only prove the call returned;
+state re-reads and screenshots determine what can be reported.
+
+Pinned source authority: [UiInvokeCommand](https://github.com/microsoft/winappCli/blob/e3cd0b94f3e7b776ac51ba0564f4908094e979b5/src/winapp-CLI/WinApp.Cli/Commands/UiInvokeCommand.cs),
+[explicit patterns](https://github.com/microsoft/winappCli/blob/e3cd0b94f3e7b776ac51ba0564f4908094e979b5/src/winapp-CLI/WinApp.UIAutomation/Services/ExplicitUiInvoker.cs),
+[UIA query](https://github.com/microsoft/winappCli/blob/e3cd0b94f3e7b776ac51ba0564f4908094e979b5/src/winapp-CLI/WinApp.UIAutomation/Services/UiAutomationService.Query.cs)
+and [desktop target validation](https://github.com/microsoft/winappCli/blob/e3cd0b94f3e7b776ac51ba0564f4908094e979b5/src/winapp-CLI/WinApp.Cli/Helpers/DesktopTargetValidation.cs).
+Offline JSON fixtures are schema-derived synthetic data, not captured official
+responses. This change does not establish a successful welcome transition,
+model selection, conversation, normal entry or new-native inference acceptance.
+The unrelated four-turn slice remains `not-run / welcome_transition_only`.

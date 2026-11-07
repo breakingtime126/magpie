@@ -25,6 +25,7 @@ on:
       - build/control-plane-native/**
       - build/desktop-live-welcome*.ps1
       - build/desktop-winapp-inspect*.ps1
+      - build/desktop-winapp-welcome*.ps1
       - build/review-desktop-contract*
       - build/desktop-welcome-step*.ps1
       - build/test-desktop-cold-start.ps1
@@ -714,6 +715,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Live welcome integration fixtures failed.' }
           if ($readOnly4239 -and !$welcome4239) {
             Write-Output 'WELCOME_ACTION_POLICY_CHECK=not_run_read_only_inspection'
+          } elseif ($welcome4239) {
+            ./build/desktop-welcome-step.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Welcome policy fixtures failed.' }
+            ./build/desktop-winapp-welcome.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Official-tool welcome fixtures failed.' }
           } else {
             powershell -NoProfile -NonInteractive -File build/desktop-welcome-step.tests.ps1 -CheckNativeInterop
             if ($LASTEXITCODE -ne 0) { throw 'Welcome policy fixtures failed.' }
