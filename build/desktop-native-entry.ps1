@@ -367,7 +367,8 @@ function Get-EntryFreshnessEvidence([object[]]$Processes, [string]$ExpectedPacka
     if ([string]::IsNullOrWhiteSpace($ExpectedPackage) -or [string]::IsNullOrWhiteSpace($BridgeName) -or
         $Processes.Count -gt 65536 -or $null -eq $ReadPackage) { throw 'Invalid freshness guard inputs.' }
     $facts=[ordered]@{ matches=0; package=0; desktopName=0; nativeName=0; bridgeName=0;
-        versionProbePid=0; configurationProbePid=0; other=0 }
+        versionProbePid=0; configurationProbePid=0; other=0;
+        recordScope='cim-snapshot-unbound-to-package-query'; records=@(); recordsTruncated=$false }
     foreach ($item in $Processes) {
         $packageMatch=(& $ReadPackage ([int]$item.ProcessId)) -eq $ExpectedPackage
         $desktopMatch=$item.Name -ieq 'ChatGPT.exe'; $nativeMatch=$item.Name -ieq 'Codex.exe'
@@ -382,6 +383,27 @@ function Get-EntryFreshnessEvidence([object[]]$Processes, [string]$ExpectedPacka
         if ($item.ProcessId -eq $VersionProbeId) { $facts.versionProbePid++ }
         elseif ($item.ProcessId -eq $ConfigurationProbeId) { $facts.configurationProbePid++ }
         else { $facts.other++ }
+        # Labels from the already-enumerated row, not image verification or permission to exempt it.
+        # The later PID package query is not bound to this CIM row's process generation.
+        if ($facts.records.Count -ge 4) { $facts.recordsTruncated=$true; continue }
+        $basename='unavailable'
+        if ($item.Name -is [string] -and
+            $item.Name -cmatch '\A[A-Za-z0-9][A-Za-z0-9._-]{0,91}\.[eE][xX][eE]\z') {
+            $basename=$item.Name
+        }
+        $parentProcessId=$null; $createdUtc=$null
+        $parentProperty=$item.PSObject.Properties['ParentProcessId']
+        if ($null -ne $parentProperty -and ($parentProperty.Value -is [int] -or
+            $parentProperty.Value -is [uint32] -or $parentProperty.Value -is [long]) -and
+            [long]$parentProperty.Value -ge 0 -and [long]$parentProperty.Value -le [uint32]::MaxValue) {
+            $parentProcessId=[long]$parentProperty.Value
+        }
+        $createdProperty=$item.PSObject.Properties['CreationDate']
+        if ($null -ne $createdProperty -and $createdProperty.Value -is [DateTime]) {
+            $createdUtc=$createdProperty.Value.ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
+        }
+        $facts.records += [ordered]@{ processId=[int]$item.ProcessId; basename=$basename;
+            parentProcessId=$parentProcessId; createdUtc=$createdUtc; packageMatch=[bool]$packageMatch }
     }
     return $facts
 }

@@ -149,10 +149,35 @@ counter is diagnostic, never permission to ignore a process.
 
 The final freshness guard still rejects every original package/name match,
 including a remaining owned-probe PID candidate, an active unrelated match or
-an unclassified package process. Its new metadata contains only bounded counters
-for package, Desktop/native/bridge names, the two known probe PID candidates and
-other matches. No arbitrary name, path, command line or process environment is
-published. Failed enumeration remains an error, not an empty result.
+an unclassified package process. Its metadata retains counters for package,
+Desktop/native/bridge names, the two known probe PID candidates and other matches.
+It also reports at most four matching rows from that same already-collected CIM
+snapshot: PID, an ASCII `.exe` basename of at most 96 characters (otherwise
+`unavailable`),
+typed parent PID and UTC creation time when available, and the existing
+`packageMatch` result. Invalid or missing optional metadata is null. Further
+matches still count and set `recordsTruncated`; no extra package query is added.
+Basenames allow only ASCII letters, digits, dot, underscore and hyphen, start
+with a letter or digit, and end in `.exe` case-insensitively. Absolute anchors
+exclude trailing newlines too. No full path, command line, environment or actual
+package-name string is published. This small matched-row disclosure is limited
+to the fresh disposable VM with no imported user data, not general user-machine
+telemetry. Failed enumeration remains an error, not an empty result.
+
+`recordScope: cim-snapshot-unbound-to-package-query` is deliberately weaker than
+held-process image evidence: the CIM row and the later PID-based package query
+may refer to different generations. A reported basename does not verify a system
+image or its role. These labels never exempt, terminate or reopen a process and
+do not change the nonzero-match stop before USER writes and activation.
+
+The [`0b3fb89f` run](https://github.com/breakingtime126/magpie/actions/runs/42357424834/job/128358472485)
+passed both treatment-scoped safety hosts, profile checks, build, exact signed
+4239 package identity, registration, native version and bridge configuration
+checks. It stopped with one package-only freshness match, no name/probe-PID
+matches, and exact prior USER absence verified. No activation or USER write
+occurred. Its saved report contains only counters and cannot identify that row.
+The bounded row labels above have not yet been exercised on that real process;
+they do not establish a harmless broker or successful normal-entry inheritance.
 
 The [first run at `46248d03`](https://github.com/breakingtime126/magpie/actions/runs/42310342651)
 passed the offline safety gate in both hosts, but all four package cases stopped

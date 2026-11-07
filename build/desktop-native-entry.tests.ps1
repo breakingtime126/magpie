@@ -125,7 +125,48 @@ $facts=Get-EntryFreshnessEvidence $rows 'fixture.package' 'fixture-bridge.exe' 1
 }
 Pass ($facts.matches -eq 4 -and $facts.versionProbePid -eq 1 -and $facts.configurationProbePid -eq 1 -and
     $facts.other -eq 2 -and $facts.package -eq 1) 'guard retains every matched process, including known probe PID candidates'
-Pass (($facts | ConvertTo-Json -Compress) -notmatch 'private-unreported|unrelated-unreported|fixture.package|fixture-bridge') 'freshness diagnostics reveal only fixed counters'
+Pass (($facts | ConvertTo-Json -Depth 4 -Compress) -notmatch 'private-unreported|unrelated-unreported|fixture.package') 'freshness diagnostics reveal only restricted executable basenames and bounded metadata'
+Pass ($facts.records.Count -eq 4 -and -not $facts.recordsTruncated -and
+    $facts.records[3].basename -ceq 'unavailable' -and $facts.records[3].packageMatch -and
+    $null -eq $facts.records[3].parentProcessId -and $null -eq $facts.records[3].createdUtc -and
+    $facts.recordScope -ceq 'cim-snapshot-unbound-to-package-query') 'invalid basename and missing metadata remain unavailable without dropping the guard match'
+$freshnessCreated=[DateTime]::new(2026,11,7,8,0,0,[DateTimeKind]::Utc)
+$publicRows=@([pscustomobject]@{ProcessId=21;Name='rUnTiMeBrOkEr.ExE';ParentProcessId=[uint32]22;CreationDate=$freshnessCreated;
+    CommandLine='private-command-canary';ExecutablePath='C:\private-path-canary\RuntimeBroker.exe'},
+    [pscustomobject]@{ProcessId=22;Name='RuntimeBroker.exe.private-name-canary';ParentProcessId=-1;CreationDate='private-date-canary'},
+    [pscustomobject]@{ProcessId=23;Name='private-name-canary';ParentProcessId=[long]4294967296;CreationDate=$null},
+    [pscustomobject]@{ProcessId=24;Name='private-name-canary';ParentProcessId='private-parent-canary';CreationDate=$null},
+    [pscustomobject]@{ProcessId=25;Name='private-name-canary';ParentProcessId=0;CreationDate=$null})
+$script:freshnessPackageReads=0
+$publicFacts=Get-EntryFreshnessEvidence $publicRows 'fixture.package' 'fixture-bridge.exe' 0 0 {
+    param($ProcessId) $script:freshnessPackageReads++; 'fixture.package'
+}
+Pass ($publicFacts.matches -eq 5 -and $publicFacts.package -eq 5 -and $publicFacts.other -eq 5 -and
+    $script:freshnessPackageReads -eq 5 -and $publicFacts.records.Count -eq 4 -and $publicFacts.recordsTruncated) 'bounded records never truncate guard counts or add package queries'
+Pass ($publicFacts.records[0].processId -eq 21 -and $publicFacts.records[0].basename -ceq 'rUnTiMeBrOkEr.ExE' -and
+    $publicFacts.records[0].parentProcessId -eq 22 -and
+    $publicFacts.records[0].createdUtc -ceq '2026-11-07T08:00:00.0000000Z') 'restricted basename and typed CIM metadata are preserved'
+foreach ($record in @($publicFacts.records | Select-Object -Skip 1)) {
+    Pass ($record.basename -ceq 'unavailable' -and $null -eq $record.parentProcessId -and
+        $null -eq $record.createdUtc) 'invalid optional metadata stays null and invalid basenames remain unavailable'
+}
+$freshnessJson=$publicFacts | ConvertTo-Json -Depth 4 -Compress
+Pass ($freshnessJson -notmatch 'private-|CommandLine|ExecutablePath|fixture.package') 'freshness evidence never includes raw command, path, package name or unreviewed strings'
+foreach ($record in $publicFacts.records) {
+    Pass (($record.Keys -join ',') -ceq 'processId,basename,parentProcessId,createdUtc,packageMatch') 'freshness record has a closed public schema'
+}
+foreach ($nameCase in @('unlisted-public-tool.exe', ('a'*92+'.exe'))) {
+    $nameFacts=Get-EntryFreshnessEvidence @([pscustomobject]@{ProcessId=31;Name=$nameCase}) 'fixture.package' 'fixture-bridge.exe' 0 0 { 'fixture.package' }
+    Pass ($nameFacts.records[0].basename -ceq $nameCase) 'an unlisted executable and the 96-character boundary remain identifiable'
+}
+foreach ($nameCase in @(('a'*93+'.exe'), 'C:\private-path-canary.exe','private/path-canary.exe',
+    "private`ncontrol-canary.exe", "private.exe`n", "private.exe`r", "private.exe`0", 'private-canary.txt',
+    ('private'+[char]0x00e9+'.exe'), '.exe', 'private:canary.exe', 'private canary.exe')) {
+    $nameFacts=Get-EntryFreshnessEvidence @([pscustomobject]@{ProcessId=31;Name=$nameCase}) 'fixture.package' 'fixture-bridge.exe' 0 0 { 'fixture.package' }
+    Pass ($nameFacts.matches -eq 1 -and $nameFacts.records[0].basename -ceq 'unavailable') 'invalid basename never leaks or removes a guard match'
+}
+$emptyFacts=Get-EntryFreshnessEvidence @() 'fixture.package' 'fixture-bridge.exe' 0 0 { $null }
+Pass ($emptyFacts.matches -eq 0 -and $emptyFacts.records.Count -eq 0 -and -not $emptyFacts.recordsTruncated) 'empty input produces no invented process evidence'
 Reject { Get-EntryFreshnessEvidence $rows '' 'fixture-bridge.exe' 11 12 { $null } } 'empty expected package never matches unknown identities'
 Reject { Get-EntryFreshnessEvidence $rows 'fixture.package' 'fixture-bridge.exe' 11 12 { throw 'synthetic read failure' } } 'freshness read errors fail closed'
 $workflow='breakingtime126/magpie/.github/workflows/experimental-desktop-native-entry.yml@refs/heads/experiment/app-server-bridge-v0.1.3035'
