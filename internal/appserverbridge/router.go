@@ -383,7 +383,10 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		if err := r.pin(p, backend); err != nil {
 			return []Delivery{fail(g.id, -32602, err.Error())}, nil
 		}
-		for _, field := range []string{"turnId", "expectedTurnId", "parentTurnId", "rootTurnId", "lastTurnId"} {
+		if method == "thread/revert" && !exists(p, "beforeTurnId") {
+			return []Delivery{fail(g.id, -32602, "beforeTurnId is required")}, nil
+		}
+		for _, field := range []string{"turnId", "beforeTurnId", "expectedTurnId", "parentTurnId", "rootTurnId", "lastTurnId"} {
 			tid, e := fieldString(p, field)
 			if e != nil {
 				return []Delivery{fail(g.id, -32602, e.Error())}, nil

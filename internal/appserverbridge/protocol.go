@@ -119,7 +119,7 @@ func validateParams(method string, p object) error {
 		"thread/unarchive":          "threadId",
 		"thread/name/set":           "threadId name",
 		"thread/compact/start":      "threadId",
-		"thread/revert":             "threadId turnId",
+		"thread/revert":             "threadId beforeTurnId",
 		"thread/rollback":           "threadId numTurns",
 		"thread/unsubscribe":        "threadId",
 		"turn/start":                "threadId disabledPluginIds clientUserMessageId input turnTrigger parentTurnId rootTurnId toolOutput cwd runtimeWorkspaceRoots environments permissions approvalPolicy approvalsReviewer sandboxPolicy model serviceTier serviceTierForTurn effort summary personality outputSchema",

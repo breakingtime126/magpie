@@ -104,9 +104,36 @@ Supported requests are enumerated in `Router.Client` and `validateParams`:
 initialization, model listing, ordinary thread start/resume/fork/list/read,
 loaded-thread listing, paginated turns/items, archive/unarchive/name/compact,
 revert/legacy rollback/unsubscribe, turn start/interrupt/steer, and the primary
-backend's account/rate-limit reads. `thread/rollback` is the older protocol
-spelling, forwarded unchanged; `thread/revert` is the newer spelling. The child
-version determines availability. Unsupported methods return `-32601`.
+backend's account/rate-limit reads. Legacy `thread/rollback` keeps its
+`numTurns` parameter. `thread/revert` takes `threadId` and `beforeTurnId`:
+the named turn and every later turn are excluded from the replacement durable
+history; local file changes are not reverted. These are distinct native
+operations, not interchangeable method names. The child version determines
+availability. Unsupported methods return `-32601`.
+
+The revert boundary follows the native `ThreadRevertParams` contract, also
+confirmed by the schema generated from Desktop `26.1103.4239.0`'s bundled
+`0.167.0-alpha.3.2` binary. The bridge requires a non-empty string boundary
+already known under the selected backend **and thread**, including turns
+learned through `thread/turns/list`. Missing, null, malformed, unknown or foreign
+boundaries return local `-32602` without a backend delivery. The mistaken
+`turnId` spelling is rejected rather than silently aliased. Valid params go
+unchanged to the thread's owner. Native errors remain errors without retrying
+another provider; the bridge does not emulate history mutation.
+The native response has updated thread metadata with empty `turns` and optional
+backwards cursors for rehydration. Existing response ownership checks and cursor
+pass-through apply. The native `thread/reverted` notification remains scoped to
+that owner. Synthetic coverage is in
+[`thread_revert_test.go`](../../internal/appserverbridge/thread_revert_test.go);
+it does not execute a native revert or establish live history-mutation support.
+The existing [`bridge-race` job](../../.github/workflows/experimental-bridge-windows.yml)
+copies that test file onto exact pre-fix commit
+`341298e1515298c6f8714509c78324f7f38dbe12` and requires the named boundary-routing
+test's behavioral failure. Compilation or setup failure does not qualify.
+On the triggering candidate it runs every `TestThreadRevert` test under
+`-race -count=20`, then retains the whole existing bridge/proc/command suite.
+Both runs use isolated homes and pinned Go caches; neither issues a native
+history-mutation request.
 The separate default-off [feature-page comparison](#exact-0167-shared-experimental-feature-pages)
 adds only unscoped `experimentalFeature/list` under its pinned contract.
 

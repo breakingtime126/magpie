@@ -76,6 +76,31 @@ jobs:
           grep -F -- '--- FAIL: TestCombinedOutputOwnKeepsReuseErrors' "$isolated/reuse.log"
           grep -F -- 'reused command returned context canceled, want exec: already started' "$isolated/reuse.log"
           grep -F -- 'reused command returned context canceled, want exec: Stdout already set' "$isolated/reuse.log"
+      - name: Check out exact pre-fix revert boundary behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 341298e1515298c6f8714509c78324f7f38dbe12
+          path: .ci-thread-revert-baseline
+          persist-credentials: false
+      - name: Prove native revert boundaries fail behaviorally before the fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
+          isolated="$(mktemp -d "$RUNNER_TEMP/thread-revert-red.XXXXXX")"
+          trap 'chmod -R u+w "$isolated"; rm -rf "$isolated" .ci-thread-revert-baseline' EXIT
+          export HOME="$isolated/home" CODEX_HOME="$isolated/codex"
+          export XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache"
+          export XDG_DATA_HOME="$isolated/data" XDG_STATE_HOME="$isolated/state" TMPDIR="$isolated/tmp"
+          mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR"
+          cp internal/appserverbridge/thread_revert_test.go .ci-thread-revert-baseline/internal/appserverbridge/
+          status=0
+          (cd .ci-thread-revert-baseline && go test -v -count=1 -timeout=5m -tags nogui -run '^TestThreadRevertBeforeTurnIDRoutesToOwner$' ./internal/appserverbridge) >"$isolated/old.log" 2>&1 || status=$?
+          cat "$isolated/old.log"
+          test "$status" -eq 1
+          grep -F -- '--- FAIL: TestThreadRevertBeforeTurnIDRoutesToOwner' "$isolated/old.log"
+          grep -F -- 'native beforeTurnId did not reach its owner:' "$isolated/old.log"
+          echo 'The exact baseline rejects native revert boundaries; compile or setup failures do not qualify.'
       - name: Test synthetic bridge and probe concurrency
         shell: bash
         run: |
@@ -97,6 +122,7 @@ jobs:
           export MAGPIE_BRIDGE_ADAPTER_TEST_EXE="$isolated/magpie-codex-bridge"
           go test -race -v -count=20 -timeout=5m -tags nogui -run '^TestCombinedOutputOwn' ./internal/proc
           go build -race -tags nogui -o "$MAGPIE_BRIDGE_ADAPTER_TEST_EXE" ./cmd/magpie-codex-bridge
+          go test -race -v -count=20 -timeout=5m -tags nogui -run '^TestThreadRevert' ./internal/appserverbridge
           go test -race -v -count=1 -timeout=15m -tags nogui ./internal/appserverbridge ./internal/proc ./cmd/magpie-codex-bridge
           go test -race -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^Test(DesktopPluginNativeChildrenReceiveExactOverride|BuiltAdapterDesktopPluginOverride)$'
           test -z "$(git status --porcelain)"
