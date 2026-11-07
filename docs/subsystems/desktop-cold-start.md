@@ -2973,7 +2973,7 @@ checks and original HWND/package/generation/foreground guards remain unchanged.
 
 `Invoke-WinAppModelMenu` shares the original 30-second stopwatch with all earlier
 stages, without increasing the fixture lifetime or resetting any deadline. It
-invokes only the menu button once, then makes one readonly tree observation and
+expands only the positively collapsed menu button once, then makes one readonly tree observation and
 captures `official-window-after-model-menu.png`. It does not select alpha/beta,
 change effort, send input, retry setup, or close the menu. Any uncertainty stops
 without retry. Earlier welcome, Skip and confirmation evidence remains intact.
@@ -2986,3 +2986,50 @@ The alpha entry alone never establishes beta: absent beta, protection, missing
 capture or uncertainty prevents overall menu success. Even both labels establish
 no inference, routing, model-switch, conversation or normal-entry acceptance.
 Readonly markers, production Go and accepted runtime pins are unchanged.
+
+
+### Explicit model-menu expansion after 4e8ae2c4
+
+The actual `4e8ae2c4` menu attempt found the exact combined-name Button,
+confirmed enabled/visible/direct `isInvokable`, and resolved its promoted ID to a
+runtime slug. The explicit Invoke command then exited 1 with zero stdout,
+without a timeout. Its action result remains uncertain: there was no retry or
+post-action read, and an unchanged screenshot does not prove that nothing
+happened. Stderr was not retained, so the specific failure cause is unknown.
+
+Pinned Microsoft winapp v0.7.1 commit
+`e3cd0b94f3e7b776ac51ba0564f4908094e979b5`,
+`UiAutomationService.ToUiElement`, computes `isInvokable` as an OR of supported
+Invoke, SelectionItem, Toggle and ExpandCollapse capabilities. It is not an
+InvokePattern guarantee. Its optional `expandState` is read directly from
+ExpandCollapsePattern: only exact `collapsed` / `expanded` are emitted; leaf,
+partial, unavailable or failed reads do not establish a collapsed state.
+`ExplicitUiInvoker` maps explicit `expand` only to
+`ExpandCollapsePattern.Expand()`, once, without another pattern or ancestor.
+
+A fresh VM may now attempt only the fixed model-menu target with positively
+observed `expandState=collapsed`. The private snapshot preserves that field;
+fixed public target metadata exposes only `collapsed`, `expanded` or
+`unavailable`. Expanded, missing or unknown state stops before an action. If a
+promoted-ID lookup is necessary, its exact identity and enabled/visible/direct
+capability checks must also re-read `collapsed`; a missing or changed state
+stops without invoking anything. No Invoke fallback is offered.
+
+The sole `open-model-menu` operation now sends `--action expand`, and accepts only
+an `ExpandCollapsePattern` receipt whose requested/performed actions are both
+`expand`. The fixed result uses `expansionInvoked` and
+`single_menu_expansion_attempted`, not a claim that the next UI state is proven.
+The subsequent exact label read and screenshot still establish only candidate
+alpha/beta visibility. Welcome/Skip/confirmation sequences, protected scanning,
+original window identity/foreground, remaining original 30-second budget,
+output cap, and action-uncertainty/no-retry rules are unchanged. This is not a
+second action after the failed Invoke in the same run. No Windows setup, model
+selection, message, or production RPC behavior is added.
+
+The existing supervisor discards stderr after bounded draining. This patch does
+not add a generic error-capture path or expose raw provider text: fixed command
+exit code, timeout/output-limit/exit-confirmation metadata and the new fixed
+expansion-state/binding reasons are retained. They cannot diagnose the historical
+exit 1. PowerShell fixtures cover positive collapsed evidence, absent/expanded/
+unknown states, changed promoted-query state, wrong-pattern receipts and
+uncertainty without fallback; local Windows execution remains unavailable.

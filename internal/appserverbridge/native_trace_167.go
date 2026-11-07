@@ -63,7 +63,8 @@ func (r *Router) nativeReadIDInUse(id json.RawMessage, method string) bool {
 	strict := func(method string) bool {
 		return (r.auth.authStatusNoAuth && method == "getAuthStatus") ||
 			(r.experimentalFeatureList167 && method == "experimentalFeature/list") ||
-			(r.controlPlaneRouting167 && method == "config/read")
+			(r.controlPlaneRouting167 && method == "config/read") ||
+			(r.windowsReadiness167 && method == "windowsSandbox/readiness")
 	}
 	key, err := authCompatibilityID(id)
 	if err != nil {

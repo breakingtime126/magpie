@@ -204,11 +204,11 @@ try {
         $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
         Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'confirmation uses only fixed typed reads or explicit Invoke'
     }
-    foreach ($spec in @(@('open-model-menu','btn-55alphamedium-abcd','ui invoke btn-55alphamedium-abcd --action invoke -w 123 --json'),
+    foreach ($spec in @(@('open-model-menu','btn-55alphamedium-abcd','ui invoke btn-55alphamedium-abcd --action expand -w 123 --json'),
         @('resolve-model-short','','ui get-property 5.5 [alpha] --type Button --property AutomationId -w 123 --json'),
         @('resolve-model-effort','','ui get-property 5.5 [alpha] Medium --type Button --property AutomationId -w 123 --json'))) {
         $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
-        Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'model menu uses fixed typed reads and one explicit Button Invoke only'
+        Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'model menu uses fixed typed reads and one explicit Button Expand only'
     }
     Reject { New-WinAppWelcomeStart $tool 123 'open-model-menu' '5.5 [alpha]' } 'model menu cannot invoke a text query'
     Reject { New-WinAppWelcomeStart $tool 123 'resolve-model-effort' 'Try again' } 'model menu resolver cannot target setup'
@@ -468,6 +468,7 @@ function ModelPage([switch]$Short,[switch]$Opened,[switch]$MissingBeta) {
     $slug=$(if($Short){'btn-55alpha-abcd'}else{'btn-55alphamedium-abcd'})
     $page.windows[0].elements=@((Node 'What should we build?' 'Text'),(Node $name 'Button' $slug),
         (Node "Couldn't check Windows setup" 'Text'),(Node 'Try again' 'Button' 'btn-tryagain-abcd'))
+    $page.windows[0].elements[1].expandState=$(if($Opened){'expanded'}else{'collapsed'})
     if ($Opened) {
         $page.windows[0].elements+=@(Node 'GPT-5.5 [alpha]' 'Text')
         if (-not $MissingBeta) { $page.windows[0].elements+=@(Node '5.5 [beta]' 'MenuItem') }
@@ -500,6 +501,22 @@ foreach ($variant in @('missing-heading','wrong-name','wrong-type','duplicate-ta
 $menuPage=ConvertTo-WinAppWelcomeSnapshot (Json (ModelPage)) 123
 Reject { Get-WinAppWelcomeTarget $menuPage '5.5 [alpha] Medium' 'Button' } 'model entry requires its own admitted scene'
 $menuPage.Decision='model_menu_ready'
+foreach ($state in @('','expanded','Collapsed','partiallyexpanded','leafnode','unknown')) {
+    $bad=ModelPage;$bad.windows[0].elements[1].expandState=$state
+    $snapshot=ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123
+    Pass ((Get-WinAppModelMenuObservation $snapshot).decision -cne 'ready') 'only positive collapsed evidence admits model expansion'
+    $snapshot.Decision='model_menu_ready'
+    Reject { Get-WinAppWelcomeTarget $snapshot '5.5 [alpha] Medium' 'Button' } 'target getter independently rejects absent or noncollapsed expansion state'
+}
+$bad=ModelPage;$bad.windows[0].elements[1].Remove('expandState')
+Pass ((Get-WinAppModelMenuObservation (ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123)).decision -ceq 'target_expand_state_unavailable') 'omitted expansion state is unknown, not collapsed'
+foreach ($state in @($null,$true,@('collapsed'),[ordered]@{state='collapsed'},'Collapsed')) {
+    $bad=ModelPage;$bad.windows[0].elements[1].automationId='modelmenu';$bad.windows[0].elements[1].selector='modelmenu'
+    $snapshot=ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123;$snapshot.Decision='model_menu_ready'
+    $resolved=Resolution '5.5 [alpha] Medium' 'Button' 'modelmenu' 'btn-modelmenu-abcd';$resolved.element.expandState=$state
+    $resolvedText=Json $resolved
+    Reject { Get-WinAppWelcomeTarget $snapshot '5.5 [alpha] Medium' 'Button' { $resolvedText } } 'resolved expansion state must be the exact lowercase string, not coerced JSON'
+}
 foreach ($name in @('Try again','5.5 [beta]','Send','Sign in')) {
     Reject { Get-WinAppWelcomeTarget $menuPage $name 'Button' } 'no setup model-selection send or account target is authorized'
 }
@@ -510,9 +527,15 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     if ($Operation -ceq 'open-model-menu') {
         $script:menuActions++
         if ($script:menuMode -ceq 'uncertain') { throw 'Synthetic uncertain menu action.' }
-        return Json ([ordered]@{elementId=$Selector;pattern='InvokePattern';requestedAction='invoke';performedAction='invoke';hwnd=123})
+        $action=$(if($script:menuMode -ceq 'wrong-pattern'){'invoke'}else{'expand'})
+        $pattern=$(if($script:menuMode -ceq 'wrong-pattern'){'InvokePattern'}else{'ExpandCollapsePattern'})
+        return Json ([ordered]@{elementId=$Selector;pattern=$pattern;requestedAction=$action;performedAction=$action;hwnd=123})
     }
-    if ($Operation -ceq 'resolve-model-effort') { return Json (Resolution '5.5 [alpha] Medium' 'Button' 'modelmenu' 'btn-modelmenu-abcd') }
+    if ($Operation -ceq 'resolve-model-effort') {
+        $resolved=Resolution '5.5 [alpha] Medium' 'Button' 'modelmenu' 'btn-modelmenu-abcd'
+        if ($script:menuMode -cne 'resolution-missing-state') { $resolved.element.expandState=$(if($script:menuMode -ceq 'resolution-expanded'){'expanded'}else{'collapsed'}) }
+        return Json $resolved
+    }
     if ($Operation -cne 'read') { throw 'No selection send or setup operation allowed.' }
     if ($script:menuActions -gt 0) {
         $script:menuPostRead=$true
@@ -521,11 +544,11 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
         return Json $page
     }
     $page=ModelPage -Short:($script:menuMode -ceq 'short')
-    if ($script:menuMode -ceq 'promoted') { $page.windows[0].elements[1].automationId='modelmenu';$page.windows[0].elements[1].selector='modelmenu' }
+    if ($script:menuMode -cin @('promoted','resolution-missing-state','resolution-expanded')) { $page.windows[0].elements[1].automationId='modelmenu';$page.windows[0].elements[1].selector='modelmenu' }
     if ($script:menuMode -ceq 'disabled') { $page.windows[0].elements[1].isEnabled=$false }
     return Json $page
 }
-foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','missing-beta','next-protected','final-identity')) {
+foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wrong-pattern','resolution-missing-state','resolution-expanded','missing-beta','next-protected','final-identity')) {
     $script:menuMode=$menuMode;$script:menuActions=0;$script:menuOperations=@();$script:menuPostRead=$false
     $script:menuWatch=[Diagnostics.Stopwatch]::StartNew();$diagnostic=[ordered]@{}
     $identity={if ($script:menuMode -ceq 'final-identity' -and $script:menuPostRead) { throw 'Synthetic identity change.' }}
@@ -534,14 +557,18 @@ foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','miss
     Pass ((Json $menu) -notmatch 'btn-|5.5|Try again|Sign in|What should') 'menu report contains fixed enums and counts, not raw UI text'
     if ($menuMode -cin @('normal','short','promoted','missing-beta','next-protected')) {
         $expected=$(if($menuMode -ceq 'promoted'){'read,resolve-model-effort,open-model-menu,read'}else{'read,open-model-menu,read'})
-        Pass ($menu.status -ceq 'observed' -and $menu.actions -eq 1 -and -not $diagnostic.partialActionUncertain -and
-            ($menuOperations -join ',') -ceq $expected) 'one bounded menu invocation followed only by a read'
+        Pass ($menu.status -ceq 'observed' -and $menu.actions -eq 1 -and $menu.expansionInvoked -and -not $diagnostic.partialActionUncertain -and
+            ($menuOperations -join ',') -ceq $expected) 'one bounded explicit expansion followed only by a read'
         if ($menuMode -ceq 'missing-beta') { Pass ($menu.labels.betaVisibleCount -eq 0) 'alpha entry alone is not beta evidence' }
+    } elseif ($menuMode -cin @('resolution-missing-state','resolution-expanded')) {
+        Pass ($menu.actions -eq 0 -and -not $diagnostic.partialActionUncertain -and
+            ($menuOperations -join ',') -ceq 'read,resolve-model-effort' -and
+            $diagnostic.bindings[0].reason -ceq 'resolution_expand_state_unavailable') 'missing or changed resolved expansion state stops before any action'
     } elseif ($menuMode -ceq 'disabled') {
         Pass ($menu.actions -eq 0 -and ($menuOperations -join ',') -ceq 'read') 'disabled entry never invokes'
     } else {
         Pass ($menu.status -ceq 'stopped' -and $menu.actions -eq 1 -and $diagnostic.partialActionUncertain -and $null -eq $menu.labels) 'uncertain menu or final identity never commits label acceptance'
-        if ($menuMode -ceq 'uncertain') { Pass (($menuOperations -join ',') -ceq 'read,open-model-menu') 'uncertain menu action stops without retry' }
+        if ($menuMode -cin @('uncertain','wrong-pattern')) { Pass (($menuOperations -join ',') -ceq 'read,open-model-menu') 'uncertain expansion or wrong receipt stops without fallback or retry' }
     }
     $prior=[pscustomobject]@{status='observed';stage='confirmation';reason='fixed';exitCode=0}
     Pass (((Get-WinAppModelMenuOutcome $prior $menu $true $diagnostic.partialActionUncertain).exitCode -eq 0) -eq

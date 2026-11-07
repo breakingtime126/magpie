@@ -45,6 +45,7 @@ type Router struct {
 	configRequirementsNull167  bool
 	experimentalFeatureList167 bool
 	controlPlaneRouting167     bool
+	windowsReadiness167        bool
 	controlSession167          *controlPlaneSession167
 	controlHome167             string
 	controlNativeHomes167      map[string]string
@@ -218,6 +219,8 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		return []Delivery{fail(g.id, -32600, "successful initialization of both backends is required")}, nil
 	}
 	switch method {
+	case "windowsSandbox/readiness":
+		return r.windowsReadinessRequest167(g, line), nil
 	case "config/read":
 		return r.controlPlaneRead167(g, line), nil
 	case "experimentalFeature/list":
@@ -525,6 +528,9 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	}
 	if g.method == "config/read" && r.controlPlaneRouting167 {
 		return r.controlPlaneReadResponse167(g, backend, line), nil
+	}
+	if g.method == "windowsSandbox/readiness" {
+		return r.windowsReadinessResponse167(g, backend, line), nil
 	}
 	if g.method == "experimentalFeature/list" {
 		return r.experimentalFeatureListResponse167(g, backend, line), nil

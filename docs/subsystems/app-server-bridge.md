@@ -1886,3 +1886,39 @@ stop. Do not invent native values, route primary config as a shared authority,
 or widen access to make the test green. No production account, credential/proof
 isolation, inference entitlement, tool execution, zero-egress, corporate-policy
 or completed same-window Desktop acceptance is claimed here.
+
+### Restricted Windows readiness (0.167.0-alpha.3.2 x64 only)
+
+`windowsSandbox/readiness` is **not generally read-only**: the pinned official
+handler can refresh Registered Core package registrations and metadata ACLs.
+The existing default-off `routing-v0.167.0-alpha.3.2` control plane admits this
+method only through the validated Windows runner with both native executables
+matching SHA256 `4b3286e35d7fe866c6b0eb3f07d7a4cdb5e96489576170dfd6b3a15aa1c67382`.
+The bridge's incoming environment and each final explicit child environment must
+both lack `CODEX_WINDOWS_REGISTERED_CORE`. Presence, even empty or `0`, rejects
+admission; the bridge does not clear a caller selection to enable this method.
+Other binaries, wrappers, platforms, and the user's older 0.166 backend remain
+unsupported. Digest verification is a pre-start path check: it retains the
+existing file-replacement TOCTOU window, does not lock the running image, and
+does not provide an OS credential isolation boundary.
+
+In that exact official source, absence at process startup keeps the OnceLock
+Registered Core flag false; dotenv cannot introduce CODEX_* variables. The
+remaining readiness branch reads per-home sandbox artifact versions and parsed
+configuration, without setup, account login, ACL or service changes. Native
+readiness diagnostics can write a debug log when `SBX_DEBUG=1`; this is neither
+a zero-file-write guarantee for the RPC nor for the whole native process. Source oracle:
+`openai/codex@c40729ea5cf8e947481b130c59807273eda2f8e9`,
+`app-server/src/request_processors/windows_sandbox_processor.rs:32-89,318-354`,
+`windows-sandbox-rs/src/app_package.rs:31-43`, `arg0/src/lib.rs:270-301`, and
+`windows-sandbox-rs/src/identity.rs:74-157` (all under `codex-rs/`).
+
+Only omitted/null unit params are accepted. Two bounded, fresh native reads must
+return exactly the same genuine `ready`, `notConfigured`, or `updateRequired`
+status; disagreement, native errors and unrecognized shapes return a fixed
+private-data-free error. No primary/best status selection, fallback or synthetic
+readiness is used. Four concurrent logical reads are allowed; failed siblings
+are abandoned using the existing bounded late-response tombstones. Trace
+metadata is validated but not propagated across providers. Setup, policy writes,
+and security feature changes remain unsupported. Even a genuine `ready` does
+not establish that a conversation or sandbox command succeeds.

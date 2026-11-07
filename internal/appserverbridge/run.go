@@ -95,6 +95,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 			return err
 		}
 	}
+	router.windowsReadiness167 = windowsReadinessLaunch167(runtime.GOOS, cfg)
 	router.controlHome167 = controlHome
 	router.controlNativeHomes167 = nativeHomes
 	router.auth = cfg.authCompatibility()
@@ -121,6 +122,9 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 		}
 		command := proc.CommandContext(processContext, b.Command, options.backendArgs(b.Provider)...)
 		command.Env = backendEnvironment(b)
+		if router.windowsReadiness167 && !windowsReadinessEnv167(command.Env) {
+			return errors.New("Windows readiness launch environment changed")
+		}
 		command.Dir = b.Home
 		if workingDirectory != "" {
 			command.Dir = workingDirectory
