@@ -1,4 +1,6 @@
 # Offline fixtures: no Desktop activation, account, network, or UI action.
+[CmdletBinding()]
+param([switch]$SkipWindowsHelperSmoke)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'desktop-live-welcome.ps1')
@@ -278,17 +280,19 @@ try {
             '-OwnerExecutable',$windowsHost,'-PackageFullName','Synthetic.InvalidContext','-SessionId','0')
         Pass ($launch.Environment['GITHUB_ACTIONS'] -ceq 'true' -and $launch.Environment['RUNNER_OS'] -ceq 'Windows' -and
             -not $launch.Environment.ContainsKey('GITHUB_TOKEN')) 'minimal helper launch environment'
-        $diagnostic=[ordered]@{}
-        try { $smoke=Invoke-LiveWelcome $launch -Diagnostic $diagnostic } catch {
-            Write-Output ('WINDOWS_HELPER_LAUNCH_DIAGNOSTIC=' + ($diagnostic | ConvertTo-Json -Compress))
-            throw 'Windows helper launch smoke failed before a validated result.'
-        }
-        Write-Output ('WINDOWS_HELPER_LAUNCH_RESULT=' + ($smoke | ConvertTo-Json -Depth 5 -Compress))
-        Pass ($smoke.status -ceq 'stopped' -and $smoke.reason -ceq 'invalid_context' -and
-            $smoke.stage -ceq 'initialization' -and $smoke.actions -eq 0 -and -not $smoke.continueInvoked -and
-            $null -eq $smoke.targetObservations -and $null -eq $smoke.initialReadObservation -and $diagnostic.reason -ceq 'helper_result_validated' -and
-            -not $diagnostic.partialActionUncertain) 'real PS5.1 helper rejects zero context before UI'
-        Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=invalid_context_verified'
+        if (-not $SkipWindowsHelperSmoke) {
+            $diagnostic=[ordered]@{}
+            try { $smoke=Invoke-LiveWelcome $launch -Diagnostic $diagnostic } catch {
+                Write-Output ('WINDOWS_HELPER_LAUNCH_DIAGNOSTIC=' + ($diagnostic | ConvertTo-Json -Compress))
+                throw 'Windows helper launch smoke failed before a validated result.'
+            }
+            Write-Output ('WINDOWS_HELPER_LAUNCH_RESULT=' + ($smoke | ConvertTo-Json -Depth 5 -Compress))
+            Pass ($smoke.status -ceq 'stopped' -and $smoke.reason -ceq 'invalid_context' -and
+                $smoke.stage -ceq 'initialization' -and $smoke.actions -eq 0 -and -not $smoke.continueInvoked -and
+                $null -eq $smoke.targetObservations -and $null -eq $smoke.initialReadObservation -and $diagnostic.reason -ceq 'helper_result_validated' -and
+                -not $diagnostic.partialActionUncertain) 'real PS5.1 helper rejects zero context before UI'
+            Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=invalid_context_verified'
+        } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_read_only_inspection' }
     } else { Write-Output 'WINDOWS_HELPER_LAUNCH_CHECK=not_run_non_windows' }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
 Write-Output "LIVE_WELCOME_OFFLINE_CHECKS=$count"

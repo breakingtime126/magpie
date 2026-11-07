@@ -2272,3 +2272,32 @@ UI evidence, separate from normal AUMID inheritance and native inference tests.
 The focused profile tests cover the disabled default, sole literal argument,
 wrong profiles and the unique preflight-to-alias assignment. Local source/YAML
 checks do not substitute for PowerShell execution or the actual Windows run.
+
+### Separate welcome-action tests from the zero-input UI gate
+
+The reviewed 4239 read-only lane requires `EnableReadOnlyWinAppInspection`
+and rejects `EnableReviewedLiveWelcome`. The only runtime call to
+`Invoke-LiveWelcome` and `desktop-welcome-step.ps1` is inside the latter
+switch's branch, so that action helper is unreachable in this lane.
+`Invoke-WinAppInspection` directly uses the shared `BoundedProcess` and
+`New-LiveStart` environment builder; the builder's `Welcome` parameter selects
+an environment allowlist, not an input action.
+
+For this one marked lane, the existing common fixture suite explicitly selects
+`SkipWindowsHelperSmoke`, which skips only the PS5 action-helper launch smoke.
+All shared config/readiness/finalization, environment, supervisor, deadline and
+output-limit checks remain blocking, as do the full winapp provenance, schema,
+identity, cleanup and zero-action fixtures. The unchanged harness still checks
+the signed package, exact payloads, registration, owned process/window and
+bounded single reader. No runtime assertion or safety check is disabled.
+
+The PS5 welcome-helper smoke and welcome policy/native-interop fixtures run in
+the independent `welcome-helper-offline` job, gated by the same 4239/winapp
+marker pair and `observer-unit`. The real read-only UI job does not depend on
+that sibling job. Its failures remain failures and can make the workflow red;
+there is no `continue-on-error` or claim that all tests passed. The main job
+prints explicit `not_run_read_only_inspection` labels for those two checks.
+Other lanes keep the old default blocking behavior. The three-phase diagnostic
+proposal is not included; helper code, stdin, deadlines and input authority are
+unchanged. This split distinguishes relevant preconditions from an independent
+unresolved action-helper test, rather than retrying or hiding its failure.
