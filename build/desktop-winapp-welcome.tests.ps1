@@ -35,6 +35,11 @@ function Action([string]$Operation) {
     $action=$(if($Operation -ceq 'continue'){'invoke'}else{$Operation})
     [ordered]@{elementId=$selector;pattern=$pattern;requestedAction=$action;performedAction=$action;hwnd=123}
 }
+function Resolution([string]$Name,[string]$Type,[string]$Id,[string]$Slug,[string]$Toggle='') {
+    $element=Node $Name $Type $Slug;$element.automationId=$Id
+    if ($Type -ceq 'CheckBox') { $element.toggleState=$Toggle }
+    [ordered]@{elementId=$Slug;element=$element;properties=[ordered]@{AutomationId=$Id}}
+}
 $page=ConvertTo-WinAppWelcomeSnapshot (Json (Page)) 123
 Pass ($page.Decision -ceq 'welcome') 'schema-derived welcome accepted without treating disabled Continue as actionable'
 $checkbox=Get-WinAppWelcomeTarget $page 'Suggest personalized tasks' 'CheckBox'
@@ -111,6 +116,52 @@ foreach ($key in @('hwnd','pattern','requestedAction','performedAction','element
     Reject { Assert-WinAppWelcomeAction (Json $bad) 123 $checkbox 'toggle' } 'only exact explicit single-action receipt accepted'
 }
 
+# Pinned upstream typed queries return runtime slugs even when inspect promoted
+# a unique AutomationId. These are synthetic schemas, not a diagnosis of 1503697d.
+$promoted=Page;$promoted.windows[0].elements[2].automationId='PRIVATE_ID_CANARY';$promoted.windows[0].elements[2].selector='PRIVATE_ID_CANARY'
+$promotedPage=ConvertTo-WinAppWelcomeSnapshot (Json $promoted) 123
+$resolvedText=Json (Resolution 'Suggest personalized tasks' 'CheckBox' 'PRIVATE_ID_CANARY' 'chk-privateidcanary-1234' 'on')
+$bindingDiagnostic=[ordered]@{}
+$resolved=Get-WinAppWelcomeTarget $promotedPage 'Suggest personalized tasks' 'CheckBox' { $resolvedText } $bindingDiagnostic
+Pass ($resolved.Selector -ceq 'chk-privateidcanary-1234' -and $bindingDiagnostic.bindings[0].selectorKind -ceq 'promoted_id' -and
+    $bindingDiagnostic.bindings[0].resolutionAttempted -and $bindingDiagnostic.bindings[0].resolved) 'promoted inspect identity receives only a verified runtime slug'
+Pass ((Json $bindingDiagnostic) -notmatch 'PRIVATE_ID_CANARY|chk-|Suggest personalized tasks') 'binding diagnostics contain only fixed categories and booleans'
+foreach ($variant in @('name','type','automation-id','property-id','element-id','promoted-selector','disabled','offscreen','not-invokable','toggle-changed','property-type','missing-property','multiple-elements')) {
+    $badResolved=Resolution 'Suggest personalized tasks' 'CheckBox' 'PRIVATE_ID_CANARY' 'chk-privateidcanary-1234' 'on'
+    switch($variant) {
+        'name' { $badResolved.element.name='Another control' }
+        'type' { $badResolved.element.type='Button' }
+        'automation-id' { $badResolved.element.automationId='other' }
+        'property-id' { $badResolved.properties.AutomationId='other' }
+        'element-id' { $badResolved.elementId='chk-other-1234' }
+        'promoted-selector' { $badResolved.element.selector='PRIVATE_ID_CANARY';$badResolved.elementId='PRIVATE_ID_CANARY' }
+        'disabled' { $badResolved.element.isEnabled=$false }
+        'offscreen' { $badResolved.element.isOffscreen=$true }
+        'not-invokable' { $badResolved.element.isInvokable=$false }
+        'toggle-changed' { $badResolved.element.toggleState='off' }
+        'property-type' { $badResolved.properties.AutomationId=@('PRIVATE_ID_CANARY') }
+        'missing-property' { $badResolved.properties.Remove('AutomationId') }
+        'multiple-elements' { $badResolved.element=@($badResolved.element,$badResolved.element) }
+    }
+    $bindingDiagnostic=[ordered]@{}
+    Reject { Get-WinAppWelcomeTarget $promotedPage 'Suggest personalized tasks' 'CheckBox' { Json $badResolved } $bindingDiagnostic } 'typed read mismatch cannot authorize an action'
+    Pass ($bindingDiagnostic.bindings[0].resolutionAttempted -and -not $bindingDiagnostic.bindings[0].resolved) 'failed resolution remains a single failed binding'
+}
+foreach ($variant in @('missing-selector','unsupported-selector','missing-id','disabled','not-invokable')) {
+    $bad=Page;$bad.windows[0].elements[2].automationId='PRIVATE_ID_CANARY';$bad.windows[0].elements[2].selector='PRIVATE_ID_CANARY'
+    switch($variant) {
+        'missing-selector' { $bad.windows[0].elements[2].selector='' }
+        'unsupported-selector' { $bad.windows[0].elements[2].selector='different-id' }
+        'missing-id' { $bad.windows[0].elements[2].automationId='' }
+        'disabled' { $bad.windows[0].elements[2].isEnabled=$false }
+        'not-invokable' { $bad.windows[0].elements[2].isInvokable=$false }
+    }
+    $script:resolutionCalls=0;$bindingDiagnostic=[ordered]@{}
+    Reject { Get-WinAppWelcomeTarget (ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123) 'Suggest personalized tasks' 'CheckBox' { $script:resolutionCalls++;$resolvedText } $bindingDiagnostic } 'incomplete identity or disabled target never broadens into a read query'
+    Pass ($resolutionCalls -eq 0 -and -not $bindingDiagnostic.bindings[0].resolutionAttempted) 'no resolver retry for ineligible original target'
+    Pass ($bindingDiagnostic.bindings[0].reason -cin @('selector_unavailable','target_disabled','target_not_invokable')) 'binding failure reason is fixed and actionable without raw UI identity'
+}
+
 # Construction only: inspect and each explicit pattern command retain the same
 # HWND, clean child environment and new private coordination/cache paths.
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('winapp-welcome-tests-'+[guid]::NewGuid().ToString('N'))
@@ -119,8 +170,8 @@ $oldSystemRoot=$env:SystemRoot
 if (-not $env:SystemRoot) { $env:SystemRoot=$temporary }
 try {
     $tool=[pscustomobject]@{Executable=(Get-Process -Id $PID).Path;Directory=$temporary}
-    foreach ($op in @('read','selected','toggle','select','continue')) {
-        $selector=@{read='';selected='rdo-engineering-abcd';toggle='chk-suggestpersonal-1234';select='rdo-engineering-abcd';continue='btn-continue-5678'}[$op]
+    foreach ($op in @('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue')) {
+        $selector=@{read='';selected='rdo-engineering-abcd';toggle='chk-suggestpersonal-1234';select='rdo-engineering-abcd';continue='btn-continue-5678';'resolve-engineering'='';'resolve-suggestions'='';'resolve-continue'=''}[$op]
         $start=New-WinAppWelcomeStart $tool 123 $op $selector
         $expected=switch($op) {
             read {'ui inspect -w 123 --depth 16 --json'}
@@ -128,6 +179,9 @@ try {
             toggle {'ui invoke chk-suggestpersonal-1234 --action toggle -w 123 --json'}
             select {'ui invoke rdo-engineering-abcd --action select -w 123 --json'}
             continue {'ui invoke btn-continue-5678 --action invoke -w 123 --json'}
+            'resolve-engineering' {'ui get-property Engineering --type RadioButton --property AutomationId -w 123 --json'}
+            'resolve-suggestions' {'ui get-property Suggest personalized tasks --type CheckBox --property AutomationId -w 123 --json'}
+            'resolve-continue' {'ui get-property Continue --type Button --property AutomationId -w 123 --json'}
         }
         Pass (($start.ArgumentList -join ' ') -ceq $expected) 'exact argv never selects automatic patterns, another window or coordinates'
         Pass ($start.Environment['WINAPP_CLI_TELEMETRY_OPTOUT'] -ceq '1' -and
@@ -138,6 +192,8 @@ try {
     }
     Reject { New-WinAppWelcomeStart $tool 123 'toggle' 'rdo-engineering-abcd' } 'operation cannot use another target type'
     Reject { New-WinAppWelcomeStart $tool 123 'toggle-off' 'chk-suggestpersonal-1234' } 'two-toggle convenience command is never admitted'
+    Reject { New-WinAppWelcomeStart $tool 123 'toggle' 'PRIVATE_ID_CANARY' } 'promoted IDs never become action argv'
+    Reject { New-WinAppWelcomeStart $tool 123 'resolve-suggestions' 'PRIVATE_ID_CANARY' } 'readonly resolver never accepts an arbitrary query argument'
 } finally { $env:SystemRoot=$oldSystemRoot;Remove-Item -LiteralPath $temporary -Recurse -Force }
 
 $tokens=$null;$errors=$null
@@ -163,6 +219,13 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     $script:operations+=,$Operation
     if ($script:mode -ceq 'uncertain' -and $Operation -ceq 'toggle') { throw 'Synthetic uncertain action.' }
     if ($script:mode -ceq 'identity' -and $script:operations.Count -eq 2) { throw 'Synthetic changed identity.' }
+    if ($Operation -like 'resolve-*') {
+        if ($script:mode -ceq 'resolution-failure') { throw 'Synthetic nonzero typed read.' }
+        $spec=@{'resolve-engineering'=@('Engineering','RadioButton','engineering','rdo-engineering-abcd');
+            'resolve-suggestions'=@('Suggest personalized tasks','CheckBox','suggestpersonal','chk-suggestpersonal-1234');
+            'resolve-continue'=@('Continue','Button','continue','btn-continue-5678')}[$Operation]
+        return Json (Resolution $spec[0] $spec[1] $spec[2] $spec[3] $(if($script:reads -eq 1){'on'}else{'off'}))
+    }
     if ($Operation -ceq 'read') {
         $script:reads++
         if ($script:reads -eq 4) { return Json (Page -Next) }
@@ -174,19 +237,27 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
             $page.windows[0].elements+=@((Node 'Describe something else' 'Edit'),(Node 'PRIVATE_CANARY' 'Button' 'btn-privatecanary-9999'))
             $page.windows[0].elementCount+=2
         }
+        if ($script:mode -cin @('promoted','resolution-failure')) {
+            for($i=1;$i -le 3;$i++) {
+                $id=@('','engineering','suggestpersonal','continue')[$i]
+                $page.windows[0].elements[$i].automationId=$id;$page.windows[0].elements[$i].selector=$id
+            }
+        }
         return Json $page
     }
     if ($Operation -ceq 'selected') { $script:selectedReads++;return Json (Selected ($script:selectedReads -gt 1)) }
     return Json (Action $Operation)
 }
-foreach ($mode in @('normal','auxiliary','uncertain','identity','indeterminate','still-on','final-identity')) {
+foreach ($mode in @('normal','auxiliary','promoted','resolution-failure','uncertain','identity','indeterminate','still-on','final-identity')) {
     $script:mode=$mode;$script:operations=@();$script:reads=0;$script:selectedReads=0
     $diagnostic=[ordered]@{};$result=Invoke-WinAppWelcome $null 123 {
         if ($script:mode -ceq 'final-identity' -and $script:reads -eq 4) { throw 'Synthetic final identity failure.' }
     } $diagnostic
-    if ($mode -cin @('normal','auxiliary')) {
+    if ($mode -cin @('normal','auxiliary','promoted')) {
         Pass ($result.status -ceq 'observed' -and $result.actions -eq 3 -and $result.nextScreen -ceq 'unreviewed_screen') 'one complete fixed welcome transition'
-        Pass (($operations -join ',') -ceq 'read,toggle,read,selected,select,read,selected,continue,read') 'each explicit action once with required state reads'
+        $expected='read,toggle,read,selected,select,read,selected,continue,read'
+        if ($mode -ceq 'promoted') { $expected='read,resolve-suggestions,toggle,read,resolve-suggestions,resolve-engineering,selected,select,read,resolve-engineering,resolve-suggestions,selected,resolve-continue,continue,read' }
+        Pass (($operations -join ',') -ceq $expected) 'conditional readonly resolution never adds an action or a retry'
     } elseif ($mode -ceq 'final-identity') {
         Pass ($result.status -ceq 'stopped' -and $result.actions -eq 3 -and $result.continueInvoked -and
             $result.nextScreen -ceq 'not_observed' -and $diagnostic.partialActionUncertain) 'late identity failure preserves valid stopped schema and action uncertainty'
@@ -196,6 +267,7 @@ foreach ($mode in @('normal','auxiliary','uncertain','identity','indeterminate',
         Pass (@($operations | Where-Object { $_ -ceq 'toggle' }).Count -le 1) 'toggle never repeated'
         if ($mode -ceq 'indeterminate') { Pass ($result.actions -eq 0) 'Indeterminate never reaches an action' }
         if ($mode -ceq 'uncertain') { Pass $diagnostic.partialActionUncertain 'unknown action remains uncertain' }
+        if ($mode -ceq 'resolution-failure') { Pass ($result.actions -eq 0 -and -not $diagnostic.partialActionUncertain -and ($operations -join ',') -ceq 'read,resolve-suggestions') 'failed initial resolution stops before any action without retry' }
     }
     Pass ((Json $result) -notmatch 'PRIVATE_CANARY|rdo-|chk-|btn-') 'raw selector and UI data remain private'
 }

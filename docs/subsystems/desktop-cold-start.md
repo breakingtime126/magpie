@@ -2708,8 +2708,9 @@ fallback, coordinates, toggle-off's possible second toggle, focus restoration
 and retries are never selected. One next-page read and the existing parent
 `official-window-after-welcome.png` follow; the next page is not acted upon.
 
-One shared 30-second active budget covers the entire sequence (at most nine
-CLI commands), not 30 seconds per command. Each child receives only the
+One shared 30-second active budget covers the entire sequence: up to nine normal
+CLI commands plus at most six conditional typed readonly resolutions, not 30
+seconds per command. Each child receives only the
 remaining budget and the unchanged 256-KiB-per-stream limit. Cleanup retains
 its bounded exit-confirmation grace and cannot authorize another action.
 Every command uses fresh private lock/cache paths, exact JSON and documented
@@ -2779,3 +2780,53 @@ missing/duplicate headings and missing/duplicate/wrong-type/case targets, retain
 protected disabled/offscreen text stops, and run the fixed action sequence with
 auxiliary controls without adding an action. No new observation, deadline,
 workflow gate or diagnostic framework is introduced.
+
+
+### Resolve promoted inspect IDs without using them for input
+
+The [1503697d run](https://github.com/breakingtime126/magpie/actions/runs/42366179017/job/128385740533)
+passed the scene read (43088 bytes, exit 0, no timeout) and stopped at
+`suggestions_off/uia_provider_error`, after one read and before any action.
+`partialActionUncertain` was false. The report did not identify which target
+availability/selector check failed. Promoted IDs are a proven source-contract
+gap, not an established diagnosis of that particular run.
+
+Pinned v0.7.1 `InspectAsync` promotes globally unique AutomationIds into
+selectors. `UiQueryOptions --type` instead routes `get-property` through
+`SearchConstrained`, which retains runtime-ID slugs and rejects more than one
+match. A fixed Name query is not itself exact identity: upstream prefers exact
+AutomationId, then case-insensitive Name/ID substring matches. This path may
+still use the documented same-PID read-root fallback, and its scrubbed result
+contains no independent HWND proof. It remains readonly, never an input target
+by itself.
+
+Only an otherwise eligible fixed target whose nonempty inspect selector equals
+its nonempty AutomationId may request one typed lookup for that snapshot:
+`ui get-property <fixed Name> --type <fixed Type> --property AutomationId -w <original HWND> --json`.
+The three operations have hardcoded names/types and accept no arbitrary query
+argument. Missing IDs/selectors, other selector forms, disabled targets or
+missing direct action support stop instead. Existing valid runtime slugs do
+not add a lookup. There is no lookup retry, even after a timeout or nonzero exit.
+
+Returned Name/Type must exactly match the observed fixed target; element and
+property AutomationId strings must both equal the original observed ID. The
+result must be enabled, visible and directly invokable, and elementId must equal
+a runtime slug with the expected type and normalized identity. A promoted ID
+returned again is rejected. Checkbox state must remain the same known On/Off
+state across the lookup. InvokableAncestor hints are ignored. Only the verified
+runtime slug reaches the unchanged explicit action argv, receipt/state checks
+and parent identity/foreground guards. The current six target bindings can add
+at most six readonly commands within the same original 30-second budget; the
+three-action maximum and no-retry rule are unchanged.
+
+`parentDiagnostic.bindings` now contains only a fixed target enum, selector kind,
+availability booleans and fixed binding/result reasons. It distinguishes a
+disabled target, unavailable direct pattern, missing/unsupported selector and
+read-resolution validation failure without exposing names, AutomationIds,
+selectors, properties or raw errors. Raw property JSON remains private; upstream
+may probe multiple properties before filtering the requested output. The new
+synthetic fixtures verify promoted-to-runtime binding, exact-field/type/state
+mismatch rejection, incomplete-ID no-query behavior, literal readonly argv,
+redaction and the fixed action sequence with optional reads. No successful
+welcome, next-page, model selection or stronger atomic identity guarantee is
+claimed from these fixtures.

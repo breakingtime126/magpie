@@ -53,37 +53,101 @@ function ConvertTo-WinAppWelcomeSnapshot([string]$Text,[long]$WindowHandle) {
     if ($summary.errorMarkerCount -gt 0) { throw 'Welcome error marker observed.' }
     return [pscustomobject]@{Nodes=$nodes.ToArray();Decision=$decision}
 }
-function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type) {
+function Get-WinAppWelcomeSelectorKind($Node) {
+    if (-not $Node.Selector) { return 'missing' }
+    $prefix=@{RadioButton='rdo';CheckBox='chk';Button='btn'}[$Node.Type]
+    $identityName=($Node.AutomationId.ToLowerInvariant() -replace '[^a-z0-9]','')
+    if (-not $identityName) { $identityName=($Node.Name.ToLowerInvariant() -replace '[^a-z0-9]','') }
+    if ($identityName.Length -gt 15) { $identityName=$identityName.Substring(0,15) }
+    if ($prefix -and $Node.Selector -cmatch ('\A'+$prefix+'-'+$identityName+'-[a-f0-9]{4}\z')) { return 'runtime_slug' }
+    if ($Node.AutomationId -and $Node.Selector -ceq $Node.AutomationId) { return 'promoted_id' }
+    return 'unsupported'
+}
+function Read-WinAppWelcomeResolvedTarget([string]$Text,$Original,[System.Collections.IDictionary]$Binding) {
+    $Binding.reason='resolution_schema_invalid'
+    $value=ConvertFrom-LiveJSON $Text 262144
+    Assert-WinAppFields $value @('elementId','element','properties')
+    Assert-LiveStrings $value @('elementId')
+    Assert-WinAppFields $value.properties @('AutomationId')
+    Assert-LiveStrings $value.properties @('AutomationId')
+    $element=$value.element
+    Assert-WinAppFields $element @('name','type','automationId','selector','isEnabled','isOffscreen','isInvokable') @(
+        'className','x','y','width','height','value','toggleState','expandState','scrollDir','children','hasMoreChildren','invokableAncestor')
+    Assert-LiveStrings $element @('name','type','automationId','selector')
+    $Binding.reason='resolution_identity_mismatch'
+    if ($element.name -cne $Original.Name -or $element.type -cne $Original.Type -or
+        $element.automationId -cne $Original.AutomationId -or $value.properties.AutomationId -cne $Original.AutomationId -or
+        $value.elementId -cne $element.selector) { throw 'Resolved welcome identity mismatch.' }
+    $Binding.reason='resolution_state_unavailable'
+    if ($element.isEnabled -isnot [bool] -or -not $element.isEnabled -or
+        $element.isOffscreen -isnot [bool] -or $element.isOffscreen -or
+        $element.isInvokable -isnot [bool] -or -not $element.isInvokable) { throw 'Resolved welcome state unavailable.' }
+    $toggle=$Original.ToggleState
+    if ($Original.Type -ceq 'CheckBox') {
+        Assert-LiveStrings $element @('toggleState')
+        if (@('on','off') -cnotcontains $element.toggleState -or $element.toggleState -cne $toggle) { throw 'Resolved toggle state changed.' }
+    }
+    $resolved=[pscustomobject]@{Name=$element.name;Type=$element.type;AutomationId=$element.automationId;
+        Selector=$element.selector;Enabled=$true;Invokable=$true;Interactive=$true;ToggleState=$toggle}
+    $Binding.reason='resolution_selector_invalid'
+    if ((Get-WinAppWelcomeSelectorKind $resolved) -cne 'runtime_slug') { throw 'Resolved runtime slug unavailable.' }
+    $Binding.reason='runtime_slug_resolved';$Binding.resolved=$true
+    return $resolved
+}
+function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptblock]$Resolve=$null,
+    [System.Collections.IDictionary]$Diagnostic=$null) {
+    $binding=[ordered]@{target='other';reason='target_not_authorized';enabled=$null;visible=$null;
+        directInvokable=$null;automationIdPresent=$false;selectorKind='not_observed';resolutionAttempted=$false;resolved=$false}
+    if ($null -ne $Diagnostic) {
+        if (-not $Diagnostic.Contains('bindings')) { $Diagnostic.bindings=@() }
+        $Diagnostic.bindings+=,$binding
+    }
     if (@('Engineering|RadioButton','Suggest personalized tasks|CheckBox','Continue|Button') -cnotcontains ($Name+'|'+$Type)) {
         throw 'Unreviewed welcome action target.'
     }
+    $binding.target=@{Engineering='engineering';'Suggest personalized tasks'='suggestions';Continue='continue'}[$Name]
+    $binding.reason='scene_unavailable'
     if ($Snapshot.Decision -cne 'welcome') { throw 'Welcome page not reviewed.' }
     $matches=@($Snapshot.Nodes | Where-Object { $_.Name -ceq $Name -and $_.Type -ceq $Type })
-    if ($matches.Count -ne 1 -or -not $matches[0].Enabled -or -not $matches[0].Invokable) { throw 'Welcome target unavailable.' }
-    $node=$matches[0]
-    $prefix=@{RadioButton='rdo';CheckBox='chk';Button='btn'}[$Type]
-    $identityName=($node.AutomationId.ToLowerInvariant() -replace '[^a-z0-9]','')
-    if (-not $identityName) { $identityName=($node.Name.ToLowerInvariant() -replace '[^a-z0-9]','') }
-    if ($identityName.Length -gt 15) { $identityName=$identityName.Substring(0,15) }
-    $slug=$node.Selector -cmatch ('\A'+$prefix+'-'+$identityName+'-[a-f0-9]{4}\z')
-    if (-not $slug) { throw 'Exact welcome selector unavailable.' }
-    return $node
+    $binding.reason='target_not_unique'
+    if ($matches.Count -ne 1) { throw 'Welcome target unavailable.' }
+    $node=$matches[0];$binding.enabled=$node.Enabled;$binding.visible=$true;$binding.directInvokable=$node.Invokable
+    $binding.automationIdPresent=[bool]$node.AutomationId;$binding.selectorKind=Get-WinAppWelcomeSelectorKind $node
+    $binding.reason='target_disabled'
+    if (-not $node.Enabled) { throw 'Welcome target unavailable.' }
+    $binding.reason='target_not_invokable'
+    if (-not $node.Invokable) { throw 'Welcome target unavailable.' }
+    if ($binding.selectorKind -ceq 'runtime_slug') { $binding.reason='runtime_slug_observed';return $node }
+    $binding.reason='selector_unavailable'
+    # Only the upstream promoted-ID form can request one typed readonly lookup.
+    # A missing/mismatched identity is not a reason to broaden the query.
+    if ($binding.selectorKind -cne 'promoted_id' -or $null -eq $Resolve) { throw 'Exact welcome selector unavailable.' }
+    $binding.resolutionAttempted=$true;$binding.reason='resolution_read_unavailable'
+    $text=& $Resolve $node
+    return Read-WinAppWelcomeResolvedTarget $text $node $binding
 }
 function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
-    [ValidateSet('read','selected','toggle','select','continue')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue')][string]$Operation,[string]$Selector='') {
     $directory=Join-Path $Tool.Directory ('welcome-'+[guid]::NewGuid().ToString('N'))
     if (Test-Path -LiteralPath $directory) { throw 'Welcome tool scratch not fresh.' }
     [void][IO.Directory]::CreateDirectory($directory)
     $localTool=[pscustomobject]@{Executable=$Tool.Executable;Directory=$directory}
     $start=New-WinAppStart $localTool $WindowHandle -RenderedDepth 16
     if ($Operation -cne 'read') {
-        $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn'}[$Operation]
-        if ($Selector -cnotmatch ('\A'+$prefix+'-[a-z0-9]{1,15}-[a-f0-9]{4}\z')) { throw 'Invalid welcome selector.' }
         $arguments=@('ui')
-        if ($Operation -ceq 'selected') { $arguments+=@('get-property',$Selector,'--property','IsSelected') }
-        else {
-            $action=$(if ($Operation -ceq 'continue') { 'invoke' } else { $Operation })
-            $arguments+=@('invoke',$Selector,'--action',$action)
+        if ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue')) {
+            if ($Selector) { throw 'Readonly target resolution does not accept a selector.' }
+            $spec=@{'resolve-engineering'=@('Engineering','RadioButton');
+                'resolve-suggestions'=@('Suggest personalized tasks','CheckBox');'resolve-continue'=@('Continue','Button')}[$Operation]
+            $arguments+=@('get-property',$spec[0],'--type',$spec[1],'--property','AutomationId')
+        } else {
+            $prefix=@{selected='rdo';toggle='chk';select='rdo';continue='btn'}[$Operation]
+            if ($Selector -cnotmatch ('\A'+$prefix+'-[a-z0-9]{1,15}-[a-f0-9]{4}\z')) { throw 'Invalid welcome selector.' }
+            if ($Operation -ceq 'selected') { $arguments+=@('get-property',$Selector,'--property','IsSelected') }
+            else {
+                $action=$(if ($Operation -ceq 'continue') { 'invoke' } else { $Operation })
+                $arguments+=@('invoke',$Selector,'--action',$action)
+            }
         }
         $arguments+=@('-w',$WindowHandle.ToString([Globalization.CultureInfo]::InvariantCulture),'--json')
         $start.ArgumentList.Clear(); foreach ($argument in $arguments) { $start.ArgumentList.Add($argument) }
@@ -92,7 +156,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
 }
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,
-    [ValidateSet('read','selected','toggle','select','continue')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue')][string]$Operation,[string]$Selector='') {
     $remaining=30000-[int]$Deadline.ElapsedMilliseconds
     if ($remaining -le 0) { throw 'Welcome deadline exceeded.' }
     $record=[ordered]@{operation=$Operation;status='stopped';reason='identity_unavailable';exitCode=$null;
@@ -160,7 +224,7 @@ function Invoke-WinAppWelcome($Tool,[long]$WindowHandle,[scriptblock]$CheckIdent
     $result=[ordered]@{schema=1;scope='synthetic-welcome-only';status='stopped';reason='uia_provider_error';
         stage='welcome_read';actions=0;suggestionsDisabled=$false;engineeringSelected=$false;
         continueInvoked=$false;nextScreen='not_observed';targetObservations=$null;initialReadObservation=$null}
-    $Diagnostic.stage='official_tool_welcome';$Diagnostic.reason='welcome_stopped';$Diagnostic.commands=@()
+    $Diagnostic.stage='official_tool_welcome';$Diagnostic.reason='welcome_stopped';$Diagnostic.commands=@();$Diagnostic.bindings=@()
     $Diagnostic.partialActionUncertain=$false;$Diagnostic.exitCode=$null;$Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
     $deadline=[Diagnostics.Stopwatch]::StartNew()
     try {
@@ -185,27 +249,31 @@ function Invoke-WinAppWelcome($Tool,[long]$WindowHandle,[scriptblock]$CheckIdent
             Assert-WinAppWelcomeAction $text $WindowHandle $Target $Action
             $Diagnostic.partialActionUncertain=$false
         }
+        $resolveTarget={param($target)
+            $operation=@{Engineering='resolve-engineering';'Suggest personalized tasks'='resolve-suggestions';Continue='resolve-continue'}[$target.Name]
+            Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $deadline $Diagnostic $operation
+        }
         $page=Read-Page;Require-Page $page
         $result.stage='suggestions_off'
-        $checkbox=Get-WinAppWelcomeTarget $page 'Suggest personalized tasks' 'CheckBox'
+        $checkbox=Get-WinAppWelcomeTarget $page 'Suggest personalized tasks' 'CheckBox' $resolveTarget $Diagnostic
         if (@('on','off') -cnotcontains $checkbox.ToggleState) { $result.reason='suggestions_not_off';throw 'Unknown toggle state.' }
         if ($checkbox.ToggleState -ceq 'on') { Perform $checkbox 'toggle' 'toggle' }
         $page=Read-Page;Require-Page $page
-        $checkbox=Get-WinAppWelcomeTarget $page 'Suggest personalized tasks' 'CheckBox'
+        $checkbox=Get-WinAppWelcomeTarget $page 'Suggest personalized tasks' 'CheckBox' $resolveTarget $Diagnostic
         if ($checkbox.ToggleState -cne 'off') { $result.reason='suggestions_not_off';throw 'Suggestions remain enabled.' }
         $result.suggestionsDisabled=$true;$result.stage='engineering_select'
-        $radio=Get-WinAppWelcomeTarget $page 'Engineering' 'RadioButton'
+        $radio=Get-WinAppWelcomeTarget $page 'Engineering' 'RadioButton' $resolveTarget $Diagnostic
         $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $deadline $Diagnostic 'selected' $radio.Selector
         if (-not (Read-WinAppWelcomeSelected $text $radio)) { Perform $radio 'select' 'select' }
         $page=Read-Page;Require-Page $page
-        $radio=Get-WinAppWelcomeTarget $page 'Engineering' 'RadioButton'
-        $checkbox=Get-WinAppWelcomeTarget $page 'Suggest personalized tasks' 'CheckBox'
+        $radio=Get-WinAppWelcomeTarget $page 'Engineering' 'RadioButton' $resolveTarget $Diagnostic
+        $checkbox=Get-WinAppWelcomeTarget $page 'Suggest personalized tasks' 'CheckBox' $resolveTarget $Diagnostic
         $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $deadline $Diagnostic 'selected' $radio.Selector
         if (-not (Read-WinAppWelcomeSelected $text $radio) -or $checkbox.ToggleState -cne 'off') {
             $result.reason='selection_state_changed';throw 'Welcome selection state changed.'
         }
         $result.engineeringSelected=$true;$result.stage='continue_invoke'
-        $button=Get-WinAppWelcomeTarget $page 'Continue' 'Button';Perform $button 'continue' 'invoke'
+        $button=Get-WinAppWelcomeTarget $page 'Continue' 'Button' $resolveTarget $Diagnostic;Perform $button 'continue' 'invoke'
         $result.continueInvoked=$true;$result.stage='next_screen_read'
         Start-Sleep -Milliseconds 1000
         $after=Read-Page
