@@ -324,5 +324,52 @@ foreach ($field in @('alpha_requests','beta_requests')) {
 $selfAudit.fixture_errors=1
 Reject { Assert-LiveAudit $selfAudit 0 -FixtureProfile 'synthetic-models-4239' } 'self-authored fixture errors remain errors'
 Reject { Get-LiveFixtureScope 'SYNTHETIC-MODELS-4239' } 'profile remains case-sensitive'
+# Owned catalog metadata has its own exact scope and a verified private file.
+$ownedProfile='bridge-owned-catalog-4239'
+$ownedReady=ConvertFrom-LiveJSON ($selfReady | ConvertTo-Json -Compress)
+$ownedReady.scope='desktop-bridge-owned-catalog-fixtures-only'
+$ownedReady.catalog_source='bridge-owned-self-authored-test-models-v1'
+$ownedReady | Add-Member -NotePropertyName owned_catalog_sha256 -NotePropertyValue ('a'*64)
+Assert-LiveReady $ownedReady -Build4239 $true -FixtureProfile $ownedProfile
+Reject { Assert-LiveReady $ownedReady -Build4239 $true -FixtureProfile 'synthetic-models-4239' } 'owned readiness cannot leak into unowned profile'
+Reject { Assert-LiveReady $selfReady -Build4239 $true -FixtureProfile $ownedProfile } 'owned readiness needs its digest'
+foreach ($value in @('',('A'*64),('a'*63),'PRIVATE_CANARY')) {
+    $bad=ConvertFrom-LiveJSON ($ownedReady | ConvertTo-Json -Compress);$bad.owned_catalog_sha256=$value
+    Reject { Assert-LiveReady $bad -Build4239 $true -FixtureProfile $ownedProfile } 'owned hash is exact lower hex'
+}
+$ownedAudit=ConvertFrom-LiveJSON '{"schema":1,"scope":"desktop-bridge-owned-catalog-fixtures-only","status":"stopped","failure":"","alpha_requests":0,"beta_requests":0,"fixture_errors":0}'
+Assert-LiveAudit $ownedAudit 0 -FixtureProfile $ownedProfile
+foreach ($field in @('alpha_requests','beta_requests')) {
+    $ownedAudit.$field=1
+    Reject { Assert-LiveAudit $ownedAudit 0 -FixtureProfile $ownedProfile } 'owned menu remains zero requests'
+    $ownedAudit.$field=0
+}
+$ownedScratch=Join-Path ([IO.Path]::GetTempPath()) ('owned-catalog-offline-'+[guid]::NewGuid().ToString('N'))
+$ownedControl=Join-Path $ownedScratch 'control-home'
+New-Item -ItemType Directory -Path $ownedControl -Force | Out-Null
+try {
+    $ownedPath=Join-Path $ownedControl 'bridge-model-catalog.json'
+    # This tests path/hash ownership only, not the production catalog schema.
+    [IO.File]::WriteAllText($ownedPath,'{"models":[]}',[Text.UTF8Encoding]::new($false))
+    $ownedReady.owned_catalog_sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $ownedPath).Hash.ToLowerInvariant()
+    $ownedBackends=@();foreach ($id in @('alpha','beta')) {
+        $ownedBackends += [pscustomobject]@{id=$id;provider=($id+'_provider');command=$exe;home=(Join-Path $ownedScratch ($id+'-home'));
+            codex_home=(Join-Path $ownedScratch ($id+'-codex'));startup_probe_sha256=$newNativeSHA}
+    }
+    $ownedConfig=[pscustomobject]@{backends=$ownedBackends;working_directory=(Join-Path $ownedScratch 'workspace');
+        control_plane='routing-v0.167.0-alpha.3.2';control_home=$ownedControl;bridge_model_catalog_json=$ownedPath}
+    $checked=ConvertTo-LiveConfiguration $ownedConfig $ownedScratch $exe -Build4239 $true -FixtureProfile $ownedProfile -Readiness $ownedReady
+    Pass ($checked.OwnedCatalogPath -ceq $ownedPath -and $checked.OwnedCatalogSHA256 -ceq $ownedReady.owned_catalog_sha256) 'owned file exact path and actual digest preserved'
+    Reject { ConvertTo-LiveConfiguration $ownedConfig $ownedScratch $exe -Build4239 $true } 'legacy rejects owned catalog config'
+    $ownedConfig.bridge_model_catalog_json=Join-Path $ownedControl 'other.json'
+    Reject { ConvertTo-LiveConfiguration $ownedConfig $ownedScratch $exe -Build4239 $true -FixtureProfile $ownedProfile -Readiness $ownedReady } 'foreign catalog path rejected before reading'
+    $ownedConfig.bridge_model_catalog_json=$ownedPath
+    [IO.File]::AppendAllText($ownedPath,' ')
+    Reject { ConvertTo-LiveConfiguration $ownedConfig $ownedScratch $exe -Build4239 $true -FixtureProfile $ownedProfile -Readiness $ownedReady } 'changed owned bytes rejected'
+    Remove-Item -LiteralPath $ownedPath
+    Reject { ConvertTo-LiveConfiguration $ownedConfig $ownedScratch $exe -Build4239 $true -FixtureProfile $ownedProfile -Readiness $ownedReady } 'missing owned file rejected'
+    New-Item -ItemType Directory -Path $ownedPath | Out-Null
+    Reject { ConvertTo-LiveConfiguration $ownedConfig $ownedScratch $exe -Build4239 $true -FixtureProfile $ownedProfile -Readiness $ownedReady } 'directory is not owned catalog'
+} finally { Remove-Item -LiteralPath $ownedScratch -Recurse -Force }
 Write-Output "LIVE_WELCOME_OFFLINE_CHECKS=$count"
 exit 0

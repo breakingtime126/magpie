@@ -33,7 +33,8 @@ const (
 // path or stderr. Strings are fixed labels or the verified public dictionary's
 // digest; dynamic public key matches expose only bounded dictionary indices.
 type event struct {
-	ModelCatalog *modelCatalogObservation `json:"modelCatalog,omitempty"`
+	ModelCatalog      *modelCatalogObservation      `json:"modelCatalog,omitempty"`
+	OwnedModelCatalog *ownedModelCatalogObservation `json:"ownedModelCatalog,omitempty"`
 
 	Sequence                  uint64   `json:"seq"`
 	PID                       int      `json:"pid"`
@@ -71,6 +72,7 @@ type event struct {
 	ThreadListSectionIDShape  string   `json:"threadListSectionIdShape,omitempty"`
 	ThreadListSortKey         string   `json:"threadListSortKey,omitempty"`
 	FSReadParamsShapeValid    *bool    `json:"fsReadParamsShapeValid,omitempty"`
+	OwnedCatalogPathMatches   *bool    `json:"ownedCatalogPathMatches,omitempty"`
 	FSReadPathForm            string   `json:"fsReadPathForm,omitempty"`
 	FSReadBasename            string   `json:"fsReadBasename,omitempty"`
 	FSReadLexicalRoot         string   `json:"fsReadLexicalRoot,omitempty"`
@@ -97,6 +99,7 @@ type pendingRequest struct {
 	correlation          uint64
 	method               string
 	modelCatalogEligible bool
+	ownedCatalogEligible bool
 }
 type observer struct {
 	mu                  sync.Mutex
@@ -110,6 +113,7 @@ type observer struct {
 	stopped             bool
 	publicPlugins       *publicPluginCatalog
 	readTargetRoots     *readTargetRoots
+	ownedModelCatalog   *ownedModelCatalog
 }
 
 func newObserver(w io.Writer) *observer {
@@ -269,7 +273,8 @@ func (o *observer) line(direction string, b []byte) {
 				e.Class = "duplicate_id"
 			} else if len(o.pending)+len(o.quarantined) < maxPending {
 				o.pending[key] = pendingRequest{correlation: e.Correlation, method: e.Method,
-					modelCatalogEligible: direction == "to_bridge" && method == "model/list" && modelCatalogRequestEligible(b)}
+					modelCatalogEligible: direction == "to_bridge" && method == "model/list" && modelCatalogRequestEligible(b),
+					ownedCatalogEligible: direction == "to_bridge" && method == "config/read" && ownedCatalogRequestEligible(b)}
 			} else {
 				// Losing tracking state must not create later false matches.
 				o.correlationDisabled = true
@@ -332,6 +337,9 @@ func (o *observer) line(direction string, b []byte) {
 				delete(o.pending, key)
 				if direction == "from_bridge" && result && p.modelCatalogEligible {
 					e.ModelCatalog = observedModelCatalog(b)
+				}
+				if direction == "from_bridge" && result && p.ownedCatalogEligible && o.ownedModelCatalog != nil {
+					e.OwnedModelCatalog = o.ownedModelCatalog.observeConfig(b)
 				}
 			}
 		}
@@ -545,7 +553,7 @@ func childEnvironment() []string {
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		if strings.EqualFold(key, activeEnv) || strings.EqualFold(key, publicPluginCatalogEnv) ||
-			strings.EqualFold(key, readTargetRootsEnv) {
+			strings.EqualFold(key, readTargetRootsEnv) || strings.EqualFold(key, ownedModelCatalogEnv) {
 			continue
 		}
 		env = append(env, value)
@@ -669,6 +677,15 @@ func main() {
 		}
 		roots = loaded
 	}
+	var owned *ownedModelCatalog
+	if value, present := os.LookupEnv(ownedModelCatalogEnv); present {
+		loaded, err := parseOwnedModelCatalog(value)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "desktop-rpc-observer: invalid test-only setup")
+			os.Exit(125)
+		}
+		owned = loaded
+	}
 	real, trace, err := setup()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "desktop-rpc-observer: invalid test-only setup")
@@ -681,6 +698,7 @@ func main() {
 	o := newObserver(sink)
 	o.publicPlugins = catalog
 	o.readTargetRoots = roots
+	o.ownedModelCatalog = owned
 	o.emit(event{Kind: "observer_start", Class: "test_only"})
 	if catalog != nil {
 		o.emit(event{Kind: "public_plugin_catalog", PublicPluginCatalogSHA256: catalog.digest})

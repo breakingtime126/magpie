@@ -87,6 +87,12 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err != nil {
 		return err
 	}
+	if cfg.BridgeModelCatalogJSON != "" {
+		router.ownedCatalog, err = loadOwnedCatalog(controlHome, cfg.BridgeModelCatalogJSON, cfg.Backends)
+		if err != nil {
+			return err
+		}
+	}
 	router.configRequirementsRead = cfg.RequirementsRead != ""
 	router.configRequirementsNull167 = cfg.RequirementsRead == ConfigRequirementsCompareNull167
 	router.experimentalFeatureList167 = cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167

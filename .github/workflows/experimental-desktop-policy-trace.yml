@@ -66,6 +66,7 @@ jobs:
           TRIGGER_SHA: ${{ github.sha }}
           PUSH_PACKAGE_IDENTITY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
           PUSH_WINAPP_MARKER: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') }}
+          PUSH_OWNED_CATALOG: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-owned-catalog-v1]') }}
           PUSH_SYNTHETIC_MODELS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[desktop-synthetic-models-v1]') }}
           PUSH_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') }}
           PUSH_NATIVE_ENTRY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]') }}
@@ -81,6 +82,10 @@ jobs:
               echo 'Explicit inspection mode and matching full expected SHA are required.' >&2
               exit 1
             fi
+          fi
+          if [[ "$PUSH_OWNED_CATALOG" == 'true' && "$PUSH_SYNTHETIC_MODELS" != 'true' ]]; then
+            echo 'Owned catalog requires the explicit self-authored welcome slice.' >&2
+            exit 1
           fi
           if [[ "$PUSH_SYNTHETIC_MODELS" == 'true' && ( "$PUSH_WELCOME_4239" != 'true' ||
                   "$PUSH_BUILD_4239" != 'true' || "$PUSH_WINAPP_MARKER" != 'true' ||
@@ -594,6 +599,34 @@ jobs:
           printf '%s\n' "$output" | grep -F -- '--- FAIL: TestThreadListSortSectionObserved'
           printf '%s\n' "$output" | grep -F -- 'thread/list sort and section metadata missing or incorrect'
           echo 'The old observer lacks these fixed labels; compile failures do not qualify.'
+      - name: Check out exact pre-owned-catalog bridge behavior
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 75908967cf18bd43fa912b8462244ea3869a1e63
+          path: .ci-owned-catalog-baseline
+          persist-credentials: false
+      - name: Prove explicit owned catalog admission fails behaviorally on the old bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .ci-owned-catalog-baseline rev-parse HEAD)" = 75908967cf18bd43fa912b8462244ea3869a1e63
+          export GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
+          isolated="$(mktemp -d "$RUNNER_TEMP/owned-catalog-red.XXXXXX")"
+          trap 'chmod -R u+w "$isolated"; rm -rf "$isolated" .ci-owned-catalog-baseline' EXIT
+          export HOME="$isolated/home" CODEX_HOME="$isolated/codex"
+          export XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache"
+          export XDG_DATA_HOME="$isolated/data" XDG_STATE_HOME="$isolated/state" TMPDIR="$isolated/tmp"
+          mkdir -p "$HOME" "$CODEX_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$TMPDIR"
+          cp internal/appserverbridge/owned_catalog_red_test.go .ci-owned-catalog-baseline/internal/appserverbridge/
+          status=0
+          (cd .ci-owned-catalog-baseline && go test -v -count=1 -timeout=3m -tags nogui \
+            -run '^TestBridgeOwnedCatalogOptionIsExplicitlyAdmitted$' ./internal/appserverbridge) >"$isolated/red.log" 2>&1 || status=$?
+          cat "$isolated/red.log"
+          test "$status" -eq 1
+          grep -F -- '--- FAIL: TestBridgeOwnedCatalogOptionIsExplicitlyAdmitted' "$isolated/red.log"
+          grep -F -- 'explicit bridge-owned catalog option was rejected before startup loading' "$isolated/red.log"
+          if grep -E 'panic:|DATA RACE|\[build failed\]' "$isolated/red.log"; then exit 1; fi
+          go test -count=5 -timeout=5m -tags nogui -run '^(TestOwnedCatalog.*|TestBridgeOwnedCatalogOptionIsExplicitlyAdmitted)$' ./internal/appserverbridge
       - name: Check out exact pre-self-authored Desktop fixture behavior
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -643,6 +676,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 25
     env:
+      MAGPIE_BRIDGE_OWNED_CATALOG: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-owned-catalog-v1]') && 'bridge-owned-catalog-v1' || '' }}
       MAGPIE_DESKTOP_SYNTHETIC_MODELS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[desktop-synthetic-models-v1]') && 'desktop-synthetic-models-v1' || '' }}
       MAGPIE_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && 'bridge-welcome-4239-v1' || '' }}
       CGO_ENABLED: '0'
@@ -792,7 +826,9 @@ jobs:
           $packageIdentity = $env:MAGPIE_PACKAGE_IDENTITY_ONLY -ceq 'package-identity-only-v1'
           $build4239 = $env:MAGPIE_REVIEWED_BUILD -ceq 'bridge-ui-4239-v1'
           $welcome4239 = $env:MAGPIE_WELCOME_4239 -ceq 'bridge-welcome-4239-v1'
-          if ($env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq 'desktop-synthetic-models-v1') {
+          if ($env:MAGPIE_BRIDGE_OWNED_CATALOG -ceq 'bridge-owned-catalog-v1') {
+              ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile bridge-owned-catalog-4239 -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
+          } elseif ($env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq 'desktop-synthetic-models-v1') {
               ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile synthetic-models-4239 -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
           } elseif ([string]$env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq '') {
               $catalog = Join-Path $env:RUNNER_TEMP 'magpie-control-native-models.json'

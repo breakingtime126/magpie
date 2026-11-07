@@ -23,6 +23,10 @@ type Config struct {
 	ControlPlane string `json:"control_plane,omitempty"`
 	ControlHome  string `json:"control_home,omitempty"`
 
+	// BridgeModelCatalogJSON is an immutable, bridge-owned alias catalog.
+	// It does not configure either native child or grant filesystem RPC access.
+	BridgeModelCatalogJSON string `json:"bridge_model_catalog_json,omitempty"`
+
 	// Auth compatibility modes are independent, explicit and disabled by default.
 	// They never authorize generating proof tokens or starting an OAuth login.
 	AuthStatus               string `json:"auth_status,omitempty"`
@@ -103,6 +107,19 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.ControlPlane == "" && cfg.ControlHome != "" {
 		return errors.New("control_home requires the routing control plane")
+	}
+	if cfg.BridgeModelCatalogJSON != "" {
+		if cfg.ControlPlane != ControlPlaneRouting167 {
+			return errors.New("bridge model catalog requires the routing control plane")
+		}
+		for _, b := range cfg.Backends {
+			if b.Models != nil {
+				return errors.New("bridge model catalog requires native model lists")
+			}
+		}
+		if _, err := ownedCatalogPath(cfg.ControlHome, cfg.BridgeModelCatalogJSON); err != nil {
+			return err
+		}
 	}
 	if cfg.AuthStatus != "" && cfg.AuthStatus != AuthStatusPrimaryNoAuth167 {
 		return errors.New("unsupported auth_status mode")

@@ -26,16 +26,18 @@ param(
 # An explicit self-authored menu-only profile cannot inherit or accept a catalog path.
 function Assert-DesktopFixtureProfile([string]$Profile,[bool]$CatalogSupplied,[string]$Mode,
     [bool]$Build4239,[bool]$Welcome4239,[bool]$LiveWelcome,[bool]$ReadOnlyInspection,
-    [bool]$NativeInspection,[bool]$PackageIdentity,[string]$EntryCase,[string]$Marker) {
+    [bool]$NativeInspection,[bool]$PackageIdentity,[string]$EntryCase,[string]$Marker,[string]$OwnedMarker='') {
     if ($Profile -ceq '') {
-        if ($Marker) { throw 'Self-authored marker requires its explicit fixture profile.' }
+        if ($Marker -or $OwnedMarker) { throw 'Self-authored marker requires its explicit fixture profile.' }
         return
     }
-    if ($Profile -cne 'synthetic-models-4239' -or $CatalogSupplied -or $Mode -cne 'observe' -or
+    if ($Profile -cnotin @('synthetic-models-4239','bridge-owned-catalog-4239') -or $CatalogSupplied -or $Mode -cne 'observe' -or
         -not $Build4239 -or -not $Welcome4239 -or -not $LiveWelcome -or $ReadOnlyInspection -or
         $NativeInspection -or $PackageIdentity -or $EntryCase -or $Marker -cne 'desktop-synthetic-models-v1') {
         throw 'Explicit self-authored 4239 menu-only profile required without a catalog argument.'
     }
+    if (($Profile -ceq 'bridge-owned-catalog-4239' -and $OwnedMarker -cne 'bridge-owned-catalog-v1') -or
+        ($Profile -cne 'bridge-owned-catalog-4239' -and $OwnedMarker)) { throw 'Owned catalog requires its exclusive explicit profile.' }
 }
 
 # Pure validation helpers are AST-loaded by the focused tests, without running the probe.
@@ -151,6 +153,33 @@ function Get-PublicRPCMethods([string]$DictionaryPath = '') {
     } catch { throw 'Invalid pinned RPC method dictionary.' }
     return @($facts.methods) + @('initialized', 'attestation/generate', 'unknown')
 }
+function Assert-PublicOwnedCatalogEvent($record,[string]$FixtureProfile='') {
+    $hasCatalog=[bool]$record.PSObject.Properties['ownedModelCatalog']
+    $hasPath=[bool]$record.PSObject.Properties['ownedCatalogPathMatches']
+    if (-not $hasCatalog -and -not $hasPath) { return }
+    if ($FixtureProfile -cne 'bridge-owned-catalog-4239' -or ($hasCatalog -and $hasPath)) { throw 'Unexpected owned catalog metadata.' }
+    foreach ($name in @('seq','pid','correlation')) { Assert-PublicInteger $record.$name 1 4294967296 }
+    foreach ($name in @('kind','direction','method','class')) {
+        if ($record.$name -isnot [string]) { throw 'Invalid owned catalog label.' }
+    }
+    if ($record.kind -cne 'rpc') { throw 'Invalid owned catalog event.' }
+    if ($hasCatalog) {
+        Assert-PublicShape $record @('seq','pid','kind','direction','method','correlation','class','ownedModelCatalog')
+        if ($record.method -cne 'config/read' -or $record.direction -cne 'from_bridge' -or $record.class -cne 'response') { throw 'Invalid owned catalog response context.' }
+        Assert-PublicShape $record.ownedModelCatalog @('schema','pathMatches','digestMatches','validated')
+        Assert-PublicInteger $record.ownedModelCatalog.schema 1 1
+        foreach ($name in @('pathMatches','digestMatches','validated')) {
+            if ($record.ownedModelCatalog.$name -isnot [bool]) { throw 'Invalid owned catalog boolean.' }
+        }
+    } else {
+        if ($record.method -cne 'fs/readFile' -or $record.direction -cne 'to_bridge' -or $record.class -cne 'request' -or
+            $record.ownedCatalogPathMatches -isnot [bool]) { throw 'Invalid owned path request context.' }
+        $names=@('seq','pid','kind','direction','method','correlation','class','fsReadParamsShapeValid','ownedCatalogPathMatches')
+        if ($record.fsReadParamsShapeValid -isnot [bool] -or -not $record.fsReadParamsShapeValid) { throw 'Invalid owned path shape.' }
+        if ($record.PSObject.Properties['tracePresent']) { $names+=@('tracePresent','traceValid') }
+        Assert-PublicShape $record $names
+    }
+}
 function Assert-PublicRequestTraceEvent($record) {
     $hasPresent = [bool]$record.PSObject.Properties['tracePresent']
     $hasValid = [bool]$record.PSObject.Properties['traceValid']
@@ -205,7 +234,10 @@ function Assert-PublicRequestTraceEvent($record) {
             throw 'Valid traced file-read envelope needs parameter shape validity.'
         }
         $names += 'fsReadParamsShapeValid'
-        if ($record.fsReadParamsShapeValid) { $names += @('fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot') }
+        if ($record.fsReadParamsShapeValid) {
+            if ($record.PSObject.Properties['ownedCatalogPathMatches']) { $names+='ownedCatalogPathMatches' }
+            else { $names += @('fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot') }
+        }
     }
     Assert-PublicShape $record $names
 }
@@ -341,6 +373,7 @@ function Assert-PublicReadTargetEvent($record) {
     $project = @('projectListParamsValid', 'projectListCursorProvided', 'projectListLimitProvided',
         'projectListSortKey', 'projectListSortDirection')
     $file = @('fsReadParamsShapeValid', 'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot')
+    if ($record.PSObject.Properties['ownedCatalogPathMatches']) { $file=@('fsReadParamsShapeValid','ownedCatalogPathMatches') }
     $hasProject = $false
     $hasFile = $false
     foreach ($field in $project) { if ($record.PSObject.Properties[$field]) { $hasProject = $true } }
@@ -368,7 +401,7 @@ function Assert-PublicReadTargetEvent($record) {
     }
     if (-not $record.$validity) { return }
     foreach ($field in $fields[1..($fields.Count - 1)]) {
-        if ($field -cin @('projectListCursorProvided', 'projectListLimitProvided')) {
+        if ($field -cin @('projectListCursorProvided', 'projectListLimitProvided','ownedCatalogPathMatches')) {
             if ($record.$field -isnot [bool]) { throw 'Invalid project-list presence boolean.' }
         } elseif ($record.$field -isnot [string] -or @(Get-PublicReadTargetLabels $field) -cnotcontains $record.$field) {
             throw 'Invalid fixed read-target classification.'
@@ -1777,7 +1810,7 @@ Assert-Desktop4239Options $EnableReviewedBuild4239 $Mode $EnableReviewedStartupP
     $NativeEntryCase $env:MAGPIE_REVIEWED_BUILD $EnableReviewedWelcome4239 $env:MAGPIE_WELCOME_4239 $EnableRendererAccessibility
 Assert-DesktopFixtureProfile $DesktopFixtureProfile ($PSBoundParameters.ContainsKey('NativeControlCatalog')) $Mode `
     $EnableReviewedBuild4239 $EnableReviewedWelcome4239 $EnableReviewedLiveWelcome $EnableReadOnlyWinAppInspection `
-    $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly $NativeEntryCase $env:MAGPIE_DESKTOP_SYNTHETIC_MODELS
+    $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly $NativeEntryCase $env:MAGPIE_DESKTOP_SYNTHETIC_MODELS $env:MAGPIE_BRIDGE_OWNED_CATALOG
 $desktopAccessibilityArguments = Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239
 $winAppRenderedDepth = $(if ($EnableRendererAccessibility) { 16 } else { 8 })
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
@@ -1969,7 +2002,7 @@ try {
     foreach ($name in @('OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'CODEX_API_KEY', 'CODEX_AUTH_JSON',
         'CODEX_HOME', 'CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG',
         'MAGPIE_CI_REAL_BRIDGE', 'MAGPIE_CI_TRACE_FILE', 'MAGPIE_CI_OBSERVER_ACTIVE',
-        'MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES', 'MAGPIE_CI_READ_TARGET_ROOTS')) {
+        'MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES', 'MAGPIE_CI_READ_TARGET_ROOTS', 'MAGPIE_CI_OWNED_MODEL_CATALOG')) {
         if ([Environment]::GetEnvironmentVariable($name)) { Block ('Unexpected existing auth/override environment name: ' + $name) }
     }
     if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\auth.json')) { Block 'Unexpected existing Codex authentication file.' }
@@ -2565,7 +2598,13 @@ requires_openai_auth = false
                 Initialize-LiveSupervisor
                 $liveScratch = Join-Path $env:RUNNER_TEMP ('desktop-live-fixture-' + [guid]::NewGuid().ToString('N'))
                 New-Item -ItemType Directory -Path $liveScratch | Out-Null
-                if ($DesktopFixtureProfile -ceq 'synthetic-models-4239') {
+                if ($DesktopFixtureProfile -ceq 'bridge-owned-catalog-4239') {
+                    $liveArguments = @('-desktop-fixtures','-codex',$officialBackend.FullName,'-scratch-parent',$liveScratch,
+                        '-fixture-profile','bridge-owned-catalog-4239')
+                    $liveFixtureReport.fixtureProfile='bridge-owned-catalog-4239'
+                    $liveFixtureReport.catalogSource='bridge-owned-self-authored-test-models-v1'
+                    $liveFixtureReport.scope='bridge-owned-model-menu-only'
+                } elseif ($DesktopFixtureProfile -ceq 'synthetic-models-4239') {
                     $liveArguments = @('-desktop-fixtures','-codex',$officialBackend.FullName,'-scratch-parent',$liveScratch,
                         '-fixture-profile','synthetic-models-4239')
                     $liveFixtureReport.fixtureProfile='synthetic-models-4239'
@@ -2584,7 +2623,7 @@ requires_openai_auth = false
                 $liveInfo = Get-Item -LiteralPath $liveConfigPath
                 if ($liveInfo.Length -lt 1 -or $liveInfo.Length -gt 16384) { throw 'Invalid internal live configuration size.' }
                 $liveConfig = Read-LiveConfig $liveConfigPath
-                $liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239
+                $liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness
                 foreach ($path in @($liveScratch,$liveOwned.Workspace,$liveOwned.ControlHome) + @($liveOwned.Backends | ForEach-Object { $_.home; $_.codex_home })) {
                     $info = Get-Item -LiteralPath $path
                     if (-not $info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid live owned directory.' }
@@ -2600,6 +2639,9 @@ requires_openai_auth = false
         if ($useLiveFixtures) {
             $bridgeSettings.working_directory = $liveWorkspace
             $bridgeSettings.gateway_oauth_provider_name = 'Synthetic alpha_provider'
+            if ($DesktopFixtureProfile -ceq 'bridge-owned-catalog-4239') {
+                $bridgeSettings.bridge_model_catalog_json = $liveOwned.OwnedCatalogPath
+            }
         }
         [IO.File]::WriteAllText($bridgeConfig, ($bridgeSettings | ConvertTo-Json -Depth 5),
             (New-Object Text.UTF8Encoding($false)))
@@ -2811,6 +2853,10 @@ requires_openai_auth = false
         if ($Mode -eq 'observe') {
             $start.EnvironmentVariables['MAGPIE_CI_REAL_BRIDGE'] = $BridgeExecutable
             $start.EnvironmentVariables['MAGPIE_CI_TRACE_FILE'] = $tracePrefix
+            if ($DesktopFixtureProfile -ceq 'bridge-owned-catalog-4239') {
+                $start.EnvironmentVariables['MAGPIE_CI_OWNED_MODEL_CATALOG'] = ([ordered]@{
+                    path=$liveOwned.OwnedCatalogPath; sha256=$liveOwned.OwnedCatalogSHA256 } | ConvertTo-Json -Compress)
+            }
             $start.EnvironmentVariables['MAGPIE_CI_READ_TARGET_ROOTS'] = New-DesktopReadTargetEnvironment `
                 -Backends $backends -Workspace $(if ($useLiveFixtures) { $liveWorkspace } else { $work }) -VerifiedPackage $app.InstallLocation -ControlHome $controlHome
             if ($null -ne $publicPluginEnvironment) {
@@ -3141,7 +3187,7 @@ requires_openai_auth = false
             if ($report.observer.sha256After -ne $report.observer.sha256) { Block 'Observer bytes changed during the diagnostic.' }
             # Only the observer's fixed metadata schema is eligible for publication.
             # Unknown fields or values fail closed without copying or printing the record.
-            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class', 'modelCatalog',
+            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class', 'modelCatalog', 'ownedModelCatalog', 'ownedCatalogPathMatches',
                 'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
                 'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
@@ -3502,7 +3548,7 @@ requires_openai_auth = false
             $configKeyClasses = @('at_sign', 'slash', 'backslash', 'colon', 'ascii_space',
                 'ascii_control', 'non_ascii', 'other_ascii_punctuation')
             $configLiterals = @('bool_true', 'bool_false', 'other')
-            $booleanKeys = @('requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
+            $booleanKeys = @('ownedCatalogPathMatches','requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'authParamsValid', 'includeTokenRequested', 'refreshTokenRequested', 'tracePresent', 'traceValid',
                 'configParamsValid', 'configIncludeLayers', 'configCwdProvided', 'featureListParamsValid',
                 'featureListCursorProvided', 'featureListLimitProvided', 'featureListThreadIdProvided',
@@ -3529,6 +3575,7 @@ requires_openai_auth = false
                         $record = $line | ConvertFrom-Json
                         Assert-PublicCanonicalJSON $line $record
                     } catch { Block 'Observer metadata is not canonical valid JSON.' }
+                    Assert-PublicOwnedCatalogEvent $record -FixtureProfile $DesktopFixtureProfile
                     Assert-PublicModelCatalogEvent $record
                     Assert-PublicAuthRequestEvent $record
                     Assert-PublicReadRequestEvent $record
@@ -3537,7 +3584,7 @@ requires_openai_auth = false
                     foreach ($property in $record.PSObject.Properties) {
                         if ($keys -cnotcontains $property.Name) { Block 'Observer emitted an unexpected metadata field.' }
                         $value = $property.Value
-                        if ($property.Name -ceq 'modelCatalog') {
+                        if ($property.Name -cin @('modelCatalog','ownedModelCatalog')) {
                             # The nested fixed schema was validated before publication.
                             continue
                         } elseif ($numericKeys -ccontains $property.Name) {
@@ -3674,6 +3721,13 @@ requires_openai_auth = false
             } })
             if ($null -ne $publicPluginCatalog) {
                 $report.publicPluginCatalog.runtimeMatchesObserved = $report.observer.publicPluginMatches.Count -gt 0
+            }
+            if ($DesktopFixtureProfile -ceq 'bridge-owned-catalog-4239') {
+                $ownedResponses=@($allEvents | Where-Object { $_.PSObject.Properties['ownedModelCatalog'] })
+                $ownedMatches=@($ownedResponses | Where-Object { $_.ownedModelCatalog.pathMatches -and $_.ownedModelCatalog.digestMatches -and $_.ownedModelCatalog.validated })
+                $report.observer.ownedCatalogEvidence=[ordered]@{schema=1;responses=$ownedResponses.Count;matchingResponses=$ownedMatches.Count;
+                    contractPublished=($ownedMatches.Count -gt 0);expectedSHA256=$liveOwned.OwnedCatalogSHA256;
+                    limit='Matched bridge-owned config publication only; not file-read support, picker success or inference.'}
             }
             $report.observer.recordCount = $allEvents.Count
             $report.observer.records = @($allEvents | Select-Object -First 256)

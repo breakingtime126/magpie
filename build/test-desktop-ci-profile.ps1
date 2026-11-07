@@ -10,7 +10,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile(
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
 foreach ($name in @('Assert-DesktopFixtureProfile', 'Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
-    'Assert-PublicModelCatalogEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
+    'Assert-PublicOwnedCatalogEvent', 'Assert-PublicModelCatalogEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
     'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
     $definitions = @($ast.FindAll({
@@ -2367,7 +2367,7 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
         'Assert-DesktopCompatibilityPackage'='-Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)'
         'Wait-LiveReady'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'
         'Complete-LiveFixture'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'
-        'ConvertTo-LiveConfiguration'='-Build4239 $EnableReviewedBuild4239'
+        'ConvertTo-LiveConfiguration'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness'
     }
     foreach($name in $selectedCalls.Keys) {
         $call=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq $name},$true))
@@ -2509,5 +2509,36 @@ if (-not $workflow.Contains("if: env.MAGPIE_DESKTOP_SYNTHETIC_MODELS == ''") -or
     -not $ast.Extent.Text.Contains("'-fixture-profile','synthetic-models-4239'")) {
     throw 'Self-authored Desktop must bypass legacy download and select its exact helper mode.'
 }
+# New mode requires both independent explicit markers; no catalog argument is legal.
+$ownedArgs=@('bridge-owned-catalog-4239',$false,'observe',$true,$true,$true,$false,$false,$false,'','desktop-synthetic-models-v1','bridge-owned-catalog-v1')
+Expect-Pass 'owned catalog exact profile' { Assert-DesktopFixtureProfile @ownedArgs }
+foreach ($index in @(1,3,4,5,6,7,8,10,11)) {
+    $badArgs=$ownedArgs.Clone()
+    if ($index -cin @(1,6,7,8)) { $badArgs[$index]=$true }
+    elseif ($index -cin @(10,11)) { $badArgs[$index]='' }
+    else { $badArgs[$index]=$false }
+    Expect-Reject 'owned profile rejects each missing or mixed gate' { Assert-DesktopFixtureProfile @badArgs }
+}
+$badArgs=$ownedArgs.Clone();$badArgs[0]='synthetic-models-4239'
+Expect-Reject 'old profile rejects owned marker' { Assert-DesktopFixtureProfile @badArgs }
+$ownedEvent='{"seq":1,"pid":2,"kind":"rpc","direction":"from_bridge","method":"config/read","correlation":3,"class":"response","ownedModelCatalog":{"schema":1,"pathMatches":true,"digestMatches":true,"validated":true}}' | ConvertFrom-Json
+Expect-Pass 'owned response fixed booleans' { Assert-PublicOwnedCatalogEvent $ownedEvent 'bridge-owned-catalog-4239' }
+Expect-Reject 'owned response forbidden outside profile' { Assert-PublicOwnedCatalogEvent $ownedEvent }
+foreach ($field in @('pathMatches','digestMatches','validated')) {
+    $bad=($ownedEvent | ConvertTo-Json -Depth 5 -Compress) | ConvertFrom-Json
+    $bad.ownedModelCatalog.$field='PRIVATE_CANARY'
+    Expect-Reject 'owned response no raw strings' { Assert-PublicOwnedCatalogEvent $bad 'bridge-owned-catalog-4239' }
+}
+$ownedPathEvent='{"seq":1,"pid":2,"kind":"rpc","direction":"to_bridge","method":"fs/readFile","correlation":3,"class":"request","tracePresent":true,"traceValid":true,"fsReadParamsShapeValid":true,"ownedCatalogPathMatches":false}' | ConvertFrom-Json
+Expect-Pass 'owned file request only shape and path equality' {
+    Assert-PublicOwnedCatalogEvent $ownedPathEvent 'bridge-owned-catalog-4239'
+    Assert-PublicReadRequestEvent $ownedPathEvent
+}
+$ownedPathEvent | Add-Member -NotePropertyName fsReadBasename -NotePropertyValue 'other'
+Expect-Reject 'owned file request cannot also carry generic path metadata' { Assert-PublicOwnedCatalogEvent $ownedPathEvent 'bridge-owned-catalog-4239' }
+if (-not $workflow.Contains('-DesktopFixtureProfile bridge-owned-catalog-4239') -or
+    -not $workflow.Contains('PUSH_OWNED_CATALOG') -or
+    -not $ast.Extent.Text.Contains("`$bridgeSettings.bridge_model_catalog_json = `$liveOwned.OwnedCatalogPath") -or
+    -not $ast.Extent.Text.Contains("`$start.EnvironmentVariables['MAGPIE_CI_OWNED_MODEL_CATALOG']")) { throw 'Owned catalog fixture wiring missing.' }
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
 

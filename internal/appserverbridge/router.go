@@ -48,6 +48,7 @@ type Router struct {
 	controlPlaneRouting167     bool
 	windowsReadiness167        bool
 	controlSession167          *controlPlaneSession167
+	ownedCatalog               *ownedAliasCatalog
 	controlHome167             string
 	controlNativeHomes167      map[string]string
 
@@ -117,6 +118,9 @@ func (r *Router) finish(g *request, result object) []Delivery {
 	return []Delivery{deliver("", object{"id": g.id, "result": raw(result)})}
 }
 func (r *Router) reject(g *request, code int, message string) []Delivery {
+	if r.ownedCatalog != nil && g.method == "model/list" {
+		r.failOwnedCatalog()
+	}
 	if g.controlInit167 != nil {
 		r.phase = "failed"
 		code, message = -32000, controlPlaneInitUnavailable167
@@ -129,6 +133,9 @@ func (r *Router) reject(g *request, code int, message string) []Delivery {
 // A failed fanout must not retain user payload while a sibling stalls.
 // Keep only bounded transport-ID tombstones for late responses.
 func (r *Router) abandon(g *request) {
+	if r.ownedCatalog != nil && g.method == "model/list" {
+		r.failOwnedCatalog()
+	}
 	g.failed = true
 	r.end(g)
 	for key, p := range r.pending {
@@ -150,7 +157,7 @@ func (r *Router) abandon(g *request) {
 
 // Client accepts one client JSONL message. Unsupported operations fail
 // locally, rather than guessing a backend or broadcasting user input.
-func (r *Router) Client(line []byte) ([]Delivery, error) {
+func (r *Router) client(line []byte) ([]Delivery, error) {
 	// Exact 0.167 reviewed reads reject ambiguous routing
 	// keys before a map can hide the guarded method behind another.
 	if (r.configRequirementsNull167 || r.auth.authStatusNoAuth || r.experimentalFeatureList167 || r.controlPlaneRouting167) && validateServerEnvelopeKeys(line) != nil {
@@ -440,7 +447,7 @@ func (r *Router) clientResponse(m object) ([]Delivery, error) {
 
 // Server accepts a message from the process named backend. A protocol
 // violation is fatal: the runner stops both children and never falls back.
-func (r *Router) Server(backend string, line []byte) (out []Delivery, err error) {
+func (r *Router) server(backend string, line []byte) (out []Delivery, err error) {
 	if r.byID[backend].ID == "" {
 		return nil, errors.New("unknown backend")
 	}
@@ -651,6 +658,9 @@ func (r *Router) Server(backend string, line []byte) (out []Delivery, err error)
 			p := clone(g.params)
 			p["cursor"] = raw(cursor)
 			p["limit"] = raw(100)
+			if r.ownedCatalog != nil && g.method == "model/list" {
+				p["includeHidden"] = raw(true)
+			}
 			if exists(p, "excludedThreadIds") {
 				ids, _ := stringList(p["excludedThreadIds"])
 				own := []string{}
@@ -985,6 +995,12 @@ func (r *Router) emitPage(g *request, data []json.RawMessage, offset, limit int)
 	return r.finish(g, object{"data": raw(data[offset:end]), "nextCursor": raw(next)})
 }
 func (r *Router) listResult(g *request) ([]Delivery, error) {
+	if r.ownedCatalog != nil && g.method == "model/list" {
+		if err := r.ownedCatalog.validateNative(g.results, r.backends); err != nil {
+			r.failOwnedCatalog()
+			return nil, err
+		}
+	}
 	data := []json.RawMessage{}
 	routes := map[string]modelRoute{}
 	defaultModel := ""
@@ -1083,6 +1099,10 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 		}
 	}
 	if g.method == "model/list" {
+		if r.ownedCatalog != nil && defaultModel != r.ownedCatalog.defaultModel {
+			r.failOwnedCatalog()
+			return nil, errors.New(ownedCatalogUnavailable)
+		}
 		if g.controlInit167 != nil && defaultModel == "" {
 			return r.reject(g, -32000, controlPlaneInitUnavailable167), nil
 		}
@@ -1094,8 +1114,12 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 				return r.reject(g, -32000, controlPlaneUnavailable167), nil
 			}
 		}
+		if r.ownedCatalog != nil {
+			r.ownedCatalog.refreshing = false
+		}
 		// Publish routes, default and the service-owned session layer together.
-		// A failed or incomplete refresh leaves all three previous values intact.
+		// Legacy refresh retains its previous snapshot. The owned-file opt-in
+		// invalidates at refresh start and closes on failure instead.
 		r.models = routes
 		r.defaultModel = defaultModel
 		r.controlSession167 = session
@@ -1138,6 +1162,10 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 // startList collects all backend pages before atomically publishing a catalog.
 // Initialization uses the same bounds and descriptor handling as model/list.
 func (r *Router) startList(g *request) ([]Delivery, error) {
+	if r.ownedCatalog != nil && g.method == "model/list" {
+		r.invalidateOwnedCatalog()
+		r.ownedCatalog.refreshing = true
+	}
 	g.remaining = len(r.backends)
 	out := []Delivery{}
 	for _, b := range r.backends {
@@ -1155,6 +1183,9 @@ func (r *Router) startList(g *request) ([]Delivery, error) {
 		params := clone(g.params)
 		delete(params, "cursor")
 		params["limit"] = raw(100)
+		if r.ownedCatalog != nil && g.method == "model/list" {
+			params["includeHidden"] = raw(true)
+		}
 		if exists(g.params, "excludedThreadIds") {
 			ids, _ := stringList(g.params["excludedThreadIds"])
 			own := []string{}

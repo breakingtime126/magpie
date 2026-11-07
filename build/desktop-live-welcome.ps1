@@ -55,10 +55,22 @@ function Get-LiveNativeSHA([bool]$Build4239=$false) {
 function Get-LiveFixtureScope([string]$FixtureProfile='') {
     if ($FixtureProfile -ceq '') { return 'desktop-loopback-fixtures-only' }
     if ($FixtureProfile -ceq 'synthetic-models-4239') { return 'desktop-self-authored-fixtures-only' }
+    if ($FixtureProfile -ceq 'bridge-owned-catalog-4239') { return 'desktop-bridge-owned-catalog-fixtures-only' }
     throw 'Unreviewed live fixture profile.'
 }
 function Assert-LiveReady($Value,[bool]$Build4239=$false,[string]$FixtureProfile='') {
     $scope=Get-LiveFixtureScope $FixtureProfile
+    if ($FixtureProfile -ceq 'bridge-owned-catalog-4239') {
+        Assert-LiveShape $Value @('schema','scope','status','lifetime_seconds','native_sha256','catalog_source','owned_catalog_sha256')
+        Assert-LiveInteger $Value.schema 1 1
+        Assert-LiveInteger $Value.lifetime_seconds 180 180
+        Assert-LiveStrings $Value @('scope','status','native_sha256','catalog_source','owned_catalog_sha256')
+        if (-not $Build4239 -or $Value.scope -cne $scope -or $Value.status -cne 'ready' -or
+            $Value.native_sha256 -cne (Get-LiveNativeSHA $true) -or
+            $Value.catalog_source -cne 'bridge-owned-self-authored-test-models-v1' -or
+            $Value.owned_catalog_sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Invalid owned catalog readiness.' }
+        return
+    }
     if ($FixtureProfile -ceq 'synthetic-models-4239') {
         Assert-LiveShape $Value @('schema','scope','status','lifetime_seconds','native_sha256','catalog_source')
         Assert-LiveInteger $Value.schema 1 1
@@ -90,7 +102,7 @@ function Assert-LiveAudit($Value, [int]$ExitCode,[string]$FixtureProfile='') {
         'native_version_failed','fixture_invalid','fixture_rejected_request','output_failed','stop_invalid','fixture_timeout','internal_failure')
     if ($Value.scope -cne $scope -or $Value.failure -isnot [string]) { throw 'Invalid live audit.' }
     if ($Value.status -ceq 'stopped') {
-        if ($FixtureProfile -ceq 'synthetic-models-4239' -and ($Value.alpha_requests -ne 0 -or $Value.beta_requests -ne 0)) {
+        if ($FixtureProfile -cin @('synthetic-models-4239','bridge-owned-catalog-4239') -and ($Value.alpha_requests -ne 0 -or $Value.beta_requests -ne 0)) {
             throw 'Menu-only fixtures received an unauthorized model request.'
         }
         if ($ExitCode -ne 0 -or $Value.failure -cne '' -or $Value.fixture_errors -ne 0) { throw 'Invalid stopped audit.' }
@@ -98,8 +110,13 @@ function Assert-LiveAudit($Value, [int]$ExitCode,[string]$FixtureProfile='') {
         if ($ExitCode -ne 1 -or $failures -cnotcontains $Value.failure) { throw 'Invalid failed audit.' }
     } else { throw 'Invalid live audit status.' }
 }
-function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex, [bool]$Build4239=$false) {
-    Assert-LiveShape $Value @('backends','working_directory','control_plane','control_home')
+function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex, [bool]$Build4239=$false,[string]$FixtureProfile='',$Readiness=$null) {
+    $null=Get-LiveFixtureScope $FixtureProfile
+    if ($FixtureProfile -ceq 'bridge-owned-catalog-4239') {
+        Assert-LiveShape $Value @('backends','working_directory','control_plane','control_home','bridge_model_catalog_json')
+    } else {
+        Assert-LiveShape $Value @('backends','working_directory','control_plane','control_home')
+    }
     Assert-LiveStrings $Value @('working_directory','control_plane','control_home')
     $workspace = Join-Path $Scratch 'workspace'; $control = Join-Path $Scratch 'control-home'
     if ($Value.working_directory -cne $workspace -or $Value.control_home -cne $control -or
@@ -117,7 +134,24 @@ function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex, [
         # Reconstruct, never copy command/path authority from the helper's JSON.
         $backends += [ordered]@{ id=$id; provider=($id+'_provider'); command=$Codex; home=$backendHome; codex_home=$ch }
     }
-    return [pscustomobject]@{ Backends=$backends; Workspace=$workspace; ControlHome=$control }
+    $result=[pscustomobject]@{ Backends=$backends; Workspace=$workspace; ControlHome=$control }
+    if ($FixtureProfile -ceq 'bridge-owned-catalog-4239') {
+        Assert-LiveReady $Readiness -Build4239 $Build4239 -FixtureProfile $FixtureProfile
+        $expected=Join-Path $control 'bridge-model-catalog.json'
+        if ($Value.bridge_model_catalog_json -isnot [string] -or $Value.bridge_model_catalog_json -cne $expected -or
+            -not [IO.Path]::IsPathFullyQualified($expected)) { throw 'Invalid owned catalog path.' }
+        # Only this private fixture-owned file is inspected; no caller-supplied catalog path.
+        foreach ($path in @($Scratch,$control,$expected)) {
+            $item=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Invalid owned catalog file.' }
+        }
+        if ($item.PSIsContainer -or $item.Length -lt 1 -or $item.Length -gt 1048576) { throw 'Invalid owned catalog size.' }
+        $digest=(Get-FileHash -Algorithm SHA256 -LiteralPath $expected).Hash.ToLowerInvariant()
+        if ($digest -cne $Readiness.owned_catalog_sha256) { throw 'Owned catalog digest mismatch.' }
+        $result | Add-Member -NotePropertyName OwnedCatalogPath -NotePropertyValue $expected
+        $result | Add-Member -NotePropertyName OwnedCatalogSHA256 -NotePropertyValue $digest
+    }
+    return $result
 }
 function Assert-WelcomeResult($Value) {
     Assert-LiveShape $Value @('schema','scope','status','reason','stage','actions','suggestionsDisabled','engineeringSelected','continueInvoked','nextScreen','targetObservations','initialReadObservation')

@@ -82,8 +82,11 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	if err := validateDesktopFixtureProfile(profile, reviewedBuild, catalogSupplied); err != nil {
 		return err
 	}
-	if profile == acceptanceSynthetic4239 {
+	if desktopUsesSelfAuthoredCatalog(profile) {
 		report.Scope = desktopSelfAuthoredScope
+		if profile == desktopOwnedCatalogProfile {
+			report.Scope = desktopOwnedCatalogScope
+		}
 	}
 	pinnedSHA, err := desktopFixtureSHA(reviewedBuild)
 	if err != nil {
@@ -147,7 +150,7 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	}
 	selected := filepath.Join(root, "models.json")
 	var alpha, beta *fixture
-	if profile == acceptanceSynthetic4239 {
+	if desktopUsesSelfAuthoredCatalog(profile) {
 		selected = ""
 		alpha = newDesktopFixtureForModel("alpha", "test-alpha", syntheticInstructions("alpha"))
 		beta = newDesktopFixtureForModel("beta", "test-beta", syntheticInstructions("beta"))
@@ -171,7 +174,7 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 		return err
 	}
 	// No paths, payloads, URLs, or IDs are emitted into public diagnostics.
-	if err := writeDesktopFixtureReadyForProfile(out, pinnedSHA, profile); err != nil {
+	if err := writeDesktopFixtureReadyFromRoot(out, pinnedSHA, profile, root); err != nil {
 		return err
 	}
 	done := make(chan error, 1)
@@ -208,7 +211,7 @@ func validateDesktopFixtureProfile(profile, build string, catalogSupplied bool) 
 	switch profile {
 	case "":
 		return nil
-	case acceptanceSynthetic4239:
+	case acceptanceSynthetic4239, desktopOwnedCatalogProfile:
 		if build == "desktop-4239" && !catalogSupplied {
 			return nil
 		}
@@ -221,11 +224,14 @@ func writeDesktopFixtureConfig(root, codex, selected, pinnedSHA string, fixtures
 }
 
 func writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, profile string, fixtures ...*fixture) error {
-	if profile != "" && profile != acceptanceSynthetic4239 {
+	if profile != "" && !desktopUsesSelfAuthoredCatalog(profile) {
 		return failure("input_invalid")
 	}
-	if profile == acceptanceSynthetic4239 && (selected != "" || pinnedSHA != native4239SHA) {
+	if desktopUsesSelfAuthoredCatalog(profile) && (selected != "" || pinnedSHA != native4239SHA) {
 		return failure("input_invalid")
+	}
+	if profile == desktopOwnedCatalogProfile && (len(fixtures) != 2 || fixtures[0].name != "alpha" || fixtures[1].name != "beta") {
+		return failure("fixture_invalid")
 	}
 	backends := []map[string]any{}
 	for _, f := range fixtures {
@@ -238,7 +244,7 @@ func writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, profi
 			return err
 		}
 		catalogPath, model := selected, modelName
-		if profile == acceptanceSynthetic4239 {
+		if desktopUsesSelfAuthoredCatalog(profile) {
 			if f.model != "test-"+f.name || f.instructions != syntheticInstructions(f.name) {
 				return failure("fixture_invalid")
 			}
@@ -262,6 +268,17 @@ func writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, profi
 		backends = append(backends, map[string]any{"id": f.name, "provider": f.name + "_provider", "command": codex, "home": home, "codex_home": ch, "startup_probe_sha256": pinnedSHA})
 	}
 	config := map[string]any{"backends": backends, "working_directory": filepath.Join(root, "workspace"), "control_plane": controlMode, "control_home": filepath.Join(root, "control-home")}
+	if profile == desktopOwnedCatalogProfile {
+		data, err := bridgeOwnedSelfAuthoredCatalog()
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(root, "control-home", "bridge-model-catalog.json")
+		if err := writeNew(path, data); err != nil {
+			return err
+		}
+		config["bridge_model_catalog_json"] = path
+	}
 	return writeNew(filepath.Join(root, "bridge.json"), jsonBytes(config))
 }
 

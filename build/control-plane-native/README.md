@@ -466,8 +466,8 @@ The preceding independent native acceptance passed at exact commit
 artifact `13589902596`. Its scope is `self-authored-models-loopback-only`:
 2 models, 2 threads, 4 turns, alpha/beta requests 2/2, 2 owner-switch rejections,
 0 fixture errors, and `adapter_clean_exit`/`cleanup_complete` true. This is
-native synthetic evidence only. The new Desktop profile below has not yet
-been executed or verified; no GUI visibility or chat result follows from it.
+native synthetic evidence only. That native result does not establish GUI visibility or chat. The later
+Desktop observation is bounded as described below.
 
 The separate Desktop fixture flag `-fixture-profile synthetic-models-4239`
 requires `-reviewed-build desktop-4239` and rejects any `-catalog` occurrence,
@@ -507,7 +507,7 @@ id/model/display-name tuples and emits only existing fixed counts. Other
 identities remain unknown and every forwarded byte remains unchanged. These
 counts describe a received `model/list` response, not visible or usable UI.
 Distinct source slugs are a minimal follow-up experiment, not a proven cause
-of the earlier missing beta menu item. No Desktop run is authorized merely by
+of the earlier first-menu observation. No Desktop run is authorized merely by
 preparing this source; first require the separate new-model native acceptance.
 
 The menu-only follow-up recognizes the exact current-model Button label
@@ -519,3 +519,62 @@ Medium. It does not expand model-item counts, submenu names or keyboard model
 activation. Exact typed resolution, unique visible enabled Button identity and
 collapsed-state checks still precede Expand. The preceding run stopped before
 any menu action; this follow-up has not yet established two visible menu items.
+
+
+### Bridge-owned alias catalog: separate menu-only slice
+
+`-fixture-profile bridge-owned-catalog-4239` is a separate explicit opt-in with
+`-reviewed-build desktop-4239`. It rejects any `-catalog` occurrence, including
+an empty one. Only `selfAuthoredCatalog` supplies its definitions. The two native
+catalogs, raw model slugs, endpoints, permission/auth configuration and private
+homes remain unchanged. The fixture additionally creates the actual
+`control-home/bridge-model-catalog.json` and sets `bridge_model_catalog_json` in
+its private bridge configuration. Only `slug` and `display_name` are mapped to
+the public aliases and existing owner-labelled names; every other authored
+field, including the short original instructions, stays unchanged. No bundled,
+legacy, downloaded or recovered model record is an input.
+
+This is a real bridge startup contract, not a placeholder path for the UI.
+The bridge loads a bounded strict two-record file, binds its file identity,
+size and SHA-256, and validates all 19 public native Model fields after both
+complete native catalogs arrive. Routes, default and the owned session layer
+publish together only on agreement. The path, digest and explicit bridge-owned
+provenance then appear in actual `config/read` responses, still gated by both
+fresh native requirements checks. This does not claim native configuration or
+that model/list verified instruction/tool fields not exposed by that RPC.
+File changes or failed/mismatched catalog refreshes close the connection and
+require restart. Existing thread ownership is never rebound. `fs/readFile`,
+config writes, authentication/setup and permission boundaries are unchanged.
+
+Readiness has seven fixed fields with scope
+`desktop-bridge-owned-catalog-fixtures-only`, catalog source
+`bridge-owned-self-authored-test-models-v1` and the actual
+`owned_catalog_sha256`. It proves file creation, not native validation.
+The test-only observer receives an explicitly declared private path/hash;
+correlated config responses emit only path-match, digest-match and validated
+provenance booleans. The observer never opens that file. An fs/readFile request
+can record only whether its path matches this known file; the bridge still
+rejects the RPC. The main harness independently checks the created file and
+keeps config publication evidence separate from GUI evidence.
+
+The existing policy-trace workflow requires `[bridge-owned-catalog-v1]` plus
+`[desktop-synthetic-models-v1] [bridge-welcome-4239-v1] [bridge-ui-4239-v1]
+[winapp-inspection-v0.7.1]`. It uses the existing welcome/menu-only path and
+requires zero Responses requests. It does not select a model, send a message,
+operate setup, add filesystem RPCs or run the legacy catalog path. An unknown,
+hidden, disabled, ambiguous or protected target remains a stop.
+
+Evidence boundary: at `75908967cf18bd43fa912b8462244ea3869a1e63`, Expand
+opened only the first observed Select model popover, where Alpha was observed.
+The later script phase named `submenu` did not establish a real second level;
+no expandable target was found, Tab did not advance focus, deeper navigation
+was unverified, and no model was selected. That is not proof that the complete
+picker excludes Beta. Public catalog documentation and an independent reported
+remote-to-local catalog workaround motivate this separate contract experiment,
+not a causal diagnosis. If this slice does not obtain two-label evidence it
+stops. If it does, it shows only improved visibility under this exact version
+and contract, not the prior root cause or successful Desktop conversation.
+
+Local preparation of this slice did not run Go, gofmt, PowerShell, Windows or
+native/Desktop acceptance. Its exact commit must pass CI before any result is
+claimed. The default and earlier explicit profiles remain separate.

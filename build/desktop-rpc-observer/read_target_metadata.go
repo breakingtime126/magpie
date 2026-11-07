@@ -144,6 +144,11 @@ func (o *observer) observedFSReadFile(raw []byte, e *event) {
 		return
 	}
 	valid = true
+	if o.ownedModelCatalog != nil {
+		matched := o.ownedModelCatalog.matchesPath(path)
+		e.OwnedCatalogPathMatches = &matched
+		return
+	}
 	e.FSReadPathForm = observedWindowsPathForm(path)
 	e.FSReadBasename = observedReadBasename(path)
 	e.FSReadLexicalRoot = o.readTargetRoots.relation(path)

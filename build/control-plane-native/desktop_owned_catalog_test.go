@@ -1,0 +1,134 @@
+package main
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestDesktopOwnedCatalogProfileRejectsAnyCatalogInput(t *testing.T) {
+	valid := []string{"-fixture-profile", desktopOwnedCatalogProfile, "-reviewed-build", "desktop-4239"}
+	for _, suffix := range [][]string{{"-catalog", ""}, {"--catalog="}, {"-catalog", "never-read.json"}} {
+		var out bytes.Buffer
+		args := append(append([]string{}, valid...), suffix...)
+		if runDesktopFixtures(args, io.NopCloser(strings.NewReader("")), &out, &desktopAudit{}) != failure("input_invalid") || out.Len() != 0 {
+			t.Fatal("owned catalog profile accepted external catalog input")
+		}
+	}
+	for _, tc := range []struct{ profile, build string }{
+		{desktopOwnedCatalogProfile, ""}, {desktopOwnedCatalogProfile, "desktop-4240"},
+		{desktopOwnedCatalogProfile + " ", "desktop-4239"},
+	} {
+		if validateDesktopFixtureProfile(tc.profile, tc.build, false) != failure("input_invalid") {
+			t.Fatal("owned catalog profile silently selected a different mode")
+		}
+	}
+	if validateDesktopFixtureProfile(desktopOwnedCatalogProfile, "desktop-4239", false) != nil {
+		t.Fatal("explicit owned catalog profile rejected")
+	}
+}
+
+func TestDesktopOwnedCatalogChangesOnlyAliasAndDisplay(t *testing.T) {
+	data, err := bridgeOwnedSelfAuthoredCatalog()
+	if err != nil {
+		t.Fatal("owned catalog build failed")
+	}
+	var document struct {
+		Models []map[string]json.RawMessage `json:"models"`
+	}
+	if json.Unmarshal(data, &document) != nil || len(document.Models) != 2 {
+		t.Fatal("owned catalog is not exactly two original records")
+	}
+	for i, name := range []string{"alpha", "beta"} {
+		original, err := selfAuthoredCatalog(name)
+		if err != nil {
+			t.Fatal("original catalog build failed")
+		}
+		var want struct {
+			Models []map[string]json.RawMessage `json:"models"`
+		}
+		if json.Unmarshal(original, &want) != nil || len(want.Models) != 1 {
+			t.Fatal("original catalog decode failed")
+		}
+		model := document.Models[i]
+		if stringField(model, "slug") != "magpie/"+name+"/test-"+name || stringField(model, "display_name") != syntheticDisplayName(name)+" ["+name+"]" {
+			t.Fatal("public catalog does not match logical route and display")
+		}
+		model["slug"] = want.Models[0]["slug"]
+		model["display_name"] = want.Models[0]["display_name"]
+		if !reflect.DeepEqual(model, want.Models[0]) {
+			t.Fatal("public catalog changed original capabilities or instructions")
+		}
+	}
+}
+
+func TestDesktopOwnedCatalogKeepsNativeFilesIndependentAndReportsActualHash(t *testing.T) {
+	root := t.TempDir()
+	if _, err := mkdir(root, "control-home"); err != nil {
+		t.Fatal("control home setup failed")
+	}
+	alpha := newDesktopFixtureForModel("alpha", "test-alpha", syntheticInstructions("alpha"))
+	beta := newDesktopFixtureForModel("beta", "test-beta", syntheticInstructions("beta"))
+	t.Cleanup(alpha.close)
+	t.Cleanup(beta.close)
+	if err := writeDesktopFixtureConfigForProfile(root, filepath.Join(root, "codex.exe"), "", native4239SHA, desktopOwnedCatalogProfile, alpha, beta); err != nil {
+		t.Fatal("owned fixture setup failed")
+	}
+	for _, f := range []*fixture{alpha, beta} {
+		path := filepath.Join(root, f.name+"-self-authored-catalog.json")
+		actual, err := os.ReadFile(path)
+		want, wantErr := selfAuthoredCatalog(f.name)
+		if err != nil || wantErr != nil || !bytes.Equal(actual, want) {
+			t.Fatal("native model catalog changed")
+		}
+		actual, err = os.ReadFile(filepath.Join(root, f.name+"-codex", "config.toml"))
+		want, wantErr = nativeConfigForModel(f.name+"_provider", f.server.URL, path, f.model)
+		if err != nil || wantErr != nil || !bytes.Equal(actual, want) {
+			t.Fatal("native configuration changed")
+		}
+	}
+	path := filepath.Join(root, "control-home", "bridge-model-catalog.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal("real public catalog missing")
+	}
+	config, err := os.ReadFile(filepath.Join(root, "bridge.json"))
+	var fields map[string]json.RawMessage
+	if err != nil || json.Unmarshal(config, &fields) != nil || stringField(fields, "bridge_model_catalog_json") != path {
+		t.Fatal("public catalog not actually configured")
+	}
+	var out bytes.Buffer
+	if writeDesktopFixtureReadyFromRoot(&out, native4239SHA, desktopOwnedCatalogProfile, root) != nil {
+		t.Fatal("owned catalog readiness failed")
+	}
+	var ready map[string]any
+	decoder := json.NewDecoder(&out)
+	if decoder.Decode(&ready) != nil || decoder.Decode(new(any)) != io.EOF {
+		t.Fatal("owned catalog readiness is not one JSON value")
+	}
+	want := map[string]any{"schema": float64(1), "scope": desktopOwnedCatalogScope, "status": "ready",
+		"lifetime_seconds": float64(180), "native_sha256": native4239SHA,
+		"catalog_source": "bridge-owned-self-authored-test-models-v1", "owned_catalog_sha256": fmt.Sprintf("%x", sha256.Sum256(data))}
+	if !reflect.DeepEqual(ready, want) {
+		t.Fatal("owned catalog readiness does not bind actual generated bytes")
+	}
+	if err := os.WriteFile(path, []byte("{}"), 0600); err != nil {
+		t.Fatal("mutation setup failed")
+	}
+	out.Reset()
+	if writeDesktopFixtureReadyFromRoot(&out, native4239SHA, desktopOwnedCatalogProfile, root) == nil || out.Len() != 0 {
+		t.Fatal("changed public file emitted readiness")
+	}
+	for _, forbidden := range []string{"models.json", filepath.Join("control-home", "config.toml")} {
+		if _, err := os.Stat(filepath.Join(root, forbidden)); !os.IsNotExist(err) {
+			t.Fatal("owned fixture created a legacy catalog or fake frontend config")
+		}
+	}
+}

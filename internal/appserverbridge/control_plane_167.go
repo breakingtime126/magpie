@@ -119,7 +119,7 @@ func (r *Router) controlPlaneReadResponse167(g *request, backend string, line []
 	if !sameJSON(g.results[r.backends[0].ID][0], g.results[r.backends[1].ID][0]) {
 		return r.reject(g, -32000, controlPlaneUnavailable167)
 	}
-	if r.controlSession167 == nil {
+	if r.controlSession167 == nil || (r.ownedCatalog != nil && r.ownedCatalog.refreshing) {
 		return r.reject(g, -32000, controlPlaneUnavailable167)
 	}
 	var includeLayers bool
@@ -150,7 +150,7 @@ func (r *Router) controlPlaneSessionConfig167(defaultModel string) object {
 		config["model"] = raw(defaultModel)
 		provenance["model"] = raw("bridge-catalog-default")
 	}
-	config["magpie_bridge"] = raw(object{
+	extension := object{
 		"version": raw(1), "view": raw("routing-defaults"),
 		"provider_routing": raw("fixed-per-thread"),
 		"execution_policy": raw("backend-owned-per-thread"),
@@ -159,7 +159,17 @@ func (r *Router) controlPlaneSessionConfig167(defaultModel string) object {
 			"config_writes": raw(false), "layer_reads": raw(true), "cwd_reads": raw(false),
 		}),
 		"provenance": raw(provenance), "backends": raw(backends),
-	})
+	}
+	if r.ownedCatalog != nil && defaultModel != "" {
+		config["model_catalog_json"] = raw(r.ownedCatalog.path)
+		provenance["model_catalog_json"] = raw("bridge-owned-alias-catalog")
+		extension["provenance"] = raw(provenance)
+		extension["catalog"] = raw(object{
+			"version": raw(1), "source": raw("bridge-owned-alias-catalog"),
+			"sha256": raw(r.ownedCatalog.digest), "validation": raw("complete-native-model-list"),
+		})
+	}
+	config["magpie_bridge"] = raw(extension)
 	return config
 }
 

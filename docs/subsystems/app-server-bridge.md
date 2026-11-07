@@ -2037,7 +2037,7 @@ without publishing names, IDs or payloads or changing forwarded bytes.
 A successful native two-thread/four-turn test is not a Desktop verdict; a
 received two-model response is not proof that both menu items are visible.
 Distinct original slugs are the next minimal experiment, not a diagnosis of
-the earlier beta visibility issue. The [fixture documentation](../../build/control-plane-native/README.md)
+the earlier first-menu observation. The [fixture documentation](../../build/control-plane-native/README.md)
 records the profile contract and evidence limits.
 
 The menu-only follow-up recognizes the exact current-model Button label
@@ -2049,3 +2049,56 @@ Medium. It does not expand model-item counts, submenu names or keyboard model
 activation. Exact typed resolution, unique visible enabled Button identity and
 collapsed-state checks still precede Expand. The preceding run stopped before
 any menu action; this follow-up has not yet established two visible menu items.
+
+
+### Optional immutable bridge-owned alias catalog
+
+`bridge_model_catalog_json` is default-off and requires the routing control
+plane and actual native model lists on both backends. It names a real absolute
+regular file under the bridge's actual `control_home`, not either native home.
+The startup loader in `owned_catalog.go` reads at most 64 KiB, rejects duplicate
+JSON keys and unreviewed fields/subsets, requires two unique known-owner alias
+records and binds file identity, size, modification time and SHA-256. This
+version supports the reviewed self-authored text/none/disabled-shell subset,
+not arbitrary hosted-model capabilities or policy overrides. Primary priority
+must precede secondary; native defaults are verified, not inferred from the
+file. The file is immutable for the life of this connection.
+
+The complete initial/native refresh collector requests hidden entries as well
+and validates every public Model field against the owned projection before
+publishing routes/default/session state. Both backends must actually return one
+matching raw model each, with their own native default true. Existing alias,
+owner display suffix and aggregate-primary-default transformations are then
+compared; no native field is overwritten to conceal a discrepancy. ModelInfo
+instructions and non-public capabilities remain authored declarations, not
+facts reconstructed or proved from model/list. The original child catalogs and
+configuration are untouched.
+
+After that barrier, existing fresh paired requirements validation still gates
+config/read. The returned `config.model_catalog_json` is the loaded real path;
+`magpie_bridge.provenance.model_catalog_json` is
+`bridge-owned-alias-catalog`. The extension's `catalog` contains version 1,
+source `bridge-owned-alias-catalog`, content `sha256` and validation
+`complete-native-model-list`. Its existing bridge-owned session layer and
+origins bind that config in the canonical version. No native config layer,
+common home or file-read support is claimed.
+
+A refresh revokes routes/default/config session/model pages until both complete
+native results validate. Frontend requests cannot use this transient state.
+Any catalog failure, file identity/hash change or mismatched result is sticky
+fatal: close the bridge connection, run the existing owned-tree cleanup and
+require restart, rather than retain a stale declaration or silently recover.
+Already-bound thread owners are never cleared or rebound. The option does not
+alter refresh behavior when absent, and does not expand auth, writes, setup,
+readiness/environment, sandbox or `fs/readFile` admission.
+
+The test-only `bridge-owned-catalog-4239` Desktop profile builds its file solely
+from the existing original self-authored alpha/beta definitions. It maps only
+raw slug to real alias and display name to the existing owner-labelled wire
+name. Its menu-only path, no-selection/no-message scope, zero-request audit,
+known-file publication booleans and independent GUI evidence are documented in
+[the fixture README](../../build/control-plane-native/README.md#bridge-owned-alias-catalog-separate-menu-only-slice).
+The prior 75908967 run observed Alpha only in the first popover; deeper
+navigation was unverified. It did not prove full-picker filtering or a missing
+filesystem contract. A positive new observation would establish this narrow
+versioned contract's visibility only, not causality or successful chat.

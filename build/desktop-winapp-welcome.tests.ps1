@@ -887,4 +887,11 @@ foreach ($variant in @('duplicate','plain-and-none','disabled','offscreen','expa
     $page=ConvertTo-WinAppWelcomeSnapshot (Json $bad) 123 -FixtureProfile $selfProfile
     Pass ((Get-WinAppModelMenuObservation $page -FixtureProfile $selfProfile).decision -cne 'ready') 'None opener remains exact unique visible enabled collapsed Button only'
 }
+# Owned catalog uses identical self-authored labels and the existing menu-only guard.
+$ownedProfile='bridge-owned-catalog-4239'
+Pass ((Json (Get-WinAppModelNames $ownedProfile)) -ceq (Json (Get-WinAppModelNames $selfProfile))) 'owned catalog labels do not widen selection'
+$ownedSnapshot=ConvertTo-WinAppWelcomeSnapshot (Json $nonePage) 123 -FixtureProfile $ownedProfile
+Pass ((Get-WinAppModelMenuObservation $ownedSnapshot -FixtureProfile $ownedProfile).labelKind -ceq 'model_and_none') 'owned catalog retains observed None opener'
+Pass (-not (Read-WinAppModelFocus (Json (Focused 'Synthetic Alpha [alpha] None')) -FixtureProfile $ownedProfile).Observation.activationAllowed) 'owned catalog cannot activate model opener as selection'
+Reject { Get-WinAppModelNames 'BRIDGE-OWNED-CATALOG-4239' } 'owned labels remain exact profile only'
 Write-Output ('WINAPP_WELCOME_OFFLINE_CHECKS='+$checks)
