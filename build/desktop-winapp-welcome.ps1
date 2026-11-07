@@ -162,7 +162,7 @@ function Get-WinAppWelcomeTarget($Snapshot,[string]$Name,[string]$Type,[scriptbl
     return Read-WinAppWelcomeResolvedTarget $text $node $binding
 }
 function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha','focused','model-tab','model-enter')][string]$Operation,[string]$Selector='') {
     $directory=Join-Path $Tool.Directory ('welcome-'+[guid]::NewGuid().ToString('N'))
     if (Test-Path -LiteralPath $directory) { throw 'Welcome tool scratch not fresh.' }
     [void][IO.Directory]::CreateDirectory($directory)
@@ -170,7 +170,11 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
     $start=New-WinAppStart $localTool $WindowHandle -RenderedDepth 16
     if ($Operation -cne 'read') {
         $arguments=@('ui')
-        if ($Operation -ceq 'search-alpha') {
+        if ($Operation -cin @('focused','model-tab','model-enter')) {
+            if ($Selector) { throw 'Model keyboard operations do not accept selectors.' }
+            if ($Operation -ceq 'focused') { $arguments+=@('get-focused') }
+            else { $arguments+=@('send-keys',$(if($Operation -ceq 'model-tab'){'tab'}else{'enter'}),'--via','send-input') }
+        } elseif ($Operation -ceq 'search-alpha') {
             if ($Selector) { throw 'Model evidence search does not accept a selector.' }
             $arguments+=@('search','[alpha]','--max','4')
         } elseif ($Operation -cin @('resolve-engineering','resolve-suggestions','resolve-continue','resolve-skip-button','resolve-skip-link','resolve-confirm-button','resolve-confirm-link','resolve-model-short','resolve-model-effort','resolve-submodel-button','resolve-submodel-menuitem')) {
@@ -198,7 +202,7 @@ function New-WinAppWelcomeStart($Tool,[long]$WindowHandle,
 }
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,
-    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha')][string]$Operation,[string]$Selector='') {
+    [ValidateSet('read','selected','toggle','select','continue','resolve-engineering','resolve-suggestions','resolve-continue','skip','resolve-skip-button','resolve-skip-link','confirm-skip','resolve-confirm-button','resolve-confirm-link','open-model-menu','resolve-model-short','resolve-model-effort','open-model-submenu','resolve-submodel-button','resolve-submodel-menuitem','search-alpha','focused','model-tab','model-enter')][string]$Operation,[string]$Selector='') {
     $remaining=30000-[int]$Deadline.ElapsedMilliseconds
     if ($remaining -le 0) { throw 'Welcome deadline exceeded.' }
     $record=[ordered]@{operation=$Operation;status='stopped';reason='identity_unavailable';exitCode=$null;
@@ -582,11 +586,61 @@ function Read-WinAppModelSearchEvidence([string]$Text,[ValidateRange(0,4)][int]$
     return [ordered]@{status='observed';reason=$reason;matchCount=$value.matchCount;hasMore=$value.hasMore;
         alphaNameCount=$related;alphaVisibleCount=$visible;nameEvidenceLimited=$limited;nameEvidence=$evidence.ToArray()}
 }
+function Read-WinAppModelFocus([string]$Text) {
+    $value=ConvertFrom-LiveJSON $Text 262144
+    Assert-WinAppFields $value @('hasFocus') @('element')
+    if ($value.hasFocus -isnot [bool]) { throw 'Invalid focused result.' }
+    $observation=[ordered]@{hasFocus=$value.hasFocus;kind='unavailable';model='none';controlType='absent';
+        enabled=$null;isOffscreen=$null;directInvokable=$null;activationAllowed=$false}
+    if (-not $value.hasFocus) {
+        if ($value.PSObject.Properties['element']) { throw 'Unexpected focused element.' }
+        return [pscustomobject]@{Observation=$observation;Key=''}
+    }
+    if (-not $value.PSObject.Properties['element']) { throw 'Missing focused element.' }
+    $node=$value.element
+    Assert-WinAppFields $node @('type','isEnabled','isOffscreen','isInvokable','x','y','width','height') @(
+        'name','automationId','className','selector','value','toggleState','expandState','scrollDir')
+    Assert-LiveStrings $node @('type')
+    foreach ($key in @('isEnabled','isOffscreen','isInvokable')) {
+        if ($node.$key -isnot [bool]) { throw 'Invalid focused state.' }
+    }
+    foreach ($key in @('name','selector')) {
+        if ($node.PSObject.Properties[$key] -and $node.$key -isnot [string]) { throw 'Invalid focused string.' }
+    }
+    $name='';$identity=''
+    if ($node.PSObject.Properties['name']) { $name=$node.name }
+    if ($node.PSObject.Properties['selector']) { $identity=$node.selector }
+    $observation.kind='other';$observation.enabled=$node.isEnabled;$observation.isOffscreen=$node.isOffscreen
+    $observation.directInvokable=$node.isInvokable
+    $observation.controlType=$(if ($node.type -cin @('Button','MenuItem','Hyperlink','RadioButton','ListItem','Slider','Text','Edit','Pane','Custom')) { $node.type } else { 'other' })
+    if ($name -match '(?i)\b(sign\s*in|log\s*in|password|verification code|sign up|payment|subscribe|terms of|privacy policy|authorize|permission|connect your|allow access|access denied|administrator|security warning|certificate|captcha|setup|error|something went wrong|failed to|could not start|unable to start|unexpected failure)\b' -or
+        $name -cin @('Continue','Try again')) { $observation.kind='protected' }
+    elseif ($name -cin @('Select model','Choose model')) {
+        $observation.kind='model_menu';$observation.model='model_menu'
+        $observation.activationAllowed=$node.isEnabled -and -not $node.isOffscreen -and $node.type -cin @('Button','MenuItem')
+    }
+    elseif ($name -cin @('5.5 [alpha]','GPT-5.5 [alpha]','5.5 [beta]','GPT-5.5 [beta]')) {
+        $observation.kind='model';$observation.model=$(if($name.EndsWith('[alpha]')){'alpha'}else{'beta'})
+        # Keyboard activation does not require or imply an InvokePattern. The
+        # current focused visible control itself, not a hidden label/ancestor, is the target.
+        $observation.activationAllowed=$node.isEnabled -and -not $node.isOffscreen -and
+            $node.type -cin @('Button','MenuItem','Hyperlink','RadioButton','ListItem')
+    }
+    return [pscustomobject]@{Observation=$observation;Key=$identity}
+}
+function Assert-WinAppModelKeyReceipt([string]$Text,[long]$WindowHandle,[ValidateSet('tab','enter')][string]$Key) {
+    $value=ConvertFrom-LiveJSON $Text 8192
+    Assert-WinAppFields $value @('keys','via','actionCount','hwnd','warnings')
+    Assert-LiveStrings $value @('keys','via')
+    Assert-LiveInteger $value.actionCount 1 1;Assert-LiveInteger $value.hwnd 1 ([long]::MaxValue)
+    if ($value.keys -cne $Key -or $value.via -cne 'send-input' -or $value.hwnd -ne $WindowHandle -or
+        $value.warnings -isnot [array] -or $value.warnings.Count -ne 0) { throw 'Keyboard receipt unavailable.' }
+}
 function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,[Diagnostics.Stopwatch]$Deadline,
     $PriorConfirmation,[System.Collections.IDictionary]$Diagnostic) {
     $result=[ordered]@{schema=1;scope='synthetic-model-menu-only';status='stopped';reason='prior_confirmation_unavailable';
         actions=0;expansionInvoked=$false;nextScreen='not_observed';lastObservation=$null;labels=$null;initialLabels=$null;
-        submenu=[ordered]@{status='not-run';reason='not-required';actions=0;expansionInvoked=$false;observation=$null;search=$null}}
+        submenu=[ordered]@{status='not-run';reason='not-required';actions=0;expansionInvoked=$false;observation=$null;search=$null;keyboard=$null}}
     $Diagnostic.commands=@();$Diagnostic.bindings=@();$Diagnostic.partialActionUncertain=$false
     $Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
     try {
@@ -636,13 +690,40 @@ function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIde
                 $labels=Get-WinAppModelMenuLabels $after
                 $result.submenu.status='observed';$result.submenu.reason='single_submenu_expansion_attempted'
             } else {
-                # One different readonly query, only after the confirmed expansion and
-                # complete safe inspect could not bind this submenu. Never use it to act.
-                $result.reason='submenu_search_unavailable'
-                $result.submenu.search=[ordered]@{status='stopped';reason='search_unavailable'}
-                $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'search-alpha'
-                $result.submenu.search=Read-WinAppModelSearchEvidence $text (4-$observation.nameEvidence.Count)
-                $result.submenu.reason=$result.submenu.search.reason
+                # Search already established the ControlView limitation. Instead, inspect
+                # real keyboard focus and navigate at most four single Tabs in this same panel.
+                $keyboard=[ordered]@{status='stopped';reason='focus_unavailable';tabsSent=0;activationSent=$false;activatedModel='none';lastFocus=$null}
+                $result.submenu.keyboard=$keyboard;$previousKey=''
+                for ($step=0;$step -le 4;$step++) {
+                    $result.reason='keyboard_focus_unavailable'
+                    $focus=Read-WinAppModelFocus (Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'focused')
+                    $keyboard.lastFocus=$focus.Observation
+                    if (-not $focus.Observation.hasFocus) { $keyboard.reason='focus_unavailable';break }
+                    $Diagnostic.partialActionUncertain=$false
+                    if ($focus.Observation.kind -ceq 'protected') { $keyboard.reason='protected_focus';break }
+                    if ($step -gt 0 -and $previousKey -and $focus.Key -ceq $previousKey) { $keyboard.reason='focus_unchanged';break }
+                    if ($focus.Observation.activationAllowed) {
+                        $result.reason='keyboard_activation_unavailable';$result.actions++;$Diagnostic.partialActionUncertain=$true
+                        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'model-enter'
+                        Assert-WinAppModelKeyReceipt $text $WindowHandle 'enter'
+                        $keyboard.activationSent=$true;$keyboard.activatedModel=$focus.Observation.model
+                        $result.reason='keyboard_after_focus_unavailable'
+                        $afterFocus=Read-WinAppModelFocus (Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'focused')
+                        $keyboard.lastFocus=$afterFocus.Observation
+                        if (-not $afterFocus.Observation.hasFocus -or $afterFocus.Observation.kind -ceq 'protected') { throw 'Keyboard destination unavailable.' }
+                        $result.reason='keyboard_after_read_unavailable'
+                        $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'read'
+                        $after=ConvertTo-WinAppWelcomeSnapshot $text $WindowHandle;$labels=Get-WinAppModelMenuLabels $after
+                        $Diagnostic.partialActionUncertain=$false;$keyboard.status='observed';$keyboard.reason='single_model_key_activation'
+                        break
+                    }
+                    if ($step -eq 4) { $keyboard.reason='navigation_limit';break }
+                    $previousKey=$focus.Key;$result.reason='keyboard_tab_unavailable';$result.actions++;$Diagnostic.partialActionUncertain=$true
+                    $text=Invoke-WinAppWelcomeCommand $Tool $WindowHandle $CheckIdentity $Deadline $Diagnostic 'model-tab'
+                    Assert-WinAppModelKeyReceipt $text $WindowHandle 'tab'
+                    $keyboard.tabsSent++ # Clear uncertainty only after the next owned-focus read.
+                }
+                $result.submenu.reason=$keyboard.reason
             }
         }
         $next=$(if ($labels.protectedScreen) { 'protected_screen' }
@@ -650,9 +731,9 @@ function Invoke-WinAppModelMenu($Tool,[long]$WindowHandle,[scriptblock]$CheckIde
         Assert-WinAppFiles $Tool; & $CheckIdentity
         if ($Deadline.ElapsedMilliseconds -ge 30000) { throw 'Model menu deadline exhausted.' }
         $result.labels=$labels;$result.nextScreen=$next;$result.status='observed';$result.reason=$(if ($result.submenu.expansionInvoked) { 'menu_and_submenu_expansion_attempted' } else { 'single_menu_expansion_attempted' })
-        if ($null -ne $result.submenu.search) {
-            $result.status='stopped';$result.reason='submenu_search_evidence_only'
-            if ($result.submenu.search.reason -ceq 'protected_screen') { $result.nextScreen='protected_screen' }
+        if ($null -ne $result.submenu.keyboard) {
+            $result.status=$result.submenu.keyboard.status;$result.reason=$result.submenu.keyboard.reason
+            if ($result.submenu.keyboard.reason -ceq 'protected_focus') { $result.nextScreen='protected_screen' }
         }
     } catch { $Diagnostic.partialActionUncertain=$Diagnostic.partialActionUncertain -or $result.actions -gt 0 }
     foreach ($command in $Diagnostic.commands) {
@@ -667,5 +748,5 @@ function Get-WinAppModelMenuOutcome($Prior,$Menu,[bool]$Captured,[bool]$Uncertai
         $Menu.nextScreen -cne 'model_labels_observed') {
         return [pscustomobject]@{status='blocked';stage='model-menu-stopped';reason='The bounded model-menu observation stopped, is uncertain, lacks both exact synthetic labels or has no verified capture. Prior onboarding evidence is retained.';exitCode=1}
     }
-    return [pscustomobject]@{status='observed';stage='synthetic-model-menu-observed';reason='Bounded menu expansion and reads found exact alpha/beta label candidates; screenshot review is required. No model selection, message, Windows setup or real-provider capability was tested.';exitCode=0}
+    return [pscustomobject]@{status='observed';stage='synthetic-model-menu-observed';reason='Bounded menu expansion and reads found exact alpha/beta label candidates; screenshot review is required. No model selection was verified; no message, Windows setup or real-provider capability was tested.';exitCode=0}
 }

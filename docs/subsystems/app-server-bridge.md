@@ -1966,3 +1966,14 @@ symptom, not a proven causal diagnosis or a claimed fix. Tests cover the
 initial barrier, backend/pagination order, early requests, failure and late
 responses, declared/native mixed catalogs, cancellation and version behavior.
 Actual Desktop validation remains separate from these protocol tests.
+
+## Isolated profile draft preview
+
+[`scripts/bridge-profile-preview`](../../scripts/bridge-profile-preview/README.md)
+is a standalone Windows Forms script, not normal Magpie GUI startup. It uses
+native path selectors and a pure allowlisted JSON draft builder; it never loads
+backend accounts or invokes migrations, backend processes, the gateway or agent
+wiring. It does not save/import configuration, change environment/security state,
+or claim executable, symlink, policy, authentication or Desktop compatibility
+validation. Compatibility modes stay absent/default-off. This is a developer
+preview slice, not a one-click installer or a production account connection UI.

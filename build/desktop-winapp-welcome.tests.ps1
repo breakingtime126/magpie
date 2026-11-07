@@ -216,6 +216,13 @@ try {
         $start=New-WinAppWelcomeStart $tool 123 $spec[0] $spec[1]
         Pass (($start.ArgumentList -join ' ') -ceq $spec[2]) 'submenu has only fixed typed alpha reads and explicit Expand'
     }
+    foreach ($spec in @(@('focused','ui get-focused -w 123 --json'),
+        @('model-tab','ui send-keys tab --via send-input -w 123 --json'),
+        @('model-enter','ui send-keys enter --via send-input -w 123 --json'))) {
+        $start=New-WinAppWelcomeStart $tool 123 $spec[0]
+        Pass (($start.ArgumentList -join ' ') -ceq $spec[1]) 'keyboard uses one named key, original window and UIPI-respecting transport without target focus or system options'
+        Reject { New-WinAppWelcomeStart $tool 123 $spec[0] 'PRIVATE_CANARY' } 'keyboard accepts no arbitrary target'
+    }
     $start=New-WinAppWelcomeStart $tool 123 'search-alpha'
     Pass (($start.ArgumentList -join ' ') -ceq 'ui search [alpha] --max 4 -w 123 --json') 'one fixed unconstrained native search, not type/root filtering or input'
     Reject { New-WinAppWelcomeStart $tool 123 'search-alpha' 'PRIVATE_CANARY' } 'search never accepts an arbitrary selector'
@@ -500,6 +507,62 @@ function SubmenuPage([string]$Variant='normal') {
     if($Variant -ceq 'duplicate'){$page.windows[0].elements+=@(Node 'GPT-5.5 [alpha]' 'MenuItem' 'mnu-gpt55alpha-cccc');$page.windows[0].elementCount++}
     return $page
 }
+# Pinned UiFocusedResult and UiSendKeysResult; these are synthetic safety fixtures.
+function Focused([string]$Name='Ordinary control',[string]$Type='Button',[string]$Id='btn-ordinary-abcd') {
+    [ordered]@{hasFocus=$true;element=(Node $Name $Type $Id)}
+}
+function KeyReceipt([string]$Key) { [ordered]@{keys=$Key;via='send-input';actionCount=1;hwnd=123;warnings=@()} }
+foreach ($name in @('5.5 [alpha]','GPT-5.5 [alpha]','5.5 [beta]','GPT-5.5 [beta]')) {
+    $focus=Read-WinAppModelFocus (Json (Focused $name))
+    Pass ($focus.Observation.activationAllowed -and $focus.Observation.kind -ceq 'model') 'exact catalog model names can activate only from actual focused controls'
+}
+foreach ($name in @('Select model','Choose model')) {
+    $value=Focused $name;$value.element.isInvokable=$false
+    Pass ((Read-WinAppModelFocus (Json $value)).Observation.activationAllowed) 'explicit model-menu focus supports one keyboard opening without pretending isInvokable means InvokePattern'
+    $value.element.type='Edit'
+    Pass (-not (Read-WinAppModelFocus (Json $value)).Observation.activationAllowed) 'menu wording on an edit is not an activation target'
+}
+foreach ($variant in @('hidden','disabled','text','slider','wrong-name','setup','protected','none')) {
+    $value=Focused '5.5 [alpha]'
+    switch($variant) {
+        'hidden' { $value.element.isOffscreen=$true }
+        'disabled' { $value.element.isEnabled=$false }
+        'text' { $value.element.type='Text' }
+        'slider' { $value.element.type='Slider' }
+        'wrong-name' { $value.element.name='5.5 [alpha] Standard, 2 of 4.' }
+        'setup' { $value.element.name='Continue' }
+        'protected' { $value.element.name='Permission required';$value.element.isOffscreen=$true }
+        'none' { $value=[ordered]@{hasFocus=$false} }
+    }
+    $focus=Read-WinAppModelFocus (Json $value)
+    Pass (-not $focus.Observation.activationAllowed) 'hidden labels, wrong roles, unknown names, setup, permissions and no focus never authorize Enter'
+    if ($variant -cin @('setup','protected')) { Pass ($focus.Observation.kind -ceq 'protected') 'protected focus stops even navigation' }
+    Pass ((Json $focus.Observation) -notmatch 'btn-|Standard|Continue|Permission') 'public focus summary contains no raw identity or unrelated names'
+}
+foreach ($variant in @('has-focus-type','name-type','boolean-type','element-missing','element-unexpected')) {
+    $value=Focused
+    switch($variant) {
+        'has-focus-type' { $value.hasFocus='true' }
+        'name-type' { $value.element.name=@('5.5 [alpha]') }
+        'boolean-type' { $value.element.isEnabled='true' }
+        'element-missing' { $value.Remove('element') }
+        'element-unexpected' { $value.hasFocus=$false }
+    }
+    Reject { Read-WinAppModelFocus (Json $value) } 'malformed focus cannot authorize keyboard input'
+}
+foreach ($key in @('tab','enter')) { Assert-WinAppModelKeyReceipt (Json (KeyReceipt $key)) 123 $key;Pass $true 'exact single-key receipt accepted' }
+foreach ($variant in @('transport','hwnd','keys','count','warning','target')) {
+    $value=KeyReceipt 'tab'
+    switch($variant) {
+        'transport' { $value.via='post-message' }
+        'hwnd' { $value.hwnd=124 }
+        'keys' { $value.keys='tab enter' }
+        'count' { $value.actionCount=2 }
+        'warning' { $value.warnings=@('PRIVATE_WARNING') }
+        'target' { $value.target='PRIVATE_TARGET' }
+    }
+    Reject { Assert-WinAppModelKeyReceipt (Json $value) 123 'tab' } 'wrong transport, window, multi-key, warning or implicit focus receipt stops'
+}
 # Schema-derived search fixtures, not recorded output from a live search.
 # The Text name/offscreen state below reproduces the a312 inspect evidence only.
 function SearchResult([string]$Variant='offscreen') {
@@ -608,12 +671,29 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     [Diagnostics.Stopwatch]$Deadline,[System.Collections.IDictionary]$Diagnostic,[string]$Operation,[string]$Selector='') {
     Pass ([object]::ReferenceEquals($Deadline,$script:menuWatch)) 'menu commands retain the original total budget'
     & $CheckIdentity;$script:menuOperations+=,$Operation
-    if ($Operation -ceq 'search-alpha') {
-        $script:menuSearchRead=$true
-        if ($script:menuMode -ceq 'search-failure') { throw 'Synthetic readonly failure.' }
-        if ($script:menuMode -ceq 'search-malformed') { return '{}' }
-        $variant=$(if($script:menuMode -ceq 'search-visible'){'visible'}elseif($script:menuMode -ceq 'search-protected'){'protected'}else{'offscreen'})
-        return Json (SearchResult $variant)
+    if ($Operation -ceq 'focused') {
+        $script:focusReads++
+        if ($script:menuMode -ceq 'keyboard-none') { return '{"hasFocus":false}' }
+        if ($script:menuMode -ceq 'keyboard-bad-focus') { return '{"hasFocus":"true"}' }
+        if ($script:menuMode -ceq 'keyboard-setup' -or ($script:menuMode -ceq 'keyboard-after-protected' -and $script:keyEntered)) { return Json (Focused 'Continue') }
+        if ($script:menuMode -ceq 'keyboard-menu-entry') { return Json (Focused 'Select model') }
+        $model=$script:menuMode -cin @('keyboard-immediate','keyboard-beta','keyboard-enter-failure','keyboard-after-protected','keyboard-final-identity') -or
+            ($script:menuMode -ceq 'keyboard-one-tab' -and $script:keyTabs -eq 1)
+        if ($model) { return Json (Focused $(if($script:menuMode -ceq 'keyboard-beta'){'5.5 [beta]'}else{'5.5 [alpha]'})) }
+        $id=$(if($script:menuMode -ceq 'keyboard-unchanged'){'btn-ordinary-abcd'}else{'btn-ordinary-'+$script:focusReads})
+        return Json (Focused 'Ordinary control' 'Button' $id)
+    }
+    if ($Operation -cin @('model-tab','model-enter')) {
+        $script:menuActions++
+        if ($Operation -ceq 'model-tab') {
+            if ($script:menuMode -ceq 'keyboard-tab-failure') { throw 'Synthetic uncertain Tab.' }
+            $script:keyTabs++;$receipt=KeyReceipt 'tab'
+            if ($script:menuMode -ceq 'keyboard-bad-receipt') { $receipt.via='post-message' }
+        } else {
+            if ($script:menuMode -ceq 'keyboard-enter-failure') { throw 'Synthetic uncertain Enter.' }
+            $script:keyEntered=$true;$receipt=KeyReceipt 'enter'
+        }
+        return Json $receipt
     }
     if ($Operation -ceq 'open-model-menu') {
         $script:menuActions++
@@ -639,7 +719,7 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     if ($Operation -cne 'read') { throw 'No selection send or setup operation allowed.' }
     if ($script:menuActions -gt 0) {
         $script:menuPostRead=$true
-        if ($script:menuActions -eq 1 -and $script:menuMode -like 'search-*') { return Json (SubmenuPage 'offscreen') }
+        if ($script:menuMode -like 'keyboard-*' -and -not $script:keyEntered) { return Json (SubmenuPage 'offscreen') }
         if ($script:menuActions -eq 1 -and $script:menuMode -like 'submenu-*') {
             return Json (SubmenuPage ($script:menuMode.Substring(8)))
         }
@@ -652,20 +732,33 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     if ($script:menuMode -ceq 'disabled') { $page.windows[0].elements[1].isEnabled=$false }
     return Json $page
 }
-foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wrong-pattern','resolution-missing-state','resolution-expanded','missing-beta','next-protected','final-identity','submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted','submenu-offscreen','submenu-othername','submenu-uncertain','search-visible','search-protected','search-failure','search-malformed','search-final-identity')) {
-    $script:menuMode=$menuMode;$script:menuActions=0;$script:menuOperations=@();$script:menuPostRead=$false;$script:menuSearchRead=$false
+foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wrong-pattern','resolution-missing-state','resolution-expanded','missing-beta','next-protected','final-identity','submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted','submenu-offscreen','submenu-othername','submenu-uncertain','keyboard-immediate','keyboard-beta','keyboard-one-tab','keyboard-menu-entry','keyboard-limit','keyboard-unchanged','keyboard-none','keyboard-setup','keyboard-bad-focus','keyboard-tab-failure','keyboard-bad-receipt','keyboard-enter-failure','keyboard-after-protected','keyboard-final-identity')) {
+    $script:menuMode=$menuMode;$script:menuActions=0;$script:menuOperations=@();$script:menuPostRead=$false;$script:focusReads=0;$script:keyTabs=0;$script:keyEntered=$false
     $script:menuWatch=[Diagnostics.Stopwatch]::StartNew();$diagnostic=[ordered]@{}
-    $identity={if (($script:menuMode -ceq 'final-identity' -and $script:menuPostRead) -or ($script:menuMode -ceq 'search-final-identity' -and $script:menuSearchRead)) { throw 'Synthetic identity change.' }}
+    $identity={if (($script:menuMode -ceq 'final-identity' -and $script:menuPostRead) -or ($script:menuMode -ceq 'keyboard-final-identity' -and $script:keyEntered -and $script:focusReads -ge 2)) { throw 'Synthetic identity change.' }}
     $menu=Invoke-WinAppModelMenu $null 123 $identity $menuWatch $confirmedConfirmation $diagnostic
-    Pass ($menuActions -le 2 -and @($menuOperations | Where-Object { $_ -ceq 'open-model-menu' }).Count -le 1 -and
-        @($menuOperations | Where-Object { $_ -ceq 'open-model-submenu' }).Count -le 1) 'each menu level expands at most once and never selects an item'
+    Pass ($menuActions -le 6 -and @($menuOperations | Where-Object { $_ -ceq 'open-model-menu' }).Count -le 1 -and
+        @($menuOperations | Where-Object { $_ -ceq 'open-model-submenu' }).Count -le 1) 'each UIA menu level expands at most once; keyboard input is separately bounded'
     Pass ((Json $menu) -notmatch 'btn-|mnu-|Try again|Sign in|What should') 'menu evidence never exposes selectors or unrelated UI text'
-    Pass (@($menuOperations | Where-Object { $_ -ceq 'search-alpha' }).Count -le 1) 'search never repeats'
-    if ($menuMode -like 'search-*') {
-        Pass ($menu.status -ceq 'stopped' -and $menu.actions -eq 1 -and $menu.submenu.actions -eq 0 -and
-            ($menuOperations -join ',') -ceq 'read,open-model-menu,read,search-alpha') 'even an actionable search match, malformed response, read failure or final identity failure cannot cause input or another read'
-        if ($menuMode -ceq 'search-visible') { Pass ($menu.submenu.search.reason -ceq 'visible_related_names' -and -not $diagnostic.partialActionUncertain) 'visible search evidence does not become an action target or menu success' }
-        if ($menuMode -ceq 'search-protected') { Pass ($menu.nextScreen -ceq 'protected_screen' -and $menu.submenu.search.nameEvidence.Count -eq 0) 'protected search stops without names or actions' }
+    Pass (@($menuOperations | Where-Object { $_ -ceq 'search-alpha' }).Count -eq 0) 'keyboard alternative does not repeat the completed search diagnostic'
+    Pass (@($menuOperations | Where-Object { $_ -ceq 'model-tab' }).Count -le 4 -and
+        @($menuOperations | Where-Object { $_ -ceq 'model-enter' }).Count -le 1) 'at most four single Tabs and one explicitly admitted activation'
+    if ($menuMode -like 'keyboard-*') {
+        Pass ($menu.submenu.actions -eq 0 -and ($menuMode -ceq 'keyboard-bad-focus' -or $menu.submenu.keyboard.lastFocus -is [System.Collections.IDictionary])) 'keyboard evidence is separate from UIA submenu expansion'
+        if ($menuMode -cin @('keyboard-immediate','keyboard-beta','keyboard-one-tab','keyboard-menu-entry')) {
+            $middle=$(if($menuMode -ceq 'keyboard-one-tab'){'focused,model-tab,'}else{''})
+            Pass ($menu.status -ceq 'observed' -and $menu.submenu.keyboard.activationSent -and -not $diagnostic.partialActionUncertain -and
+                ($menuOperations -join ',') -ceq ('read,open-model-menu,read,'+$middle+'focused,model-enter,focused,read')) 'only a freshly confirmed model focus gets one Enter then focus and screen reads'
+        } else {
+            Pass ($menu.status -ceq 'stopped') 'unavailable protected unchanged exhausted or uncertain navigation stops'
+            if ($menuMode -ceq 'keyboard-limit') { Pass ($keyTabs -eq 4 -and $focusReads -eq 5 -and -not $keyEntered -and -not $diagnostic.partialActionUncertain) 'every bounded Tab has a before/after focused read, never a blind Enter' }
+            if ($menuMode -ceq 'keyboard-unchanged') { Pass ($keyTabs -eq 1 -and $focusReads -eq 2) 'no-effect Tab is not repeated' }
+            if ($menuMode -cin @('keyboard-none','keyboard-setup','keyboard-bad-focus')) { Pass ($keyTabs -eq 0 -and -not $keyEntered) 'missing ownership evidence or protected focus cannot receive keys' }
+            if ($menuMode -cin @('keyboard-tab-failure','keyboard-bad-receipt','keyboard-enter-failure')) {
+                Pass ($diagnostic.partialActionUncertain -and $menuOperations[-1] -cin @('model-tab','model-enter')) 'uncertain key or bad receipt stops without fallback transport or another read'
+            }
+            if ($menuMode -ceq 'keyboard-after-protected') { Pass ($keyEntered -and $menuOperations[-1] -ceq 'focused' -and $diagnostic.partialActionUncertain) 'new protected focus after Enter prevents further reads or keys' }
+        }
     } elseif ($menuMode -like 'submenu-*') {
         Pass ($menu.initialLabels.betaVisibleCount -eq 0 -and $menu.submenu.observation.nameEvidence.Count -le 4) 'first panel evidence remains distinct and bounded'
         if ($menuMode -cin @('submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted')) {
@@ -676,15 +769,15 @@ foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wron
             Pass ($menu.status -ceq 'stopped' -and $menu.actions -eq 2 -and $diagnostic.partialActionUncertain -and
                 ($menuOperations -join ',') -ceq 'read,open-model-menu,read,open-model-submenu') 'uncertain submenu stops without another action or read'
         } else {
-            Pass ($menu.actions -eq 1 -and $menu.submenu.actions -eq 0 -and -not $diagnostic.partialActionUncertain -and
-                ($menuOperations -join ',') -ceq 'read,open-model-menu,read,search-alpha' -and $menu.status -ceq 'stopped' -and
-                $menu.submenu.search.reason -ceq 'offscreen_only') 'unknown name or offscreen target permits only one distinct search with no guessed action'
+            Pass ($menu.actions -eq 5 -and $menu.submenu.actions -eq 0 -and -not $diagnostic.partialActionUncertain -and
+                ($menuOperations -join ',') -ceq ('read,open-model-menu,read,focused'+(',model-tab,focused'*4)) -and $menu.status -ceq 'stopped' -and
+                $menu.submenu.keyboard.reason -ceq 'navigation_limit') 'unknown name or offscreen label permits bounded focus navigation but no guessed activation'
         }
     } elseif ($menuMode -cin @('normal','short','promoted','missing-beta','next-protected')) {
-        $expected=$(if($menuMode -ceq 'promoted'){'read,resolve-model-effort,open-model-menu,read'}elseif($menuMode -ceq 'missing-beta'){'read,open-model-menu,read,search-alpha'}else{'read,open-model-menu,read'})
+        $expected=$(if($menuMode -ceq 'promoted'){'read,resolve-model-effort,open-model-menu,read'}elseif($menuMode -ceq 'missing-beta'){'read,open-model-menu,read,focused'+(',model-tab,focused'*4)}else{'read,open-model-menu,read'})
         $expectedStatus=$(if($menuMode -ceq 'missing-beta'){'stopped'}else{'observed'})
-        Pass ($menu.status -ceq $expectedStatus -and $menu.actions -eq 1 -and $menu.expansionInvoked -and -not $diagnostic.partialActionUncertain -and
-            ($menuOperations -join ',') -ceq $expected) 'one bounded explicit expansion followed only by a read'
+        Pass ($menu.status -ceq $expectedStatus -and $menu.actions -eq $(if($menuMode -ceq 'missing-beta'){5}else{1}) -and $menu.expansionInvoked -and -not $diagnostic.partialActionUncertain -and
+            ($menuOperations -join ',') -ceq $expected) 'one initial expansion retains explicit readonly or bounded keyboard outcome'
         if ($menuMode -ceq 'missing-beta') { Pass ($menu.labels.betaVisibleCount -eq 0) 'alpha entry alone is not beta evidence' }
     } elseif ($menuMode -cin @('resolution-missing-state','resolution-expanded')) {
         Pass ($menu.actions -eq 0 -and -not $diagnostic.partialActionUncertain -and
@@ -698,7 +791,7 @@ foreach ($menuMode in @('normal','short','promoted','disabled','uncertain','wron
     }
     $prior=[pscustomobject]@{status='observed';stage='confirmation';reason='fixed';exitCode=0}
     Pass (((Get-WinAppModelMenuOutcome $prior $menu $true $diagnostic.partialActionUncertain).exitCode -eq 0) -eq
-        ($menuMode -cin @('normal','short','promoted','submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted'))) 'only both known labels and confirmed capture complete the menu observation'
+        ($menuMode -cin @('normal','short','promoted','submenu-normal','submenu-combo','submenu-menuitem','submenu-promoted','keyboard-immediate','keyboard-beta','keyboard-one-tab','keyboard-menu-entry'))) 'only both known labels and confirmed capture complete the menu observation'
     Pass ((Get-WinAppModelMenuOutcome $prior $menu $false $false).exitCode -eq 1) 'missing menu pixels blocks completion'
 }
 $script:menuOperations=@();$diagnostic=[ordered]@{}

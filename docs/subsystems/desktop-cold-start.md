@@ -3136,3 +3136,58 @@ counts/types, exact fixed argv, and no input or further read after visible,
 offscreen, failed or malformed search results. These are not live search output.
 PowerShell/Windows execution remains CI verification; no production Go, marker,
 harness or workflow changes are required.
+
+### Bounded official keyboard navigation after the inaccessible model entry
+
+Actual `5a9e2f9e` completed the different native search, but inspect and search
+still exposed only the hidden, non-invokable alpha Text. That diagnostic is not
+repeated. When the confirmed first Expand and safe complete inspect cannot bind
+the second-level entry, the same menu function now reads real keyboard focus and
+permits at most four individually supervised Tabs. Each Tab has a focused-element
+read before and after; unchanged identified focus stops rather than repeating a
+no-effect input. Missing ownership/focus evidence, a protected/setup focus,
+failure, exhausted budget or uncertain key immediately stops.
+
+Pinned v0.7.1 exposes
+[`get-focused`](https://github.com/microsoft/winappCli/blob/e3cd0b94f3e7b776ac51ba0564f4908094e979b5/src/winapp-CLI/WinApp.Cli/Commands/UiGetFocusedCommand.cs)
+as Observe, with `{hasFocus,element?}`. Its native service checks provider PID and
+walks RawView ancestry (at most 40 parents) to verify the actual focused element's
+native/root window belongs to the explicit HWND. This differs from searching the
+ControlView tree and does not move focus. No returned selector is used to focus
+or activate an element; it is only compared privately to detect a no-effect Tab.
+
+The only key commands are fixed `send-keys tab -w <held HWND> --via send-input
+--json` and `send-keys enter ...`, one key per process. The
+[official implementation](https://github.com/microsoft/winappCli/blob/e3cd0b94f3e7b776ac51ba0564f4908094e979b5/src/winapp-CLI/WinApp.Cli/Commands/UiSendKeysCommand.cs#L225-L341)
+requests the original window foreground, confirms target PID/HWND and uses a
+strict foreground guard that excludes owned dialogs. SendInput is OS-wide and
+subject to UIPI, not atomic element-directed input. Parent-held process generation,
+package, HWND and foreground checks remain before and after every command; focus
+can still change between checks. UIPI refusal stops, never retries as administrator
+or switches to default post-message. No `--target`, focus command, coordinates,
+system-key allowance, modifier combination, free text or Space is used.
+
+Tab is navigation, not permission to activate the newly focused control. A single
+Enter is allowed only when that fresh focused element is visible, enabled, one of
+Button/MenuItem/Hyperlink/RadioButton/ListItem, and its Name is exactly the trusted
+catalog/screenshot `5.5 [alpha]`, `GPT-5.5 [alpha]`, `5.5 [beta]` or
+`GPT-5.5 [beta]`. A freshly focused visible/enabled Button or MenuItem named
+exactly `Select model` or `Choose model` is separately admitted as a menu-opening
+target, not a model choice; that records `model_menu` rather than alpha/beta.
+These names are tested only against actual focus, not guessed tree ancestors. Hidden Text, sliders and combined/unknown labels never authorize
+Enter. The aggregate `isInvokable` flag is diagnostic, not an InvokePattern claim
+or prerequisite for keyboard input. Windows setup, Continue, Try again, login,
+permissions and security/terms/credential markers stop even navigation.
+
+One admitted Enter is followed only by owned-focus and full screen reads plus the
+existing screenshot; there is no second activation, model-switch sequence or send.
+The receipt validates original HWND, exact key, send-input, one action and no
+warnings. It proves command return, not that a model was selected. Fixed
+`submenu.keyboard` fields separate Tabs, activation and focus categories from UIA
+Expand and retain prior evidence. Raw focus names, values and selectors stay
+private. Existing global 30-second and output limits, protected-tree checks,
+uncertainty cleanup and screenshot path remain; no deadline is reset. Both model
+labels still require actual final read/pixel review, and neither dual selection
+nor inference is claimed. Pure fixtures cover key routing, non-model navigation,
+four-Tab cap, protected/missing focus, malformed receipts and stop-without-retry.
+PowerShell/Windows/live keyboard execution remains CI work.

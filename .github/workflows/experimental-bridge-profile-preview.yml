@@ -1,0 +1,42 @@
+name: Experimental bridge profile draft tests
+
+on:
+  push:
+    branches:
+      - experiment/app-server-bridge-v0.1.3035
+    paths:
+      - .github/workflows/experimental-bridge-profile-preview.yml
+      - scripts/bridge-profile-preview/**
+
+permissions:
+  contents: read
+
+jobs:
+  pure-profile-builder:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - name: Check out the exact triggering commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Test pure draft generation without opening the GUI
+        # Explicit shell avoids the built-in powershell shell's policy override.
+        # If the runner policy refuses this script, fail rather than relaxing it.
+        shell: powershell.exe -NoLogo -NoProfile -NonInteractive -File {0}
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+              throw 'This job requires Windows PowerShell 5.1.'
+          }
+          $actual = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual.Trim() -cne $env:EXPECTED_SHA) {
+              throw 'Checkout does not match the triggering commit.'
+          }
+          & "$PWD/scripts/bridge-profile-preview/preview.test.ps1"
+          if (-not $?) { throw 'Draft tests failed.' }
