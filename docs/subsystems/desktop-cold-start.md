@@ -265,6 +265,36 @@ diagnostic change, not a confirmed timeout fix. Both PowerShell host runs and
 the original package observation remain unverified for this change; no workflow
 or 4239 native-entry run is enabled by these frames alone.
 
+The subsequent [`71dd9e9b` single-VM run](https://github.com/breakingtime126/magpie/actions/runs/42342444847/job/128312877629)
+failed in the Core-host zero-record case after 30 seconds, again at `started`
+and now specifically before `input_file_validated`. Streams completed, no
+overflow/read error was reported, and helper exit was confirmed. This narrows
+the known stalled segment to `Get-Item` and its metadata validation; it does
+not establish the provider's internal cause or prove module autoloading was
+responsible. No Desktop provisioning, activation or USER mutation occurred.
+
+`Assert-EntryInputFileMetadata` replaces that segment with direct
+`File.GetAttributes` and `FileInfo.Length` calls. It rejects directories,
+leaf reparse points, hidden files and system files. Hidden retains no-Force
+filtering; System rejection deliberately tightens the private-input contract,
+not a claim of exact Windows PowerShell 5.1 provider equivalence. It requires
+1 through 16384 bytes and propagates failed metadata reads to the
+existing fixed failure path. The bounded stream read still checks the actual
+byte count independently. This neither closes a file-replacement race nor
+adds ancestor-reparse validation. The helper deadline, output/input bounds,
+cleared environment, phases and held-process cleanup are unchanged.
+
+Adjacent fixtures use real zero-, one-, 16384- and 16385-byte files, a missing
+path, a directory, read-only, hidden and system files with verified attribute
+restoration, and an owned junction. Junction
+rejection also exercises the directory flag, so it is not isolated proof of
+the reparse branch. Cleanup deletes known leaves without recursive traversal.
+The existing complete zero-record and owned-process cases remain mandatory
+in both hosts. The previous Windows run is a behavioral failure; the metadata
+replacement and new cases still require exact-commit Windows execution before
+calling the stall fixed. Earlier native/bridge UI observations remain separate
+evidence and are not rerun or strengthened by this change.
+
 The documented `WM_SETTINGCHANGE` / `Environment` notification uses a separate
 allowlisted helper. `SendMessageTimeout`'s one-second timeout is per receiving
 window, so the parent applies a separate ten-second helper deadline and verifies

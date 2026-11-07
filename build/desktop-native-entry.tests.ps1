@@ -434,6 +434,50 @@ $matchedIds=[Collections.Generic.List[int]]::new()
 $many=@(1..6 | ForEach-Object { [pscustomobject]@{ProcessId=$_;Name='ChatGPT.exe'} })
 $manyFacts=Get-EntryFreshnessEvidence $many 'fixture.package' 'fixture-bridge.exe' 0 0 { $null } $matchedIds
 Pass ($manyFacts.matches -eq 6 -and $matchedIds.Count -eq 4) 'inspection cap never weakens all-match guard'
+# Real filesystem boundaries for the helper's metadata gate. No ACL or privilege changes.
+$metadataScratch=Join-Path ([IO.Path]::GetTempPath()) ('entry-metadata-test-'+[guid]::NewGuid().ToString('N'))
+$null=[IO.Directory]::CreateDirectory($metadataScratch)
+$metadataFile=Join-Path $metadataScratch 'input.json'
+$metadataDirectory=Join-Path $metadataScratch 'directory'
+$metadataJunction=Join-Path $metadataScratch 'junction'
+try {
+    Write-Output 'ENTRY_SAFETY_FIXTURE=observation-input-metadata'
+    foreach ($size in @(0,1,16384,16385)) {
+        [IO.File]::WriteAllBytes($metadataFile,[byte[]]::new($size))
+        if ($size -eq 1 -or $size -eq 16384) {
+            Pass (@(Assert-EntryInputFileMetadata $metadataFile).Count -eq 0) ('metadata accepts bounded file length '+$size)
+        } else { Reject { Assert-EntryInputFileMetadata $metadataFile } ('metadata rejects file length '+$size) }
+    }
+    Reject { Assert-EntryInputFileMetadata (Join-Path $metadataScratch 'missing.json') } 'missing metadata fails closed'
+    $null=[IO.Directory]::CreateDirectory($metadataDirectory)
+    Reject { Assert-EntryInputFileMetadata $metadataDirectory } 'directory input is rejected before length'
+    [IO.File]::WriteAllBytes($metadataFile,[byte[]]::new(1))
+    $originalAttributes=[IO.File]::GetAttributes($metadataFile)
+    try {
+        [IO.File]::SetAttributes($metadataFile,($originalAttributes -bor [IO.FileAttributes]::ReadOnly))
+        Pass (@(Assert-EntryInputFileMetadata $metadataFile).Count -eq 0) 'read-only regular input remains readable metadata'
+        [IO.File]::SetAttributes($metadataFile,($originalAttributes -bor [IO.FileAttributes]::Hidden))
+        Pass (([IO.File]::GetAttributes($metadataFile) -band [IO.FileAttributes]::Hidden) -ne 0) 'hidden fixture attribute is established'
+        Reject { Assert-EntryInputFileMetadata $metadataFile } 'hidden input retains prior no-Force rejection'
+        [IO.File]::SetAttributes($metadataFile,($originalAttributes -bor [IO.FileAttributes]::System))
+        Pass (([IO.File]::GetAttributes($metadataFile) -band [IO.FileAttributes]::System) -ne 0) 'system fixture attribute is established'
+        Reject { Assert-EntryInputFileMetadata $metadataFile } 'system input is conservatively rejected by the private-input contract'
+    } finally { [IO.File]::SetAttributes($metadataFile,$originalAttributes) }
+    Pass ([IO.File]::GetAttributes($metadataFile) -eq $originalAttributes) 'owned file attributes are restored after boundary cases'
+    $null=New-Item -ItemType Junction -Path $metadataJunction -Target $metadataDirectory
+    Pass (([IO.File]::GetAttributes($metadataJunction) -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'owned junction is a real reparse point'
+    Reject { Assert-EntryInputFileMetadata $metadataJunction } 'junction input is rejected'
+    # A junction also has Directory; this does not independently isolate the ReparsePoint branch.
+} finally {
+    if ([IO.File]::Exists($metadataFile)) {
+        [IO.File]::SetAttributes($metadataFile,[IO.FileAttributes]::Normal)
+        [IO.File]::Delete($metadataFile)
+    }
+    # Delete only known leaves, never recursively traverse a junction or uncertain cleanup.
+    if ([IO.Directory]::Exists($metadataJunction)) { [IO.Directory]::Delete($metadataJunction) }
+    if ([IO.Directory]::Exists($metadataDirectory)) { [IO.Directory]::Delete($metadataDirectory) }
+    [IO.Directory]::Delete($metadataScratch)
+}
 Initialize-EntryHeldObservation
 $heldSelf=$null
 try {

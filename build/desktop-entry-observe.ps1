@@ -1,6 +1,15 @@
 # Read-only, single-pass freshness observation. Dot-sourcing without input only defines helpers.
 [CmdletBinding()]
 param([string]$InputPath = '')
+function Assert-EntryInputFileMetadata([string]$Path) {
+    # Direct filesystem metadata avoids provider discovery in the cleared helper environment.
+    # Read errors propagate; Hidden retains no-Force filtering. System is a stricter private-input rule.
+    $attributes=[IO.File]::GetAttributes($Path)
+    if (($attributes -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint -bor
+        [IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::System)) -ne 0) { throw 'input' }
+    $length=([IO.FileInfo]::new($Path)).Length
+    if ($length -lt 1 -or $length -gt 16384) { throw 'input' }
+}
 function Get-EntryKnownImages([string]$PackageRoot, [string]$WindowsRoot, $Applications) {
     $manifestPaths=[ordered]@{
         App='app/ChatGPT.exe'
@@ -172,8 +181,7 @@ if ([string]::IsNullOrEmpty($InputPath)) { return }
 $ErrorActionPreference='Stop'
 try {
     Write-EntryObservationPhase 'started'
-    $file=Get-Item -LiteralPath $InputPath
-    if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -lt 1 -or $file.Length -gt 16384) { throw 'input' }
+    Assert-EntryInputFileMetadata $InputPath
     Write-EntryObservationPhase 'input_file_validated'
     $stream=[IO.File]::OpenRead($InputPath)
     try {
