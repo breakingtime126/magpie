@@ -2899,7 +2899,7 @@ not establish the confirmation control's UIA type or state.
 
 Only the existing explicit welcome triple-marker profile adds one confirmation
 stage after a successful, certain Skip and its retained capture. A fresh bounded
-read must find the exact visible modal title once, one interactive **Keep setting
+read must find the exact visible modal title at least once, one interactive **Keep setting
 up** button/link, and one exact **Go to ChatGPT** Button or Hyperlink across both
 types. The action target must be enabled and directly invokable. Same-name wrong
 interactive types or duplicates, missing scene evidence, protected text anywhere
@@ -2925,3 +2925,14 @@ success without discarding prior evidence. Any other resulting page is explicitl
 production Go, accepted pins, native four-turn exclusion and 180-second fixture
 lifetime are unchanged. Offline confirmation fixtures are synthetic; only the
 subsequent Windows run can establish the real UIA fields and next screen.
+
+
+The actual `a9454a49` run (`42371528614`, job `128401553341`, artifact
+`13574621302`) confirmed welcome and Skip but stopped before the confirmation
+with zero confirmation actions and no uncertainty. Its fixed metadata reported
+three visible title names, one cancel control and one enabled directly invokable
+Button target. The title is scene evidence, not an action selector: repeated
+non-action container/text names now satisfy presence without a guessed maximum.
+Cancel and actionable target uniqueness, whole-tree protection, original-window
+checks and the shared deadline are unchanged. A synthetic three-title fixture
+now expects one confirmation; duplicate actionable targets still fail closed.

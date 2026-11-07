@@ -395,7 +395,7 @@ function Get-WinAppSkipConfirmationObservation($Page) {
     $observation=[ordered]@{decision='scene_changed';titleCount=$title.Count;cancelInteractiveCount=$cancel.Count;
         targetInteractiveCount=$targets.Count;targetType=$type;enabled=$enabled;directInvokable=$invokable}
     if ($Page.Decision -ceq 'protected_screen') { $observation.decision='protected_screen';return $observation }
-    if ($title.Count -ne 1 -or $cancel.Count -ne 1 -or $cancel[0].Type -cnotin @('Button','Hyperlink')) { return $observation }
+    if ($title.Count -lt 1 -or $cancel.Count -ne 1 -or $cancel[0].Type -cnotin @('Button','Hyperlink')) { return $observation }
     if ($type -cin @('ambiguous','other')) { $observation.decision='ambiguous_target';return $observation }
     $observation.decision='target_not_ready'
     if ($targets.Count -eq 1 -and $enabled -and $invokable) { $observation.decision='ready' }

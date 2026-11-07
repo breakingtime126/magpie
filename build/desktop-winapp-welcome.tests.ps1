@@ -370,11 +370,10 @@ $confirmationGuard=$confirmationCalls[0].Parent
 while ($null -ne $confirmationGuard -and $confirmationGuard -isnot [Management.Automation.Language.IfStatementAst]) { $confirmationGuard=$confirmationGuard.Parent }
 Pass ($confirmationGuard.Clauses[0].Item1.Extent.Text.Contains('$skipAfterCaptured') -and
     $confirmationGuard.Clauses[0].Item1.Extent.Text.Contains('-not $liveFixtureReport.partialActionUncertain')) 'confirmation follows only captured certain Skip'
-foreach ($variant in @('missing-title','duplicate-title','missing-cancel','duplicate-cancel','wrong-cancel-type','missing-target','duplicate-target','wrong-target-type','offscreen','disabled','no-pattern','protected')) {
+foreach ($variant in @('missing-title','missing-cancel','duplicate-cancel','wrong-cancel-type','missing-target','duplicate-target','wrong-target-type','offscreen','disabled','no-pattern','protected')) {
     $page=ConfirmationPage
     switch ($variant) {
         'missing-title' { $page.windows[0].elements[0].name='Other scene' }
-        'duplicate-title' { $page.windows[0].elements+=@(Node 'Skip setup?' 'Text') }
         'missing-cancel' { $page.windows[0].elements[1].name='Other control' }
         'duplicate-cancel' { $page.windows[0].elements+=@(Node 'Keep setting up' 'Hyperlink') }
         'wrong-cancel-type' { $page.windows[0].elements[1].type='Edit' }
@@ -414,18 +413,25 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
         return Json $after
     }
     $page=ConfirmationPage $(if ($script:confirmationMode -ceq 'link') { 'Hyperlink' } else { 'Button' })
+    if ($script:confirmationMode -ceq 'duplicate-title') {
+        $page.windows[0].elements+=@((Node 'Skip setup?' 'Group'),(Node 'Skip setup?' 'Pane'));$page.windows[0].elementCount+=2
+    }
     if ($script:confirmationMode -ceq 'promoted') { $page.windows[0].elements[2].automationId='confirmgo';$page.windows[0].elements[2].selector='confirmgo' }
     if ($script:confirmationMode -ceq 'disabled') { $page.windows[0].elements[2].isEnabled=$false }
     return Json $page
 }
-foreach ($confirmationMode in @('normal','link','promoted','disabled','uncertain','wrong-receipt','next-protected','unchanged','final-identity')) {
+foreach ($confirmationMode in @('normal','link','promoted','duplicate-title','disabled','uncertain','wrong-receipt','next-protected','unchanged','final-identity')) {
     $script:confirmationMode=$confirmationMode;$script:confirmationActions=0;$script:confirmationOperations=@();$script:confirmationPostRead=$false
     $script:confirmationWatch=[Diagnostics.Stopwatch]::StartNew();$diagnostic=[ordered]@{}
     $identity={if ($script:confirmationMode -ceq 'final-identity' -and $script:confirmationPostRead) { throw 'Synthetic changed identity.' }}
     $confirmation=Invoke-WinAppSkipConfirmation $null 123 $identity $confirmationWatch $confirmedSkip $diagnostic
     Pass ($confirmationActions -le 1) 'confirmation is never retried'
+    if ($confirmationMode -ceq 'duplicate-title') {
+        Pass ($confirmation.lastObservation.titleCount -eq 3 -and $confirmation.lastObservation.targetInteractiveCount -eq 1 -and
+            $confirmation.status -ceq 'observed' -and $confirmationActions -eq 1) 'repeated non-action title names do not make the unique confirmation action ambiguous'
+    }
     Pass ((Json $confirmation) -notmatch 'btn-|lnk-|Sign in|Skip setup|Go to ChatGPT') 'confirmation output contains fixed metadata only'
-    if ($confirmationMode -cin @('normal','link','promoted','next-protected','unchanged')) {
+    if ($confirmationMode -cin @('normal','link','promoted','duplicate-title','next-protected','unchanged')) {
         $expected=$(if($confirmationMode -ceq 'promoted'){'read,resolve-confirm-button,confirm-skip,read'}else{'read,confirm-skip,read'})
         Pass ($confirmation.status -ceq 'observed' -and $confirmation.actions -eq 1 -and $confirmation.confirmationInvoked -and
             -not $diagnostic.partialActionUncertain -and ($confirmationOperations -join ',') -ceq $expected) 'one admitted confirmation then only one next-page read'
@@ -438,7 +444,7 @@ foreach ($confirmationMode in @('normal','link','promoted','disabled','uncertain
     }
     $prior=[pscustomobject]@{status='observed';stage='skip';reason='fixed';exitCode=0}
     $outcome=Get-WinAppSkipConfirmationOutcome $prior $confirmation $true $diagnostic.partialActionUncertain
-    Pass (($outcome.exitCode -eq 0) -eq ($confirmationMode -cin @('normal','link','promoted'))) 'only confirmed transition and capture can finish; next page remains unreviewed'
+    Pass (($outcome.exitCode -eq 0) -eq ($confirmationMode -cin @('normal','link','promoted','duplicate-title'))) 'only confirmed transition and capture can finish; next page remains unreviewed'
     Pass ((Get-WinAppSkipConfirmationOutcome $prior $confirmation $false $false).exitCode -eq 1) 'missing final pixels block completion'
 }
 $script:confirmationOperations=@();$diagnostic=[ordered]@{}
