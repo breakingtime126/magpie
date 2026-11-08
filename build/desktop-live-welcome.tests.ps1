@@ -374,10 +374,10 @@ try {
 # Selection result is a separate bounded schema, never inference or persistence.
 $selectionResult=[pscustomobject]@{schema=1;scope='bridge-owned-current-draft-selection-only';status='observed';reason='both_current_draft_selections_verified';
     selectionAttempts=2;confirmedSelections=2;menuReopens=2;initialAlphaSelected=$true;betaSelected=$true;alphaSelected=$true;
-    betaLabelMatched=$true;alphaLabelMatched=$true;betaCaptured=$true;alphaCaptured=$true;
+    betaLabelMatched=$true;alphaLabelMatched=$true;betaCaptured=$true;alphaCaptured=$true;failureCapture='not_attempted';
     lastObservation=[pscustomobject]@{target='beta';matches=1;controlType='RadioButton';enabled=$true;selectorKind='runtime_slug';selectionState='unselected';patternConfirmed=$true}}
 $selectionResult | Add-Member -NotePropertyName snapshotObservation -NotePropertyValue ([pscustomobject]@{
-    stage='ready';baseValidated=$true;statsComplete=$true;headingCount=1;protectedScreen=$false;
+    stage='ready';baseValidated=$true;statsComplete=$true;headingCount=1;protectedScreen=$false;modelSettingsErrorCount=0;
     names=[pscustomobject]@{
         alpha=[pscustomobject]@{total=1;hidden=0;disabled=0;directInvokable=1;radioButton=1;menuItem=0;button=0;text=0;other=0};
         beta=[pscustomobject]@{total=1;hidden=0;disabled=0;directInvokable=1;radioButton=1;menuItem=0;button=0;text=0;other=0};
@@ -400,6 +400,9 @@ foreach ($mutation in @(
     {param($v) $v.snapshotObservation.statsComplete=$false},
     {param($v) $v.snapshotObservation.protectedScreen=$true},
     {param($v) $v.snapshotObservation.headingCount=0},
+    {param($v) $v.snapshotObservation.modelSettingsErrorCount=1},
+    {param($v) $v.snapshotObservation.modelSettingsErrorCount='PRIVATE_CANARY'},
+    {param($v) $v.failureCapture='beta'},
     {param($v) $v.snapshotObservation.names.alpha.total=501},
     {param($v) $v.snapshotObservation.names.alpha.menuItem=1},
     {param($v) $v.snapshotObservation.names.alpha.hidden=2},
@@ -409,5 +412,57 @@ foreach ($mutation in @(
     $bad=($selectionResult | ConvertTo-Json -Depth 8 -Compress) | ConvertFrom-Json; & $mutation $bad
     Reject { Assert-ModelSelectionResult $bad } 'selection success cannot omit proof or widen counts/data'
 }
+# A file proof is independent of the UI and RPC evidence. Only a synthetic
+# frontend file is created by this fixture; the runtime helper is read-only.
+$settingsTemp=Join-Path ([IO.Path]::GetTempPath()) ('magpie-owned-settings-test-'+[guid]::NewGuid().ToString('N'))
+$null=New-Item -ItemType Directory -Path $settingsTemp
+try {
+    $settingsPath=Join-Path $settingsTemp 'config.toml'
+    Reject { Assert-LiveOwnedSettingsFile $settingsTemp 'alpha' } 'missing settings never count as persistence'
+    foreach ($owner in @('alpha','beta')) {
+        $model='magpie/'+$owner+'/test-'+$owner
+        foreach ($content in @(
+            ('model = "'+$model+'"'+"`n"+'model_reasoning_effort = "none"'+"`n"),
+            ("model_reasoning_effort = 'none'`r`nmodel = '"+$model+"'`r`n")
+        )) {
+            [IO.File]::WriteAllText($settingsPath,$content,[Text.UTF8Encoding]::new($false))
+            $before=[IO.File]::ReadAllBytes($settingsPath)
+            $output=@(Assert-LiveOwnedSettingsFile $settingsTemp $owner)
+            Pass ($output.Count -eq 0) 'owned settings reader emits no content or path'
+            Pass ([Convert]::ToBase64String($before) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath))) 'owned settings observation never writes'
+            $other=$(if($owner -ceq 'alpha'){'beta'}else{'alpha'})
+            Reject { Assert-LiveOwnedSettingsFile $settingsTemp $other } 'prior owner is not a successful next selection'
+        }
+    }
+    foreach ($content in @(
+        '',
+        'model = "magpie/alpha/test-alpha"',
+        "model = 'magpie/alpha/test-alpha'`nmodel_reasoning_effort = 'low'`n",
+        "model = 'magpie/alpha/test-alpha'`nmodel_reasoning_effort = 'none'`nunknown = 'PRIVATE_CANARY'`n",
+        "model = 'magpie/alpha/test-alpha'`nmodel = 'magpie/alpha/test-alpha'`nmodel_reasoning_effort = 'none'`n",
+        "model = 'magpie/alpha/test-alpha'`nmodel_reasoning_effort = 0`n",
+        "[profile]`nmodel = 'magpie/alpha/test-alpha'`nmodel_reasoning_effort = 'none'`n",
+        ('x'*16385)
+    )) {
+        [IO.File]::WriteAllText($settingsPath,$content,[Text.UTF8Encoding]::new($false))
+        Reject { Assert-LiveOwnedSettingsFile $settingsTemp 'alpha' } 'unknown truncated duplicate or oversized settings fail closed'
+    }
+    Reject { Assert-LiveOwnedSettingsFile $settingsTemp 'PRIVATE_CANARY' } 'reader owner is an exact fixed enum'
+    Reject { Assert-LiveOwnedSettingsFile 'relative-root' 'alpha' } 'reader requires the known absolute control home'
+} finally { Remove-Item -LiteralPath $settingsTemp -Recurse -Force }
+$settingsPrior=[pscustomobject]@{status='observed';stage='synthetic-model-selection-observed';reason='fixed';exitCode=0}
+$settingsFiles=[pscustomobject]@{initialVerified=$true;betaVerified=$true;alphaVerified=$true}
+$settingsRPC=[pscustomobject]@{status='observed'}
+Pass ((Get-LiveOwnedSettingsOutcome $settingsPrior $settingsFiles $settingsRPC).stage -ceq 'synthetic-model-settings-observed') 'independent evidence yields only the explicit current-VM settings scope'
+foreach ($key in @('initialVerified','betaVerified','alphaVerified')) {
+    $settingsFiles.$key=$false
+    Pass ((Get-LiveOwnedSettingsOutcome $settingsPrior $settingsFiles $settingsRPC).exitCode -ne 0) 'missing file observation cannot be hidden by UI or success messages'
+    $settingsFiles.$key=$true
+}
+$settingsRPC.status='incomplete'
+Pass ((Get-LiveOwnedSettingsOutcome $settingsPrior $settingsFiles $settingsRPC).exitCode -ne 0) 'file and UI do not substitute for matching RPC evidence'
+$settingsRPC.status='observed';$settingsPrior.exitCode=1;$settingsPrior.stage='model-selection-stopped'
+Pass ((Get-LiveOwnedSettingsOutcome $settingsPrior $settingsFiles $settingsRPC).stage -ceq 'model-selection-stopped') 'settings proof never overrides a toast or prior cleanup failure'
+
 Write-Output "LIVE_WELCOME_OFFLINE_CHECKS=$count"
 exit 0

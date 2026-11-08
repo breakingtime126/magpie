@@ -33,6 +33,8 @@ const (
 // path or stderr. Strings are fixed labels or the verified public dictionary's
 // digest; dynamic public key matches expose only bounded dictionary indices.
 type event struct {
+	ConfigBatchWrite *configBatchWriteObservation `json:"configBatchWrite,omitempty"`
+
 	ModelCatalog      *modelCatalogObservation      `json:"modelCatalog,omitempty"`
 	OwnedModelCatalog *ownedModelCatalogObservation `json:"ownedModelCatalog,omitempty"`
 
@@ -300,6 +302,8 @@ func (o *observer) line(direction string, b []byte) {
 				o.observedProjectList(b, &e)
 			case "fs/readFile":
 				o.observedFSReadFile(b, &e)
+			case "config/batchWrite":
+				e.ConfigBatchWrite = observedConfigBatchWrite(b, o.readTargetRoots)
 			case "config/read":
 				e.ConfigParamsValid, e.ConfigIncludeLayers, e.ConfigCwdProvided = observedConfigRead(b)
 			case "experimentalFeature/list":

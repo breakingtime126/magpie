@@ -153,6 +153,55 @@ function ConvertTo-LiveConfiguration($Value, [string]$Scratch, [string]$Codex, [
     }
     return $result
 }
+# Read only the one freshly owned frontend file. This is a bounded, single
+# observation, not a writer, retry loop, general TOML parser or restart proof.
+function Assert-LiveOwnedSettingsFile([string]$ControlHome,[string]$Owner) {
+    if ($Owner -cnotin @('alpha','beta') -or -not [IO.Path]::IsPathFullyQualified($ControlHome)) {
+        throw 'Invalid owned settings observation.'
+    }
+    $path=Join-Path $ControlHome 'config.toml'
+    foreach ($candidate in @($ControlHome,$path)) {
+        $item=Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Invalid owned settings file.' }
+    }
+    if ($item.PSIsContainer -or $item.Length -lt 1 -or $item.Length -gt 16384) { throw 'Invalid owned settings size.' }
+    $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,
+        ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try {
+        $bytes=[byte[]]::new(16385);$count=0
+        while ($count -lt $bytes.Length) {
+            $n=$stream.Read($bytes,$count,$bytes.Length-$count)
+            if ($n -eq 0) { break };$count+=$n
+        }
+        if ($count -lt 1 -or $count -gt 16384) { throw 'Invalid owned settings size.' }
+        $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes,0,$count)
+    } finally { $stream.Dispose() }
+    $after=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    if ($after.PSIsContainer -or ($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        $after.Length -ne $count -or $after.Length -ne $item.Length -or
+        $after.LastWriteTimeUtc -ne $item.LastWriteTimeUtc) { throw 'Owned settings changed during observation.' }
+    $values=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    # The test owns the two ASCII values. Accept either TOML quote style and
+    # either field order, never arbitrary expressions, extra keys or duplicates.
+    foreach ($line in ($text -csplit '\r?\n')) {
+        if ($line -cmatch '^[ \t]*$') { continue }
+        $match=[regex]::Match($line,'\A[ \t]*(model|model_reasoning_effort)[ \t]*=[ \t]*(?:"([^"\r\n]*)"|''([^''\r\n]*)'')[ \t]*\z')
+        if (-not $match.Success -or $values.ContainsKey($match.Groups[1].Value)) { throw 'Invalid owned settings shape.' }
+        $value=$(if($match.Groups[2].Success){$match.Groups[2].Value}else{$match.Groups[3].Value})
+        $values.Add($match.Groups[1].Value,$value)
+    }
+    if ($values.Count -ne 2 -or $values['model'] -cne ('magpie/'+$Owner+'/test-'+$Owner) -or
+        $values['model_reasoning_effort'] -cne 'none') { throw 'Owned settings value mismatch.' }
+}
+function Get-LiveOwnedSettingsOutcome($Prior,$Files,$RPC) {
+    if ($Prior.exitCode -ne 0) { return $Prior }
+    if ($null -eq $Files -or $null -eq $RPC -or -not $Files.initialVerified -or
+        -not $Files.betaVerified -or -not $Files.alphaVerified -or $RPC.status -cne 'observed') {
+        return [pscustomobject]@{status='blocked';stage='model-settings-verification-stopped';reason='The owned settings slice lacks two correlated matching successes or its one-time file observations. No version, restart or conversation result is established.';exitCode=1}
+    }
+    return [pscustomobject]@{status='observed';stage='synthetic-model-settings-observed';reason='Beta then Alpha UI selection, no observed settings-error toast, correlated matching request successes and fixed-file preference observations passed in this VM. No response-body, user-layer version, restart, thread migration or conversation validation.';exitCode=0}
+}
+
 function Assert-WelcomeResult($Value) {
     Assert-LiveShape $Value @('schema','scope','status','reason','stage','actions','suggestionsDisabled','engineeringSelected','continueInvoked','nextScreen','targetObservations','initialReadObservation')
     if ($null -ne $Value.targetObservations) {
@@ -411,12 +460,12 @@ function Invoke-LiveWelcome($Start, [System.Collections.IDictionary]$Diagnostic 
 
 function Assert-ModelSelectionResult($Value) {
     Assert-LiveShape $Value @('schema','scope','status','reason','selectionAttempts','confirmedSelections','menuReopens',
-        'initialAlphaSelected','betaSelected','alphaSelected','betaLabelMatched','alphaLabelMatched','betaCaptured','alphaCaptured','lastObservation','snapshotObservation')
+        'initialAlphaSelected','betaSelected','alphaSelected','betaLabelMatched','alphaLabelMatched','betaCaptured','alphaCaptured','lastObservation','snapshotObservation','failureCapture')
     Assert-LiveInteger $Value.schema 1 1
     Assert-LiveStrings $Value @('scope','status','reason')
     if ($Value.scope -cne 'bridge-owned-current-draft-selection-only' -or $Value.status -cnotin @('observed','stopped') -or
         $Value.reason -cnotin @('selection_profile_unavailable','prior_menu_unavailable','initial_selection_unavailable','selection_read_unavailable',
-            'selection_snapshot_base_unavailable','selection_snapshot_names_unavailable','selection_snapshot_target_guard_unavailable','selection_snapshot_scene_unavailable',
+            'selection_snapshot_base_unavailable','selection_snapshot_names_unavailable','selection_snapshot_target_guard_unavailable','selection_snapshot_scene_unavailable','selection_model_settings_error',
             'preselection_state_unavailable','selection_action_unavailable','selection_receipt_invalid','selected_label_unavailable',
             'selection_reopen_unavailable','selected_pair_unavailable','selection_capture_unavailable','both_current_draft_selections_verified')) {
         throw 'Invalid fixed selection outcome.'
@@ -436,9 +485,9 @@ function Assert-ModelSelectionResult($Value) {
         $o.enabled -isnot [bool] -or $o.patternConfirmed -isnot [bool]) { throw 'Invalid bounded selection observation.' }
     $snapshot=$Value.snapshotObservation
     if ($null -ne $snapshot) {
-        Assert-LiveShape $snapshot @('stage','baseValidated','statsComplete','headingCount','protectedScreen','names')
-        Assert-LiveStrings $snapshot @('stage'); Assert-LiveInteger $snapshot.headingCount 0 500
-        if ($snapshot.stage -cnotin @('base_schema','name_scan','name_guard','scene','ready') -or
+        Assert-LiveShape $snapshot @('stage','baseValidated','statsComplete','headingCount','protectedScreen','modelSettingsErrorCount','names')
+        Assert-LiveStrings $snapshot @('stage'); Assert-LiveInteger $snapshot.headingCount 0 500; Assert-LiveInteger $snapshot.modelSettingsErrorCount 0 500
+        if ($snapshot.stage -cnotin @('base_schema','name_scan','name_guard','scene','ready','model_settings_error') -or
             $snapshot.baseValidated -isnot [bool] -or $snapshot.statsComplete -isnot [bool] -or $snapshot.protectedScreen -isnot [bool]) {
             throw 'Invalid fixed snapshot stage.'
         }
@@ -452,11 +501,20 @@ function Assert-ModelSelectionResult($Value) {
                 ($counts.radioButton+$counts.menuItem+$counts.button+$counts.text+$counts.other) -ne $counts.total) { throw 'Inconsistent fixed snapshot counts.' }
         }
         if (($snapshot.stage -cne 'base_schema' -and -not $snapshot.baseValidated) -or
-            ($snapshot.stage -cin @('name_guard','scene','ready') -and -not $snapshot.statsComplete)) { throw 'Incomplete snapshot stage proof.' }
+            ($snapshot.stage -cin @('name_guard','scene','ready','model_settings_error') -and -not $snapshot.statsComplete)) { throw 'Incomplete snapshot stage proof.' }
     }
     if ($Value.status -ceq 'observed' -and ($null -eq $snapshot -or $snapshot.stage -cne 'ready' -or
-        $snapshot.protectedScreen -or $snapshot.headingCount -ne 1 -or $snapshot.names.alpha.total -ne 1 -or
+        $snapshot.protectedScreen -or $snapshot.modelSettingsErrorCount -ne 0 -or $snapshot.headingCount -ne 1 -or $snapshot.names.alpha.total -ne 1 -or
         $snapshot.names.beta.total -ne 1)) { throw 'Missing final snapshot validation.' }
+    Assert-LiveStrings $Value @('failureCapture')
+    if ($Value.failureCapture -cnotin @('not_attempted','unavailable','beta','alpha')) { throw 'Invalid fixed failure capture.' }
+    if ($Value.reason -ceq 'selection_model_settings_error') {
+        if ($Value.status -cne 'stopped' -or $null -eq $snapshot -or $snapshot.stage -cne 'model_settings_error' -or
+            $snapshot.modelSettingsErrorCount -lt 1) { throw 'Application error lacks its fixed observation.' }
+    } elseif ($Value.failureCapture -cne 'not_attempted') { throw 'Unexpected failure capture.' }
+    if (($Value.failureCapture -ceq 'beta' -and $Value.selectionAttempts -ne 1) -or
+        ($Value.failureCapture -ceq 'alpha' -and $Value.selectionAttempts -ne 2) -or
+        ($Value.failureCapture -ceq 'unavailable' -and $Value.selectionAttempts -lt 1)) { throw 'Failure capture does not match the attempted selection.' }
     if ($Value.status -ceq 'observed' -and ($Value.reason -cne 'both_current_draft_selections_verified' -or
         $Value.selectionAttempts -ne 2 -or $Value.confirmedSelections -ne 2 -or -not $Value.initialAlphaSelected -or
         -not $Value.betaSelected -or -not $Value.alphaSelected -or -not $Value.betaLabelMatched -or -not $Value.alphaLabelMatched -or

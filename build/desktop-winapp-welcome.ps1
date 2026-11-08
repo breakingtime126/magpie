@@ -825,7 +825,7 @@ function Assert-WinAppModelSelectionProfile([string]$Profile,[string]$FixturePro
 function ConvertTo-WinAppModelSelectionSnapshot([string]$Text,[long]$WindowHandle,[System.Collections.IDictionary]$Result=$null) {
     # Only fixed-name statistics leave this function. Until base validation and
     # the complete scan succeed, zero counts do not mean a target was absent.
-    $snapshot=[ordered]@{stage='base_schema';baseValidated=$false;statsComplete=$false;headingCount=0;protectedScreen=$false;
+    $snapshot=[ordered]@{stage='base_schema';baseValidated=$false;statsComplete=$false;headingCount=0;protectedScreen=$false;modelSettingsErrorCount=0;
         names=[ordered]@{}}
     $names=[ordered]@{'Synthetic Alpha [alpha]'='alpha';'Synthetic Beta [beta]'='beta';
         'Synthetic Alpha [alpha] None'='currentAlpha';'Synthetic Beta [beta] None'='currentBeta'}
@@ -844,6 +844,11 @@ function ConvertTo-WinAppModelSelectionSnapshot([string]$Text,[long]$WindowHandl
     foreach ($node in $value.windows[0].elements) { $pending.Push($node) }
     while ($pending.Count) {
         $node=$pending.Pop()
+        # Exact public toast, including its observed typographic apostrophe.
+        # Do not export arbitrary text or infer success from a changed checkmark.
+        if ($node.PSObject.Properties['name'] -and $node.name -cin @("Couldn't update model settings","Couldn’t update model settings")) {
+            $snapshot.modelSettingsErrorCount++
+        }
         if ($node.PSObject.Properties['name'] -and $node.name -cin @($names.Keys)) {
             $count=$snapshot.names[$names[$node.name]]
             $count.total++
@@ -860,7 +865,13 @@ function ConvertTo-WinAppModelSelectionSnapshot([string]$Text,[long]$WindowHandl
         }
         if ($node.PSObject.Properties['children']) { foreach ($child in $node.children) { $pending.Push($child) } }
     }
-    $snapshot.statsComplete=$true;$snapshot.stage='name_guard'
+    $snapshot.statsComplete=$true
+    if ($snapshot.modelSettingsErrorCount -gt 0) {
+        $snapshot.stage='model_settings_error'
+        if ($null -ne $Result) { $Result.reason='selection_model_settings_error' }
+        throw 'The application could not update model settings.'
+    }
+    $snapshot.stage='name_guard'
     if ($null -ne $Result) { $Result.reason='selection_snapshot_target_guard_unavailable' }
     # Only the two pending model targets are gated here. Current-model Button
     # state is checked if it later becomes an actual Expand action target.
@@ -959,7 +970,7 @@ function Invoke-WinAppModelSelection($Tool,[long]$WindowHandle,[scriptblock]$Che
     $result=[ordered]@{schema=1;scope='bridge-owned-current-draft-selection-only';status='stopped';reason='selection_profile_unavailable';
         selectionAttempts=0;confirmedSelections=0;menuReopens=0;initialAlphaSelected=$false;
         betaSelected=$false;alphaSelected=$false;betaLabelMatched=$false;alphaLabelMatched=$false;betaCaptured=$false;alphaCaptured=$false;
-        lastObservation=[ordered]@{target='none';matches=0;controlType='absent';enabled=$false;selectorKind='not_observed';selectionState='not_read';patternConfirmed=$false};snapshotObservation=$null}
+        lastObservation=[ordered]@{target='none';matches=0;controlType='absent';enabled=$false;selectorKind='not_observed';selectionState='not_read';patternConfirmed=$false};snapshotObservation=$null;failureCapture='not_attempted'}
     $Diagnostic.commands=@();$Diagnostic.partialActionUncertain=$false;$Diagnostic.stdoutBytes=0;$Diagnostic.outputLimitExceeded=$false
     $deadline=[Diagnostics.Stopwatch]::StartNew()
     try {
@@ -1043,13 +1054,27 @@ function Invoke-WinAppModelSelection($Tool,[long]$WindowHandle,[scriptblock]$Che
             $result[($owner+'Selected')]=$true;$result.confirmedSelections++
             $result.reason='selection_capture_unavailable'
             & $CheckIdentity; & $Capture $owner; & $CheckIdentity
-            $result[($owner+'Captured')]=$true;$Diagnostic.partialActionUncertain=$false
+            $result[($owner+'Captured')]=$true
+            # The toast may arrive after the first post-select read. Recheck
+            # after the screenshot, before another selection or a successful result.
+            $null=Selection-Page
+            $Diagnostic.partialActionUncertain=$false
         }
         Assert-WinAppFiles $Tool; & $CheckIdentity
         if ($deadline.ElapsedMilliseconds -ge 30000) { throw 'Selection deadline exceeded.' }
         $result.status='observed';$result.reason='both_current_draft_selections_verified'
     } catch {
         $Diagnostic.partialActionUncertain=$Diagnostic.partialActionUncertain -or $result.selectionAttempts -gt $result.confirmedSelections
+        if ($result.reason -ceq 'selection_model_settings_error' -and $result.selectionAttempts -gt 0) {
+            # Preserve the failed application outcome and its fixed screenshot.
+            # This is a read/capture only, never an action retry or the next select.
+            $failedOwner=$(if ($result.selectionAttempts -eq 1) { 'beta' } else { 'alpha' })
+            $result.failureCapture='unavailable'
+            try {
+                & $CheckIdentity; & $Capture $failedOwner; & $CheckIdentity
+                $result.failureCapture=$failedOwner
+            } catch { }
+        }
     }
     foreach ($command in $Diagnostic.commands) {
         $Diagnostic.stdoutBytes+=$command.stdoutBytes

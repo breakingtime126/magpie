@@ -122,6 +122,12 @@ func (r *Router) controlPlaneReadResponse167(g *request, backend string, line []
 	if r.controlSession167 == nil || (r.ownedCatalog != nil && r.ownedCatalog.refreshing) {
 		return r.reject(g, -32000, controlPlaneUnavailable167)
 	}
+	if r.ownedSettings != nil {
+		if _, _, err := r.ownedSettings.snapshot(); err != nil {
+			r.failOwnedCatalog()
+			return r.reject(g, -32000, ownedSettingsUnavailable167)
+		}
+	}
 	var includeLayers bool
 	_ = json.Unmarshal(g.params["includeLayers"], &includeLayers)
 	return r.finish(g, r.controlSession167.read(includeLayers))
@@ -167,6 +173,16 @@ func (r *Router) controlPlaneSessionConfig167(defaultModel string) object {
 		extension["catalog"] = raw(object{
 			"version": raw(1), "source": raw("bridge-owned-alias-catalog"),
 			"sha256": raw(r.ownedCatalog.digest), "validation": raw("complete-native-model-list"),
+		})
+	}
+	if r.ownedSettings != nil {
+		delete(config, "model")
+		delete(provenance, "model")
+		extension["provenance"] = raw(provenance)
+		// This opt-in does not advertise arbitrary configuration writes.
+		extension["model_settings"] = raw(object{
+			"version": raw(1), "source": raw("bridge-owned-user-file"),
+			"writable_keys": raw([]string{"model", "model_reasoning_effort"}),
 		})
 	}
 	config["magpie_bridge"] = raw(extension)

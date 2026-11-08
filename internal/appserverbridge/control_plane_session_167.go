@@ -25,6 +25,7 @@ type controlPlaneSession167 struct {
 	config  json.RawMessage
 	origins json.RawMessage
 	layer   json.RawMessage
+	layers  json.RawMessage
 }
 
 func (r *Router) enableControlPlane167() error {
@@ -86,7 +87,11 @@ func (s *controlPlaneSession167) read(includeLayers bool) object {
 		"origins": append(json.RawMessage(nil), s.origins...),
 	}
 	if includeLayers {
-		result["layers"] = raw([]json.RawMessage{s.layer})
+		if s.layers != nil {
+			result["layers"] = append(json.RawMessage(nil), s.layers...)
+		} else {
+			result["layers"] = raw([]json.RawMessage{s.layer})
+		}
 	}
 	return result
 }

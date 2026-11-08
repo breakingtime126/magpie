@@ -612,7 +612,8 @@ or coordinate click is used. Held window/package/process/foreground checks
 surround each command, retaining the existing disclosed non-atomic identity
 limitations rather than claiming an action-instant proof.
 
-A successful action receipt is insufficient. A fresh tree must show the exact
+A successful action receipt is insufficient. Any observed model-settings error
+stops the slice even if the checkmark and current label change. A fresh tree must show the exact
 current-model Button (`Synthetic Beta [beta] None`, then
 `Synthetic Alpha [alpha] None`). For this read-only label check the Button need not be enabled or invokable.
 If collapsed, that unique enabled, directly invokable Button may be reopened once through explicit Expand; if already expanded it is not acted
@@ -671,3 +672,90 @@ rejection, an expanded disabled opener, bounded diagnostics and two-selection
 limits. Local PowerShell/Windows/GUI execution remains unavailable; these tests
 must run in CI before any new acceptance is claimed. Other evidence and the
 original failed report are unchanged.
+
+#### Application-error stop after model selection
+
+At `39a73bf4bca222188fd4c91c796847ba2c6787f7`, the real isolated Desktop
+performed Beta then Alpha through RadioButton SelectionItemPattern; selected
+states and current labels changed. Both screenshots also show the red public
+toast **Couldn’t update model settings**, and the trace records rejected
+`config/batchWrite` requests (`-32601`). The helper incorrectly reported its UI
+selection stage as observed and continued to Alpha after the Beta error. That
+was a test-oracle defect. The original report and screenshots remain unchanged:
+they prove control operability, not successful application settings or persistence.
+The current run's `... None` count of two (one Button, one other role) justifies
+keeping display labels separate from action-target uniqueness; it does not
+establish the cause of an older run without its raw tree.
+
+The selection snapshot now rejects the exact public error sentence with either
+its straight or typographic apostrophe. It exports only a bounded fixed count
+and `selection_model_settings_error`, not the toast text or arbitrary UI content.
+A second snapshot after each screenshot checks for errors that arrived after
+the first post-select read, before another selection or an observed result.
+This remains a bounded observation, not an atomic absence-of-errors guarantee.
+The first error stops the sequence. If Beta was attempted, only its existing
+fixed screenshot path is captured for the failure; no Alpha selection follows.
+Capture failure remains explicit and does not erase the application error.
+Previously proven UI state/label counts may be retained as operability evidence,
+but an error cannot produce an observed selection outcome.
+
+Pure negative fixtures cover both exact spellings, an error already present,
+an error after Beta despite changed labels, a toast arriving after the first
+capture, and failure to save error pixels. They require zero or one selection
+and no Alpha attempt; successful no-error control fixtures remain distinct.
+No production write/auth/setup boundary is changed, and there is no retry,
+sleep, timeout extension or standalone GUI run. This candidate needs CI fixture
+validation; local PowerShell/Windows/GUI tests were not run. Any future real
+configuration-write behavior needs a separate explicit contract, not more
+selection-only GUI repetitions.
+
+### Explicit current-VM owned preference-write slice
+
+The separate `-DesktopModelSettingsProfile bridge-owned-model-settings-4239`
+requires the existing owned catalog and model-selection profiles plus all seven
+push markers: `[bridge-ui-4239-v1]`, `[winapp-inspection-v0.7.1]`,
+`[bridge-welcome-4239-v1]`, `[desktop-synthetic-models-v1]`,
+`[bridge-owned-catalog-v1]`, `[bridge-model-selection-v1]`, and
+`[bridge-model-settings-v1]`. Missing, unknown or mixed authority stops before
+launch. Without this additional opt-in, menu-only and prior selection modes
+retain their existing write rejection. The original signed-package, runtime
+pin, window identity, process supervision, cleanup and UI action limits remain.
+
+The main test harness sets only
+`bridge_model_settings: "owned-file-v0.167.0-alpha.3.2"` in its reconstructed
+bridge configuration. The fixture helper, original seven-field readiness and
+zero-request audit are unchanged. Readiness proves fixture creation, not settings
+activation. The frontend `control-home/config.toml` must initially be absent;
+only the production bridge may create it after its genuine native policy and
+complete catalog checks. Native homes, configurations, auth, setup and policy
+are not modified by this option.
+
+The same bounded Beta-then-Alpha UI path, including the exact settings-error
+toast stop, is reused without new actions, retries or keyboard fallbacks. A
+single bounded read of the fixed frontend file checks the initial Alpha value
+and each captured Beta/Alpha value. It accepts only the two known flat string
+fields, independent of quote style and order; missing, unknown, duplicate,
+changed, oversized or unexpected contents stop the slice. There is no sleep or
+retry if an asynchronous write has not committed at that observation. A second
+failure screenshot does not repeat the file read. No file contents or paths
+are published.
+
+Before truncating the public record preview, the main harness summarizes the
+complete validated `$allEvents` snapshot. Exactly one Beta and one Alpha
+`model` + `model_reasoning_effort: none` flat scalar batch must each have its own
+matching `(pid, correlation)` success message, in that order. The request
+oracle matches the reviewed production subset: `replace`/`upsert` for both
+scalar edits and omitted/boolean `reloadUserConfig`; this does not reload
+existing threads or authorize other fields. Other startup
+batches are counted separately, never attributed to these selections or made
+supported. Unknown selected shapes, RPC errors, missing or duplicate matches
+cannot count as success. This correlation evidence does **not** inspect or
+validate the `ConfigWriteResponse` body.
+
+A successful result establishes only the two UI states, no observed settings
+error toast and the actual frontend preference values at those file-read
+instants in this disposable VM. It does not verify GUI user-layer versions,
+CAS, restart persistence, thread migration, inference, real accounts or the
+absence of all background failures. Version/provenance/CAS behavior belongs to
+the separate production regressions. Existing cleanup evidence retains its
+original scope; a file read is not proof that the entire process tree stopped.

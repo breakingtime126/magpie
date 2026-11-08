@@ -316,7 +316,30 @@ func (r *Router) failOwnedCatalog() {
 	}
 }
 
+// These already-supported reads do not consume model routes, the catalog
+// default or the service-owned config session. This exempts only the transient
+// refresh barrier: the normal method, params, limits and response guards still
+// run, and file/catalog failure remains fatal before dispatch.
+func (r *Router) catalogIndependentReadDuringRefresh(method string) bool {
+	switch method {
+	case "getAuthStatus":
+		return r.auth.authStatusNoAuth
+	case "experimentalFeature/list":
+		return r.experimentalFeatureList167
+	case "configRequirements/read":
+		return r.configRequirementsRead
+	default:
+		return false
+	}
+}
+
 func (r *Router) Client(line []byte) ([]Delivery, error) {
+	if r.ownedSettings != nil {
+		if _, _, err := r.ownedSettings.snapshot(); err != nil {
+			r.failOwnedCatalog()
+			return nil, errors.New(ownedSettingsUnavailable167)
+		}
+	}
 	if r.ownedCatalog != nil {
 		if r.ownedCatalog.verify() != nil {
 			r.failOwnedCatalog()
@@ -324,10 +347,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		}
 		if r.ownedCatalog.refreshing {
 			m, _ := parseObject(line)
-			// This existing primary-only read does not use model routes or the
-			// session config. Keep its normal mode, params, limits and result
-			// validation below; all catalog-dependent requests remain blocked.
-			if _, request := m["id"]; request && text(m, "method") != "" && !(r.auth.authStatusNoAuth && text(m, "method") == "getAuthStatus") {
+			if _, request := m["id"]; request && text(m, "method") != "" && !r.catalogIndependentReadDuringRefresh(text(m, "method")) {
 				return []Delivery{fail(m["id"], -32000, "bridge model catalog refresh is in progress")}, nil
 			}
 		}
@@ -341,6 +361,12 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 }
 
 func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
+	if r.ownedSettings != nil {
+		if _, _, err := r.ownedSettings.snapshot(); err != nil {
+			r.failOwnedCatalog()
+			return nil, errors.New(ownedSettingsUnavailable167)
+		}
+	}
 	if r.ownedCatalog != nil && r.ownedCatalog.verify() != nil {
 		r.failOwnedCatalog()
 		return nil, errors.New(ownedCatalogUnavailable)

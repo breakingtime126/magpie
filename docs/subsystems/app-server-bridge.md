@@ -2085,6 +2085,17 @@ common home or file-read support is claimed.
 
 A refresh revokes routes/default/config session/model pages until both complete
 native results validate. Frontend requests cannot use this transient state.
+Only three already-enabled, catalog-independent reads bypass this temporary
+barrier: CI no-auth `getAuthStatus`, `experimentalFeature/list`, and public
+`configRequirements/read`. Each retains its existing mode, initialization,
+parameter/trace, request-count/byte, native comparison and response-validation
+gates. Feature cursors/limits still belong to the native page producer; no
+cached or synthesized feature/policy result is substituted. This does not enable
+public requirements through the internal config/read policy check. Mode-off,
+unknown methods, config/read, model/list and all other operations remain blocked
+during refresh. Gateway, account, readiness and thread-read routes gain no
+exception in this change. These native reads are not an offline or no-credential
+side-effect guarantee; their existing documented limitations still apply.
 Any catalog failure, file identity/hash change or mismatched result is sticky
 fatal: close the bridge connection, run the existing owned-tree cleanup and
 require restart, rather than retain a stale declaration or silently recover.
@@ -2102,3 +2113,72 @@ The prior 75908967 run observed Alpha only in the first popover; deeper
 navigation was unverified. It did not prove full-picker filtering or a missing
 filesystem contract. A positive new observation would establish this narrow
 versioned contract's visibility only, not causality or successful chat.
+
+### Optional persisted bridge-owned model defaults
+
+`bridge_model_settings: "owned-file-v0.167.0-alpha.3.2"` is separately default-off
+and requires the immutable owned alias catalog and routing control plane. It is
+not enabled by menu-only or selection-only Desktop fixture profiles. The separate
+explicit model-settings CI profile opts in to this mode. Its only writable
+configuration is
+the bridge's real `control_home/config.toml`, never either child's configuration.
+The two allowed keys are `model` and `model_reasoning_effort`. Only the existing
+text/`none` catalog subset is supported; `none` is already the verified native
+model default. No native config override, authentication or execution-policy
+setting is introduced to apply it.
+
+The first complete catalog in this mode first checks fresh requirements from
+both native children using the existing strict null-requirements validator. Only
+after that policy pair and the entire native catalog succeed may an absent or
+empty owned settings file be initialized with the catalog default and `none`.
+Opening the store acquires an exclusive lifetime marker but does not create the
+configuration file. Existing nonempty files must contain exactly the two known
+string keys, and the selected alias must still belong to the validated catalog.
+
+`config/batchWrite` accepts exactly one `replace` or `upsert` edit for each key, atomically.
+Unknown, duplicate, missing, profile, permission, provider and credential edits
+are rejected, as are null or non-string edit values. `reloadUserConfig` may be
+omitted or a boolean; null/non-booleans are rejected. Both boolean values retain
+existing thread owners: pinned c407 `config_processor.rs:168-191` skips mutation
+cache clearing and thread reload for these session-default keys. Its
+`config_manager_service.rs:708-778` gives `replace` and `upsert` the same scalar
+insertion semantics for these two flat keys, not general object/array merging. Optional
+`filePath` may be absent/null or the exact absolute owned path only. Optional
+`expectedVersion` may be absent/null; if supplied, it must equal the real user
+layer's semantic `sha256:` version. Writes serialize within the connection and
+recheck fresh paired null requirements before committing. No native config-write
+RPC is forwarded. Catalog refresh blocks writes; a refresh cannot reset a saved
+selection to the catalog's priority default.
+
+`config/read` exposes the real `user` file layer (`profile: null`) plus the
+existing `sessionFlags` routing layer. Only the user layer supplies model and
+effort; session flags do not override them. The write response contains the real
+absolute path, semantic version, `status: "ok"` and null overridden metadata,
+and is returned only after successful file publication and verification. Generic
+`supports.config_writes` stays false; the separate `model_settings` extension
+lists precisely these two writable keys. Catalog priority/default and persisted
+new-thread selection are distinct. Existing thread/provider ownership is never
+changed. A new thread without an explicit model uses the effective persisted
+alias and is routed to its original native model/provider.
+
+The store uses bounded TOML, a fixed file name, directory/file identity checks,
+exclusive bridge-writer coordination and same-directory staged publication.
+Unix uses exclusive link publication for the first file and rename thereafter;
+Windows uses `MoveFileEx` without copy/delete fallback. Failed or uncertain
+persistence/verification is fatal, not a claimed rollback or successful write.
+Unexpected semantic edits or file-existence changes fail closed; stale locks
+are not automatically removed. This is not isolation against a malicious writer
+running as the same OS user, and does not promise power-loss durability on every
+filesystem. External editors must respect the writer lock.
+
+Public schema source: `openai/codex@c40729ea`,
+`app-server-protocol/src/protocol/v2/config.rs`,
+`app-server/src/config_manager_service.rs`, and `config/src/fingerprint.rs`.
+Regression entry points are `TestOwnedSettings*`; tests are synthetic and do not
+claim that the current Desktop sends an accepted batch shape. Actual Desktop
+parameters and consumer compatibility require separate sanitized observation
+before enabling this mode in any Desktop run.
+The public `model/list` `isDefault` still describes the immutable catalog priority,
+not the user's saved selection. Router restart tests prove retained config and
+new-thread routing only; they do not establish that Desktop startup will prefer
+that user layer over its own picker/default handling.

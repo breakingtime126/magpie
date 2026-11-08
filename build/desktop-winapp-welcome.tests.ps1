@@ -1010,6 +1010,18 @@ foreach ($variant in @('base','target-duplicate','target-hidden','target-disable
     Pass ($observed.reason -ceq $expected) 'snapshot failure is assigned a fixed precise stage'
     Pass (-not (Json $observed).Contains('PRIVATE_CANARY')) 'snapshot statistics contain no arbitrary UI names'
 }
+# The exact observed application failure is a stop even when model controls
+# remain selected and otherwise usable. These are fixed public UI strings.
+foreach ($toast in @("Couldn't update model settings","Couldn’t update model settings")) {
+    $page=SelectionPage 'beta' $true
+    $page.windows[0].elements+=@(Node $toast 'Text');$page.windows[0].elementCount++
+    $observed=[ordered]@{reason='';snapshotObservation=$null}
+    Reject { ConvertTo-WinAppModelSelectionSnapshot (Json $page) 123 $observed } 'model-settings toast is an explicit selection stop'
+    Pass ($observed.reason -ceq 'selection_model_settings_error' -and
+        $observed.snapshotObservation.stage -ceq 'model_settings_error' -and
+        $observed.snapshotObservation.modelSettingsErrorCount -eq 1) 'exact error yields a fixed count and reason, not raw UI text'
+    Pass (-not (Json $observed).Contains($toast)) 'error text is not exported in the fixed observation'
+}
 Reject { Get-WinAppModelSelectionTarget $selectionPage 'Try again' 'Button' $null $selectionProfile $ownedProfile } 'setup remains outside selection allowlist'
 Reject { Get-WinAppModelSelectionTarget $selectionPage 'Synthetic Beta [beta]' 'RadioButton' $null '' $ownedProfile } 'menu-only does not gain selection targets'
 function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$CheckIdentity,
@@ -1024,6 +1036,13 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
         $type=$(if ($script:selectionMode -cin @('menuitem','menuitem-promoted')) { 'MenuItem' } else { 'RadioButton' })
         $page=SelectionPage $current $script:selectionOpen $type
         if ($script:selectionMode -ceq 'expanded-disabled-current') { $page.windows[0].elements[1].isEnabled=$false;$page.windows[0].elements[1].isInvokable=$false }
+        $toastVisible=($script:selectionMode -ceq 'initial-model-error' -or
+            ($script:selectionMode -cin @('model-error','model-error-curly','model-error-capture-failure') -and $script:selectionCount -gt 0) -or
+            ($script:selectionMode -ceq 'late-model-error' -and $script:selectionCaptures.Count -gt 0))
+        if ($toastVisible) {
+            $toast=$(if ($script:selectionMode -ceq 'model-error-curly') { "Couldn’t update model settings" } else { "Couldn't update model settings" })
+            $page.windows[0].elements+=@(Node $toast 'Text');$page.windows[0].elementCount++
+        }
         if ($script:selectionMode -ceq 'protected' -and $script:selectionCount -gt 0) {
             $page.windows[0].elements+=@(Node 'Sign in' 'Button');$page.windows[0].elementCount++
         }
@@ -1075,12 +1094,12 @@ function Invoke-WinAppWelcomeCommand($Tool,[long]$WindowHandle,[scriptblock]$Che
     throw 'Selection attempted an unreviewed keyboard, setup or other operation.'
 }
 $priorMenu=[pscustomobject]@{status='observed';nextScreen='model_labels_observed'}
-foreach ($selectionMode in @('normal','promoted','menuitem','menuitem-promoted','expanded-disabled-current','no-pattern','wrong-type','unchanged-label','unchanged-pattern','wrong-receipt','uncertain','protected','capture-failure')) {
+foreach ($selectionMode in @('normal','promoted','menuitem','menuitem-promoted','expanded-disabled-current','no-pattern','wrong-type','unchanged-label','unchanged-pattern','wrong-receipt','uncertain','protected','capture-failure','initial-model-error','model-error','model-error-curly','late-model-error','model-error-capture-failure')) {
     $script:selectionMode=$selectionMode;$script:selectionOwner='alpha';$script:selectionOpen=$true
     $script:selectionOperations=@();$script:selectionCount=0;$script:selectionReopens=0;$script:selectionCaptures=@()
     $diagnostic=[ordered]@{}
     $capture={param($owner)
-        if ($script:selectionMode -ceq 'capture-failure') { throw 'Synthetic missing capture.' }
+        if ($script:selectionMode -cin @('capture-failure','model-error-capture-failure')) { throw 'Synthetic missing capture.' }
         $script:selectionCaptures+=,$owner
     }
     $result=Invoke-WinAppModelSelection $null 123 {} $priorMenu $diagnostic $selectionProfile $ownedProfile $capture
@@ -1093,6 +1112,24 @@ foreach ($selectionMode in @('normal','promoted','menuitem','menuitem-promoted',
         Pass ($result.selectionAttempts -le 1) 'failed first transition never retries or starts second selection'
         if ($selectionMode -ceq 'no-pattern') { Pass ($result.selectionAttempts -eq 0 -and $result.lastObservation.selectionState -ceq 'unavailable') 'unsupported SelectionItem is a diagnosed no-action stop' }
         if ($selectionMode -ceq 'wrong-type') { Pass ($result.selectionAttempts -eq 0 -and $result.lastObservation.controlType -ceq 'other') 'different live type is a bounded no-action observation' }
+    }
+    if ($selectionMode -cin @('initial-model-error','model-error','model-error-curly','late-model-error','model-error-capture-failure')) {
+        Pass ($result.status -ceq 'stopped' -and $result.reason -ceq 'selection_model_settings_error' -and
+            $result.snapshotObservation.modelSettingsErrorCount -eq 1) 'application failure never becomes observed selection success'
+        if ($selectionMode -ceq 'initial-model-error') {
+            Pass ($result.selectionAttempts -eq 0 -and $selectionCaptures.Count -eq 0 -and $result.failureCapture -ceq 'not_attempted') 'existing error causes no selection'
+        } else {
+            Pass ($result.selectionAttempts -eq 1 -and $selectionCount -eq 1 -and
+                $result.alphaSelected -eq $false -and $selectionCaptures -cnotcontains 'alpha') 'Beta error stops before Alpha, with no retry'
+            if ($selectionMode -ceq 'model-error-capture-failure') {
+                Pass ($result.failureCapture -ceq 'unavailable') 'missing failure capture retains the application error'
+            } else {
+                Pass ($result.failureCapture -ceq 'beta' -and $selectionCaptures[-1] -ceq 'beta') 'failed Beta application outcome retains its fixed screenshot'
+            }
+            if ($selectionMode -ceq 'late-model-error') {
+                Pass ($result.confirmedSelections -eq 1 -and $selectionCaptures.Count -eq 2) 'post-capture toast keeps operability evidence but stops and replaces pixels with failure evidence'
+            }
+        }
     }
     Pass (-not ((Json $result).Contains('PRIVATE_CANARY'))) 'selection report carries only fixed observations'
 }

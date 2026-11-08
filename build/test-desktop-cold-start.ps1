@@ -9,6 +9,7 @@ param(
     [string]$NativeControlCatalog = '',
     [string]$DesktopFixtureProfile = '',
     [string]$DesktopModelSelectionProfile = '',
+    [string]$DesktopModelSettingsProfile = '',
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
@@ -47,6 +48,15 @@ function Assert-DesktopModelSelectionProfile([string]$Profile,[string]$FixturePr
     if ($Profile -ceq '' -and $Marker -ceq '') { return }
     if ($Profile -cne 'bridge-owned-model-selection-4239' -or $FixtureProfile -cne 'bridge-owned-catalog-4239' -or
         $Marker -cne 'bridge-model-selection-v1') { throw 'Explicit owned model-selection profile and marker required.' }
+}
+
+# Writes are a second independent opt-in, never implied by menu or selection.
+function Assert-DesktopModelSettingsProfile([string]$Profile,[string]$FixtureProfile,[string]$SelectionProfile,[string]$Marker) {
+    if ($Profile -ceq '' -and $Marker -ceq '') { return }
+    if ($Profile -cne 'bridge-owned-model-settings-4239' -or $FixtureProfile -cne 'bridge-owned-catalog-4239' -or
+        $SelectionProfile -cne 'bridge-owned-model-selection-4239' -or $Marker -cne 'bridge-model-settings-v1') {
+        throw 'Explicit owned model-settings profile, selection and marker required.'
+    }
 }
 
 # Pure validation helpers are AST-loaded by the focused tests, without running the probe.
@@ -115,6 +125,52 @@ function ConvertFrom-PublicRPCMethodFacts([byte[]]$bytes) {
         $previous = $method
     }
     return $facts
+}
+# Optional request shape only. No write acceptance, filesystem identity or version claim.
+function Assert-PublicConfigBatchWriteEvent($record) {
+    if (-not $record.PSObject.Properties['configBatchWrite']) { return }
+    Assert-PublicShape $record @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'class', 'configBatchWrite')
+    foreach ($key in @('seq', 'pid', 'correlation')) { Assert-PublicInteger $record.$key 1 4294967296 }
+    foreach ($key in @('kind', 'direction', 'method', 'class')) {
+        if ($record.$key -isnot [string]) { throw 'Invalid config write label.' }
+    }
+    if ($record.kind -cne 'rpc' -or $record.direction -cne 'to_bridge' -or
+        $record.method -cne 'config/batchWrite' -or $record.class -cne 'request') { throw 'Invalid config write context.' }
+    $summary = $record.configBatchWrite
+    if ($null -eq $summary -or $summary -isnot [pscustomobject] -or
+        -not $summary.PSObject.Properties['status'] -or $summary.status -isnot [string] -or
+        @('observed', 'unavailable', 'limit') -cnotcontains $summary.status) { throw 'Invalid config write status.' }
+    if ($summary.status -cne 'observed') {
+        Assert-PublicShape $summary @('schema', 'status')
+        Assert-PublicInteger $summary.schema 1 1
+        return
+    }
+    Assert-PublicShape $summary @('schema', 'status', 'shape')
+    Assert-PublicInteger $summary.schema 1 1
+    $shape = $summary.shape
+    Assert-PublicShape $shape @('edits', 'duplicateKeyPath', 'unknownTopLevel', 'filePath', 'expectedVersion', 'reloadUserConfig', 'items')
+    Assert-PublicInteger $shape.edits 0 8
+    if ($shape.duplicateKeyPath -isnot [bool] -or $shape.unknownTopLevel -isnot [bool] -or
+        ($shape.edits -lt 2 -and $shape.duplicateKeyPath)) { throw 'Invalid config write flags.' }
+    foreach ($key in @('filePath', 'expectedVersion', 'reloadUserConfig')) {
+        if ($shape.$key -isnot [string]) { throw 'Invalid config write optional field.' }
+    }
+    if (@('missing', 'null', 'control_config', 'other') -cnotcontains $shape.filePath -or
+        @('missing', 'null', 'string', 'other') -cnotcontains $shape.expectedVersion -or
+        @('missing', 'true', 'false', 'other') -cnotcontains $shape.reloadUserConfig) { throw 'Invalid config write optional enum.' }
+    if ($shape.items -isnot [System.Array] -or $shape.items.Count -ne $shape.edits) { throw 'Invalid config write edit count.' }
+    foreach ($item in $shape.items) {
+        Assert-PublicShape $item @('key', 'valueType', 'valueMatch', 'mergeStrategy', 'unknownFields')
+        foreach ($key in @('key', 'valueType', 'valueMatch', 'mergeStrategy')) {
+            if ($item.$key -isnot [string]) { throw 'Invalid config write edit label.' }
+        }
+        if ($item.unknownFields -isnot [bool] -or
+            @('model', 'model_reasoning_effort', 'other') -cnotcontains $item.key -or
+            @('missing', 'null', 'string', 'boolean', 'number', 'array', 'object') -cnotcontains $item.valueType -or
+            @('alpha', 'beta', 'none', 'other') -cnotcontains $item.valueMatch -or
+            @('missing', 'replace', 'upsert', 'other') -cnotcontains $item.mergeStrategy -or
+            ($item.valueType -cne 'string' -and $item.valueMatch -cne 'other')) { throw 'Invalid config write edit enum.' }
+    }
 }
 # Optional TEST-ONLY model/list page facts. This is not a routing/UI verdict.
 function Assert-PublicModelCatalogEvent($record) {
@@ -1406,6 +1462,65 @@ function Get-DesktopRPCErrorEvidence([object[]]$Records, [string[]]$PublicMethod
 # Only the full sanitized snapshot is evidence, never native config or response bodies.
 # Success relies on the production bridge-owned view and its fresh paired native
 # requirements:null checks. The observer does not prove the view's consumer support.
+# Correlate the full already-validated snapshot. This does not inspect result
+# bodies or interpret unrelated startup writes as either selected model action.
+function Get-DesktopModelSettingsEvidence([object[]]$Records) {
+    if ($Records.Count -gt 65536) { throw 'Owned settings evidence bound exceeded.' }
+    $requests=@{};$excluded=0;$ambiguous=0;$errors=0
+    $alphaRequests=0;$betaRequests=0;$alphaResponses=0;$betaResponses=0
+    foreach ($record in $Records) {
+        if (-not $record.PSObject.Properties['configBatchWrite']) { continue }
+        Assert-PublicConfigBatchWriteEvent $record
+        $observed=$record.configBatchWrite
+        if ($observed.status -cne 'observed') { $excluded++;continue }
+        $shape=$observed.shape
+        $model=@($shape.items | Where-Object { $_.key -ceq 'model' })
+        $effort=@($shape.items | Where-Object { $_.key -ceq 'model_reasoning_effort' })
+        $valid=$shape.edits -eq 2 -and -not $shape.duplicateKeyPath -and -not $shape.unknownTopLevel -and
+            $shape.filePath -cin @('missing','null','control_config') -and
+            $shape.expectedVersion -cin @('missing','null','string') -and
+            $shape.reloadUserConfig -cin @('missing','false','true') -and $model.Count -eq 1 -and $effort.Count -eq 1
+        if ($valid) {
+            $valid=$model[0].valueType -ceq 'string' -and $model[0].valueMatch -cin @('alpha','beta') -and
+                $effort[0].valueType -ceq 'string' -and $effort[0].valueMatch -ceq 'none'
+            foreach ($item in $shape.items) {
+                $valid=$valid -and $item.mergeStrategy -cin @('replace','upsert') -and -not $item.unknownFields
+            }
+        }
+        if (-not $valid) { $excluded++;continue }
+        $key=([string]$record.pid)+':'+([string]$record.correlation)
+        if ($requests.ContainsKey($key)) { $ambiguous++;continue }
+        $owner=$model[0].valueMatch
+        if ($owner -ceq 'alpha') { $alphaRequests++ } else { $betaRequests++ }
+        $requests[$key]=[pscustomobject]@{owner=$owner;process=$record.pid;requestSeq=$record.seq;responseSeq=0;done=$false;success=$false}
+    }
+    foreach ($record in $Records) {
+        if (-not $record.PSObject.Properties['method'] -or $record.method -cne 'config/batchWrite' -or
+            -not $record.PSObject.Properties['direction'] -or $record.direction -cne 'from_bridge' -or
+            -not $record.PSObject.Properties['correlation']) { continue }
+        $key=([string]$record.pid)+':'+([string]$record.correlation)
+        if (-not $requests.ContainsKey($key)) { continue }
+        $request=$requests[$key]
+        if ($request.done -or $record.seq -le $request.requestSeq) { $ambiguous++;continue }
+        $request.done=$true
+        if ($record.kind -ceq 'rpc' -and $record.class -ceq 'response') {
+            $request.success=$true;$request.responseSeq=$record.seq
+            if ($request.owner -ceq 'alpha') { $alphaResponses++ } else { $betaResponses++ }
+        } elseif ($record.kind -ceq 'rpc_error') { $errors++ }
+        else { $ambiguous++ }
+    }
+    $pending=@($requests.Values | Where-Object { -not $_.done }).Count
+    $alpha=@($requests.Values | Where-Object { $_.owner -ceq 'alpha' -and $_.success })
+    $beta=@($requests.Values | Where-Object { $_.owner -ceq 'beta' -and $_.success })
+    $ordered=$alpha.Count -eq 1 -and $beta.Count -eq 1 -and
+        $alpha[0].process -eq $beta[0].process -and $beta[0].responseSeq -lt $alpha[0].requestSeq
+    $complete=$alphaRequests -eq 1 -and $betaRequests -eq 1 -and $alphaResponses -eq 1 -and
+        $betaResponses -eq 1 -and $errors -eq 0 -and $ambiguous -eq 0 -and $pending -eq 0 -and $ordered
+    return [pscustomobject]@{schema=1;status=$(if($complete){'observed'}else{'incomplete'});
+        alphaRequests=$alphaRequests;betaRequests=$betaRequests;alphaResponses=$alphaResponses;betaResponses=$betaResponses;
+        errors=$errors;ambiguous=$ambiguous;pending=$pending;excludedRequests=$excluded;betaThenAlpha=$ordered}
+}
+
 function Get-DesktopConfigReadEvidence([object[]]$Records, [switch]$RequireLayers, [string]$FixtureProfile='') {
     $pending = @{}
     $seen = @{}
@@ -1836,6 +1951,7 @@ Assert-DesktopFixtureProfile $DesktopFixtureProfile ($PSBoundParameters.Contains
     $EnableReviewedBuild4239 $EnableReviewedWelcome4239 $EnableReviewedLiveWelcome $EnableReadOnlyWinAppInspection `
     $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly $NativeEntryCase $env:MAGPIE_DESKTOP_SYNTHETIC_MODELS $env:MAGPIE_BRIDGE_OWNED_CATALOG
 Assert-DesktopModelSelectionProfile $DesktopModelSelectionProfile $DesktopFixtureProfile $env:MAGPIE_MODEL_SELECTION
+Assert-DesktopModelSettingsProfile $DesktopModelSettingsProfile $DesktopFixtureProfile $DesktopModelSelectionProfile $env:MAGPIE_MODEL_SETTINGS
 $desktopAccessibilityArguments = Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239
 $winAppRenderedDepth = $(if ($EnableRendererAccessibility) { 16 } else { 8 })
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
@@ -1914,6 +2030,8 @@ $confirmationAfterCaptured = $false
 $liveModelMenu = $null
 $modelMenuAfterCaptured = $false
 $liveModelSelection = $null
+$liveModelSettings = $null
+$modelSettingsRPC = $null
 $selectionDiagnostic = $null
 $welcomeDeadline = $null
 $liveFixtureStopped = $false
@@ -2636,6 +2754,14 @@ requires_openai_auth = false
                         $liveFixtureReport.selectionProfile=$DesktopModelSelectionProfile
                         $liveFixtureReport.limit='At most Beta then Alpha SelectionItem selection and two menu reopens in the same owned window. Current draft only, no persistence, thread migration, message, Windows setup or auth action. Background RPC errors remain separate observations with unknown causal relation.'
                     }
+                    if ($DesktopModelSettingsProfile) {
+                        $liveFixtureReport.scope='bridge-owned-model-settings-only'
+                        $liveFixtureReport.settingsProfile=$DesktopModelSettingsProfile
+                        $liveFixtureReport.limit='Two selections and single fixed-file observations in this VM only. Ready proves fixture creation, not settings activation. No response-body/user-layer-version, restart, thread migration, message, setup or auth validation.'
+                        $liveModelSettings=[ordered]@{schema=1;initialReadAttempted=$false;initialVerified=$false;
+                            betaReadAttempted=$false;betaVerified=$false;alphaReadAttempted=$false;alphaVerified=$false;reason='not_observed'}
+                        $liveFixtureReport.modelSettings=$liveModelSettings
+                    }
                 } elseif ($DesktopFixtureProfile -ceq 'synthetic-models-4239') {
                     $liveArguments = @('-desktop-fixtures','-codex',$officialBackend.FullName,'-scratch-parent',$liveScratch,
                         '-fixture-profile','synthetic-models-4239')
@@ -2673,6 +2799,10 @@ requires_openai_auth = false
             $bridgeSettings.gateway_oauth_provider_name = 'Synthetic alpha_provider'
             if ($DesktopFixtureProfile -ceq 'bridge-owned-catalog-4239') {
                 $bridgeSettings.bridge_model_catalog_json = $liveOwned.OwnedCatalogPath
+                if ($DesktopModelSettingsProfile -ceq 'bridge-owned-model-settings-4239') {
+                    if (Test-Path -LiteralPath (Join-Path $liveOwned.ControlHome 'config.toml')) { throw 'Owned settings must start absent.' }
+                    $bridgeSettings.bridge_model_settings = 'owned-file-v0.167.0-alpha.3.2'
+                }
             }
         }
         [IO.File]::WriteAllText($bridgeConfig, ($bridgeSettings | ConvertTo-Json -Depth 5),
@@ -3195,13 +3325,35 @@ requires_openai_auth = false
                             default { throw 'Unreviewed selection capture.' }
                         }
                         & $captureWelcomeWindow $fileName
+                        if ($DesktopModelSettingsProfile -ceq 'bridge-owned-model-settings-4239' -and
+                            -not $liveModelSettings[($owner+'ReadAttempted')]) {
+                            $liveModelSettings[($owner+'ReadAttempted')]=$true
+                            $liveModelSettings.reason=$owner+'_file_unavailable'
+                            Assert-LiveOwnedSettingsFile $liveOwned.ControlHome $owner
+                            $liveModelSettings[($owner+'Verified')]=$true
+                            $liveModelSettings.reason=$owner+'_file_verified'
+                        }
                     }
-                    $liveModelSelection=Invoke-WinAppModelSelection $winAppTool $window.Handle $checkInspectionIdentity `
-                        $liveModelMenu $selectionDiagnostic $DesktopModelSelectionProfile $DesktopFixtureProfile $captureSelection
-                    $liveFixtureReport.modelSelection=[ordered]@{status=$liveModelSelection.status;reason=$liveModelSelection.reason;
-                        result=$liveModelSelection;parentDiagnostic=$selectionDiagnostic;
-                        captureLimit='Fixed per-selection screenshots require pixel review; UI draft state only, not persistence or inference.'}
-                    $liveFixtureReport.partialActionUncertain=$liveFixtureReport.partialActionUncertain -or $selectionDiagnostic.partialActionUncertain
+                    $settingsInitialReady=$true
+                    if ($DesktopModelSettingsProfile -ceq 'bridge-owned-model-settings-4239') {
+                        $settingsInitialReady=$false;$liveModelSettings.initialReadAttempted=$true
+                        $liveModelSettings.reason='initial_file_unavailable'
+                        try {
+                            Assert-LiveOwnedSettingsFile $liveOwned.ControlHome 'alpha'
+                            $liveModelSettings.initialVerified=$true;$settingsInitialReady=$true
+                            $liveModelSettings.reason='initial_file_verified'
+                        } catch { }
+                    }
+                    if ($settingsInitialReady) {
+                        $liveModelSelection=Invoke-WinAppModelSelection $winAppTool $window.Handle $checkInspectionIdentity `
+                            $liveModelMenu $selectionDiagnostic $DesktopModelSelectionProfile $DesktopFixtureProfile $captureSelection
+                        $liveFixtureReport.modelSelection=[ordered]@{status=$liveModelSelection.status;reason=$liveModelSelection.reason;
+                            result=$liveModelSelection;parentDiagnostic=$selectionDiagnostic;
+                            captureLimit='Fixed per-selection screenshots require pixel review; UI draft state only, not persistence or inference.'}
+                        $liveFixtureReport.partialActionUncertain=$liveFixtureReport.partialActionUncertain -or $selectionDiagnostic.partialActionUncertain
+                    } else {
+                        $liveFixtureReport.modelSelection.reason='settings_initial_file_unavailable'
+                    }
                 }
             }
         }
@@ -3241,7 +3393,7 @@ requires_openai_auth = false
             if ($report.observer.sha256After -ne $report.observer.sha256) { Block 'Observer bytes changed during the diagnostic.' }
             # Only the observer's fixed metadata schema is eligible for publication.
             # Unknown fields or values fail closed without copying or printing the record.
-            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class', 'modelCatalog', 'ownedModelCatalog', 'ownedCatalogPathMatches',
+            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class', 'configBatchWrite', 'modelCatalog', 'ownedModelCatalog', 'ownedCatalogPathMatches',
                 'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
                 'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
@@ -3631,6 +3783,7 @@ requires_openai_auth = false
                     } catch { Block 'Observer metadata is not canonical valid JSON.' }
                     Assert-PublicOwnedCatalogEvent $record -FixtureProfile $DesktopFixtureProfile
                     Assert-PublicModelCatalogEvent $record
+                    Assert-PublicConfigBatchWriteEvent $record
                     Assert-PublicAuthRequestEvent $record
                     Assert-PublicReadRequestEvent $record
                     Assert-PublicPluginShapeEvent $record
@@ -3638,7 +3791,7 @@ requires_openai_auth = false
                     foreach ($property in $record.PSObject.Properties) {
                         if ($keys -cnotcontains $property.Name) { Block 'Observer emitted an unexpected metadata field.' }
                         $value = $property.Value
-                        if ($property.Name -cin @('modelCatalog','ownedModelCatalog')) {
+                        if ($property.Name -cin @('modelCatalog','ownedModelCatalog','configBatchWrite')) {
                             # The nested fixed schema was validated before publication.
                             continue
                         } elseif ($numericKeys -ccontains $property.Name) {
@@ -3782,6 +3935,11 @@ requires_openai_auth = false
                 $report.observer.ownedCatalogEvidence=[ordered]@{schema=1;responses=$ownedResponses.Count;matchingResponses=$ownedMatches.Count;
                     contractPublished=($ownedMatches.Count -gt 0);expectedSHA256=$liveOwned.OwnedCatalogSHA256;
                     limit='Matched bridge-owned config publication only; not file-read support, picker success or inference.'}
+            }
+            if ($DesktopModelSettingsProfile -ceq 'bridge-owned-model-settings-4239') {
+                $modelSettingsRPC=Get-DesktopModelSettingsEvidence $allEvents
+                $report.observer.modelSettingsEvidence=$modelSettingsRPC
+                $report.observer.modelSettingsEvidenceLimit='Full validated snapshot, not preview. Exact request shapes and correlated success messages only, not ConfigWriteResponse bodies, versions or unrelated startup writes.'
             }
             $report.observer.recordCount = $allEvents.Count
             $report.observer.records = @($allEvents | Select-Object -First 256)
@@ -4004,6 +4162,9 @@ if ($EnableReviewedLiveWelcome) {
             $selectionUncertain=$true
             if ($null -ne $selectionDiagnostic) { $selectionUncertain=$selectionDiagnostic.partialActionUncertain }
             $liveOutcome=Get-WinAppModelSelectionOutcome $liveOutcome $liveModelSelection $selectionUncertain
+            if ($DesktopModelSettingsProfile -ceq 'bridge-owned-model-settings-4239') {
+                $liveOutcome=Get-LiveOwnedSettingsOutcome $liveOutcome $liveModelSettings $modelSettingsRPC
+            }
         }
     }
     $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode

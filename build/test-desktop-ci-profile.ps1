@@ -8,9 +8,9 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw 'FAIL: cold-start syntax' }
-foreach ($name in @('Assert-DesktopModelSelectionProfile', 'Assert-DesktopFixtureProfile', 'Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
+foreach ($name in @('Assert-DesktopModelSettingsProfile', 'Get-DesktopModelSettingsEvidence', 'Assert-DesktopModelSelectionProfile', 'Assert-DesktopFixtureProfile', 'Assert-DesktopCIOptions', 'Assert-DesktopCompatibilityPackage', 'Assert-Desktop4239Options', 'Assert-Desktop4239Identity', 'Get-DesktopStaticEntries', 'Get-DesktopAccessibilityArguments', 'Assert-DesktopPackageIdentityOptions', 'New-DesktopBridgeSettings',
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
-    'Assert-PublicOwnedCatalogEvent', 'Assert-PublicModelCatalogEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
+    'Assert-PublicConfigBatchWriteEvent', 'Assert-PublicOwnedCatalogEvent', 'Assert-PublicModelCatalogEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
     'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
     $definitions = @($ast.FindAll({
@@ -62,6 +62,77 @@ function New-Backends {
         [ordered]@{ id = 'alpha'; provider = 'alpha_provider'; command = 'fixture-codex.exe'; home = 'fixture-alpha-home'; codex_home = 'fixture-alpha-codex' },
         [ordered]@{ id = 'beta'; provider = 'beta_provider'; command = 'fixture-codex.exe'; home = 'fixture-beta-home'; codex_home = 'fixture-beta-codex' }
     )
+}
+function New-ConfigBatchWriteEvent {
+    return ('{"seq":1,"pid":2,"kind":"rpc","direction":"to_bridge","method":"config/batchWrite","correlation":3,"class":"request",' +
+        '"configBatchWrite":{"schema":1,"status":"observed","shape":{"edits":2,"duplicateKeyPath":false,"unknownTopLevel":false,"filePath":"control_config","expectedVersion":"string","reloadUserConfig":"false","items":[' +
+        '{"key":"model","valueType":"string","valueMatch":"beta","mergeStrategy":"replace","unknownFields":false},' +
+        '{"key":"model_reasoning_effort","valueType":"string","valueMatch":"none","mergeStrategy":"upsert","unknownFields":false}]}}}') | ConvertFrom-Json
+}
+Expect-Pass 'config write fixed shape is not write success' { Assert-PublicConfigBatchWriteEvent (New-ConfigBatchWriteEvent) }
+Expect-Pass 'legacy event without write metadata unchanged' { Assert-PublicConfigBatchWriteEvent ([pscustomobject]@{kind='rpc'}) }
+foreach ($status in @('unavailable', 'limit')) {
+    Expect-Pass ('config write bounded absent evidence ' + $status) {
+        $event=New-ConfigBatchWriteEvent; $event.configBatchWrite=[pscustomobject]@{schema=1;status=$status}
+        Assert-PublicConfigBatchWriteEvent $event
+    }
+}
+foreach ($count in @(0, 1, 8)) {
+    Expect-Pass ('config write array bound ' + $count) {
+        $event=New-ConfigBatchWriteEvent; $shape=$event.configBatchWrite.shape
+        $shape.items=@(for ($i=0; $i -lt $count; $i++) { $shape.items[0] }); $shape.edits=$count
+        Assert-PublicConfigBatchWriteEvent $event
+        # Match the existing publication serializer, including the deepest item objects.
+        $roundTrip=($event | ConvertTo-Json -Depth 4 -Compress) | ConvertFrom-Json
+        Assert-PublicConfigBatchWriteEvent $roundTrip
+    }
+}
+foreach ($kind in @('missing', 'null', 'string', 'boolean', 'number', 'array', 'object')) {
+    Expect-Pass ('config write bounded value type ' + $kind) {
+        $event=New-ConfigBatchWriteEvent; $event.configBatchWrite.shape.items[0].valueType=$kind
+        $event.configBatchWrite.shape.items[0].valueMatch='other'; Assert-PublicConfigBatchWriteEvent $event
+    }
+}
+Expect-Pass 'config write unknown and duplicate facts remain observations' {
+    $event=New-ConfigBatchWriteEvent; $shape=$event.configBatchWrite.shape
+    $shape.unknownTopLevel=$true; $shape.duplicateKeyPath=$true
+    $shape.filePath='other'; $shape.expectedVersion='other'; $shape.reloadUserConfig='other'
+    $shape.items[0].key='other'; $shape.items[0].unknownFields=$true; $shape.items[0].mergeStrategy='other'
+    Assert-PublicConfigBatchWriteEvent $event
+}
+foreach ($mutation in @(
+    {param($e) $e.kind='rpc_error'}, {param($e) $e.direction='from_bridge'},
+    {param($e) $e.method='config/read'}, {param($e) $e.class='notification'},
+    {param($e) $e.correlation=0}, {param($e) $e.configBatchWrite.schema=2},
+    {param($e) $e.configBatchWrite.status='PRIVATE_CANARY'},
+    {param($e) $e.configBatchWrite.status='unavailable'},
+    {param($e) $e.configBatchWrite.shape.edits=9}, {param($e) $e.configBatchWrite.shape.edits='2'},
+    {param($e) $e.configBatchWrite.shape.edits=1}, {param($e) $e.configBatchWrite.shape.items=$null},
+    {param($e) $e.configBatchWrite.shape.items=$e.configBatchWrite.shape.items[0]},
+    {param($e) $e.configBatchWrite.shape.duplicateKeyPath=1},
+    {param($e) $e.configBatchWrite.shape.unknownTopLevel='PRIVATE_CANARY'},
+    {param($e) $e.configBatchWrite.shape.filePath='PRIVATE_CANARY_PATH'},
+    {param($e) $e.configBatchWrite.shape.expectedVersion='PRIVATE_CANARY_VERSION'},
+    {param($e) $e.configBatchWrite.shape.reloadUserConfig=$false},
+    {param($e) $e.configBatchWrite.shape.items[0].key='PRIVATE_CANARY_KEY'},
+    {param($e) $e.configBatchWrite.shape.items[0].valueType='PRIVATE_CANARY_TYPE'},
+    {param($e) $e.configBatchWrite.shape.items[0].valueMatch='PRIVATE_CANARY_VALUE'},
+    {param($e) $e.configBatchWrite.shape.items[0].valueType='null'},
+    {param($e) $e.configBatchWrite.shape.items[0].mergeStrategy='PRIVATE_CANARY_STRATEGY'},
+    {param($e) $e.configBatchWrite.shape.items[0].unknownFields='PRIVATE_CANARY'},
+    {param($e) $e.configBatchWrite.shape.items[0] | Add-Member -NotePropertyName raw -NotePropertyValue 'PRIVATE_CANARY'},
+    {param($e) $e.configBatchWrite.shape | Add-Member -NotePropertyName path -NotePropertyValue 'PRIVATE_CANARY'},
+    {param($e) $e.configBatchWrite | Add-Member -NotePropertyName raw -NotePropertyValue 'PRIVATE_CANARY'},
+    {param($e) $e | Add-Member -NotePropertyName tracePresent -NotePropertyValue $true}
+)) {
+    Expect-Reject 'config write context/schema/unknown text cannot publish' {
+        $event=New-ConfigBatchWriteEvent; & $mutation $event; Assert-PublicConfigBatchWriteEvent $event
+    }
+}
+Expect-Reject 'config write impossible duplicate count cannot publish' {
+    $event=New-ConfigBatchWriteEvent; $shape=$event.configBatchWrite.shape
+    $shape.edits=1; $shape.items=@($shape.items[0]); $shape.duplicateKeyPath=$true
+    Assert-PublicConfigBatchWriteEvent $event
 }
 function New-ModelCatalogEvent {
     return ('{"seq":2,"pid":1,"kind":"rpc","direction":"from_bridge","method":"model/list","correlation":1,"class":"response",' +
@@ -2652,5 +2723,101 @@ Expect-Pass 'model selection reaches only one explicit post-menu seam' {
     if (-not $workflow.Contains('PUSH_MODEL_SELECTION') -or -not $workflow.Contains('MAGPIE_MODEL_SELECTION:') -or
         -not $workflow.Contains('-DesktopModelSelectionProfile $selectionProfile')) { throw 'Selection workflow authority missing.' }
 }
+# Model preference writes remain a separate opt-in from the unchanged fixture
+# readiness and UI action profile.
+Expect-Pass 'owned settings explicit authority' {
+    Assert-DesktopModelSettingsProfile 'bridge-owned-model-settings-4239' 'bridge-owned-catalog-4239' 'bridge-owned-model-selection-4239' 'bridge-model-settings-v1'
+}
+Expect-Pass 'old selection does not enable writes' { Assert-DesktopModelSettingsProfile '' 'bridge-owned-catalog-4239' 'bridge-owned-model-selection-4239' '' }
+foreach ($settingsArgs in @(
+    @('','bridge-owned-catalog-4239','bridge-owned-model-selection-4239','bridge-model-settings-v1'),
+    @('bridge-owned-model-settings-4239','bridge-owned-catalog-4239','bridge-owned-model-selection-4239',''),
+    @('bridge-owned-model-settings-4239','synthetic-models-4239','bridge-owned-model-selection-4239','bridge-model-settings-v1'),
+    @('bridge-owned-model-settings-4239','bridge-owned-catalog-4239','','bridge-model-settings-v1'),
+    @('BRIDGE-OWNED-MODEL-SETTINGS-4239','bridge-owned-catalog-4239','bridge-owned-model-selection-4239','bridge-model-settings-v1')
+)) { Expect-Reject 'settings rejects missing mixed or unknown authority' { Assert-DesktopModelSettingsProfile @settingsArgs } }
+function New-SettingsEvidenceFixture {
+    $beta=New-ConfigBatchWriteEvent;$beta.seq=301;$beta.correlation=31
+    $beta.configBatchWrite.shape.items[0].valueMatch='beta'
+    $alpha=New-ConfigBatchWriteEvent;$alpha.seq=303;$alpha.correlation=32
+    $alpha.configBatchWrite.shape.items[0].valueMatch='alpha'
+    $betaResponse=[pscustomobject]@{seq=302;pid=2;kind='rpc';direction='from_bridge';method='config/batchWrite';correlation=31;class='response'}
+    $alphaResponse=[pscustomobject]@{seq=304;pid=2;kind='rpc';direction='from_bridge';method='config/batchWrite';correlation=32;class='response'}
+    return @($beta,$betaResponse,$alpha,$alphaResponse)
+}
+Expect-Pass 'two exact writes use full observed correlation not a preview' {
+    $noise=@();for($i=1;$i -le 300;$i++) { $noise+=,[pscustomobject]@{seq=$i;kind='fixed_noise'} }
+    $records=$noise+@(New-SettingsEvidenceFixture)
+    $summary=Get-DesktopModelSettingsEvidence $records
+    if ($summary.status -cne 'observed' -or $summary.alphaResponses -ne 1 -or $summary.betaResponses -ne 1 -or
+        -not $summary.betaThenAlpha -or (Get-DesktopModelSettingsEvidence @($records|Select-Object -First 256)).status -ceq 'observed') {
+        throw 'Matching full-snapshot write evidence lost.'
+    }
+    Assert-Keys $summary @('schema','status','alphaRequests','betaRequests','alphaResponses','betaResponses','errors','ambiguous','pending','excludedRequests','betaThenAlpha')
+}
+foreach($modelStrategy in @('replace','upsert')) {
+    foreach($effortStrategy in @('replace','upsert')) {
+        foreach($reload in @('missing','false','true')) {
+            Expect-Pass 'reviewed flat scalar strategies and boolean reload retain the same evidence gate' {
+                $records=@(New-SettingsEvidenceFixture)
+                foreach($index in @(0,2)) {
+                    $records[$index].configBatchWrite.shape.items[0].mergeStrategy=$modelStrategy
+                    $records[$index].configBatchWrite.shape.items[1].mergeStrategy=$effortStrategy
+                    $records[$index].configBatchWrite.shape.reloadUserConfig=$reload
+                }
+                if((Get-DesktopModelSettingsEvidence $records).status -cne 'observed') { throw 'Reviewed scalar batch was rejected by the evidence oracle.' }
+            }
+        }
+    }
+}
+foreach ($fault in @('rpc-error','missing-response','wrong-process','duplicate-request','duplicate-response','reverse','bad-merge','extra','wrong-model','wrong-effort','reload','bad-path','no-metadata')) {
+    Expect-Pass ('settings evidence refuses '+$fault) {
+        $records=@(New-SettingsEvidenceFixture)
+        switch ($fault) {
+            'rpc-error' { $records[1].kind='rpc_error';$records[1].class='unknown' }
+            'missing-response' { $records=@($records[0],$records[2],$records[3]) }
+            'wrong-process' { $records[1].pid=3 }
+            'duplicate-request' { $records+=,$records[0] }
+            'duplicate-response' { $records+=,$records[1] }
+            'reverse' { $records[2].seq=299 }
+            'bad-merge' { $records[0].configBatchWrite.shape.items[0].mergeStrategy='other' }
+            'extra' { $records[0].configBatchWrite.shape.unknownTopLevel=$true }
+            'wrong-model' { $records[0].configBatchWrite.shape.items[0].valueMatch='other' }
+            'wrong-effort' { $records[0].configBatchWrite.shape.items[1].valueMatch='other' }
+            'reload' { $records[0].configBatchWrite.shape.reloadUserConfig='other' }
+            'bad-path' { $records[0].configBatchWrite.shape.filePath='other' }
+            'no-metadata' { $records[0].PSObject.Properties.Remove('configBatchWrite') }
+        }
+        if ((Get-DesktopModelSettingsEvidence $records).status -ceq 'observed') { throw 'Invalid selected write evidence became success.' }
+    }
+}
+Expect-Pass 'unrelated startup batch is excluded rather than attributed to selection' {
+    $other=New-ConfigBatchWriteEvent;$other.correlation=90;$other.seq=1
+    foreach($item in $other.configBatchWrite.shape.items) { $item.key='other';$item.valueMatch='other' }
+    $summary=Get-DesktopModelSettingsEvidence (@($other)+@(New-SettingsEvidenceFixture))
+    if ($summary.status -cne 'observed' -or $summary.excludedRequests -ne 1) { throw 'Startup write was mistaken for selected settings.' }
+}
+Expect-Pass 'settings scope does not modify fixture ready or UI action API' {
+    $gate=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-DesktopModelSettingsProfile'},$true))
+    if ($gate.Count -ne 1 -or $gate[0].Extent.Text -cne 'Assert-DesktopModelSettingsProfile $DesktopModelSettingsProfile $DesktopFixtureProfile $DesktopModelSelectionProfile $env:MAGPIE_MODEL_SETTINGS') { throw 'Settings admission is not exact.' }
+    $writes=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$bridgeSettings.bridge_model_settings'},$true))
+    if ($writes.Count -ne 1 -or $writes[0].Right.Extent.Text -cne "'owned-file-v0.167.0-alpha.3.2'") { throw 'Settings mode is not a single fixed assignment.' }
+    $parent=$writes[0].Parent;$guarded=$false
+    while($null -ne $parent) {
+        if($parent -is [Management.Automation.Language.IfStatementAst] -and
+            @($parent.Clauses|ForEach-Object{$_.Item1.Extent.Text}) -ccontains "`$DesktopModelSettingsProfile -ceq 'bridge-owned-model-settings-4239'") { $guarded=$true }
+        $parent=$parent.Parent
+    }
+    if(-not $guarded) { throw 'Old mode silently enables writes.' }
+    $reads=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-LiveOwnedSettingsFile'},$true))
+    if($reads.Count -ne 2 -or $reads[0].Extent.Text -cne 'Assert-LiveOwnedSettingsFile $liveOwned.ControlHome $owner' -or
+        $reads[1].Extent.Text -cne "Assert-LiveOwnedSettingsFile `$liveOwned.ControlHome 'alpha'") { throw 'File reads escaped the fixed owned path and owner.' }
+    $evidence=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Get-DesktopModelSettingsEvidence'},$true))
+    if($evidence.Count -ne 1 -or $evidence[0].Extent.Text -cne 'Get-DesktopModelSettingsEvidence $allEvents') { throw 'Settings evidence uses something other than full validated records.' }
+    if(-not $workflow.Contains('PUSH_MODEL_SETTINGS') -or -not $workflow.Contains('MAGPIE_MODEL_SETTINGS:') -or
+        -not $workflow.Contains('-DesktopModelSettingsProfile $settingsProfile') -or
+        -not $workflow.Contains('"$PUSH_MODEL_SETTINGS" == ''true'' && "$PUSH_MODEL_SELECTION" != ''true''')) { throw 'Seventh explicit marker gate missing.' }
+}
+
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
 

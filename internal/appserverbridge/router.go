@@ -25,6 +25,8 @@ type request struct {
 	seen                map[string]map[string]bool
 	failed              bool
 	controlInit167      object
+	settingsPolicyStage bool
+	settingsPolicyReady bool
 	size, bytes         int
 }
 type serverCall struct {
@@ -49,6 +51,7 @@ type Router struct {
 	windowsReadiness167        bool
 	controlSession167          *controlPlaneSession167
 	ownedCatalog               *ownedAliasCatalog
+	ownedSettings              *ownedSettingsStore
 	controlHome167             string
 	controlNativeHomes167      map[string]string
 
@@ -234,6 +237,8 @@ func (r *Router) client(line []byte) ([]Delivery, error) {
 	switch method {
 	case "windowsSandbox/readiness":
 		return r.windowsReadinessRequest167(g, line), nil
+	case "config/batchWrite":
+		return r.ownedSettingsWriteRequest167(g, line), nil
 	case "config/read":
 		return r.controlPlaneRead167(g, line), nil
 	case "experimentalFeature/list":
@@ -501,6 +506,9 @@ func (r *Router) server(backend string, line []byte) (out []Delivery, err error)
 	}
 	delete(r.pending, key)
 	g := pending.group
+	if g.settingsPolicyStage {
+		return r.ownedSettingsPolicyResponse167(g, backend, line)
+	}
 	if g.controlInit167 != nil {
 		defer func() {
 			if err != nil {
@@ -1109,7 +1117,7 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 		var session *controlPlaneSession167
 		if r.controlPlaneRouting167 {
 			var err error
-			session, err = newControlPlaneSession167(r.controlPlaneSessionConfig167(defaultModel))
+			session, err = r.ownedSettingsCatalogSession167(defaultModel)
 			if err != nil {
 				return r.reject(g, -32000, controlPlaneUnavailable167), nil
 			}
@@ -1162,6 +1170,11 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 // startList collects all backend pages before atomically publishing a catalog.
 // Initialization uses the same bounds and descriptor handling as model/list.
 func (r *Router) startList(g *request) ([]Delivery, error) {
+	if r.ownedSettings != nil && g.method == "model/list" && !g.settingsPolicyReady {
+		r.invalidateOwnedCatalog()
+		r.ownedCatalog.refreshing = true
+		return r.ownedSettingsPolicyStart167(g), nil
+	}
 	if r.ownedCatalog != nil && g.method == "model/list" {
 		r.invalidateOwnedCatalog()
 		r.ownedCatalog.refreshing = true

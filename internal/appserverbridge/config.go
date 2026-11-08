@@ -27,6 +27,9 @@ type Config struct {
 	// It does not configure either native child or grant filesystem RPC access.
 	BridgeModelCatalogJSON string `json:"bridge_model_catalog_json,omitempty"`
 
+	// BridgeModelSettings persists only two frontend defaults in the separate control home.
+	BridgeModelSettings string `json:"bridge_model_settings,omitempty"`
+
 	// Auth compatibility modes are independent, explicit and disabled by default.
 	// They never authorize generating proof tokens or starting an OAuth login.
 	AuthStatus               string `json:"auth_status,omitempty"`
@@ -102,6 +105,12 @@ func LoadConfig(input io.Reader) (Config, error) {
 // Validate checks isolation before any subprocess starts. All paths must exist;
 // symlinks are resolved so aliases cannot silently share account state.
 func (cfg Config) Validate() error {
+	if cfg.BridgeModelSettings != "" && cfg.BridgeModelSettings != BridgeModelSettingsOwned167 {
+		return errors.New("unsupported bridge_model_settings mode")
+	}
+	if cfg.BridgeModelSettings != "" && (cfg.ControlPlane != ControlPlaneRouting167 || cfg.BridgeModelCatalogJSON == "") {
+		return errors.New("bridge model settings require the owned catalog and routing control plane")
+	}
 	if cfg.ControlPlane != "" && cfg.ControlPlane != ControlPlaneRouting167 {
 		return errors.New("unsupported control_plane mode")
 	}

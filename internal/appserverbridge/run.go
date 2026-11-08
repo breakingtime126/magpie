@@ -40,7 +40,7 @@ func Run(parent context.Context, cfg Config, input io.ReadCloser, output io.Writ
 
 // RunWithOptions preserves the reviewed Desktop startup controls on both
 // children. It has the same stream ownership and shutdown contract as Run.
-func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, input io.ReadCloser, output io.WriteCloser) error {
+func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, input io.ReadCloser, output io.WriteCloser) (resultErr error) {
 	if input == nil || output == nil {
 		return errors.New("bridge requires input and output")
 	}
@@ -71,6 +71,9 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	nativeHomes := map[string]string{}
 	if cfg.ControlPlane == ControlPlaneRouting167 {
 		var err error
+		if cfg.BridgeModelSettings == BridgeModelSettingsOwned167 && ownedSettingsCheckHome(cfg.ControlHome) != nil {
+			return errors.New(ownedSettingsUnavailable167)
+		}
 		controlHome, err = filepath.EvalSymlinks(cfg.ControlHome)
 		if err != nil {
 			return errors.New("cannot resolve control_home")
@@ -92,6 +95,17 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 		if err != nil {
 			return err
 		}
+	}
+	if cfg.BridgeModelSettings == BridgeModelSettingsOwned167 {
+		router.ownedSettings, err = openOwnedSettingsStore(controlHome)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := router.ownedSettings.Close(); err != nil && resultErr == nil {
+				resultErr = errors.New(ownedSettingsUnavailable167)
+			}
+		}()
 	}
 	router.configRequirementsRead = cfg.RequirementsRead != ""
 	router.configRequirementsNull167 = cfg.RequirementsRead == ConfigRequirementsCompareNull167
