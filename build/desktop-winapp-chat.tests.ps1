@@ -38,7 +38,7 @@ foreach($value in @('True','false','', $null,$false)){
 Pass ((Read-WinAppChatValue '{"elementId":"txt-doanything-abcd","text":"synthetic-alpha-turn-1"}' $edit) -ceq 'synthetic-alpha-turn-1') 'value read exact'
 Reject {Read-WinAppChatValue '{"elementId":"txt-other-abcd","text":""}' $edit} 'value identity mismatch'
 Reject {Read-WinAppChatValue '{"elementId":"txt-doanything-abcd","text":null}' $edit} 'null text rejected'
-foreach($name in @('Finish Windows setup to continue','Sign in','Approve','Couldn’t update model settings')){
+foreach($name in @('Finish Windows setup to continue','Sign in','Approve',"Couldn't update model settings",('Couldn'+[char]0x2019+'t update model settings'))){
     Reject {Assert-WinAppChatPage ([pscustomobject]@{Nodes=@((N $name Text 'lbl-protected-abcd'))})} 'protected page'
 }
 # Absence of a real composer ends the slice without input or send, even when

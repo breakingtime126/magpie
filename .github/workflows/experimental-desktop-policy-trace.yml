@@ -140,9 +140,11 @@ jobs:
           ./build/desktop-live-welcome.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Platform-neutral live supervisor fixtures failed.' }
           pwsh -NoProfile -File build/test-desktop-ci-profile.ps1
-          pwsh -NoProfile -File build/desktop-unelevated-read-only.tests.ps1
-          pwsh -NoProfile -File build/desktop-winapp-chat.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Platform-neutral CI profile fixtures failed.' }
+          pwsh -NoProfile -File build/desktop-unelevated-read-only.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only setup contract fixtures failed.' }
+          pwsh -NoProfile -File build/desktop-winapp-chat.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic chat helper fixtures failed.' }
       - name: Set up the pinned Go version
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:

@@ -1504,7 +1504,7 @@ $runtimeWorkspaceContract = {
     # before the one declaration seam. JSON cannot supply arbitrary path authority.
     $lastEnd = -1
     foreach ($spec in @(
-        @('$liveOwned', 'ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness'),
+        @('$liveOwned', 'ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile'),
         @('$liveWorkspace', '$liveOwned.Workspace')
     )) {
         $assignments = @($ast.FindAll({
@@ -1539,16 +1539,18 @@ foreach ($mutation in @(
         '$(if ($EnableReviewedLiveWelcome) { $liveWorkspace } else { $work })'),
     @('        if ($useLiveFixtures) {', '        if ($EnableReviewedLiveWelcome) {'),
     @('$liveWorkspace = $liveOwned.Workspace', '$liveWorkspace = $liveConfig.workspace'),
-    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile',
         '$liveOwned = $liveConfig'),
-    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
-        '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -Readiness $liveFixtureReport.readiness'),
-    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile',
+        '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile'),
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile',
         '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'),
-    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
-        '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $liveConfig.profile -Readiness $liveFixtureReport.readiness'),
-    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness',
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile',
+        '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $liveConfig.profile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile'),
+    @('$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile',
         '$liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveConfig.readiness'),
+    @('-SetupProfile $DesktopSandboxSetupProfile', '-SetupProfile $liveConfig.profile'),
+    @('-SetupProfile $DesktopSandboxSetupProfile', ''),
     @('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection',
         ('$useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection' + "`n" + '$useLiveFixtures = $true')),
     @('New-DesktopReadTargetEnvironment `', 'New-DesktopReadTargetEnvironment; New-DesktopReadTargetEnvironment `')
@@ -2507,7 +2509,7 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
         'Assert-DesktopCompatibilityPackage'='-Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)'
         'Wait-LiveReady'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'
         'Complete-LiveFixture'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'
-        'ConvertTo-LiveConfiguration'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness'
+        'ConvertTo-LiveConfiguration'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile'
     }
     foreach($name in $selectedCalls.Keys) {
         $call=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq $name},$true))
