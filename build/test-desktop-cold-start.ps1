@@ -3302,7 +3302,7 @@ requires_openai_auth = false
         $liveFixtureReport.parentDiagnostic=$welcomeDiagnostic
         $liveFixtureReport.partialActionUncertain=$welcomeDiagnostic.partialActionUncertain
         # All fixed captures keep the original owned HWND/PID and generation.
-        $captureWelcomeWindow={param([ValidateSet('official-window-after-welcome.png','official-window-after-skip.png','official-window-after-skip-confirmation.png','official-window-after-model-menu.png','official-window-after-beta-selection.png','official-window-after-alpha-selection.png')][string]$FileName)
+        $captureWelcomeWindow={param([ValidateSet('official-window-after-welcome.png','official-window-after-skip.png','official-window-after-skip-confirmation.png','official-window-after-model-menu.png','official-window-after-beta-selection.png','official-window-after-alpha-selection.png','official-window-alpha-turn-1.png','official-window-alpha-turn-2.png','official-window-beta-turn-1.png','official-window-beta-turn-2.png','official-window-chat-first-blocker.png')][string]$FileName)
             if ($null -eq $ownedActivationProcess -or $ownedActivationProcess.HasExited -or
                 $ownedActivationProcess.StartTime.ToUniversalTime().ToString('o') -cne $ownedActivationCreatedUtc -or
                 [DesktopColdProbe.Native]::PackageFor([uint32]$activationPid) -cne $app.PackageFullName) { throw 'After window identity unavailable.' }

@@ -130,6 +130,7 @@ jobs:
             exit 1
           fi
       - name: Check out the exact experimental commit
+        id: reviewed_checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -146,11 +147,13 @@ jobs:
           pwsh -NoProfile -File build/desktop-winapp-chat.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic chat helper fixtures failed.' }
       - name: Set up the pinned Go version
+        if: ${{ !cancelled() && steps.reviewed_checkout.outcome == 'success' }}
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false
       - name: Check source formatting before regression gates
+        if: ${{ !cancelled() && steps.reviewed_checkout.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail

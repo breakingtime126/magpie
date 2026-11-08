@@ -2507,8 +2507,8 @@ Expect-Pass 'new identity proof and exact native pins precede owned runtime seam
     $selectedCalls=@{
         'New-DesktopBridgeSettings'='-Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239 -EntryCompatibility $EnableReviewedEntryCompatibility'
         'Assert-DesktopCompatibilityPackage'='-Build4239 ($EnableReviewedBuild4239 -or $EnableReviewedEntry4239)'
-        'Wait-LiveReady'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'
-        'Complete-LiveFixture'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile'
+        'Wait-LiveReady'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -SetupProfile $DesktopSandboxSetupProfile'
+        'Complete-LiveFixture'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -SetupProfile $DesktopSandboxSetupProfile'
         'ConvertTo-LiveConfiguration'='-Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile'
     }
     foreach($name in $selectedCalls.Keys) {
@@ -2712,11 +2712,26 @@ Expect-Pass 'model selection reaches only one explicit post-menu seam' {
         -not (($conditions -join ' ').Contains('$liveFixtureReport.partialActionUncertain'))) { throw 'Selection escaped confirmed captured menu scope.' }
     $captures=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and
         $n.Left.Extent.Text -ceq '$captureWelcomeWindow'},$true))
-    $captureParameter='param([ValidateSet(''official-window-after-welcome.png'',''official-window-after-skip.png'',''official-window-after-skip-confirmation.png'',''official-window-after-model-menu.png'',''official-window-after-beta-selection.png'',''official-window-after-alpha-selection.png'')][string]$FileName)'
+    $captureParameter='param([ValidateSet(''official-window-after-welcome.png'',''official-window-after-skip.png'',''official-window-after-skip-confirmation.png'',''official-window-after-model-menu.png'',''official-window-after-beta-selection.png'',''official-window-after-alpha-selection.png'',''official-window-alpha-turn-1.png'',''official-window-alpha-turn-2.png'',''official-window-beta-turn-1.png'',''official-window-beta-turn-2.png'',''official-window-chat-first-blocker.png'')][string]$FileName)'
     if ($captures.Count -ne 1 -or -not $captures[0].Right.Extent.Text.Contains($captureParameter)) {
         throw 'Selection captures must be admitted by the exact existing fixed-name capture boundary.'
     }
-    foreach ($captureFile in @('official-window-after-beta-selection.png','official-window-after-alpha-selection.png')) {
+    # Execute only the exact pure parameter declaration, never the screenshot body.
+    # Exact text equality above binds this fixture to the real capture whitelist.
+    $captureAdmission=[scriptblock]::Create($captureParameter+'; return $FileName')
+    foreach ($captureFile in @('official-window-alpha-turn-1.png','official-window-alpha-turn-2.png',
+        'official-window-beta-turn-1.png','official-window-beta-turn-2.png','official-window-chat-first-blocker.png')) {
+        if ((& $captureAdmission $captureFile) -cne $captureFile) { throw 'Fixed chat capture name rejected.' }
+    }
+    foreach ($badCapture in @('arbitrary.png','../official-window-alpha-turn-1.png',
+        'C:\outside.png','official-window-alpha-turn-3.png','')) {
+        $captureRejected=$false
+        try { $null=& $captureAdmission $badCapture } catch { $captureRejected=$true }
+        if (-not $captureRejected) { throw 'Capture whitelist accepted an arbitrary path or name.' }
+    }
+    foreach ($captureFile in @('official-window-after-beta-selection.png','official-window-after-alpha-selection.png',
+        'official-window-alpha-turn-1.png','official-window-alpha-turn-2.png','official-window-beta-turn-1.png',
+        'official-window-beta-turn-2.png','official-window-chat-first-blocker.png')) {
         $artifactPath='${{ runner.temp }}/desktop-cold-start-report/'+$captureFile
         if ([regex]::Matches($workflow,[regex]::Escape($artifactPath)).Count -ne 1) {
             throw 'Each fixed selection screenshot must be delivered exactly once by the existing artifact list.'
