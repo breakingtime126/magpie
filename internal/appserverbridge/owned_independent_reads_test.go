@@ -172,7 +172,9 @@ func TestOwnedCatalogIndependentReadAdmissionRemainsNarrow(t *testing.T) {
 			})
 		}
 	}
-	for _, method := range []string{"config/read", "model/list", "thread/start", "turn/start", "account/read", "account/gatewayOAuth/read", "windowsSandbox/readiness", "environment/info", "thread/read", "experimentalFeature/enablement/set", "unreviewed/read"} {
+	// config/read is catalog-dependent and waits with its own policy pair;
+	// TestOwnedConfigReadWaitBeforeAndDuringRefresh verifies that distinction.
+	for _, method := range []string{"model/list", "thread/start", "turn/start", "account/read", "account/gatewayOAuth/read", "windowsSandbox/readiness", "environment/info", "thread/read", "experimentalFeature/enablement/set", "unreviewed/read"} {
 		r, _, _ := ownedAuthRefreshStart(t)
 		ownedRefreshEnableReads(r)
 		before := len(r.pending)

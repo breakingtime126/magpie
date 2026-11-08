@@ -66,7 +66,6 @@ func TestOwnedCatalogRefreshAuthExceptionsStayNarrow(t *testing.T) {
 		{"wrong-case", `{"id":2,"method":"getauthstatus","params":{}}`, true, -32000},
 		{"refresh-denied", `{"id":2,"method":"getAuthStatus","params":{"refreshToken":true}}`, true, -32602},
 		{"extra-params", `{"id":2,"method":"getAuthStatus","params":{"unknown":true}}`, true, -32602},
-		{"config", `{"id":2,"method":"config/read","params":{}}`, true, -32000},
 		{"requirements", `{"id":2,"method":"configRequirements/read","params":{}}`, true, -32000},
 		{"thread", `{"id":2,"method":"thread/start","params":{}}`, true, -32000},
 		{"turn", `{"id":2,"method":"turn/start","params":{}}`, true, -32000},

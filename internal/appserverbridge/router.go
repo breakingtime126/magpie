@@ -44,6 +44,7 @@ type page struct {
 // loop, never concurrently. Losing the connection loses its ownership map;
 // a new connection must discover saved threads with thread/list again.
 type Router struct {
+	controlReadGroups167       map[*request]struct{}
 	configRequirementsRead     bool
 	configRequirementsNull167  bool
 	experimentalFeatureList167 bool
@@ -111,6 +112,7 @@ func (r *Router) sendParams(g *request, backend string, params json.RawMessage) 
 	return deliver(backend, object{"id": raw(id), "method": raw(g.method), "params": params})
 }
 func (r *Router) end(g *request) {
+	delete(r.controlReadGroups167, g)
 	if r.active[g.key] {
 		delete(r.active, g.key)
 		r.activeBytes -= g.size

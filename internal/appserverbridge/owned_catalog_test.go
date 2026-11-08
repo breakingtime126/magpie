@@ -198,7 +198,7 @@ func TestOwnedCatalogRefreshBlocksRequestsAndFailureIsSticky(t *testing.T) {
 	if err != nil || len(out) != 2 || r.controlSession167 != nil || len(r.models) != 0 || r.defaultModel != "" {
 		t.Fatal("refresh retained stale public state")
 	}
-	for _, method := range []string{"config/read", "model/list", "thread/start", "turn/start"} {
+	for _, method := range []string{"model/list", "thread/start", "turn/start"} {
 		done, err := r.Client(raw(object{"id": raw("blocked-" + method), "method": raw(method), "params": raw(object{})}))
 		if err != nil || len(done) != 1 || done[0].Backend != "" || !strings.Contains(string(done[0].Message), `"error"`) {
 			t.Fatal("request used an in-progress catalog")

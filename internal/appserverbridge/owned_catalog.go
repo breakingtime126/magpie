@@ -312,6 +312,9 @@ func (r *Router) invalidateOwnedCatalog() {
 func (r *Router) failOwnedCatalog() {
 	if r.ownedCatalog != nil {
 		r.ownedCatalog.failed = true
+		for g := range r.controlReadGroups167 {
+			r.abandon(g)
+		}
 		r.invalidateOwnedCatalog()
 	}
 }
@@ -347,7 +350,10 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 		}
 		if r.ownedCatalog.refreshing {
 			m, _ := parseObject(line)
-			if _, request := m["id"]; request && text(m, "method") != "" && !r.catalogIndependentReadDuringRefresh(text(m, "method")) {
+			// Config reads depend on the new catalog and wait for its commit;
+			// unlike independent reads, they cannot return during refresh.
+			waitingConfigRead := text(m, "method") == "config/read" && r.controlPlaneRouting167
+			if _, request := m["id"]; request && text(m, "method") != "" && !r.catalogIndependentReadDuringRefresh(text(m, "method")) && !waitingConfigRead {
 				return []Delivery{fail(m["id"], -32000, "bridge model catalog refresh is in progress")}, nil
 			}
 		}
@@ -374,6 +380,10 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	out, err := r.server(backend, line)
 	if r.ownedCatalog != nil && (err != nil || r.ownedCatalog.failed) {
 		r.failOwnedCatalog()
+		return nil, errors.New(ownedCatalogUnavailable)
+	}
+	out = append(out, r.releaseControlReads167()...)
+	if r.ownedCatalog != nil && r.ownedCatalog.failed {
 		return nil, errors.New(ownedCatalogUnavailable)
 	}
 	return out, err

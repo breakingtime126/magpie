@@ -77,8 +77,17 @@ func (r *Router) controlPlaneRead167(g *request, line []byte) []Delivery {
 			groups[pending.group] = struct{}{}
 		}
 	}
+	for g := range r.controlReadGroups167 {
+		groups[g] = struct{}{}
+	}
 	if len(groups) >= controlPlaneReadPendingLimit167 {
 		return []Delivery{fail(g.id, -32000, "routing config read request limit reached")}
+	}
+	if r.ownedCatalog != nil {
+		if r.controlReadGroups167 == nil {
+			r.controlReadGroups167 = map[*request]struct{}{}
+		}
+		r.controlReadGroups167[g] = struct{}{}
 	}
 	r.active[g.key] = true
 	r.activeBytes += g.size
@@ -119,6 +128,15 @@ func (r *Router) controlPlaneReadResponse167(g *request, backend string, line []
 	if !sameJSON(g.results[r.backends[0].ID][0], g.results[r.backends[1].ID][0]) {
 		return r.reject(g, -32000, controlPlaneUnavailable167)
 	}
+	if r.ownedCatalog != nil && r.ownedCatalog.refreshing {
+		// Retain this actual matched policy pair and its logical request slot.
+		// Release uses the newly committed view, not the invalidated snapshot.
+		return nil
+	}
+	return r.finishControlRead167(g)
+}
+
+func (r *Router) finishControlRead167(g *request) []Delivery {
 	if r.controlSession167 == nil || (r.ownedCatalog != nil && r.ownedCatalog.refreshing) {
 		return r.reject(g, -32000, controlPlaneUnavailable167)
 	}
@@ -373,4 +391,19 @@ func controlPlanePath167(path string) string {
 		path = strings.ToLower(filepath.Clean(path))
 	}
 	return path
+}
+
+// Completion is serialized with catalog publication by the Run event loop.
+// Held reads retain their own genuine matched pair, not a post-commit reread.
+func (r *Router) releaseControlReads167() []Delivery {
+	if r.ownedCatalog == nil || r.ownedCatalog.refreshing || r.ownedCatalog.failed || r.controlSession167 == nil {
+		return nil
+	}
+	var out []Delivery
+	for g := range r.controlReadGroups167 {
+		if g.remaining == 0 && !g.failed {
+			out = append(out, r.finishControlRead167(g)...)
+		}
+	}
+	return out
 }

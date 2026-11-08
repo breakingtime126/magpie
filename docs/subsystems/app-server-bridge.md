@@ -2182,3 +2182,27 @@ The public `model/list` `isDefault` still describes the immutable catalog priori
 not the user's saved selection. Router restart tests prove retained config and
 new-thread routing only; they do not establish that Desktop startup will prefer
 that user layer over its own picker/default handling.
+
+
+### Owned config reads during catalog refresh
+
+In the owned-catalog mode, `config/read` keeps its existing strict parameters,
+initialization gate, four-logical-read limit, duplicate-ID and active-byte limits.
+The limit includes both native-policy-pending reads and reads whose policy pair
+has completed while a catalog refresh is in progress. Each read obtains its own
+real, validated, identical two-backend null-requirements responses. A completed
+pair is retained while waiting; it is not discarded, synthesized or described as
+a new policy read after catalog publication.
+
+Only successful complete catalog publication releases held reads against the
+current bridge-owned config session, including the persisted user defaults when
+that mode is enabled. No invalidated or empty session is returned. A remaining
+policy response arriving after publication follows the same validation before
+completion. Policy failure rejects that read; catalog/file failure abandons all
+tracked reads, releases payload accounting and tombstones pending siblings.
+No new RPC, native configuration write, or general read bypass is introduced.
+
+This is a bounded-memory wait, not a new wall-clock deadline. There is no new
+request timer: if a native policy or catalog operation stalls, the bounded reads
+can remain pending until connection cancellation or termination. Existing Run
+EOF/error/cancellation handling still closes the connection and its children.
