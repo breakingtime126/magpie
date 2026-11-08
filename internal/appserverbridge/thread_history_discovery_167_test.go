@@ -159,6 +159,23 @@ func TestThreadHistoryDiscovery167FiltersPagesAndOwnership(t *testing.T) {
 						if len(out) != 1 || out[0].Backend != owner {
 							t.Fatal("discovered history routed to another provider")
 						}
+						if method == "thread/resume" {
+							native, _ := parseObject(out[0].Message)
+							nativeParams, _ := child(native, "params")
+							if text(nativeParams, "modelProvider") != owner {
+								t.Fatal("resume did not retain its configured native provider")
+							}
+							resumed := reply(t, r, out[0], string(raw(object{"thread": raw(historyDiscoveryRow167(id, owner, 1)), "modelProvider": raw(owner), "model": raw(model)})))
+							if len(resumed) != 1 || resumed[0].Backend != "" {
+								t.Fatal("synthetic resume did not produce one frontend response")
+							}
+							m, _ := parseObject(resumed[0].Message)
+							result, _ := child(m, "result")
+							thread, _ := child(result, "thread")
+							if text(m, "id") != method+id || text(thread, "id") != id || text(thread, "modelProvider") != controlPlaneProvider167 || text(result, "modelProvider") != controlPlaneProvider167 || text(thread, "model") != alias(owner, model) || text(result, "model") != alias(owner, model) || r.threads[id] != owner {
+								t.Fatal("synthetic resume changed the thread, owner or public model")
+							}
+						}
 					}
 					expectError(t, client(t, r, string(raw(object{"id": raw("cross-" + id), "method": raw("turn/start"), "params": raw(object{"threadId": raw(id), "input": raw([]object{}), "model": raw(other)})}))))
 				}
@@ -196,5 +213,49 @@ func TestThreadHistoryDiscovery167CollidingIDsDoNotMergeProviders(t *testing.T) 
 	got, err := r.Server(out[1].Backend, raw(object{"id": m["id"], "result": raw(object{"data": raw([]object{row}), "nextCursor": raw(nil)})}))
 	if err == nil || len(got) != 0 || r.threads["synthetic-collision"] != "!" {
 		t.Fatal("colliding history IDs were silently merged across native owners")
+	}
+}
+
+func TestThreadHistoryDiscovery167MixedProvidersFailClosed(t *testing.T) {
+	for _, filter := range []string{"", "null", "[]", `["magpie_bridge"]`} {
+		for _, owner := range []string{"openai", "aihub"} {
+			for _, foreignFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("filter=%s/owner=%s/foreignFirst=%t", filter, owner, foreignFirst), func(t *testing.T) {
+					r := historyDiscoveryRouter167(t)
+					params := object{}
+					if filter != "" {
+						params["modelProviders"] = json.RawMessage(filter)
+					}
+					out := client(t, r, string(raw(object{"id": raw("mixed-history"), "method": raw("thread/list"), "params": raw(params)})))
+					if len(out) != 2 {
+						t.Fatal("expected two native list requests")
+					}
+					var mixed Delivery
+					for _, d := range out {
+						if d.Backend == owner {
+							mixed = d
+						} else if got := historyDiscoveryReply167(t, r, d, []object{}, nil); len(got) != 0 {
+							t.Fatal("history exposed a list before checking the mixed peer")
+						}
+					}
+					if mixed.Backend != owner {
+						t.Fatal("missing configured native owner")
+					}
+					rows := []object{historyDiscoveryRow167("synthetic-owned-history", owner, 2), historyDiscoveryRow167("synthetic-legacy-history", "legacy-provider", 1)}
+					if foreignFirst {
+						rows[0], rows[1] = rows[1], rows[0]
+					}
+					m, _ := parseObject(mixed.Message)
+					got, err := r.Server(owner, raw(object{"id": m["id"], "result": raw(object{"data": raw(rows), "nextCursor": raw(nil)})}))
+					if err == nil || len(got) != 0 || r.threads["synthetic-legacy-history"] != "" {
+						t.Fatal("mixed-provider history was published or foreign ownership was adopted")
+					}
+					// A native peer can legitimately include legacy providers for [].
+					// For the other filters this response violates the pinned native
+					// contract. Both cases close the connection, regardless of row
+					// order; do not keep using this Router or claim atomic rollback.
+				})
+			}
+		}
 	}
 }

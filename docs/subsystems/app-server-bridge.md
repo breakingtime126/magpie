@@ -2341,8 +2341,13 @@ view nor this rejection establishes that underlying data was deleted.
 `thread_history_discovery_167_test.go` adds only in-memory synthetic router
 regressions. They cover all four filter spellings, both backends and native
 continuations, merged frontend pagination, owner-based read/resume/turn request
-routing, cross-provider override rejection, rediscovery in a fresh router,
-foreign-provider results and ID collisions. The fixtures do not execute Codex,
+routing and synthetic resume-response projection, cross-provider override
+rejection, rediscovery in a fresh router, foreign-provider results and ID
+collisions. Mixed configured/legacy-provider rows in one native response are
+checked for each filter, backend and row order. With `[]`, a legacy row can be
+a legitimate native result; with the other filters it violates the pinned
+native contract. Both cases fail closed without publishing a partial list;
+the test does not keep using the failed router or assert ownership-map rollback. The fixtures do not execute Codex,
 read a native store, complete a resumed turn, or test Desktop restart, grouping,
 real account history retention or migration. No production routing or filter
 behavior is changed. Use the existing explicit offline-only CI markers so this
