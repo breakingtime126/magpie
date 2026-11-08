@@ -289,7 +289,9 @@ func checkDesktopSetupPolicy(p desktopSetupPeer, t desktopSetupTarget, configure
 	if err != nil {
 		return "", failure("sandbox_setup_requirements_rpc_failed")
 	}
-	if !desktopSetupJSONEqual(raw, map[string]any{"requirements": nil}) {
+	// The pinned c407 native handler always reports independent speed modes.
+	// Keep the complete response contract; never discard actual requirements.
+	if !desktopSetupJSONEqual(raw, map[string]any{"supportsIndependentSpeedModes": true, "requirements": nil}) {
 		return "", failure("sandbox_setup_requirements_rejected")
 	}
 	raw, err = p.rpc("config/read", map[string]any{"includeLayers": true, "cwd": t.cwd})

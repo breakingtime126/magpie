@@ -28,9 +28,9 @@ func (p *desktopSetupFake) rpc(method string, params any) (json.RawMessage, erro
 		return jsonBytes(map[string]any{"codexHome": p.target.codexHome}), nil
 	case "configRequirements/read":
 		if p.fail == "non-null-requirements" {
-			return jsonBytes(map[string]any{"requirements": map[string]any{}}), nil
+			return jsonBytes(map[string]any{"supportsIndependentSpeedModes": true, "requirements": map[string]any{}}), nil
 		}
-		return jsonBytes(map[string]any{"requirements": nil}), nil
+		return jsonBytes(map[string]any{"supportsIndependentSpeedModes": true, "requirements": nil}), nil
 	case "config/read":
 		if !reflect.DeepEqual(params, map[string]any{"includeLayers": true, "cwd": p.target.cwd}) {
 			return nil, failure("wrong_params")

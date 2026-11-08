@@ -91,7 +91,7 @@ jobs:
           # This action-time approved experiment is not a default or reusable setup
           # policy: only the first attempt of the direct reviewed-base successor.
           if [[ "$PUSH_UNELEVATED_CHAT" == 'true' && ( "$TRIGGER_EVENT" != 'push' ||
-                  "$TRIGGER_ATTEMPT" != '1' || "$TRIGGER_BASE_SHA" != 'ccafc97ab1b7d41350bf48f9b3795e23704f5c71' ||
+                  "$TRIGGER_ATTEMPT" != '1' || "$TRIGGER_BASE_SHA" != 'b2de3505fa117e008adf80cc684eeb6638cd3525' ||
                   "$PUSH_MODEL_SETTINGS" != 'true' ) ]]; then
             echo 'Unelevated setup requires the explicitly reviewed first-attempt experiment.' >&2
             exit 1

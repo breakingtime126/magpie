@@ -18,7 +18,8 @@ service, plugin installation or MCP configuration are introduced.
 Before the first setup attempt, **both** native peers must initialize in their
 known separate homes and provide:
 
-* genuine `configRequirements/read` with `requirements:null`;
+* genuine `configRequirements/read` with the complete pinned response
+  `{"requirements":null,"supportsIndependentSpeedModes":true}`;
 * genuine `config/read` for the launch workspace, including layers: exactly one
   user layer for that home's generated file, no profile selection, and its full
   semantic content equal to the authored TOML. Only empty system/sessionFlags
@@ -102,3 +103,11 @@ layers, file changes, failed/uncertain requests, genuine completion versus
 acceptance, post-restart readiness, clean shutdown and truthful audit fields.
 No successful compile, gofmt, unit test or native setup run is implied by the
 source addition; record their actual CI results separately.
+
+The complete requirements envelope is defined by the pinned
+[`ConfigRequirementsReadResponse`](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/config.rs#L835-L846)
+and [handler](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/config_processor.rs#L140-L156).
+The handler supplies the speed-mode metadata even when requirements are null.
+Missing metadata, unknown fields, duplicate keys and all non-null requirements
+remain rejected. No claim that a particular machine has null requirements follows
+from this schema; its actual native reply must pass the check.
