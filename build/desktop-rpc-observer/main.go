@@ -683,6 +683,21 @@ func runChild(real string, args []string, input io.ReadCloser, output, diagnosti
 	o.stop()
 	return code
 }
+
+// emitStart records provenance before optional guard activation evidence.
+// The guard is already configured in memory; this ordering changes no launch
+// or wire admission. The parent requires the actual per-process catalog event
+// before any event other than observer_start.
+func (o *observer) emitStart() {
+	o.emit(event{Kind: "observer_start", Class: "test_only"})
+	if o.publicPlugins != nil {
+		o.emit(event{Kind: "public_plugin_catalog", PublicPluginCatalogSHA256: o.publicPlugins.digest})
+	}
+	if o.fixtureGuard != nil {
+		o.emit(event{Kind: "fixture_readonly_guard_started"})
+	}
+}
+
 func main() {
 	// This diagnostic has no Unix signal relay and must not imply Unix process
 	// transparency. Pure metadata/pump tests remain portable.
@@ -754,13 +769,7 @@ func main() {
 	if fixtureGuard != nil {
 		fixtureGuard.emit = o.emit
 	}
-	o.emit(event{Kind: "observer_start", Class: "test_only"})
-	if fixtureGuard != nil {
-		o.emit(event{Kind: "fixture_readonly_guard_started"})
-	}
-	if catalog != nil {
-		o.emit(event{Kind: "public_plugin_catalog", PublicPluginCatalogSHA256: catalog.digest})
-	}
+	o.emitStart()
 	o.argv(os.Args[1:])
 	code := runChild(real, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, o)
 	if trace != nil {

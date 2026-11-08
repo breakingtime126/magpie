@@ -2251,3 +2251,41 @@ No successful Windows setup or conversation is claimed by adding this profile.
 The ordinary settings-only profile retains its zero-model-request requirement
 and original 180-second fixture lifetime; only the explicit chat profile uses
 360 seconds and nonzero synthetic requests.
+
+
+### Offline repair and the first completed native setup
+
+A push marked `[bridge-offline-only-v1]` plus the existing
+`[winapp-inspection-v0.7.1]` legacy-lane exclusion runs only offline observer /
+bridge regressions and the separate Windows build. All other policy-trace jobs
+are explicitly skipped. Live profile markers cannot be combined with this
+mode. It does not renew permission to configure another disposable VM.
+
+In commit `eda5edd5867cd4bc2c368e83d5f7263da17513cc`,
+[run 42458635929](https://github.com/breakingtime126/magpie/actions/runs/42458635929)
+recorded both genuine native setups completed, both post-restart read-only /
+readiness checks passed, and four preparation peers exited cleanly. The real
+Desktop screenshot no longer showed the Windows setup prompt. This is native
+backend restart evidence, not Desktop restart acceptance. The Desktop chat
+slice stopped at its first Alpha UI read without input, send, or local model
+requests. A separate observer event-order bug prevented final trace validation;
+the Desktop job failed. The independent legacy helper smoke also failed.
+[Windows run 42458635987](https://github.com/breakingtime126/magpie/actions/runs/42458635987)
+passed its race, Windows test and packaging jobs. Those results do not establish
+actual chat or production compatibility.
+
+The observer now emits its real public catalog provenance before its guard
+activation record. Guard construction still precedes child startup and wire
+forwarding; the parent ordering validator is unchanged. UI helper fixes must be
+verified independently: a screenshot alone cannot identify the first parser
+exception or prove that a semantically named send target is available.
+
+The chat helper now records hidden/duplicate evidence for all fixed targets but
+applies it only when that target is requested. A hidden future composer cannot
+block closing an already-open model menu. The actual composer, send, new-chat
+or model target must still be unique, visible and enabled. Promoted UI Automation
+IDs use only the existing official read-only property lookup with a fixed name /
+type, and must resolve back to the same identity and menu expansion state.
+Anonymous buttons, changed identities and unavailable state remain rejected.
+These are independently reproducible helper defects, not proof of the first
+exception in the earlier real run, whose raw UI tree was not retained.

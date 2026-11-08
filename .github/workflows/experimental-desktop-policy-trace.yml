@@ -66,6 +66,7 @@ jobs:
           TRIGGER_SHA: ${{ github.sha }}
           TRIGGER_BASE_SHA: ${{ github.event.before }}
           TRIGGER_ATTEMPT: ${{ github.run_attempt }}
+          PUSH_OFFLINE_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-offline-only-v1]') }}
           PUSH_UNELEVATED_CHAT: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-unelevated-chat-v1]') }}
           PUSH_PACKAGE_IDENTITY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
           PUSH_WINAPP_MARKER: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') }}
@@ -87,6 +88,18 @@ jobs:
               echo 'Explicit inspection mode and matching full expected SHA are required.' >&2
               exit 1
             fi
+          fi
+          # Offline repair commits never activate Desktop or configure a sandbox.
+          # Keep the existing exclusion marker for the separate legacy workflows.
+          if [[ "$PUSH_OFFLINE_ONLY" == 'true' && ( "$TRIGGER_EVENT" != 'push' ||
+                  "$PUSH_WINAPP_MARKER" != 'true' || "$PUSH_UNELEVATED_CHAT" == 'true' ||
+                  "$PUSH_PACKAGE_IDENTITY" == 'true' || "$PUSH_OWNED_CATALOG" == 'true' ||
+                  "$PUSH_MODEL_SELECTION" == 'true' || "$PUSH_MODEL_SETTINGS" == 'true' ||
+                  "$PUSH_SYNTHETIC_MODELS" == 'true' || "$PUSH_WELCOME_4239" == 'true' ||
+                  "$PUSH_NATIVE_ENTRY" == 'true' || "$PUSH_BUILD_4239" == 'true' ||
+                  "$PUSH_OTHER_DIAGNOSTIC" == 'true' ) ]]; then
+            echo 'Offline-only repair requires the exclusion marker and no live profile.' >&2
+            exit 1
           fi
           # This action-time approved experiment is not a default or reusable setup
           # policy: only the first attempt of the direct reviewed-base successor.
@@ -702,7 +715,7 @@ jobs:
 
   observed-policy-read:
     needs: observer-unit
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]'))) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-ui-inspection-v1]') || contains(github.event.head_commit.message, '[native-contract-review-v1]'))) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-offline-only-v1]'))
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -909,7 +922,7 @@ jobs:
 
   welcome-helper-offline:
     needs: observer-unit
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-offline-only-v1]'))
     runs-on: windows-2025
     timeout-minutes: 5
     steps:
@@ -927,7 +940,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Welcome policy fixtures failed.' }
 
   native-original-ui:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-ui-inspection-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-offline-only-v1]'))
     runs-on: windows-2025
     timeout-minutes: 25
     env:
@@ -974,7 +987,7 @@ jobs:
 
 
   native-contract-review:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]'))
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[native-contract-review-v1]') && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') && !contains(github.event.head_commit.message, '[bridge-ui-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-entry-4239-v1]')) && !contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[app-server-4239-v1]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-offline-only-v1]'))
     runs-on: windows-2025
     timeout-minutes: 12
     env:
@@ -1023,7 +1036,7 @@ jobs:
 
 
   renderer-menu-review:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]')
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[renderer-menu-review-v1]') && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-offline-only-v1]'))
     runs-on: windows-2025
     timeout-minutes: 12
     env:

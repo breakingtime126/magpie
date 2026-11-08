@@ -65,7 +65,10 @@ is not retroactive prevention of a tool that has already begun: the loopback
 fixture independently emits only its fixed text response and no tool calls.
 No real credentials, provider authentication or external inference is covered.
 
-`fixture_readonly_guard_started` identifies the active stream mode. A
+`fixture_readonly_guard_started` identifies the active stream mode. When a public
+plugin catalog is configured, its real digest event precedes this record; guard
+construction and admission still occur before child startup and any forwarding.
+The parent continues to reject records before the required provenance. A
 `fixture_readonly_turn_completed` event has only
 `fixtureReadOnly: {schema: 1, owner: "alpha"|"beta", completed, threadTurn}`.
 It is emitted after both an admitted turn/start response supplies its turn ID

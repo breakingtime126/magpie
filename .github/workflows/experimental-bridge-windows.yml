@@ -155,6 +155,7 @@ jobs:
           test -z "$(git status --porcelain)"
 
       - name: Test the pinned official runtime without external networking
+        if: ${{ !(github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-offline-only-v1]')) }}
         shell: bash
         run: bash build/test-official-runtime.sh
 

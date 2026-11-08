@@ -12,7 +12,7 @@ foreach ($name in @('Assert-DesktopModelSettingsProfile', 'Get-DesktopModelSetti
     'Wait-DesktopRegistration', 'Get-DesktopNoAuthStatusEvidence', 'Assert-PublicShape', 'Assert-PublicInteger',
     'Assert-PublicConfigBatchWriteEvent', 'Assert-PublicOwnedCatalogEvent', 'Assert-PublicModelCatalogEvent', 'Assert-PublicThreadListEvent', 'Get-PublicThreadListShapeFields', 'Get-PublicThreadListErrorClasses',
     'Assert-PublicRequestTraceEvent', 'Assert-PublicReadTargetEvent', 'Get-PublicReadTargetLabels', 'Assert-PublicReadRequestEvent', 'Get-DesktopFeatureListEvidence', 'Get-DesktopRPCErrorEvidence', 'Get-DesktopConfigReadEvidence',
-    'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
+    'New-DesktopReadTargetEnvironment', 'Complete-DesktopActivationProcess', 'Get-DesktopNativeRunDecision', 'Get-DesktopCombinedOutcome', 'ConvertTo-DesktopNativeControlEvidence', 'Assert-PublicHash', 'Assert-PublicPluginEvent', 'Assert-PublicCanonicalJSON', 'ConvertTo-DesktopReadCallerEvidence', 'ConvertFrom-DesktopReadCallerOutput')) {
     $definitions = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
@@ -2858,6 +2858,24 @@ Expect-Pass 'chat fixed-file read is under explicit setup profile' {
         $node=$node.Parent
     }
     if (-not $guarded) { throw 'Chat file observation escaped explicit profile.' }
+}
+
+
+# Guard activation evidence follows the configured public catalog provenance.
+# These fixtures preserve the validator's original strict ordering requirement.
+Expect-Reject 'guard start before the required catalog remains rejected' {
+    $catalog = [pscustomobject]@{keysSha256=('a'*64);candidates=@()}
+    $seen = @{}
+    Assert-PublicPluginEvent ([pscustomobject]@{seq=1;pid=91;kind='observer_start';class='test_only'}) $catalog $seen
+    Assert-PublicPluginEvent ([pscustomobject]@{seq=2;pid=91;kind='fixture_readonly_guard_started'}) $catalog $seen
+}
+Expect-Pass 'guard start after the actual matching catalog is admitted' {
+    $catalog = [pscustomobject]@{keysSha256=('a'*64);candidates=@()}
+    $seen = @{}
+    Assert-PublicPluginEvent ([pscustomobject]@{seq=1;pid=91;kind='observer_start';class='test_only'}) $catalog $seen
+    Assert-PublicPluginEvent ([pscustomobject]@{seq=2;pid=91;kind='public_plugin_catalog';publicPluginCatalogSHA256=('a'*64)}) $catalog $seen
+    Assert-PublicPluginEvent ([pscustomobject]@{seq=3;pid=91;kind='fixture_readonly_guard_started'}) $catalog $seen
+    if (-not $seen.ContainsKey('91') -or -not $seen.ContainsKey('start:91')) { throw 'Catalog provenance missing.' }
 }
 
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)
