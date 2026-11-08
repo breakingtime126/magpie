@@ -22,13 +22,14 @@ import (
 const desktopSelfAuthoredScope = "desktop-self-authored-fixtures-only"
 
 type desktopAudit struct {
-	Schema        int    `json:"schema"`
-	Scope         string `json:"scope"`
-	Status        string `json:"status"`
-	Failure       string `json:"failure"`
-	AlphaRequests int    `json:"alpha_requests"`
-	BetaRequests  int    `json:"beta_requests"`
-	FixtureErrors int    `json:"fixture_errors"`
+	Schema        int                       `json:"schema"`
+	Scope         string                    `json:"scope"`
+	Status        string                    `json:"status"`
+	Failure       string                    `json:"failure"`
+	AlphaRequests int                       `json:"alpha_requests"`
+	BetaRequests  int                       `json:"beta_requests"`
+	FixtureErrors int                       `json:"fixture_errors"`
+	SandboxSetup  *desktopSandboxSetupAudit `json:"sandbox_setup,omitempty"`
 }
 
 // These pins select a CI fixture runtime, not a Desktop compatibility verdict.
@@ -62,7 +63,7 @@ func desktopFixturesMain(args []string) {
 }
 
 func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report *desktopAudit) (runErr error) {
-	var codex, catalogPath, scratch, reviewedBuild, profile string
+	var codex, catalogPath, scratch, reviewedBuild, profile, sandboxSetupProfile string
 	flags := flag.NewFlagSet("desktop-fixtures", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&codex, "codex", "", "")
@@ -70,6 +71,7 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	flags.StringVar(&scratch, "scratch-parent", "", "")
 	flags.StringVar(&reviewedBuild, "reviewed-build", "", "")
 	flags.StringVar(&profile, "fixture-profile", "", "")
+	flags.StringVar(&sandboxSetupProfile, "sandbox-setup-profile", "", "")
 	if flags.Parse(args) != nil || flags.NArg() != 0 {
 		return failure("input_invalid")
 	}
@@ -81,6 +83,12 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 	})
 	if err := validateDesktopFixtureProfile(profile, reviewedBuild, catalogSupplied); err != nil {
 		return err
+	}
+	if err := validateDesktopSandboxSetupProfile(sandboxSetupProfile, profile, reviewedBuild); err != nil {
+		return err
+	}
+	if sandboxSetupProfile != "" {
+		report.SandboxSetup = newDesktopSandboxSetupAudit()
 	}
 	if desktopUsesSelfAuthoredCatalog(profile) {
 		report.Scope = desktopSelfAuthoredScope
@@ -170,11 +178,16 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 			runErr = failure("fixture_rejected_request")
 		}
 	}()
-	if err := writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, profile, alpha, beta); err != nil {
+	if err := writeDesktopFixtureConfigWithSetup(root, codex, selected, pinnedSHA, profile, sandboxSetupProfile, alpha, beta); err != nil {
 		return err
 	}
+	if sandboxSetupProfile != "" {
+		if err := prepareDesktopUnelevated(codex, root, report.SandboxSetup, alpha, beta); err != nil {
+			return err
+		}
+	}
 	// No paths, payloads, URLs, or IDs are emitted into public diagnostics.
-	if err := writeDesktopFixtureReadyFromRoot(out, pinnedSHA, profile, root); err != nil {
+	if err := writeDesktopFixtureReadyWithSetup(out, pinnedSHA, profile, root, report.SandboxSetup); err != nil {
 		return err
 	}
 	done := make(chan error, 1)
@@ -189,7 +202,11 @@ func runDesktopFixtures(args []string, stop io.ReadCloser, out io.Writer, report
 		_ = stop.Close()
 		<-finished
 	}()
-	timer := time.NewTimer(180 * time.Second)
+	lifetime := 180 * time.Second
+	if report.SandboxSetup != nil {
+		lifetime = 360 * time.Second
+	}
+	timer := time.NewTimer(lifetime)
 	defer timer.Stop()
 	select {
 	case err := <-done:
@@ -224,6 +241,13 @@ func writeDesktopFixtureConfig(root, codex, selected, pinnedSHA string, fixtures
 }
 
 func writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, profile string, fixtures ...*fixture) error {
+	return writeDesktopFixtureConfigWithSetup(root, codex, selected, pinnedSHA, profile, "", fixtures...)
+}
+
+func writeDesktopFixtureConfigWithSetup(root, codex, selected, pinnedSHA, profile, setupProfile string, fixtures ...*fixture) error {
+	if err := validateDesktopSandboxSetupProfile(setupProfile, profile, "desktop-4239"); err != nil {
+		return err
+	}
 	if profile != "" && !desktopUsesSelfAuthoredCatalog(profile) {
 		return failure("input_invalid")
 	}
@@ -261,6 +285,12 @@ func writeDesktopFixtureConfigForProfile(root, codex, selected, pinnedSHA, profi
 		config, err := nativeConfigForModel(f.name+"_provider", f.server.URL, catalogPath, model)
 		if err != nil {
 			return err
+		}
+		if setupProfile != "" {
+			config, err = desktopUnelevatedConfig(config)
+			if err != nil {
+				return err
+			}
 		}
 		if err := writeNew(filepath.Join(ch, "config.toml"), config); err != nil {
 			return err

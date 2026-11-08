@@ -10,6 +10,7 @@ param(
     [string]$DesktopFixtureProfile = '',
     [string]$DesktopModelSelectionProfile = '',
     [string]$DesktopModelSettingsProfile = '',
+    [string]$DesktopSandboxSetupProfile = '',
     [switch]$EnableReviewedStartupProbe,
     [switch]$EnableReviewedLaunchCompatibility,
     [switch]$EnableReviewedLiveWelcome,
@@ -24,6 +25,8 @@ param(
     [switch]$InspectStaticLauncher,
     [ValidateSet('', 'baseline', 'treatment', 'restore-before-activation', 'alias-control', 'freshness-observation')][string]$NativeEntryCase = ''
 )
+
+. (Join-Path $PSScriptRoot 'desktop-unelevated-read-only.ps1')
 
 # An explicit self-authored menu-only profile cannot inherit or accept a catalog path.
 function Assert-DesktopFixtureProfile([string]$Profile,[bool]$CatalogSupplied,[string]$Mode,
@@ -1464,7 +1467,9 @@ function Get-DesktopRPCErrorEvidence([object[]]$Records, [string[]]$PublicMethod
 # requirements:null checks. The observer does not prove the view's consumer support.
 # Correlate the full already-validated snapshot. This does not inspect result
 # bodies or interpret unrelated startup writes as either selected model action.
-function Get-DesktopModelSettingsEvidence([object[]]$Records) {
+function Get-DesktopModelSettingsEvidence([object[]]$Records,[string]$ChatProfile='') {
+    if ($ChatProfile -cnotin @('','unelevated-read-only-4239')) { throw 'Invalid settings chat profile.' }
+    $expectedBeta=$(if($ChatProfile){2}else{1})
     if ($Records.Count -gt 65536) { throw 'Owned settings evidence bound exceeded.' }
     $requests=@{};$excluded=0;$ambiguous=0;$errors=0
     $alphaRequests=0;$betaRequests=0;$alphaResponses=0;$betaResponses=0
@@ -1511,11 +1516,14 @@ function Get-DesktopModelSettingsEvidence([object[]]$Records) {
     }
     $pending=@($requests.Values | Where-Object { -not $_.done }).Count
     $alpha=@($requests.Values | Where-Object { $_.owner -ceq 'alpha' -and $_.success })
-    $beta=@($requests.Values | Where-Object { $_.owner -ceq 'beta' -and $_.success })
-    $ordered=$alpha.Count -eq 1 -and $beta.Count -eq 1 -and
+    $beta=@($requests.Values | Where-Object { $_.owner -ceq 'beta' -and $_.success } | Sort-Object requestSeq)
+    $ordered=$alpha.Count -eq 1 -and $beta.Count -eq $expectedBeta -and
         $alpha[0].process -eq $beta[0].process -and $beta[0].responseSeq -lt $alpha[0].requestSeq
-    $complete=$alphaRequests -eq 1 -and $betaRequests -eq 1 -and $alphaResponses -eq 1 -and
-        $betaResponses -eq 1 -and $errors -eq 0 -and $ambiguous -eq 0 -and $pending -eq 0 -and $ordered
+    if ($ordered -and $ChatProfile) {
+        $ordered=$beta[1].process -eq $alpha[0].process -and $alpha[0].responseSeq -lt $beta[1].requestSeq
+    }
+    $complete=$alphaRequests -eq 1 -and $betaRequests -eq $expectedBeta -and $alphaResponses -eq 1 -and
+        $betaResponses -eq $expectedBeta -and $errors -eq 0 -and $ambiguous -eq 0 -and $pending -eq 0 -and $ordered
     return [pscustomobject]@{schema=1;status=$(if($complete){'observed'}else{'incomplete'});
         alphaRequests=$alphaRequests;betaRequests=$betaRequests;alphaResponses=$alphaResponses;betaResponses=$betaResponses;
         errors=$errors;ambiguous=$ambiguous;pending=$pending;excludedRequests=$excluded;betaThenAlpha=$ordered}
@@ -1952,6 +1960,8 @@ Assert-DesktopFixtureProfile $DesktopFixtureProfile ($PSBoundParameters.Contains
     $EnableNativeReadOnlyInspection $InspectPackageIdentityOnly $NativeEntryCase $env:MAGPIE_DESKTOP_SYNTHETIC_MODELS $env:MAGPIE_BRIDGE_OWNED_CATALOG
 Assert-DesktopModelSelectionProfile $DesktopModelSelectionProfile $DesktopFixtureProfile $env:MAGPIE_MODEL_SELECTION
 Assert-DesktopModelSettingsProfile $DesktopModelSettingsProfile $DesktopFixtureProfile $DesktopModelSelectionProfile $env:MAGPIE_MODEL_SETTINGS
+Assert-DesktopUnelevatedProfile $DesktopSandboxSetupProfile $DesktopFixtureProfile $DesktopModelSelectionProfile `
+    $DesktopModelSettingsProfile $env:MAGPIE_UNELEVATED_CHAT $env:GITHUB_RUN_ATTEMPT
 $desktopAccessibilityArguments = Get-DesktopAccessibilityArguments $EnableRendererAccessibility $EnableReviewedBuild4239 $EnableReviewedEntry4239
 $winAppRenderedDepth = $(if ($EnableRendererAccessibility) { 16 } else { 8 })
 $useLiveFixtures = $EnableReviewedLiveWelcome -or $EnableReadOnlyWinAppInspection
@@ -1999,6 +2009,7 @@ if ($useLiveFixtures) {
 if ($EnableReviewedWelcome4239) {
     . (Join-Path $PSScriptRoot 'desktop-winapp-inspect.ps1')
     . (Join-Path $PSScriptRoot 'desktop-winapp-welcome.ps1')
+    if ($DesktopSandboxSetupProfile) { . (Join-Path $PSScriptRoot 'desktop-winapp-chat.ps1') }
 }
 $out = Join-Path $env:RUNNER_TEMP 'desktop-cold-start-report'
 $work = Join-Path $env:RUNNER_TEMP ('desktop-cold-start-' + [guid]::NewGuid().ToString('N'))
@@ -2031,6 +2042,12 @@ $liveModelMenu = $null
 $modelMenuAfterCaptured = $false
 $liveModelSelection = $null
 $liveModelSettings = $null
+$liveChat = $null
+$heldGuardProcess = $null
+$heldGuardCreatedUtc = ''
+$liveChatGuard = $null
+$liveChatDiagnostic = $null
+$liveChatFiles=[ordered]@{verified=0}
 $modelSettingsRPC = $null
 $selectionDiagnostic = $null
 $welcomeDeadline = $null
@@ -2147,7 +2164,7 @@ try {
     foreach ($name in @('OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'CODEX_API_KEY', 'CODEX_AUTH_JSON',
         'CODEX_HOME', 'CODEX_CLI_PATH', 'MAGPIE_APP_SERVER_BRIDGE_CONFIG',
         'MAGPIE_CI_REAL_BRIDGE', 'MAGPIE_CI_TRACE_FILE', 'MAGPIE_CI_OBSERVER_ACTIVE',
-        'MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES', 'MAGPIE_CI_READ_TARGET_ROOTS', 'MAGPIE_CI_OWNED_MODEL_CATALOG')) {
+        'MAGPIE_CI_PUBLIC_PLUGIN_CANDIDATES', 'MAGPIE_CI_READ_TARGET_ROOTS', 'MAGPIE_CI_OWNED_MODEL_CATALOG', 'MAGPIE_CI_READONLY_GUARD')) {
         if ([Environment]::GetEnvironmentVariable($name)) { Block ('Unexpected existing auth/override environment name: ' + $name) }
     }
     if (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.codex\auth.json')) { Block 'Unexpected existing Codex authentication file.' }
@@ -2772,16 +2789,26 @@ requires_openai_auth = false
                 $liveArguments = @('-desktop-fixtures','-codex',$officialBackend.FullName,'-catalog',$NativeControlCatalog,'-scratch-parent',$liveScratch)
                 }
                 if ($EnableReviewedBuild4239) { $liveArguments += @('-reviewed-build','desktop-4239') }
+                if ($DesktopSandboxSetupProfile) {
+                    $liveArguments+=@('-sandbox-setup-profile',$DesktopSandboxSetupProfile)
+                    $liveFixtureReport.scope='unelevated-read-only-synthetic-chat-only'
+                    $liveFixtureReport.sandboxSetupProfile=$DesktopSandboxSetupProfile
+                    $liveFixtureReport.sandboxSetup=[ordered]@{status='pending';partial_state_possible=$true;no_retry=$true}
+                    $liveFixtureReport.limit='Explicit disposable non-elevated setup after both native read-only preflights, then at most four loopback-only plaintext turns. Not elevated, authenticated, normal-startup or restart acceptance.'
+                }
                 $liveStart = New-LiveStart -Executable $NativeControlExecutable -Directory $liveScratch -Arguments $liveArguments
-                $liveFixture = [DesktopLive.BoundedProcess]::new($liveStart,16384,30000)
-                $liveFixtureReport.readiness = Wait-LiveReady $liveFixture -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile
+                $fixtureReadyDeadline=30000
+                if ($DesktopSandboxSetupProfile) { $fixtureReadyDeadline=240000 }
+                $liveFixture = [DesktopLive.BoundedProcess]::new($liveStart,16384,$fixtureReadyDeadline)
+                $liveFixtureReport.readiness = Wait-LiveReady $liveFixture -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -SetupProfile $DesktopSandboxSetupProfile
+                if ($DesktopSandboxSetupProfile) { $liveFixtureReport.sandboxSetup=[ordered]@{status='complete';evidence=$liveFixtureReport.readiness.sandbox_setup} }
                 # Bounded private input, then exact fields and reconstructed owned paths.
                 $liveConfigPath = Join-Path $liveScratch 'bridge.json'
                 Assert-PublicRegularPath $liveConfigPath
                 $liveInfo = Get-Item -LiteralPath $liveConfigPath
                 if ($liveInfo.Length -lt 1 -or $liveInfo.Length -gt 16384) { throw 'Invalid internal live configuration size.' }
                 $liveConfig = Read-LiveConfig $liveConfigPath
-                $liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness
+                $liveOwned = ConvertTo-LiveConfiguration $liveConfig $liveScratch $officialBackend.FullName -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -Readiness $liveFixtureReport.readiness -SetupProfile $DesktopSandboxSetupProfile
                 foreach ($path in @($liveScratch,$liveOwned.Workspace,$liveOwned.ControlHome) + @($liveOwned.Backends | ForEach-Object { $_.home; $_.codex_home })) {
                     $info = Get-Item -LiteralPath $path
                     if (-not $info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid live owned directory.' }
@@ -2790,7 +2817,10 @@ requires_openai_auth = false
                 $backends = $liveOwned.Backends; $controlHome = $liveOwned.ControlHome
                 $liveWorkspace = $liveOwned.Workspace
                 $liveFixtureReport.status = 'ready'; $liveFixtureReport.reason = 'welcome_not_attempted'
-            } catch { Block 'The live fixture could not establish its bounded reviewed contract.' }
+            } catch {
+                if ($DesktopSandboxSetupProfile) { $liveFixtureReport.sandboxSetup=Get-LiveUnelevatedFailure $liveFixture }
+                Block 'The live fixture could not establish its bounded reviewed contract.'
+            }
         }
         $bridgeSettings = New-DesktopBridgeSettings -Backends $backends -StartupProbe ($EnableReviewedStartupProbe -or [bool]$NativeEntryCase) `
             -LaunchCompatibility ($EnableReviewedLaunchCompatibility -or $EnableReviewedEntryCompatibility) -VersionText $versionText -BackendHash $actualBackendHash -ControlHome $controlHome -Build4239 $EnableReviewedBuild4239 -Entry4239 $EnableReviewedEntry4239 -EntryCompatibility $EnableReviewedEntryCompatibility
@@ -3015,6 +3045,12 @@ requires_openai_auth = false
         if ($Mode -eq 'observe') {
             $start.EnvironmentVariables['MAGPIE_CI_REAL_BRIDGE'] = $BridgeExecutable
             $start.EnvironmentVariables['MAGPIE_CI_TRACE_FILE'] = $tracePrefix
+            if ($DesktopSandboxSetupProfile) {
+                $start.EnvironmentVariables['MAGPIE_CI_READONLY_GUARD']=([ordered]@{
+                    profile=$DesktopSandboxSetupProfile;workspace=$liveWorkspace } | ConvertTo-Json -Compress)
+                $report.observer.readOnlyGuard=[ordered]@{profile=$DesktopSandboxSetupProfile;status='requested-not-yet-observed';
+                    limit='Explicit test-only request rejection, not byte-transparent authority expansion or proof of every native task.'}
+            }
             if ($DesktopFixtureProfile -ceq 'bridge-owned-catalog-4239') {
                 $start.EnvironmentVariables['MAGPIE_CI_OWNED_MODEL_CATALOG'] = ([ordered]@{
                     path=$liveOwned.OwnedCatalogPath; sha256=$liveOwned.OwnedCatalogSHA256 } | ConvertTo-Json -Compress)
@@ -3203,6 +3239,31 @@ requires_openai_auth = false
         }
         if ($report.nativeInspection.status -cne 'observed') { Block 'The one read-only native inspection stopped; no retry or UI action.' }
     }
+    if ($DesktopSandboxSetupProfile) {
+        # Confirm the actual live stream guard before even the welcome actions,
+        # not merely its requested environment or a post-hoc chat verdict.
+        $guardStarts=@($report.processStarts | Where-Object {
+            $_.name -ceq $launchName -and $_.parentProcessId -eq $activationPid
+        })
+        $guardId=Read-LiveGuardActivation $tracePrefix @($guardStarts | ForEach-Object { [int]$_.processId })
+        if (@($guardStarts | Where-Object { $_.processId -eq $guardId }).Count -ne 1) { Block 'Guard process generation is ambiguous.' }
+        $guardCurrent=Get-CimInstance Win32_Process -Filter ('ProcessId='+$guardId)
+        if ($null -eq $guardCurrent -or $guardCurrent.ParentProcessId -ne $activationPid) { Block 'Guard parent changed.' }
+        $heldGuardProcess=Get-Process -Id $guardId -ErrorAction Stop
+        $null=$heldGuardProcess.Handle
+        $heldGuardCreatedUtc=$heldGuardProcess.StartTime.ToUniversalTime().ToString('o')
+        Assert-LiveGuardProcess $heldGuardProcess $heldGuardCreatedUtc $ObserverExecutable $processSession
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $ObserverExecutable).Hash.ToLowerInvariant() -cne $report.observer.sha256 -or
+            $heldGuardProcess.StartTime.ToUniversalTime() -lt $ownedActivationProcess.StartTime.ToUniversalTime()) { Block 'Guard image or lifetime not verified.' }
+        $originalInspectionCheck=$checkInspectionIdentity
+        $checkInspectionIdentity={
+            & $originalInspectionCheck
+            Assert-LiveGuardProcess $heldGuardProcess $heldGuardCreatedUtc $ObserverExecutable $processSession
+        }
+        & $checkInspectionIdentity
+        $report.observer.readOnlyGuardActivation=[ordered]@{status='observed';observerPid=$guardId;beforeWelcomeActions=$true;
+            limit='Fresh private trace, current expected image/parent and held process; not an OS anti-tampering boundary.'}
+    }
     if ($EnableReviewedLiveWelcome) {
         # Exactly one attempt, never retry after missing output or uncertain UI action.
         $welcomeDiagnostic=[ordered]@{stage='fixture_liveness';reason='fixture_unavailable';partialActionUncertain=$false;exitCode=$null;stdoutBytes=0;outputLimitExceeded=$false}
@@ -3356,6 +3417,40 @@ requires_openai_auth = false
                     }
                 }
             }
+            if ($DesktopSandboxSetupProfile -and $null -ne $liveModelSelection -and
+                $liveModelSelection.status -ceq 'observed' -and -not $liveFixtureReport.partialActionUncertain -and
+                $liveModelSettings.initialVerified -and $liveModelSettings.betaVerified -and $liveModelSettings.alphaVerified) {
+                $liveChatDiagnostic=[ordered]@{commands=@()}
+                $chatBudget=[Diagnostics.Stopwatch]::StartNew()
+                $readChatPage={
+                    if ($chatBudget.ElapsedMilliseconds -ge 120000) { throw 'Chat slice deadline.' }
+                    $perRead=[Diagnostics.Stopwatch]::StartNew()
+                    $text=Invoke-WinAppWelcomeCommand $winAppTool $window.Handle $checkInspectionIdentity `
+                        $perRead $liveChatDiagnostic 'read' -FixtureProfile bridge-owned-catalog-4239
+                    ConvertTo-WinAppChatSnapshot $text $window.Handle
+                }
+                $chatCommand={param([string]$operation,[string]$selector,[string]$text)
+                    if ($chatBudget.ElapsedMilliseconds -ge 120000) { throw 'Chat slice deadline.' }
+                    Invoke-WinAppChatCommand $winAppTool $window.Handle $checkInspectionIdentity `
+                        $liveChatDiagnostic 'bridge-readonly-synthetic-chat-4239' $operation $selector $text
+                }
+                $captureChat={param([string]$stage)
+                    if ($stage -cne 'chat-first-blocker' -and $stage -cnotmatch '\A(alpha|beta)-turn-[12]\z') { throw 'Unreviewed chat capture.' }
+                    & $checkInspectionIdentity
+                    & $captureWelcomeWindow ('official-window-'+$stage+'.png')
+                    & $checkInspectionIdentity
+                    if ($stage -cne 'chat-first-blocker') {
+                        $owner=$stage.Split('-')[0]
+                        Assert-LiveOwnedSettingsFile $liveOwned.ControlHome $owner
+                        $liveChatFiles.verified++
+                    }
+                }
+                $liveChat=Invoke-WinAppSyntheticChatCore 'bridge-readonly-synthetic-chat-4239' $window.Handle `
+                    $readChatPage $chatCommand $captureChat
+                $liveFixtureReport.syntheticChat=[ordered]@{ui=$liveChat;commands=$liveChatDiagnostic.commands;
+                    fixedFileObservations=$liveChatFiles.verified;limit='UI observations only until independently correlated with guarded turns and loopback requests.'}
+                $liveFixtureReport.partialActionUncertain=$liveFixtureReport.partialActionUncertain -or $liveChat.partialActionUncertain
+            }
         }
     }
     if ($Mode -ne 'baseline') {
@@ -3393,7 +3488,7 @@ requires_openai_auth = false
             if ($report.observer.sha256After -ne $report.observer.sha256) { Block 'Observer bytes changed during the diagnostic.' }
             # Only the observer's fixed metadata schema is eligible for publication.
             # Unknown fields or values fail closed without copying or printing the record.
-            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class', 'configBatchWrite', 'modelCatalog', 'ownedModelCatalog', 'ownedCatalogPathMatches',
+            $keys = @('seq', 'pid', 'kind', 'direction', 'method', 'correlation', 'code', 'class', 'fixtureReadOnly', 'configBatchWrite', 'modelCatalog', 'ownedModelCatalog', 'ownedCatalogPathMatches',
                 'requestAttestation', 'explicitGatewayOauth', 'requiredHumanApproval', 'experimentalApi',
                 'flag', 'configKey', 'configValue', 'configShape', 'configFamily',
                 'configLexicalRoot', 'configKeyClasses', 'configLiteral', 'child_pid', 'exit',
@@ -3405,7 +3500,8 @@ requires_openai_auth = false
                 'projectListSortKey', 'projectListSortDirection', 'fsReadParamsShapeValid',
                 'fsReadPathForm', 'fsReadBasename', 'fsReadLexicalRoot', 'threadListSortKey') + @(Get-PublicThreadListShapeFields)
             $kinds = @('observer_start', 'public_plugin_catalog', 'argv', 'argv_config', 'rpc', 'rpc_error', 'stream_end',
-                'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit')
+                'setup_error', 'child_start_failed', 'child_start', 'copy_error', 'child_exit',
+                'fixture_readonly_guard_started','fixture_guard_rejected','fixture_readonly_turn_completed')
             $classes = @('test_only', 'request', 'notification', 'duplicate_id', 'correlation_limit',
                 'response', 'unmatched_response', 'unrecognized', 'oversized', 'unterminated',
                 'unsupported_authentication_capability', 'initialization_required',
@@ -3764,11 +3860,13 @@ requires_openai_auth = false
             $allEvents = @()
             $traceFiles = @()
             $complete = $true
+            $traceByteLimit=$(if($DesktopSandboxSetupProfile){131072}else{65536})
+            $traceNearLimit=$traceByteLimit-1024
             for ($slot = 1; $slot -le 16; $slot++) {
                 $tracePath = $tracePrefix + ('.{0:D2}.jsonl' -f $slot)
                 if (-not (Test-Path -LiteralPath $tracePath)) { continue }
                 $traceInfo = Get-Item -LiteralPath $tracePath
-                if ($traceInfo.Length -gt 65536 -or ($traceInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                if ($traceInfo.Length -gt $traceByteLimit -or ($traceInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
                     Block 'Unexpected observer trace file size or type.'
                 }
                 $lines = @(Get-Content -LiteralPath $tracePath -Encoding UTF8)
@@ -3781,6 +3879,7 @@ requires_openai_auth = false
                         $record = $line | ConvertFrom-Json
                         Assert-PublicCanonicalJSON $line $record
                     } catch { Block 'Observer metadata is not canonical valid JSON.' }
+                    Assert-PublicFixtureGuardEvent $record -SetupProfile $DesktopSandboxSetupProfile
                     Assert-PublicOwnedCatalogEvent $record -FixtureProfile $DesktopFixtureProfile
                     Assert-PublicModelCatalogEvent $record
                     Assert-PublicConfigBatchWriteEvent $record
@@ -3791,7 +3890,7 @@ requires_openai_auth = false
                     foreach ($property in $record.PSObject.Properties) {
                         if ($keys -cnotcontains $property.Name) { Block 'Observer emitted an unexpected metadata field.' }
                         $value = $property.Value
-                        if ($property.Name -cin @('modelCatalog','ownedModelCatalog','configBatchWrite')) {
+                        if ($property.Name -cin @('modelCatalog','ownedModelCatalog','configBatchWrite','fixtureReadOnly')) {
                             # The nested fixed schema was validated before publication.
                             continue
                         } elseif ($numericKeys -ccontains $property.Name) {
@@ -3897,7 +3996,7 @@ requires_openai_auth = false
                     -not $seenPublicCatalogs.ContainsKey([string]$filePids[0]))) {
                     Block 'Observer trace has no unique verified per-process public catalog.'
                 }
-                if ($traceInfo.Length -ge 64512 -or @($fileEvents | Where-Object { $_.kind -eq 'child_exit' }).Count -eq 0 -or
+                if ($traceInfo.Length -ge $traceNearLimit -or @($fileEvents | Where-Object { $_.kind -eq 'child_exit' }).Count -eq 0 -or
                     @($fileEvents | Where-Object { $_.kind -eq 'stream_end' -and
                         $_.PSObject.Properties['direction'] -and $_.direction -eq 'from_bridge' -and
                         $_.PSObject.Properties['class'] -and $_.class -eq 'eof' }).Count -eq 0 -or
@@ -3937,9 +4036,13 @@ requires_openai_auth = false
                     limit='Matched bridge-owned config publication only; not file-read support, picker success or inference.'}
             }
             if ($DesktopModelSettingsProfile -ceq 'bridge-owned-model-settings-4239') {
-                $modelSettingsRPC=Get-DesktopModelSettingsEvidence $allEvents
+                $modelSettingsRPC=Get-DesktopModelSettingsEvidence $allEvents -ChatProfile $DesktopSandboxSetupProfile
                 $report.observer.modelSettingsEvidence=$modelSettingsRPC
                 $report.observer.modelSettingsEvidenceLimit='Full validated snapshot, not preview. Exact request shapes and correlated success messages only, not ConfigWriteResponse bodies, versions or unrelated startup writes.'
+            }
+            if ($DesktopSandboxSetupProfile) {
+                $liveChatGuard=Get-LiveReadonlyConversationEvidence $allEvents
+                $report.observer.readOnlyGuard=$liveChatGuard
             }
             $report.observer.recordCount = $allEvents.Count
             $report.observer.records = @($allEvents | Select-Object -First 256)
@@ -4057,14 +4160,20 @@ requires_openai_auth = false
             # Normally EOF follows exact activation exit. If cleanup failed, stop
             # the held fixture anyway, report failure, and retain private scratch.
             if (-not $activationExitConfirmed) { $liveFixture.Stop() }
-            $audit = Complete-LiveFixture $liveFixture -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile
+            $audit = Complete-LiveFixture $liveFixture -Build4239 $EnableReviewedBuild4239 -FixtureProfile $DesktopFixtureProfile -SetupProfile $DesktopSandboxSetupProfile
             $liveFixtureReport.fixtureAudit = $audit
             $liveFixtureStopped = $activationExitConfirmed -and $audit.status -ceq 'stopped'
-        } catch { $liveFixtureReport.fixtureAudit = [ordered]@{status='unavailable';reason='fixture_supervision_failed'} }
+        } catch {
+            $liveFixtureReport.fixtureAudit = [ordered]@{status='unavailable';reason='fixture_supervision_failed'}
+            if ($DesktopSandboxSetupProfile -and $liveFixtureReport.sandboxSetup.status -cne 'complete') {
+                $liveFixtureReport.sandboxSetup=Get-LiveUnelevatedFailure $liveFixture
+            }
+        }
         finally {
             try { $liveFixture.Dispose() } catch { $liveFixtureStopped=$false; $liveFixtureReport.fixtureDisposal='unconfirmed' }
         }
     }
+    if ($null -ne $heldGuardProcess) { $heldGuardProcess.Dispose() }
 }
 
 # Same Windows job, after safe Desktop capture and exact activation-process exit.
@@ -4166,6 +4275,12 @@ if ($EnableReviewedLiveWelcome) {
                 $liveOutcome=Get-LiveOwnedSettingsOutcome $liveOutcome $liveModelSettings $modelSettingsRPC
             }
         }
+    }
+    if ($DesktopSandboxSetupProfile) {
+        $report.liveWelcome.priorChatOutcome=$liveOutcome
+        $chatAudit=$null
+        if ($null -ne $liveFixtureReport -and $liveFixtureReport.Contains('fixtureAudit')) { $chatAudit=$liveFixtureReport.fixtureAudit }
+        $liveOutcome=Get-LiveUnelevatedChatOutcome $liveOutcome $liveChat $liveChatGuard $chatAudit $liveChatFiles.verified
     }
     $report.status=$liveOutcome.status; $report.stage=$liveOutcome.stage; $report.reason=$liveOutcome.reason; $exitCode=$liveOutcome.exitCode
 }

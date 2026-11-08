@@ -2206,3 +2206,48 @@ This is a bounded-memory wait, not a new wall-clock deadline. There is no new
 request timer: if a native policy or catalog operation stalls, the bounded reads
 can remain pending until connection cancellation or termination. Existing Run
 EOF/error/cancellation handling still closes the connection and its children.
+
+
+## Disposable Windows unelevated conversation experiment
+
+The separately approved `unelevated-read-only-4239` CI test profile is default-off.
+It does not add production `windowsSandbox/setupStart` routing or configure a
+user installation. See [the native preflight and setup contract](../../build/control-plane-native/unelevated-setup.md)
+and [the explicit test-only observer guard](../../build/desktop-rpc-observer/fixture-readonly-guard.md).
+
+Both fresh backend homes must first prove the genuine built-in read-only profile
+through the pinned official runtime, exact generated configuration layers and
+unrestricted native requirements. Only then are the two official unelevated
+setups attempted sequentially. Completion, persisted configuration, process
+shutdown, native restart and readiness are separate required observations. A
+failed or uncertain setting operation is never retried or changed to elevated.
+This is an action-time-approved disposable test, not standing permission for
+future security changes. The eighth CI marker is additionally restricted to a
+first attempt and a reviewed base commit; the other seven markers remain required.
+
+The later Desktop connection explicitly rejects unsafe or unknown permission
+overrides before forwarding them; unlike the normal observer, that test mode is
+not an unconditional byte-transparent relay. It preserves original bytes for
+admitted messages and never fabricates a policy, readiness, proof or RPC success.
+Registered Core or prefer-MXC selection is not silently removed to make it pass.
+The source-derived no-ACL-change argument applies only to the strictly verified
+read-only unelevated branch; normal configuration, logs and thread state can be
+written. Separate homes and startup hashes are not an OS isolation or anti-TOCTOU
+boundary, nor reproducible-build proof.
+
+The optional GUI slice only attempts four fixed plaintext loopback turns: two in
+one Alpha conversation, a genuine New chat action, then two in a Beta conversation.
+It requires unique semantically named editable/send controls, actual value
+readback and official UI Automation receipts; missing controls stop the test.
+Evidence must agree across UI text, fixed-file defaults, guarded native
+thread/turn ownership and the two independent local Responses services. Menu
+visibility or UI text alone is not conversation acceptance. A completion under
+this profile still does not prove hosted GPT/AIHub, real authentication, tools,
+elevated sandbox, cross-Desktop-restart persistence or ordinary Start/taskbar
+launch. Desktop restart is deliberately not attempted without a complete
+process-family shutdown proof.
+
+No successful Windows setup or conversation is claimed by adding this profile.
+The ordinary settings-only profile retains its zero-model-request requirement
+and original 180-second fixture lifetime; only the explicit chat profile uses
+360 seconds and nonzero synthetic requests.

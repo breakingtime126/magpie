@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/yetone/magpie/internal/proc"
 )
@@ -33,6 +34,8 @@ const (
 // path or stderr. Strings are fixed labels or the verified public dictionary's
 // digest; dynamic public key matches expose only bounded dictionary indices.
 type event struct {
+	FixtureReadOnly *fixtureReadOnlyTurn `json:"fixtureReadOnly,omitempty"`
+
 	ConfigBatchWrite *configBatchWriteObservation `json:"configBatchWrite,omitempty"`
 
 	ModelCatalog      *modelCatalogObservation      `json:"modelCatalog,omitempty"`
@@ -104,6 +107,7 @@ type pendingRequest struct {
 	ownedCatalogEligible bool
 }
 type observer struct {
+	fixtureGuard        *fixtureReadOnlyGuard
 	mu                  sync.Mutex
 	out                 io.Writer
 	size                int
@@ -136,7 +140,11 @@ func (o *observer) emitLocked(e event) {
 		return
 	}
 	b = append(b, '\n')
-	if len(b) > maxTrace-o.size {
+	budget := maxTrace
+	if o.fixtureGuard != nil {
+		budget = 128 << 10
+	}
+	if len(b) > budget-o.size {
 		o.out = nil
 		return
 	}
@@ -557,7 +565,8 @@ func childEnvironment() []string {
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		if strings.EqualFold(key, activeEnv) || strings.EqualFold(key, publicPluginCatalogEnv) ||
-			strings.EqualFold(key, readTargetRootsEnv) || strings.EqualFold(key, ownedModelCatalogEnv) {
+			strings.EqualFold(key, readTargetRootsEnv) || strings.EqualFold(key, ownedModelCatalogEnv) ||
+			strings.EqualFold(key, fixtureReadOnlyGuardEnv) {
 			continue
 		}
 		env = append(env, value)
@@ -603,10 +612,21 @@ func runChild(real string, args []string, input io.ReadCloser, output, diagnosti
 	inR.Close()
 	outW.Close()
 	errW.Close()
+	var guardFailed atomic.Bool
 	var copies sync.WaitGroup
 	copies.Add(2)
 	go func() {
-		err := pump(inW, input, &lineObserver{o: o, direction: "to_bridge"})
+		var err error
+		if o.fixtureGuard == nil {
+			err = pump(inW, input, &lineObserver{o: o, direction: "to_bridge"})
+		} else {
+			err = pumpFixtureGuard(inW, input, &lineObserver{o: o, direction: "to_bridge"}, o.fixtureGuard, "to_bridge")
+			if err != nil {
+				guardFailed.Store(true)
+				o.emit(event{Kind: "fixture_guard_rejected", Direction: "to_bridge"})
+				tree.Kill()
+			}
+		}
 		if err != nil {
 			o.emit(event{Kind: "copy_error", Direction: "to_bridge"})
 		}
@@ -614,7 +634,17 @@ func runChild(real string, args []string, input io.ReadCloser, output, diagnosti
 	}()
 	go func() {
 		defer copies.Done()
-		err := pump(output, outR, &lineObserver{o: o, direction: "from_bridge"})
+		var err error
+		if o.fixtureGuard == nil {
+			err = pump(output, outR, &lineObserver{o: o, direction: "from_bridge"})
+		} else {
+			err = pumpFixtureGuard(output, outR, &lineObserver{o: o, direction: "from_bridge"}, o.fixtureGuard, "from_bridge")
+			if err != nil {
+				guardFailed.Store(true)
+				o.emit(event{Kind: "fixture_guard_rejected", Direction: "from_bridge"})
+				tree.Kill()
+			}
+		}
 		if err != nil {
 			o.emit(event{Kind: "copy_error", Direction: "from_bridge"})
 		}
@@ -649,6 +679,7 @@ func runChild(real string, args []string, input io.ReadCloser, output, diagnosti
 	// Output pumps are joined so every child byte and EOF is delivered first.
 	inW.Close()
 	copies.Wait()
+	code = fixtureGuardExitCode(code, guardFailed.Load())
 	o.stop()
 	return code
 }
@@ -690,6 +721,22 @@ func main() {
 		}
 		owned = loaded
 	}
+	var fixtureGuard *fixtureReadOnlyGuard
+	if value, present := os.LookupEnv(fixtureReadOnlyGuardEnv); present {
+		loaded, err := parseFixtureReadOnlyGuard(value)
+		_, registeredCorePresent := os.LookupEnv("CODEX_WINDOWS_REGISTERED_CORE")
+		probe := false
+		if err == nil {
+			probe, err = loaded.argv(os.Args[1:], registeredCorePresent)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "desktop-rpc-observer: fixture_readonly_guard_rejected")
+			os.Exit(125)
+		}
+		if !probe {
+			fixtureGuard = loaded
+		}
+	}
 	real, trace, err := setup()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "desktop-rpc-observer: invalid test-only setup")
@@ -703,7 +750,14 @@ func main() {
 	o.publicPlugins = catalog
 	o.readTargetRoots = roots
 	o.ownedModelCatalog = owned
+	o.fixtureGuard = fixtureGuard
+	if fixtureGuard != nil {
+		fixtureGuard.emit = o.emit
+	}
 	o.emit(event{Kind: "observer_start", Class: "test_only"})
+	if fixtureGuard != nil {
+		o.emit(event{Kind: "fixture_readonly_guard_started"})
+	}
 	if catalog != nil {
 		o.emit(event{Kind: "public_plugin_catalog", PublicPluginCatalogSHA256: catalog.digest})
 	}

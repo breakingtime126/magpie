@@ -2810,13 +2810,37 @@ Expect-Pass 'settings scope does not modify fixture ready or UI action API' {
     }
     if(-not $guarded) { throw 'Old mode silently enables writes.' }
     $reads=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-LiveOwnedSettingsFile'},$true))
-    if($reads.Count -ne 2 -or $reads[0].Extent.Text -cne 'Assert-LiveOwnedSettingsFile $liveOwned.ControlHome $owner' -or
+    if($reads.Count -ne 3 -or $reads[2].Extent.Text -cne 'Assert-LiveOwnedSettingsFile $liveOwned.ControlHome $owner' -or $reads[0].Extent.Text -cne 'Assert-LiveOwnedSettingsFile $liveOwned.ControlHome $owner' -or
         $reads[1].Extent.Text -cne "Assert-LiveOwnedSettingsFile `$liveOwned.ControlHome 'alpha'") { throw 'File reads escaped the fixed owned path and owner.' }
     $evidence=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Get-DesktopModelSettingsEvidence'},$true))
-    if($evidence.Count -ne 1 -or $evidence[0].Extent.Text -cne 'Get-DesktopModelSettingsEvidence $allEvents') { throw 'Settings evidence uses something other than full validated records.' }
+    if($evidence.Count -ne 1 -or $evidence[0].Extent.Text -cne 'Get-DesktopModelSettingsEvidence $allEvents -ChatProfile $DesktopSandboxSetupProfile') { throw 'Settings evidence uses something other than full validated records.' }
     if(-not $workflow.Contains('PUSH_MODEL_SETTINGS') -or -not $workflow.Contains('MAGPIE_MODEL_SETTINGS:') -or
         -not $workflow.Contains('-DesktopModelSettingsProfile $settingsProfile') -or
         -not $workflow.Contains('"$PUSH_MODEL_SETTINGS" == ''true'' && "$PUSH_MODEL_SELECTION" != ''true''')) { throw 'Seventh explicit marker gate missing.' }
+}
+
+Expect-Pass 'chat requires all three exact model writes without weakening two-write profile' {
+    $records=@(New-SettingsEvidenceFixture)
+    $extra=@(New-SettingsEvidenceFixture)
+    $extra[0].seq=305;$extra[0].correlation=33
+    $extra[1].seq=306;$extra[1].correlation=33
+    $records+=@($extra[0],$extra[1])
+    if ((Get-DesktopModelSettingsEvidence $records).status -ceq 'observed') { throw 'Old slice accepted extra writes.' }
+    $summary=Get-DesktopModelSettingsEvidence $records 'unelevated-read-only-4239'
+    if ($summary.status -cne 'observed' -or $summary.betaResponses -ne 2 -or -not $summary.betaThenAlpha) { throw 'Three-write chat sequence rejected.' }
+    $records[4].seq=302
+    if ((Get-DesktopModelSettingsEvidence $records 'unelevated-read-only-4239').status -ceq 'observed') { throw 'Out-of-order extra Beta accepted.' }
+    if ((Get-DesktopModelSettingsEvidence @(New-SettingsEvidenceFixture) 'unelevated-read-only-4239').status -ceq 'observed') { throw 'Missing later Beta accepted.' }
+}
+Expect-Pass 'chat fixed-file read is under explicit setup profile' {
+    $reads=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Assert-LiveOwnedSettingsFile'},$true))
+    $node=$reads[2].Parent;$guarded=$false
+    while($null -ne $node) {
+        if ($node -is [Management.Automation.Language.IfStatementAst] -and
+            $node.Extent.Text.StartsWith('if ($DesktopSandboxSetupProfile -and')) { $guarded=$true }
+        $node=$node.Parent
+    }
+    if (-not $guarded) { throw 'Chat file observation escaped explicit profile.' }
 }
 
 Write-Output ('DESKTOP_CI_PROFILE_TESTS_PASSED=' + $script:passed)

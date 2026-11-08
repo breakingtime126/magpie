@@ -64,6 +64,9 @@ jobs:
           DISPATCH_INSPECTION_MODE: ${{ inputs.inspection_mode }}
           DISPATCH_EXPECTED_SHA: ${{ inputs.expected_sha }}
           TRIGGER_SHA: ${{ github.sha }}
+          TRIGGER_BASE_SHA: ${{ github.event.before }}
+          TRIGGER_ATTEMPT: ${{ github.run_attempt }}
+          PUSH_UNELEVATED_CHAT: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-unelevated-chat-v1]') }}
           PUSH_PACKAGE_IDENTITY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[package-identity-only-v1]') }}
           PUSH_WINAPP_MARKER: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[winapp-inspection-v0.7.1]') }}
           PUSH_OWNED_CATALOG: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-owned-catalog-v1]') }}
@@ -84,6 +87,14 @@ jobs:
               echo 'Explicit inspection mode and matching full expected SHA are required.' >&2
               exit 1
             fi
+          fi
+          # This action-time approved experiment is not a default or reusable setup
+          # policy: only the first attempt of the direct reviewed-base successor.
+          if [[ "$PUSH_UNELEVATED_CHAT" == 'true' && ( "$TRIGGER_EVENT" != 'push' ||
+                  "$TRIGGER_ATTEMPT" != '1' || "$TRIGGER_BASE_SHA" != 'cc68bb085f4040087e7247c3c64d51c87f42603d' ||
+                  "$PUSH_MODEL_SETTINGS" != 'true' ) ]]; then
+            echo 'Unelevated setup requires the explicitly reviewed first-attempt experiment.' >&2
+            exit 1
           fi
           if [[ "$PUSH_MODEL_SETTINGS" == 'true' && "$PUSH_MODEL_SELECTION" != 'true' ]]; then
             echo 'Model settings require the explicit owned model-selection slice.' >&2
@@ -129,6 +140,8 @@ jobs:
           ./build/desktop-live-welcome.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Platform-neutral live supervisor fixtures failed.' }
           pwsh -NoProfile -File build/test-desktop-ci-profile.ps1
+          pwsh -NoProfile -File build/desktop-unelevated-read-only.tests.ps1
+          pwsh -NoProfile -File build/desktop-winapp-chat.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Platform-neutral CI profile fixtures failed.' }
       - name: Set up the pinned Go version
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -675,6 +688,8 @@ jobs:
           set -euo pipefail
           pwsh -NoProfile -File build/test-desktop-public-catalog.ps1
           pwsh -NoProfile -File build/test-desktop-ci-profile.ps1
+          pwsh -NoProfile -File build/desktop-unelevated-read-only.tests.ps1
+          pwsh -NoProfile -File build/desktop-winapp-chat.tests.ps1
           node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs build/inspect-desktop-mcp-catalog.test.mjs build/inspect-desktop-mcp-catalog-red.test.mjs
           node --max-old-space-size=1024 --test build/inspect-desktop-read-callers.test.mjs build/inspect-desktop-read-callers-package.test.mjs
           go test -race -count=1 -timeout=10m -tags nogui ./build/control-plane-native ./build/desktop-rpc-observer ./internal/appserverbridge ./cmd/magpie-codex-bridge
@@ -688,6 +703,7 @@ jobs:
     env:
       MAGPIE_BRIDGE_OWNED_CATALOG: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-owned-catalog-v1]') && 'bridge-owned-catalog-v1' || '' }}
       MAGPIE_MODEL_SELECTION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-model-selection-v1]') && 'bridge-model-selection-v1' || '' }}
+      MAGPIE_UNELEVATED_CHAT: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-unelevated-chat-v1]') && 'bridge-unelevated-chat-v1' || '' }}
       MAGPIE_MODEL_SETTINGS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-model-settings-v1]') && 'bridge-model-settings-v1' || '' }}
       MAGPIE_DESKTOP_SYNTHETIC_MODELS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[desktop-synthetic-models-v1]') && 'desktop-synthetic-models-v1' || '' }}
       MAGPIE_WELCOME_4239: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[bridge-welcome-4239-v1]') && 'bridge-welcome-4239-v1' || '' }}
@@ -754,6 +770,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Public catalog validation tests failed.' }
           powershell -NoProfile -File build/test-desktop-ci-profile.ps1
           if ($LASTEXITCODE -ne 0) { throw 'CI compatibility profile tests failed.' }
+          pwsh -NoProfile -File build/desktop-unelevated-read-only.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Unelevated contract tests failed.' }
+          pwsh -NoProfile -File build/desktop-winapp-chat.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic chat helper tests failed.' }
           node --max-old-space-size=512 --test build/inspect-desktop-static-metadata.test.mjs build/inspect-desktop-public-plugin-metadata.test.mjs build/inspect-desktop-public-plugin-ast.test.mjs build/inspect-desktop-public-plugin-ast-red.test.mjs build/inspect-desktop-ast-limits-red.test.mjs build/inspect-desktop-mcp-catalog.test.mjs build/inspect-desktop-mcp-catalog-red.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Static metadata inspector tests failed.' }
           node --max-old-space-size=1024 --test build/inspect-desktop-read-callers.test.mjs build/inspect-desktop-read-callers-package.test.mjs
@@ -846,8 +866,12 @@ jobs:
           if ($env:MAGPIE_MODEL_SETTINGS -ceq 'bridge-model-settings-v1') { $settingsProfile='bridge-owned-model-settings-4239' }
           elseif ([string]$env:MAGPIE_MODEL_SETTINGS -cne '') { throw 'Unreviewed model-settings marker.' }
           if ($settingsProfile -and -not $selectionProfile) { throw 'Model settings require explicit selection.' }
+          $sandboxSetupProfile=''
+          if ($env:MAGPIE_UNELEVATED_CHAT -ceq 'bridge-unelevated-chat-v1') { $sandboxSetupProfile='unelevated-read-only-4239' }
+          elseif ([string]$env:MAGPIE_UNELEVATED_CHAT -cne '') { throw 'Unreviewed sandbox setup marker.' }
+          if ($sandboxSetupProfile -and -not $settingsProfile) { throw 'Sandbox setup requires the exact model-settings experiment.' }
           if ($env:MAGPIE_BRIDGE_OWNED_CATALOG -ceq 'bridge-owned-catalog-v1') {
-              ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile bridge-owned-catalog-4239 -DesktopModelSelectionProfile $selectionProfile -DesktopModelSettingsProfile $settingsProfile -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
+              ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile bridge-owned-catalog-4239 -DesktopModelSelectionProfile $selectionProfile -DesktopModelSettingsProfile $settingsProfile -DesktopSandboxSetupProfile $sandboxSetupProfile -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
           } elseif ($env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq 'desktop-synthetic-models-v1') {
               ./build/test-desktop-cold-start.ps1 -Mode observe -BridgeExecutable $bridge -ObserverExecutable $observer -NativeControlExecutable $native -DesktopFixtureProfile synthetic-models-4239 -EnableReviewedStartupProbe -EnableReviewedLaunchCompatibility -EnableReviewedLiveWelcome:(($welcome4239 -or !$inspection) -and !$packageIdentity) -EnableReviewedWelcome4239:$welcome4239 -EnableReadOnlyWinAppInspection:($inspection -and !$packageIdentity -and !$welcome4239) -InspectPackageIdentityOnly:$packageIdentity -EnableReviewedBuild4239:$build4239 -EnableRendererAccessibility:$build4239 -InspectStaticLauncher
           } elseif ([string]$env:MAGPIE_DESKTOP_SYNTHETIC_MODELS -ceq '') {
@@ -869,6 +893,11 @@ jobs:
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-model-menu.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-beta-selection.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-alpha-selection.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-alpha-turn-1.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-alpha-turn-2.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-beta-turn-1.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-beta-turn-2.png
+            ${{ runner.temp }}/desktop-cold-start-report/official-window-chat-first-blocker.png
             ${{ runner.temp }}/desktop-cold-start-report/official-window-after-inspection.png
           if-no-files-found: error
           retention-days: 7
