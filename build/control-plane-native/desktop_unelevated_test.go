@@ -226,12 +226,24 @@ func TestDesktopUnelevatedLayersRejectAmbientOrChangedMeaning(t *testing.T) {
 		name   string
 		change func(map[string]any)
 	}{
-		{"managed", func(m map[string]any) { m["layers"].([]any)[0].(map[string]any)["name"] = map[string]any{"type": "mdm"} }},
-		{"nonempty-system", func(m map[string]any) { m["layers"].([]any)[0].(map[string]any)["config"] = map[string]any{"hooks": map[string]any{}} }},
-		{"nonempty-flags", func(m map[string]any) { m["layers"].([]any)[2].(map[string]any)["config"] = map[string]any{"sandbox_mode": "danger-full-access"} }},
-		{"extra-user-key", func(m map[string]any) { m["layers"].([]any)[1].(map[string]any)["config"].(map[string]any)["hooks"] = map[string]any{} }},
-		{"wrong-file", func(m map[string]any) { m["layers"].([]any)[1].(map[string]any)["name"].(map[string]any)["file"] = "other" }},
-		{"profile", func(m map[string]any) { m["layers"].([]any)[1].(map[string]any)["name"].(map[string]any)["profile"] = "other" }},
+		{"managed", func(m map[string]any) {
+			m["layers"].([]any)[0].(map[string]any)["name"] = map[string]any{"type": "mdm"}
+		}},
+		{"nonempty-system", func(m map[string]any) {
+			m["layers"].([]any)[0].(map[string]any)["config"] = map[string]any{"hooks": map[string]any{}}
+		}},
+		{"nonempty-flags", func(m map[string]any) {
+			m["layers"].([]any)[2].(map[string]any)["config"] = map[string]any{"sandbox_mode": "danger-full-access"}
+		}},
+		{"extra-user-key", func(m map[string]any) {
+			m["layers"].([]any)[1].(map[string]any)["config"].(map[string]any)["hooks"] = map[string]any{}
+		}},
+		{"wrong-file", func(m map[string]any) {
+			m["layers"].([]any)[1].(map[string]any)["name"].(map[string]any)["file"] = "other"
+		}},
+		{"profile", func(m map[string]any) {
+			m["layers"].([]any)[1].(map[string]any)["name"].(map[string]any)["profile"] = "other"
+		}},
 		{"disabled", func(m map[string]any) { m["layers"].([]any)[1].(map[string]any)["disabledReason"] = "disabled" }},
 		{"default-override", func(m map[string]any) { m["config"].(map[string]any)["default_permissions"] = "other" }},
 		{"approval-override", func(m map[string]any) { m["config"].(map[string]any)["approval_policy"] = "on-request" }},

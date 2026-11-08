@@ -63,9 +63,9 @@ type desktopSetupPeer interface {
 
 type desktopSetupTarget struct {
 	home, codexHome, cwd string
-	provider, model     string
-	expected            []byte
-	version             string
+	provider, model      string
+	expected             []byte
+	version              string
 }
 
 type desktopSetupFactory func(desktopSetupTarget) (desktopSetupPeer, error)
@@ -232,7 +232,7 @@ func runDesktopUnelevated(targets [2]desktopSetupTarget, factory desktopSetupFac
 
 func initializeDesktopSetupPeer(p desktopSetupPeer, t desktopSetupTarget) error {
 	raw, err := p.rpc("initialize", map[string]any{
-		"clientInfo": map[string]any{"name": "magpie_synthetic_ci", "title": "Synthetic isolated CI", "version": "0.1.0"},
+		"clientInfo":   map[string]any{"name": "magpie_synthetic_ci", "title": "Synthetic isolated CI", "version": "0.1.0"},
 		"capabilities": map[string]any{"experimentalApi": true},
 	})
 	if err != nil {

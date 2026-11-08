@@ -79,8 +79,8 @@ func TestFixtureReadOnlyGuardRejectsUnsafeParameters(t *testing.T) {
 	cases := map[string]any{
 		"permissions": ":workspace-write", "cwd": `C:\other`,
 		"runtimeWorkspaceRoots": []any{`C:\`}, "approvalPolicy": "on-request",
-		"sandboxPolicy": map[string]any{"type": "workspaceWrite"},
-		"config": map[string]any{"sandbox_mode": "danger-full-access"},
+		"sandboxPolicy":     map[string]any{"type": "workspaceWrite"},
+		"config":            map[string]any{"sandbox_mode": "danger-full-access"},
 		"collaborationMode": map[string]any{}, "environments": []any{map[string]any{"id": "remote"}},
 		"selectedCapabilityRoots": []any{"C:\\"}, "toolOutput": map[string]any{},
 		"unknownFutureOverride": nil, "model": "magpie/beta/test-beta",
@@ -103,7 +103,7 @@ func TestFixtureReadOnlyGuardRejectsUnsafeParameters(t *testing.T) {
 
 func TestFixtureReadOnlyGuardRejectsEffectivePermissions(t *testing.T) {
 	cases := map[string]any{
-		"sandbox": map[string]any{"type": "readOnly", "networkAccess": true},
+		"sandbox":                 map[string]any{"type": "readOnly", "networkAccess": true},
 		"activePermissionProfile": nil, "cwd": `C:\other`,
 		"runtimeWorkspaceRoots": []any{`C:\other`}, "approvalPolicy": "on-request",
 	}
