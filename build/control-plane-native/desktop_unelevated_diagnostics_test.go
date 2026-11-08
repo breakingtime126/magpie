@@ -91,11 +91,21 @@ func TestDesktopUnelevatedDiagnosticLayerReasonsPreserveRejection(t *testing.T) 
 		{"sandbox_setup_layer_count_rejected", func(m map[string]any) { m["layers"] = []any{} }},
 		{"sandbox_setup_layer_disabled", func(m map[string]any) { m["layers"].([]any)[1].(map[string]any)["disabledReason"] = "private" }},
 		{"sandbox_setup_layer_metadata_rejected", func(m map[string]any) { m["layers"].([]any)[1].(map[string]any)["version"] = "" }},
-		{"sandbox_setup_layer_source_rejected", func(m map[string]any) { m["layers"].([]any)[0].(map[string]any)["name"] = map[string]any{"type": "unknown"} }},
-		{"sandbox_setup_user_identity_rejected", func(m map[string]any) { m["layers"].([]any)[1].(map[string]any)["name"].(map[string]any)["file"] = "private" }},
-		{"sandbox_setup_user_content_rejected", func(m map[string]any) { m["layers"].([]any)[1].(map[string]any)["config"].(map[string]any)["unknown"] = "private" }},
-		{"sandbox_setup_system_layer_rejected", func(m map[string]any) { m["layers"].([]any)[0].(map[string]any)["config"] = map[string]any{"unknown": "private"} }},
-		{"sandbox_setup_session_layer_rejected", func(m map[string]any) { m["layers"].([]any)[2].(map[string]any)["config"] = map[string]any{"unknown": "private"} }},
+		{"sandbox_setup_layer_source_rejected", func(m map[string]any) {
+			m["layers"].([]any)[0].(map[string]any)["name"] = map[string]any{"type": "unknown"}
+		}},
+		{"sandbox_setup_user_identity_rejected", func(m map[string]any) {
+			m["layers"].([]any)[1].(map[string]any)["name"].(map[string]any)["file"] = "private"
+		}},
+		{"sandbox_setup_user_content_rejected", func(m map[string]any) {
+			m["layers"].([]any)[1].(map[string]any)["config"].(map[string]any)["unknown"] = "private"
+		}},
+		{"sandbox_setup_system_layer_rejected", func(m map[string]any) {
+			m["layers"].([]any)[0].(map[string]any)["config"] = map[string]any{"unknown": "private"}
+		}},
+		{"sandbox_setup_session_layer_rejected", func(m map[string]any) {
+			m["layers"].([]any)[2].(map[string]any)["config"] = map[string]any{"unknown": "private"}
+		}},
 		{"sandbox_setup_user_layer_missing", func(m map[string]any) { m["layers"] = []any{m["layers"].([]any)[0]} }},
 	} {
 		t.Run(string(tc.want), func(t *testing.T) {
