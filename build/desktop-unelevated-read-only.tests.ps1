@@ -77,6 +77,17 @@ Confirm-Test ($unknown.partial_state_possible -and $unknown.no_retry) 'Missing o
 $raw=[pscustomobject]@{Exited=$true;Overflow=$false;Output=('{"status":"failed","sandbox_setup":'+((New-SetupEvidence)|ConvertTo-Json -Compress)+'}')}
 $known=Get-LiveUnelevatedFailure $raw
 Confirm-Test ($known.status -ceq 'failed' -and $known.no_retry) 'Fixed complete setup evidence survives later failure'
+$raw.Output='{"status":"failed","failure":"sandbox_setup_layers_rejected","sandbox_setup":'+((New-SetupEvidence)|ConvertTo-Json -Compress)+'}'
+Confirm-Test ((Get-LiveUnelevatedFailure $raw).failure -ceq 'sandbox_setup_layers_rejected') 'Exact fixed native failure classification retained'
+foreach ($fixedFailure in @('sandbox_setup_approval_rejected','sandbox_setup_config_rpc_failed','sandbox_setup_default_permissions_rejected','sandbox_setup_initial_file_rejected','sandbox_setup_initialize_rpc_failed','sandbox_setup_initialized_send_failed','sandbox_setup_layer_count_rejected','sandbox_setup_layer_disabled','sandbox_setup_layer_metadata_rejected','sandbox_setup_layer_source_rejected','sandbox_setup_peer_start_failed','sandbox_setup_permission_profile_rejected','sandbox_setup_readonly_rejected','sandbox_setup_requirements_rpc_failed','sandbox_setup_session_layer_rejected','sandbox_setup_system_layer_rejected','sandbox_setup_thread_identity_rejected','sandbox_setup_thread_rpc_failed','sandbox_setup_user_content_rejected','sandbox_setup_user_identity_rejected','sandbox_setup_user_layer_missing')) {
+    $raw.Output=([ordered]@{status='failed';failure=$fixedFailure;sandbox_setup=(New-SetupEvidence)}|ConvertTo-Json -Compress)
+    Confirm-Test ((Get-LiveUnelevatedFailure $raw).failure -ceq $fixedFailure) 'Specific fixed preflight classification retained'
+}
+foreach ($invalidFailure in @('C:\private\config.toml','native error contains secret','SANDBOX_SETUP_LAYERS_REJECTED','',12,$null)) {
+    $raw.Output=([ordered]@{status='failed';failure=$invalidFailure;sandbox_setup=(New-SetupEvidence)}|ConvertTo-Json -Compress)
+    $redacted=Get-LiveUnelevatedFailure $raw
+    Confirm-Test ($redacted.status -ceq 'failed' -and $redacted.failure -ceq 'unknown' -and $redacted.no_retry) 'Unknown native failure text never published'
+}
 $raw.Output='{}'
 $unknown=Get-LiveUnelevatedFailure $raw
 Confirm-Test ($unknown.partial_state_possible -and $unknown.no_retry) 'Unrecognized failure remains uncertain'

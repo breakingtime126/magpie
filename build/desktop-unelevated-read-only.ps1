@@ -55,7 +55,33 @@ function Get-LiveUnelevatedFailure($Process) {
         $value=ConvertFrom-LiveJSON $lines[0]
         if ($value.status -cne 'failed' -or -not $value.PSObject.Properties['sandbox_setup']) { return $result }
         Assert-LiveSandboxSetup $value.sandbox_setup
-        return [ordered]@{status='failed';sandbox_setup=$value.sandbox_setup;
+        # Preserve only reviewed constant classifications, never backend error text,
+        # paths or configuration payloads. Unknown/missing values remain unknown.
+        $failure='unknown'
+        $allowedFailures=@('internal_failure','input_invalid','environment_rejected',
+            'native_hash_mismatch','version_invalid','process_start_failed','process_ended',
+            'protocol_invalid','protocol_limit','protocol_write_failed','native_error',
+            'unexpected_server_request','deadline','cleanup_failed','shutdown_failed',
+            'scratch_invalid','scratch_not_empty','fixture_invalid','fixture_rejected_request',
+            'sandbox_setup_profile_rejected','sandbox_setup_already_used','sandbox_setup_config_rejected',
+            'sandbox_setup_file_changed','sandbox_setup_home_mismatch','sandbox_setup_layers_rejected',
+            'sandbox_setup_permissions_rejected','sandbox_setup_policy_changed','sandbox_setup_requirements_rejected',
+            'sandbox_setup_start_rejected','sandbox_setup_completion_rejected','sandbox_setup_readiness_rejected',
+            'sandbox_setup_not_complete',
+            'sandbox_setup_approval_rejected','sandbox_setup_config_rpc_failed',
+            'sandbox_setup_default_permissions_rejected','sandbox_setup_initial_file_rejected',
+            'sandbox_setup_initialize_rpc_failed','sandbox_setup_initialized_send_failed',
+            'sandbox_setup_layer_count_rejected','sandbox_setup_layer_disabled',
+            'sandbox_setup_layer_metadata_rejected','sandbox_setup_layer_source_rejected',
+            'sandbox_setup_peer_start_failed','sandbox_setup_permission_profile_rejected',
+            'sandbox_setup_readonly_rejected','sandbox_setup_requirements_rpc_failed',
+            'sandbox_setup_session_layer_rejected','sandbox_setup_system_layer_rejected',
+            'sandbox_setup_thread_identity_rejected','sandbox_setup_thread_rpc_failed',
+            'sandbox_setup_user_content_rejected','sandbox_setup_user_identity_rejected',
+            'sandbox_setup_user_layer_missing')
+        if ($value.PSObject.Properties['failure'] -and $value.failure -is [string] -and
+            $value.failure -cin $allowedFailures) { $failure=$value.failure }
+        return [ordered]@{status='failed';failure=$failure;sandbox_setup=$value.sandbox_setup;
             partial_state_possible=$value.sandbox_setup.partial_state_possible;no_retry=$true}
     } catch { return $result }
 }

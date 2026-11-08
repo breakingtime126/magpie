@@ -127,11 +127,11 @@ func runDesktopUnelevated(targets [2]desktopSetupTarget, factory desktopSetupFac
 	for i := range targets {
 		t := &targets[i]
 		if err := checkDesktopSetupFile(*t, false); err != nil {
-			return err
+			return failure("sandbox_setup_initial_file_rejected")
 		}
 		p, err := factory(*t)
 		if err != nil {
-			return err
+			return failure("sandbox_setup_peer_start_failed")
 		}
 		peers[i] = p
 		if err := initializeDesktopSetupPeer(p, *t); err != nil {
@@ -236,13 +236,16 @@ func initializeDesktopSetupPeer(p desktopSetupPeer, t desktopSetupTarget) error 
 		"capabilities": map[string]any{"experimentalApi": true},
 	})
 	if err != nil {
-		return err
+		return failure("sandbox_setup_initialize_rpc_failed")
 	}
 	obj, err := object(raw)
 	if err != nil || stringField(obj, "codexHome") != t.codexHome {
 		return failure("sandbox_setup_home_mismatch")
 	}
-	return p.send(map[string]any{"method": "initialized", "params": map[string]any{}})
+	if err := p.send(map[string]any{"method": "initialized", "params": map[string]any{}}); err != nil {
+		return failure("sandbox_setup_initialized_send_failed")
+	}
+	return nil
 }
 
 func desktopSetupExpected(t desktopSetupTarget, configured bool) (map[string]any, error) {
@@ -284,14 +287,14 @@ func checkDesktopSetupFile(t desktopSetupTarget, configured bool) error {
 func checkDesktopSetupPolicy(p desktopSetupPeer, t desktopSetupTarget, configured bool) (string, error) {
 	raw, err := p.rpc("configRequirements/read", map[string]any{})
 	if err != nil {
-		return "", err
+		return "", failure("sandbox_setup_requirements_rpc_failed")
 	}
 	if !desktopSetupJSONEqual(raw, map[string]any{"requirements": nil}) {
 		return "", failure("sandbox_setup_requirements_rejected")
 	}
 	raw, err = p.rpc("config/read", map[string]any{"includeLayers": true, "cwd": t.cwd})
 	if err != nil {
-		return "", err
+		return "", failure("sandbox_setup_config_rpc_failed")
 	}
 	return checkDesktopSetupLayers(raw, t, configured)
 }
@@ -305,8 +308,14 @@ func checkDesktopSetupLayers(raw json.RawMessage, t desktopSetupTarget, configur
 		return "", err
 	}
 	cfg, err := object(obj["config"])
-	if err != nil || stringField(cfg, "default_permissions") != ":read-only" || stringField(cfg, "approval_policy") != "never" {
+	if err != nil {
 		return "", failure("sandbox_setup_layers_rejected")
+	}
+	if stringField(cfg, "default_permissions") != ":read-only" {
+		return "", failure("sandbox_setup_default_permissions_rejected")
+	}
+	if stringField(cfg, "approval_policy") != "never" {
+		return "", failure("sandbox_setup_approval_rejected")
 	}
 	expected, err := desktopSetupExpected(t, configured)
 	if err != nil {
@@ -314,7 +323,7 @@ func checkDesktopSetupLayers(raw json.RawMessage, t desktopSetupTarget, configur
 	}
 	var layers []map[string]json.RawMessage
 	if json.Unmarshal(obj["layers"], &layers) != nil || len(layers) < 1 || len(layers) > 3 {
-		return "", failure("sandbox_setup_layers_rejected")
+		return "", failure("sandbox_setup_layer_count_rejected")
 	}
 	seen := map[string]bool{}
 	version := ""
@@ -325,7 +334,7 @@ func checkDesktopSetupLayers(raw json.RawMessage, t desktopSetupTarget, configur
 			}
 		}
 		if reason, ok := layer["disabledReason"]; ok && !bytes.Equal(reason, []byte("null")) {
-			return "", failure("sandbox_setup_layers_rejected")
+			return "", failure("sandbox_setup_layer_disabled")
 		}
 		name, err := object(layer["name"])
 		if err != nil {
@@ -333,29 +342,32 @@ func checkDesktopSetupLayers(raw json.RawMessage, t desktopSetupTarget, configur
 		}
 		kind := stringField(name, "type")
 		if seen[kind] || stringField(layer, "version") == "" || len(stringField(layer, "version")) > 256 {
-			return "", failure("sandbox_setup_layers_rejected")
+			return "", failure("sandbox_setup_layer_metadata_rejected")
 		}
 		seen[kind] = true
 		switch kind {
 		case "user":
-			if !desktopSetupJSONEqual(layer["name"], map[string]any{"type": "user", "file": filepath.Join(t.codexHome, "config.toml"), "profile": nil}) || !desktopSetupJSONEqual(layer["config"], expected) {
-				return "", failure("sandbox_setup_layers_rejected")
+			if !desktopSetupJSONEqual(layer["name"], map[string]any{"type": "user", "file": filepath.Join(t.codexHome, "config.toml"), "profile": nil}) {
+				return "", failure("sandbox_setup_user_identity_rejected")
+			}
+			if !desktopSetupJSONEqual(layer["config"], expected) {
+				return "", failure("sandbox_setup_user_content_rejected")
 			}
 			version = stringField(layer, "version")
 		case "system":
 			if len(name) != 2 || stringField(name, "file") == "" || !filepath.IsAbs(stringField(name, "file")) || !desktopSetupJSONEqual(layer["config"], map[string]any{}) {
-				return "", failure("sandbox_setup_layers_rejected")
+				return "", failure("sandbox_setup_system_layer_rejected")
 			}
 		case "sessionFlags":
 			if len(name) != 1 || !desktopSetupJSONEqual(layer["config"], map[string]any{}) {
-				return "", failure("sandbox_setup_layers_rejected")
+				return "", failure("sandbox_setup_session_layer_rejected")
 			}
 		default:
-			return "", failure("sandbox_setup_layers_rejected")
+			return "", failure("sandbox_setup_layer_source_rejected")
 		}
 	}
 	if version == "" {
-		return "", failure("sandbox_setup_layers_rejected")
+		return "", failure("sandbox_setup_user_layer_missing")
 	}
 	return version, nil
 }
@@ -363,16 +375,26 @@ func checkDesktopSetupLayers(raw json.RawMessage, t desktopSetupTarget, configur
 func checkDesktopSetupThread(p desktopSetupPeer, t desktopSetupTarget) error {
 	raw, err := p.rpc("thread/start", map[string]any{"ephemeral": true})
 	if err != nil {
-		return err
+		return failure("sandbox_setup_thread_rpc_failed")
 	}
 	if _, err := decodeConfigJSON(raw); err != nil {
 		return failure("sandbox_setup_permissions_rejected")
 	}
 	obj, err := object(raw)
-	if err != nil || stringField(obj, "cwd") != t.cwd || stringField(obj, "approvalPolicy") != "never" || stringField(obj, "modelProvider") != t.provider || stringField(obj, "model") != t.model ||
-		!desktopSetupJSONEqual(obj["sandbox"], map[string]any{"type": "readOnly", "networkAccess": false}) ||
-		!desktopSetupJSONEqual(obj["activePermissionProfile"], map[string]any{"id": ":read-only", "extends": nil}) {
+	if err != nil {
 		return failure("sandbox_setup_permissions_rejected")
+	}
+	if stringField(obj, "cwd") != t.cwd || stringField(obj, "modelProvider") != t.provider || stringField(obj, "model") != t.model {
+		return failure("sandbox_setup_thread_identity_rejected")
+	}
+	if stringField(obj, "approvalPolicy") != "never" {
+		return failure("sandbox_setup_approval_rejected")
+	}
+	if !desktopSetupJSONEqual(obj["sandbox"], map[string]any{"type": "readOnly", "networkAccess": false}) {
+		return failure("sandbox_setup_readonly_rejected")
+	}
+	if !desktopSetupJSONEqual(obj["activePermissionProfile"], map[string]any{"id": ":read-only", "extends": nil}) {
+		return failure("sandbox_setup_permission_profile_rejected")
 	}
 	return nil
 }

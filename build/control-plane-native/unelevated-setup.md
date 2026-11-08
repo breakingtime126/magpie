@@ -50,6 +50,8 @@ persists `[windows].sandbox="unelevated"` and clears legacy sandbox keys (the
 fixture did not contain those keys). Normal native state/debug writes remain
 possible. This is not elevated-mode validation.
 
+The failure report retains only fixed preflight classifications (for example, user-layer identity versus effective permission profile). Unknown classifications remain unknown; native error text, paths and configuration values are not published. These labels do not change any admission condition.
+
 Requests are sequential and are not retried. `started:true` is only acceptance;
 the same connection must emit genuine
 `windowsSandbox/setupCompleted {mode:"unelevated",success:true,error:null}`.
