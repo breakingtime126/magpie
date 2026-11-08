@@ -79,7 +79,7 @@ func TestConfigBatchWriteBoundsAndAmbiguity(t *testing.T) {
 		for i := range parts {
 			parts[i] = `{"keyPath":"model","value":"magpie/alpha/test-alpha","mergeStrategy":"replace"}`
 		}
-		got := observedConfigBatchWrite(batchWriteTestRequest(`{"edits":[` + strings.Join(parts, ",") + `]}`), nil)
+		got := observedConfigBatchWrite(batchWriteTestRequest(`{"edits":[`+strings.Join(parts, ",")+`]}`), nil)
 		if n > maxObservedConfigEdits {
 			if got.Status != "limit" || got.Shape != nil {
 				t.Fatal("edit cap bypassed")
@@ -129,7 +129,7 @@ func TestConfigBatchWriteOptionalShapesAndValueTypes(t *testing.T) {
 		{`"magpie/alpha/test-alpha"`, "alpha"}, {`"magpie/beta/test-beta"`, "beta"}, {`"none"`, "none"},
 		{`"magpie/alpha/test-alphaX"`, "other"}, {`"NONE"`, "other"}, {`null`, "other"},
 	} {
-		got := observedConfigBatchWrite(batchWriteTestRequest(`{"edits":[{"value":` + tc.value + `}]}`), nil)
+		got := observedConfigBatchWrite(batchWriteTestRequest(`{"edits":[{"value":`+tc.value+`}]}`), nil)
 		if got.Shape.Items[0].ValueMatch != tc.match {
 			t.Fatal("value match is not exact")
 		}

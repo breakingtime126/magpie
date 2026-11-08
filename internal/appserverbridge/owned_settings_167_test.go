@@ -174,10 +174,18 @@ func TestOwnedSettingsRejectsUnknownOrConflictingBatchAtomically(t *testing.T) {
 		func(p object) { p["reloadUserConfig"] = raw("true") },
 		func(p object) { p["reloadUserConfig"] = raw(1) },
 		func(p object) { p["filePath"] = raw(filepath.Join(t.TempDir(), "foreign.toml")) },
-		func(p object) { p["edits"] = raw([]object{{"keyPath": raw("model"), "value": raw("magpie/two/second"), "mergeStrategy": raw("replace")}}) },
-		func(p object) { p["edits"] = raw([]object{{"keyPath": raw("model"), "value": raw("foreign"), "mergeStrategy": raw("replace")}, {"keyPath": raw("model_reasoning_effort"), "value": raw("none"), "mergeStrategy": raw("replace")}}) },
-		func(p object) { p["edits"] = raw([]object{{"keyPath": raw("model"), "value": raw("magpie/two/second"), "mergeStrategy": raw("unknown")}, {"keyPath": raw("model_reasoning_effort"), "value": raw("none"), "mergeStrategy": raw("replace")}}) },
-		func(p object) { p["edits"] = raw([]object{{"keyPath": raw("model"), "value": raw("magpie/two/second"), "mergeStrategy": raw("replace")}, {"keyPath": raw("model"), "value": raw("magpie/one/first"), "mergeStrategy": raw("replace")}}) },
+		func(p object) {
+			p["edits"] = raw([]object{{"keyPath": raw("model"), "value": raw("magpie/two/second"), "mergeStrategy": raw("replace")}})
+		},
+		func(p object) {
+			p["edits"] = raw([]object{{"keyPath": raw("model"), "value": raw("foreign"), "mergeStrategy": raw("replace")}, {"keyPath": raw("model_reasoning_effort"), "value": raw("none"), "mergeStrategy": raw("replace")}})
+		},
+		func(p object) {
+			p["edits"] = raw([]object{{"keyPath": raw("model"), "value": raw("magpie/two/second"), "mergeStrategy": raw("unknown")}, {"keyPath": raw("model_reasoning_effort"), "value": raw("none"), "mergeStrategy": raw("replace")}})
+		},
+		func(p object) {
+			p["edits"] = raw([]object{{"keyPath": raw("model"), "value": raw("magpie/two/second"), "mergeStrategy": raw("replace")}, {"keyPath": raw("model"), "value": raw("magpie/one/first"), "mergeStrategy": raw("replace")}})
+		},
 	} {
 		r := ownedSettingsTestRouter(t)
 		ownedSettingsTestCatalog(t, r, 1)
