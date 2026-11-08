@@ -2289,3 +2289,61 @@ type, and must resolve back to the same identity and menu expansion state.
 Anonymous buttons, changed identities and unavailable state remain rejected.
 These are independently reproducible helper defects, not proof of the first
 exception in the earlier real run, whose raw UI tree was not retained.
+
+## Thread-history discovery: pinned 0.167 filter semantics
+
+This section records the existing behavior, not a migration or new history /
+section store. The public reference is Codex commit
+`c40729ea5cf8e947481b130c59807273eda2f8e9`, matching the reviewed version
+declaration `0.167.0-alpha.3.2`, not a reproducible-build proof.
+
+For an ordinary native `thread/list` without a relation filter:
+
+| `modelProviders` | Native meaning | Bridge control-plane behavior |
+| --- | --- | --- |
+| Omitted or `null` | Filter by that app-server's current configured provider. | Preserve omission/null separately on each backend and every collected page. |
+| `[]` | Do not filter by provider inside that backend's history store. | Preserve `[]`; do not replace it with the configured provider. |
+| Nonempty list | Return records matching the supplied provider names. | Accept only `["magpie_bridge"]`, translated on every native page to that backend's configured native provider. Raw, unknown, duplicate or multi-provider frontend filters are rejected. |
+
+The native implementation also makes omitted/null provider filters unrestricted
+when a relation filter is present. The current bridge rejects non-null relation
+filters, so it must not advertise that native exception as supported. Null
+lineage fields remain supported without creating a relation filter.
+
+An empty provider filter is **not** a request for every thread: source-kind,
+archived, cwd, exclusion and other supported filters still apply. In particular,
+source kinds default to interactive sources and archived defaults to false.
+Native `useStateDbOnly:false` can scan and repair stored metadata; a list request
+is not a guarantee of zero filesystem writes. These observations come from the
+[official protocol](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1429-L1501),
+[filter construction](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/thread_processor.rs#L5990-L6064),
+and the official
+[provider-filter test](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/tests/suite/v2/thread_list.rs#L676-L720).
+Those native tests were inspected, not executed for this check.
+
+The bridge collects both backend lists before publishing its bounded merged
+pages. It learns each returned ID's backend ownership, projects the validated
+native provider to the logical bridge provider, and qualifies model names with
+the backend alias. Subsequent read, resume and turn requests route only to that
+owner; choosing another backend's model does not migrate the thread. A new
+bridge connection has to discover ownership again. It does not create, copy,
+repair or delete native rollout files itself, or infer ownership from a model
+name supplied for an unknown thread.
+
+If `[]` causes a backend to return a record from a provider other than that
+backend's configured provider, `bindThread` rejects the result and the running
+bridge connection fails closed. Cross-backend thread-ID collisions also fail
+closed rather than merging histories. This is a current compatibility limit:
+all-provider native discovery does not grant permission or establish an
+execution route for historical foreign-provider threads. Neither a filtered
+view nor this rejection establishes that underlying data was deleted.
+
+`thread_history_discovery_167_test.go` adds only in-memory synthetic router
+regressions. They cover all four filter spellings, both backends and native
+continuations, merged frontend pagination, owner-based read/resume/turn request
+routing, cross-provider override rejection, rediscovery in a fresh router,
+foreign-provider results and ID collisions. The fixtures do not execute Codex,
+read a native store, complete a resumed turn, or test Desktop restart, grouping,
+real account history retention or migration. No production routing or filter
+behavior is changed. Use the existing explicit offline-only CI markers so this
+check does not start Desktop, run the official runtime or configure a sandbox.
