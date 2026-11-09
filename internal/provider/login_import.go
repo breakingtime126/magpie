@@ -335,6 +335,9 @@ func sub2apiEntry(agent string, x, c map[string]any) loginImport {
 // accounts from other tools' files (see above), each file's text one
 // element of files, and says what became of each.
 func ImportLogins(ctx context.Context, agent string, files []string) ([]ImportedAccount, error) {
+	if nativeGPTBuiltinBlocked(agent) {
+		return nil, errNativeGPTBuiltin
+	}
 	if settings.AccountDiscoveryOff() {
 		return nil, errAccountDiscoveryOff
 	}

@@ -156,7 +156,25 @@ type startupProbeRunner func(context.Context, Backend, string, []string) ([]byte
 // a rejected result can follow official authentication refresh or cache writes.
 // It does not initialize JSONL, sign out, or change either child's requirements.
 func ProbeStartup(parent context.Context, cfg Config, options LaunchOptions, info StartupClientInfo) ([]byte, error) {
-	return probeStartup(parent, cfg, options, info, startupProbeTimeout, runStartupProbe)
+	runner := startupProbeRunner(runStartupProbe)
+	if cfg.SharedNativeRoute != nil {
+		if cfg.Validate() != nil {
+			return nil, errStartupProbe
+		}
+		environments := map[string][]string{}
+		inherited := os.Environ()
+		for _, b := range cfg.Backends {
+			env, err := cfg.sharedNativeEnvironment167(b, inherited)
+			if err != nil {
+				return nil, errStartupProbe
+			}
+			environments[b.ID] = env
+		}
+		runner = func(ctx context.Context, b Backend, directory string, args []string) ([]byte, error) {
+			return runStartupProbeEnvironment(ctx, b, directory, args, environments[b.ID])
+		}
+	}
+	return probeStartup(parent, cfg, options, info, startupProbeTimeout, runner)
 }
 
 func probeStartup(parent context.Context, cfg Config, options LaunchOptions, info StartupClientInfo, timeout time.Duration, run startupProbeRunner) ([]byte, error) {
@@ -201,7 +219,7 @@ func probeStartup(parent context.Context, cfg Config, options LaunchOptions, inf
 		if directory == "" {
 			directory = b.Home
 		}
-		args := append(options.backendArgs(b.Provider), "--print-startup-config", "--startup-client-info", string(clientInfo))
+		args := append(cfg.nativeProbeArgs167(options, b), "--print-startup-config", "--startup-client-info", string(clientInfo))
 		data, err := run(ctx, b, directory, args)
 		if err != nil || ctx.Err() != nil {
 			return nil, errStartupProbe
@@ -292,6 +310,10 @@ func validateStartupProbe(data []byte, mode string) ([]byte, error) {
 // unread stdout. Both stdio endpoints are native files, so exec owns no copy
 // goroutines and a descendant cannot keep an internal stderr copier alive.
 func runStartupProbe(ctx context.Context, b Backend, directory string, args []string) ([]byte, error) {
+	return runStartupProbeEnvironment(ctx, b, directory, args, backendEnvironment(b))
+}
+
+func runStartupProbeEnvironment(ctx context.Context, b Backend, directory string, args []string, environment []string) ([]byte, error) {
 	if ctx.Err() != nil {
 		return nil, errStartupProbe
 	}
@@ -301,7 +323,7 @@ func runStartupProbe(ctx context.Context, b Backend, directory string, args []st
 	}
 	defer reader.Close()
 	command := proc.CommandContext(context.WithoutCancel(ctx), b.Command, args...)
-	command.Env = backendEnvironment(b)
+	command.Env = environment
 	command.Dir = directory
 	command.Stdin = nil
 	command.Stderr = nil

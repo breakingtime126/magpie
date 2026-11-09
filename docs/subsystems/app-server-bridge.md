@@ -2488,3 +2488,143 @@ program selections, provider IDs and four prepared directories. It does not
 configure providers, credentials, compatibility opt-ins or normal Desktop
 startup, and `--check` success establishes only the existing schema/path checks.
 Pure temporary-file fixtures do not establish actual Windows GUI acceptance.
+
+### Shared native state and primary identity routing (default off, runtime unverified)
+
+`shared_native_route` is an explicit, exact-version configuration object:
+
+```json
+{
+  "mode": "shared-native-home-v0.167.0-alpha.3.2",
+  "gateway_url": "http://127.0.0.1:PORT/v1",
+  "gateway_env_key": "MAGPIE_SHARED_GATEWAY_KEY",
+  "secondary_catalog": "ABSOLUTE_EXISTING_NATIVE_CATALOG_PATH"
+}
+```
+
+The placeholders must be replaced with real values; they are not accepted
+example paths or endpoints. This slice adds no catalog payload or generator.
+It requires two pinned official 0.167.0-alpha.3.2 children, the existing exact
+control-plane mode, primary provider `openai`, and secondary provider
+`magpie_shared_aihub`. Both children must refer to the same existing HOME and
+CODEX_HOME directory identities. The bridge control directory and working
+project remain separate from CODEX_HOME and from each other. HOME may contain
+these directories; that is state sharing, not path or OS credential isolation.
+Without this object the existing isolated-directory rules remain unchanged.
+
+The primary receives explicit CLI inference and backend URLs
+`https://chatgpt.com/backend-api/codex` and
+`https://chatgpt.com/backend-api/`. The secondary receives the declared loopback
+endpoint, a dedicated inherited environment-key name, `requires_openai_auth=false`,
+Responses wire protocol and an explicit separate native catalog path. Both use
+`--listen stdio://`. The secondary provider table is merged by native Codex,
+not replaced: surviving unreviewed auth/header/query/gateway fields fail the
+strict effective-provider check. This does not establish that the declared
+loopback listener belongs to Magpie or that its credential is valid.
+
+Both native initialize responses are held while the same processes first return
+genuine null requirements and then answer internal `config/read` checks; only validated results proceed to the existing
+complete real model-list barrier. No raw native configuration or error body is
+forwarded or logged. The shared pure `internal/nativeconfigguard` validator
+also replaces the existing preview's equivalent secondary check; the preview's
+legacy primary behavior remains unchanged. Unknown or duplicate provider fields
+are rejected, not sanitized into an accepted configuration.
+
+Every start and resume requires an explicit absolute existing local cwd, no
+service override, and the existing
+prohibition on client config/history/path/provider overrides. Existing environment,
+workspace-root and permission fields retain their original validation and are
+forwarded unchanged; they are not rewritten into a new sandbox. The target process
+must first return the genuine two-field null-requirements response and then
+pass strict effective-config admission for that cwd. Non-null managed policy is
+unsupported here, not silently ignored. Fork is unsupported. These checks retain
+the original pending request, ID, byte limits and failure handling. Live-thread
+admission is distinct from discovering an owner through list/read/notifications:
+only a successful admitted start/resume permits subsequent model-producing
+input; unknown threads require resume. Revocation prevents a stale result from
+restoring a closed or superseded admission. Live turns do not trigger repeated
+configuration polling.
+
+Pinned c407 project configuration is sanitized before merging: the loader removes
+both URL keys, provider ID/table, and profile/profiles from enabled and disabled
+project layers. Auto-trust reload therefore cannot activate project-supplied
+provider routing. This bridge does not force read-only permissions or create
+trust. Native thread/start retains its original behavior, including possible
+persistence of project trust. This mode is not zero-write. Native global write
+RPCs remain subject to the existing bridge support/ownership rules.
+
+Config admission and native thread creation are separate loads, not an atomic
+filesystem snapshot or protection against same-user config replacement. Existing
+live threads retain their native ModelClient route snapshot. The primary CLI
+inference URL flows through `cfg.openai_base_url` to the built-in provider;
+arg0 dotenv loading does not override that explicit config field. Dotenv may
+still change other environment inputs, including the gateway key's value.
+No absence-of-proxy, zero-egress, sandbox, keychain or credential-isolation claim
+is made. Sharing CODEX_HOME permits the secondary to see the native account
+store; this patch neither copies nor manages its contents.
+
+Shared mode preserves a bounded explicit snapshot of original HOME/USERPROFILE,
+APPDATA/LOCALAPPDATA, XDG directories, temporary directories, PATH/PATHEXT,
+ComSpec/SystemRoot and upper/lowercase HTTP(S)/ALL/NO_PROXY values. It does not
+replace these with fabricated subdirectories or remove company proxies to force
+a direct route. Present home identities must match the selected HOME; conflicts
+fail before either child starts. Only CODEX_HOME is pinned to the configured
+namespace. The secondary alone inherits its explicitly named nonempty gateway
+key. OPENAI_* and unknown environment variables are not inherited. This is not
+all-environment compatibility: unlisted tool/runtime variables need a separately reviewed explicit contract.
+Existing CODEX_CA_CERTIFICATE, SSL_CERT_FILE/SSL_CERT_DIR, CURL_CA_BUNDLE,
+REQUESTS_CA_BUNDLE and
+NODE_EXTRA_CA_CERTS values are preserved as certificate-path settings, not changed
+trust stores; arbitrary runtime options such as NODE_OPTIONS stay excluded. Nothing changes the user's system
+environment. Presence of `CODEX_WINDOWS_REGISTERED_CORE` is unsupported and
+rejected before either normal launch or a probe; it is never silently dropped
+to change native sandbox-registration semantics. Gateway credential names cannot
+collide with any preserved operational environment key. Legacy isolated mode
+retains its prior environment builder.
+
+The existing exact `compare-unrestricted-v0.167.0-alpha.3.2` startup probe can
+be separately enabled. Its two sequential one-shot commands use the same route
+overrides and shared environment, but omit `--listen` because native clap makes
+serve transports conflict with `--print-startup-config`. They verify both binary pins before launch, and
+compare the complete genuine null-requirements responses. No signout, fabricated
+policy or fallback success is added. One-shot authentication refresh/cache writes
+remain possible. Other-version probes and old attestation/gateway modes cannot be
+mixed with this shared contract. Existing exact auth-status/requirements modes
+remain separate explicit choices.
+
+The frontend's `requestAttestation` and `explicitGatewayOauth` flags are kept on
+the primary only. The secondary never negotiates either capability. Genuine
+primary proof requests are relayed only after startup route admission; the
+opaque exact token result or genuine RPC error returns solely to that primary.
+No token content is interpreted, logged, generated or offered to AIHub.
+Gateway inspection remains the existing strictly validated primary-only read;
+login, browser authorization, cancellation and credential management are not added.
+
+Before forwarding any primary start/resume, the connection suspends proof and
+gateway inspection. Outstanding unanswered proof requests get real origin RPC
+errors and translated-ID tombstones; late frontend proof replies cannot revive
+them. Concurrent primary creations keep the window closed until every actual
+native result passes exact provider/owner checks. Error or uncertain completion
+is fatal to the connection and both native children. During the window valid
+primary attestation requests receive genuine RPC errors, never a fabricated
+successful token. Pinned native Codex itself handles that failure; whether its
+HTTP/new-WebSocket path later requests another proof or a warm connection reuses
+state is native behavior, not a promise of service acceptance. This is a proof
+window, not a blanket gate on native account credential use. Trusted OS/admin
+configuration must not change global routing during a connection; the bridge
+does not claim atomic resistance to such changes.
+
+These are functional protocol/launch paths with synthetic regression coverage,
+**not verified Desktop login or real ChatGPT/AIHub acceptance**. No actual account,
+proof, native service or network was used while preparing this candidate.
+
+Source anchors are public Apache-2.0 Codex commit
+`c40729ea5cf8e947481b130c59807273eda2f8e9`: `config/src/loader/mod.rs`
+(project denylist and sanitization), `app-server/src/config_manager_service.rs`
+(effective config), `core/src/config/mod.rs` (CLI provider construction),
+`model-provider-info/src/lib.rs` (built-in routing), `arg0/src/lib.rs` (dotenv),
+`app-server/src/config_manager.rs` and `core/src/session/session.rs` (live route
+retention). The pure synthetic tests exercise admission ordering, rejection,
+thread ownership, unchanged writable parameters and cleanup without accounts or
+native execution. Go, gofmt, Windows and actual native/GUI checks were not run
+during candidate preparation; source review is not runtime acceptance.

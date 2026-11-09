@@ -9,6 +9,9 @@ on:
       - internal/buildvariant/**
       - internal/codexsetup/**
       - internal/nativepreview/**
+      - internal/nativeconfigguard/**
+      - internal/provider/**
+      - internal/gateway/**
       - build/package-native-magpie-windows.ps1
       - build/test-native-preview-official.ps1
       - .github/workflows/experimental-codex-connectivity-preview.yml
@@ -42,8 +45,8 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/preview-format"
           mkdir -p "$out"
-          gofmt -d internal/codexsetup internal/nativepreview internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
-          bad="$(gofmt -l internal/codexsetup internal/nativepreview internal/gui internal/agent internal/library internal/buildvariant)"
+          gofmt -d internal/codexsetup internal/nativepreview internal/nativeconfigguard internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
+          bad="$(gofmt -l internal/codexsetup internal/nativepreview internal/nativeconfigguard internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant)"
           while IFS= read -r file; do
             test -n "$file" || continue
             mkdir -p "$out/$(dirname "$file")"
@@ -54,12 +57,14 @@ jobs:
         id: vet
         continue-on-error: true
         run: |
-          go vet -tags nogui ./internal/nativepreview ./internal/codexsetup ./internal/gui ./internal/agent ./internal/library
-          go vet -tags nogui,nativecodex ./internal/gui ./internal/agent ./internal/library
+          go vet -tags nogui ./internal/nativepreview ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/codexsetup ./internal/gui ./internal/agent ./internal/library
+          go vet -tags nogui,nativecodex ./internal/provider ./internal/gateway ./internal/gui ./internal/agent ./internal/library
       - name: Race and page-state regressions with synthetic inputs only
         run: |
           go test -race -tags nogui -count=1 -timeout=10m ./internal/nativepreview ./internal/codexsetup ./internal/agent ./internal/library ./internal/gui
-          go test -race -tags nogui,nativecodex -count=1 -timeout=5m -run "^TestNativeCodex" ./internal/agent ./internal/library ./internal/gui
+          go test -race -tags nogui -count=1 -timeout=5m ./internal/nativeconfigguard
+          go test -race -tags nogui -count=1 -timeout=5m -run "^TestNativeGPT" ./internal/provider ./internal/gateway
+          go test -race -tags nogui,nativecodex -count=1 -timeout=5m -run "^TestNative(Codex|GPT)" ./internal/provider ./internal/gateway ./internal/agent ./internal/library ./internal/gui
           node internal/codexsetup/app.test.cjs
       - name: Original page browser regressions, both engines and languages
         env:

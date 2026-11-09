@@ -367,6 +367,9 @@ func (r *Router) controlPlaneInitialize167(g *request, backend string, line []by
 	g.results = map[string][]json.RawMessage{}
 	g.seen = map[string]map[string]bool{}
 	g.bytes = 0
+	if r.sharedNativeRoute167 != nil {
+		return r.sharedNativeAdmissionStart167(g)
+	}
 	out, err := r.startList(g)
 	if err != nil {
 		return failInit()

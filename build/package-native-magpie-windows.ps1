@@ -11,11 +11,11 @@ $package = Join-Path $env:RUNNER_TEMP 'native-magpie-package'
 $evidence = Join-Path $env:RUNNER_TEMP 'native-magpie-evidence'
 [void](New-Item -ItemType Directory -Path $package -ErrorAction Stop)
 [void](New-Item -ItemType Directory -Path $evidence -ErrorAction Stop)
-& go vet -tags nogui,nativecodex ./internal/gui ./internal/agent ./internal/library ./internal/codexsetup
+& go vet -tags nogui,nativecodex ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/gui ./internal/agent ./internal/library ./internal/codexsetup
 Assert-Exit 'Windows native-mode vet'
 & go vet -tags production,nativecodex ./internal/gui
 Assert-Exit 'Windows original GUI vet'
-& go test -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestNativeCodex' ./internal/agent ./internal/library ./internal/gui
+& go test -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestNative(Codex|GPT)' ./internal/provider ./internal/gateway ./internal/agent ./internal/library ./internal/gui
 Assert-Exit 'Synthetic native-mode write protection'
 & go run github.com/tc-hib/go-winres@v0.3.3 make --in build/windows/winres.json --arch amd64 --out rsrc --file-version '0.0.0' --product-version '0.0.0'
 Assert-Exit 'Original Windows resources'

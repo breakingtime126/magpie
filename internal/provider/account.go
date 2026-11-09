@@ -215,6 +215,9 @@ func (p Provider) ListedAPIs(model string) []Protocol {
 // Sign authenticates a request to the provider, refreshing what needs it.
 // Plain providers get their key; accounts get the agent's tokens.
 func (p Provider) Sign(ctx context.Context, req *http.Request, proto Protocol, body []byte) error {
+	if p.Account != nil && nativeGPTBuiltinBlocked(p.Account.Agent) {
+		return errNativeGPTBuiltin
+	}
 	if p.Account != nil && settings.AccountDiscoveryOff() && !p.publicAccount() {
 		return errAccountDiscoveryOff
 	}
@@ -1222,6 +1225,9 @@ func forcedReason(ctx context.Context) string {
 // no scope (a refresh keeps the scopes granted), and Codex's originator
 // and User-Agent.
 func codexRefresh(ctx context.Context, raw map[string]any, reason string) (string, error) {
+	if nativeGPTBuiltinBlocked("codex") {
+		return "", errNativeGPTBuiltin
+	}
 	toks, _ := raw["tokens"].(map[string]any)
 	if toks == nil {
 		toks = map[string]any{}

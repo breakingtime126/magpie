@@ -515,6 +515,9 @@ func codexKeychainUnread(err error) bool {
 // read as before there was a setting (Codex itself wouldn't start), and
 // nothing is saved over it (saveCodexLogin).
 func readCodexLogin(home string, fresh bool) ([]byte, codexStore, error) {
+	if nativeGPTBuiltinBlocked("codex") {
+		return nil, codexStore{home: home}, errNativeGPTBuiltin
+	}
 	st := codexStore{home: home}
 	if discoveryOff() {
 		return nil, st, errAccountDiscoveryOff

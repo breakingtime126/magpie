@@ -50,13 +50,24 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" || cfg.ControlPlane != "" {
+	if cfg.SharedNativeRoute != nil || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" || cfg.ControlPlane != "" {
 		// Check both reviewed executables before either process can read or
 		// refresh account/policy state. This is not an OS security boundary.
 		for _, backend := range cfg.Backends {
 			if !startupProbeDigestMatches(parent, backend) {
 				return errors.New("reviewed backend digest verification failed")
 			}
+		}
+	}
+	sharedEnvironments := map[string][]string{}
+	if cfg.SharedNativeRoute != nil {
+		inherited := os.Environ()
+		for _, backend := range cfg.Backends {
+			environment, err := cfg.sharedNativeEnvironment167(backend, inherited)
+			if err != nil {
+				return err
+			}
+			sharedEnvironments[backend.ID] = environment
 		}
 	}
 	workingDirectory := cfg.WorkingDirectory
@@ -119,6 +130,7 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 	router.controlHome167 = controlHome
 	router.controlNativeHomes167 = nativeHomes
 	router.auth = cfg.authCompatibility()
+	router.sharedNativeRoute167 = cfg.SharedNativeRoute
 	ctx, cancel := context.WithCancel(parent)
 	processContext, stopProcesses := context.WithCancel(context.WithoutCancel(parent))
 	defer stopProcesses()
@@ -136,8 +148,11 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		command := proc.CommandContext(processContext, b.Command, options.backendArgs(b.Provider)...)
-		command.Env = backendEnvironment(b)
+		command := proc.CommandContext(processContext, b.Command, cfg.nativeArgs167(options, b)...)
+		command.Env = sharedEnvironments[b.ID]
+		if cfg.SharedNativeRoute == nil {
+			command.Env = backendEnvironment(b)
+		}
 		if router.windowsReadiness167 && !windowsReadinessEnv167(command.Env) {
 			return errors.New("Windows readiness launch environment changed")
 		}

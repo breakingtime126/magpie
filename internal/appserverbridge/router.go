@@ -17,6 +17,11 @@ type pending struct {
 	backend string
 }
 type request struct {
+	sharedNativeLiveEpoch167 uint64
+	sharedNativeAdmission167 bool
+	sharedNativeTarget167    string
+	sharedNativePolicy167    bool
+
 	id                  json.RawMessage
 	key, method, thread string
 	params              object
@@ -44,6 +49,11 @@ type page struct {
 // loop, never concurrently. Losing the connection loses its ownership map;
 // a new connection must discover saved threads with thread/list again.
 type Router struct {
+	sharedNativeLive167    map[string]string
+	sharedNativeRevoked167 map[string]uint64
+	sharedNativeEpoch167   uint64
+	sharedNativeRoute167   *SharedNativeRoute167
+
 	controlReadGroups167       map[*request]struct{}
 	configRequirementsRead     bool
 	configRequirementsNull167  bool
@@ -138,6 +148,9 @@ func (r *Router) reject(g *request, code int, message string) []Delivery {
 // A failed fanout must not retain user payload while a sibling stalls.
 // Keep only bounded transport-ID tombstones for late responses.
 func (r *Router) abandon(g *request) {
+	if r.sharedNativeRoute167 != nil && g.method == "thread/resume" && g.thread != "" {
+		r.revokeSharedNativeLive167(g.thread)
+	}
 	if r.ownedCatalog != nil && g.method == "model/list" {
 		r.failOwnedCatalog()
 	}
@@ -229,7 +242,11 @@ func (r *Router) client(line []byte) ([]Delivery, error) {
 		g.remaining = len(r.backends)
 		out := []Delivery{}
 		for _, b := range r.backends {
-			out = append(out, r.send(g, b.ID, p))
+			projected, err := r.primaryCapabilities167(b.ID, p)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, r.send(g, b.ID, projected))
 		}
 		return out, nil
 	}
@@ -268,6 +285,9 @@ func (r *Router) client(line []byte) ([]Delivery, error) {
 		}
 		if validateRequirementsJSON(line) != nil {
 			return []Delivery{fail(g.id, -32602, "invalid gateway OAuth request")}, nil
+		}
+		if r.auth.primaryProofCandidate && !r.primaryRouteReady167() {
+			return []Delivery{fail(g.id, -32000, "primary route admission is in progress")}, nil
 		}
 		r.active[key] = true
 		r.activeBytes += g.size
@@ -365,6 +385,10 @@ func (r *Router) client(line []byte) ([]Delivery, error) {
 		}
 		p["model"] = raw(route.model)
 		p["modelProvider"] = raw(r.byID[route.backend].Provider)
+		if r.sharedNativeRoute167 != nil {
+			g.sharedNativeLiveEpoch167 = r.sharedNativeEpoch167
+			return r.sharedNativeThreadAdmission167(g, route.backend), nil
+		}
 		r.active[key] = true
 		r.activeBytes += g.size
 		return []Delivery{r.send(g, route.backend, p)}, nil
@@ -378,6 +402,21 @@ func (r *Router) client(line []byte) ([]Delivery, error) {
 			return []Delivery{fail(g.id, -32602, "unknown or ambiguous thread; list its owning backend's threads first")}, nil
 		}
 		g.thread = id
+		if r.sharedNativeRoute167 != nil {
+			switch method {
+			case "thread/resume", "thread/unsubscribe", "thread/archive":
+				// A new resume must replace, not inherit, earlier admission.
+				// Revoke at submission even if native later rejects the action.
+				r.revokeSharedNativeLive167(id)
+			case "thread/read", "thread/turns/list", "thread/items/list", "turn/interrupt", "thread/fork":
+				// Inspection and stopping remain possible without live admission.
+				// Fork has its separate unsupported-method rejection below.
+			default:
+				if r.sharedNativeLive167[id] != backend {
+					return []Delivery{fail(g.id, -32602, "resume the shared native thread before sending input")}, nil
+				}
+			}
+		}
 		if err := r.pin(p, backend); err != nil {
 			return []Delivery{fail(g.id, -32602, err.Error())}, nil
 		}
@@ -404,6 +443,13 @@ func (r *Router) client(line []byte) ([]Delivery, error) {
 		}
 		if method == "thread/resume" || method == "thread/fork" {
 			p["modelProvider"] = raw(r.byID[backend].Provider)
+		}
+		if r.sharedNativeRoute167 != nil && method == "thread/fork" {
+			return []Delivery{fail(g.id, -32602, "shared native fork context is not supported")}, nil
+		}
+		if r.sharedNativeRoute167 != nil && method == "thread/resume" {
+			g.sharedNativeLiveEpoch167 = r.sharedNativeEpoch167
+			return r.sharedNativeThreadAdmission167(g, backend), nil
 		}
 		r.active[key] = true
 		r.activeBytes += g.size
@@ -439,6 +485,9 @@ func (r *Router) pin(p object, backend string) error {
 	return nil
 }
 func (r *Router) clientResponse(m object) ([]Delivery, error) {
+	if handled, out, err := r.primaryProofResponse167(m); handled {
+		return out, err
+	}
 	key, e := idKey(m["id"])
 	if e != nil {
 		return nil, errors.New("invalid client response id")
@@ -515,6 +564,25 @@ func (r *Router) server(backend string, line []byte) (out []Delivery, err error)
 	}
 	delete(r.pending, key)
 	g := pending.group
+	defer func() {
+		if err != nil && r.primaryCreationPending167(g) {
+			_ = r.finishPrimaryCreation167(g, false)
+			r.abandon(g)
+		}
+	}()
+	if r.sharedNativeRoute167 != nil && g.method == "thread/resume" {
+		defer func() {
+			if err != nil && g.thread != "" {
+				r.revokeSharedNativeLive167(g.thread)
+			}
+		}()
+	}
+	if g.sharedNativeAdmission167 {
+		if g.thread != "" && r.sharedNativeRevoked167[g.thread] > g.sharedNativeLiveEpoch167 {
+			return r.reject(g, -32000, "shared native thread admission is no longer current"), nil
+		}
+		return r.sharedNativeAdmissionResponse167(g, backend, line)
+	}
 	if g.settingsPolicyStage {
 		return r.ownedSettingsPolicyResponse167(g, backend, line)
 	}
@@ -549,6 +617,9 @@ func (r *Router) server(backend string, line []byte) (out []Delivery, err error)
 		return r.finishAuthStatus167(g, line), nil
 	}
 	if g.method == "account/gatewayOAuth/read" {
+		if r.auth.primaryProofCandidate && !r.primaryRouteReady167() {
+			return r.reject(g, -32000, "primary route admission is in progress"), nil
+		}
 		result, err := validateGatewayRead(line, r.backends[0], r.auth.gatewayProviderName)
 		if err != nil {
 			return r.reject(g, -32000, "primary gateway OAuth readiness unavailable"), nil
@@ -600,6 +671,11 @@ func (r *Router) server(backend string, line []byte) (out []Delivery, err error)
 		return nil, errors.New("backend response has both result and error")
 	}
 	if exists(m, "error") {
+		if r.primaryCreationPending167(g) {
+			err := r.finishPrimaryCreation167(g, false)
+			r.abandon(g)
+			return nil, err
+		}
 		m["id"] = g.id
 		out := []Delivery{deliver("", m)}
 		r.abandon(g)
@@ -738,6 +814,33 @@ func (r *Router) server(backend string, line []byte) (out []Delivery, err error)
 				return nil, err
 			}
 		}
+		if r.sharedNativeRoute167 != nil && (g.method == "thread/start" || g.method == "thread/resume") {
+			thread, err := child(result, "thread")
+			id := text(thread, "id")
+			if err != nil || id == "" || g.sharedNativeTarget167 != backend || g.sharedNativeAdmission167 ||
+				r.threads[id] != backend || r.sharedNativeRevoked167[id] > g.sharedNativeLiveEpoch167 {
+				// A stale native completion can mean its config load raced a
+				// newer one. Require fresh admission rather than keeping either.
+				if id != "" && r.threads[id] == backend {
+					r.revokeSharedNativeLive167(id)
+				}
+				if r.primaryCreationPending167(g) {
+					err := r.finishPrimaryCreation167(g, false)
+					r.abandon(g)
+					return nil, err
+				}
+				return r.reject(g, -32000, "shared native thread admission is no longer current"), nil
+			}
+			if r.sharedNativeLive167 == nil {
+				r.sharedNativeLive167 = map[string]string{}
+			}
+			if backend == r.backends[0].ID {
+				if err := r.finishPrimaryCreation167(g, true); err != nil {
+					return nil, err
+				}
+			}
+			r.sharedNativeLive167[id] = backend
+		}
 		r.rewriteModel(backend, result, "model")
 		return r.finish(g, result), nil
 	}
@@ -864,7 +967,7 @@ func (r *Router) serverMessage(backend, method string, m object) ([]Delivery, er
 			allowed = r.threads[parent] == backend
 		}
 		for _, pending := range r.pending {
-			if pending.backend == backend && !pending.group.failed && (pending.group.method == "thread/start" || pending.group.method == "thread/fork" || pending.group.method == "thread/resume") {
+			if pending.backend == backend && !pending.group.failed && !pending.group.sharedNativeAdmission167 && (pending.group.method == "thread/start" || pending.group.method == "thread/fork" || pending.group.method == "thread/resume") {
 				allowed = true
 			}
 		}
@@ -892,6 +995,10 @@ func (r *Router) serverMessage(backend, method string, m object) ([]Delivery, er
 				return []Delivery{deliver("", m)}, nil
 			}
 			return nil, nil
+		}
+		if r.sharedNativeRoute167 != nil && (method == "thread/closed" || method == "thread/archived") {
+			// The owner check above must precede revoking another thread's lease.
+			r.revokeSharedNativeLive167(id)
 		}
 		if method == "turn/started" || method == "turn/completed" {
 			turn, e := child(p, "turn")
@@ -939,6 +1046,7 @@ func (r *Router) serverMessage(backend, method string, m object) ([]Delivery, er
 		}
 		p["requestId"] = raw(translated)
 		delete(r.reverseCalls, backend+"\x00"+k)
+		r.releasePrimaryProof167("s:" + translated)
 		delete(r.calls, "s:"+translated)
 		r.staleCalls["s:"+translated] = true
 		r.staleOrder = append(r.staleOrder, "s:"+translated)
@@ -958,6 +1066,7 @@ func (r *Router) serverMessage(backend, method string, m object) ([]Delivery, er
 			if !r.calls["s:"+old].answered {
 				return nil, errors.New("duplicate backend request id")
 			}
+			r.releasePrimaryProof167("s:" + old)
 			delete(r.calls, "s:"+old)
 		}
 		if len(r.calls) >= 4096 {
@@ -1144,6 +1253,7 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 			result := g.controlInit167
 			g.controlInit167 = nil
 			r.phase = "ready"
+			r.admitPrimaryStartup167()
 			return r.finish(g, result), nil
 		}
 	} else if g.method == "thread/list" {
@@ -1234,4 +1344,16 @@ func snapshotBytes(pages map[string]page) int {
 		}
 	}
 	return total
+}
+
+// Ownership learned from lists, reads, or notifications is not live admission.
+// Retain revocation epochs so a late successful response cannot undo a close or
+// newer resume. These maps share the connection lifetime of thread ownership.
+func (r *Router) revokeSharedNativeLive167(thread string) {
+	delete(r.sharedNativeLive167, thread)
+	if r.sharedNativeRevoked167 == nil {
+		r.sharedNativeRevoked167 = map[string]uint64{}
+	}
+	r.sharedNativeEpoch167++
+	r.sharedNativeRevoked167[thread] = r.sharedNativeEpoch167
 }

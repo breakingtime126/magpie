@@ -29,6 +29,9 @@ import (
 // codexSign authenticates a request to the ChatGPT backend with the
 // tokens token hands out, and says it comes from Codex CLI.
 func codexSign(token func(context.Context) (tok, accountID string, err error)) func(context.Context, *http.Request, []byte) error {
+	if nativeGPTBuiltinBlocked("codex") {
+		return func(context.Context, *http.Request, []byte) error { return errNativeGPTBuiltin }
+	}
 	return func(ctx context.Context, req *http.Request, body []byte) error {
 		tok, accountID, err := token(ctx)
 		if err != nil {

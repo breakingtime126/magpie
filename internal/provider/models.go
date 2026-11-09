@@ -434,6 +434,9 @@ func (p Provider) fetch(ctx context.Context) ([]catalog.Model, error) {
 }
 
 func (p Provider) fetchList(ctx context.Context) ([]catalog.Model, error) {
+	if p.Account != nil && nativeGPTBuiltinBlocked(p.Account.Agent) {
+		return nil, errNativeGPTBuiltin
+	}
 	ctx = p.ownRequests(p.Via(ctx), probelog.KindList)
 	if p.DecideOnly() {
 		return p.fetchDecide(ctx)
@@ -490,6 +493,9 @@ func (p Provider) fetchList(ctx context.Context) ([]catalog.Model, error) {
 // nothing: a provider still being added (#578, the add form's Fetch models)
 // is shown its vendor's list to pick from before it is saved.
 func (p Provider) List(ctx context.Context) ([]catalog.Model, error) {
+	if p.Account != nil && nativeGPTBuiltinBlocked(p.Account.Agent) {
+		return nil, errNativeGPTBuiltin
+	}
 	ctx = p.ownRequests(p.Via(ctx), probelog.KindList)
 	if pr := Preset(p.Preset); pr != nil && pr.NoList && strings.TrimSpace(p.ModelsURL) == "" && !p.listRegion(pr) {
 		return catalog.Chat(p.planModels(nil)), nil

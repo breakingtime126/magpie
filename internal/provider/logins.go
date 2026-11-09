@@ -282,7 +282,9 @@ func writeLogins(ls []savedLogin) error {
 	// every account gets its stable id before it is written (#905): the
 	// one it has, or the stand-in made of its name, there to stay
 	for i := range ls {
-		ls[i].ID = loginID(ls[i])
+		if !nativeGPTBuiltinBlocked(ls[i].Agent) {
+			ls[i].ID = loginID(ls[i])
+		}
 	}
 	sortLogins(ls)
 	// a Copilot account renamed on read is written under its new name
@@ -294,6 +296,10 @@ func writeLogins(ls []savedLogin) error {
 	}
 	defer Changed() // an account added, switched or gone: All builds anew
 	beforeLoginsWrite()
+	b, err = preserveNativeGPTRecords(loginsPath(), b)
+	if err != nil {
+		return err
+	}
 	// the file there now is kept first: as its last good generation, or
 	// copied aside when it doesn't read, never written over unkept
 	if err := lastgood.Keep(loginsPath(), validLogins, 0o600); err != nil {
@@ -696,6 +702,9 @@ func codexSignedOutWhy() string {
 
 // liveLogin reads the account an agent is signed in to now.
 func liveLogin(agent string) (savedLogin, bool) {
+	if nativeGPTBuiltinBlocked(agent) {
+		return savedLogin{}, false
+	}
 	if settings.AccountDiscoveryOff() {
 		return savedLogin{}, false
 	}
@@ -869,6 +878,9 @@ func rememberLogins(force bool) {
 	now := time.Now().UTC().Truncate(time.Second)
 	changed := false
 	for _, agent := range loginAgents {
+		if nativeGPTBuiltinBlocked(agent) {
+			continue
+		}
 		if accountRemoved(agent) {
 			continue
 		}
@@ -981,6 +993,9 @@ func Logins(agent string) []Login {
 var loginsRuns atomic.Int64
 
 func loginsNow(agent string) []Login {
+	if nativeGPTBuiltinBlocked(agent) {
+		return nil
+	}
 	loginsRuns.Add(1)
 	if settings.AccountDiscoveryOff() {
 		return nil
@@ -1064,7 +1079,7 @@ func loginsNow(agent string) []Login {
 		}
 	}
 	for _, l := range ls {
-		if (agent != "" && l.Agent != agent) || sideAgent(l.Agent) || strings.HasPrefix(l.Agent, "plugin:") {
+		if nativeGPTBuiltinBlocked(l.Agent) || (agent != "" && l.Agent != agent) || sideAgent(l.Agent) || strings.HasPrefix(l.Agent, "plugin:") {
 			continue
 		}
 		using := strings.EqualFold(active[l.Agent], l.User)
@@ -1216,6 +1231,9 @@ func loginRoom(agent string) func(user string) (known, spent bool) {
 // they restart; so does Codex's background app-server, which new Codex
 // sessions attach to (CodexDaemonStale says when it is).
 func SwitchLogin(agent, user string) error {
+	if nativeGPTBuiltinBlocked(agent) {
+		return errNativeGPTBuiltin
+	}
 	if settings.AccountDiscoveryOff() {
 		return errAccountDiscoveryOff
 	}
@@ -1444,6 +1462,9 @@ func putClaudeLogin(l savedLogin) error {
 // Code's last one that it can be signed in to is kept, and the removal
 // refused (SignedInError, Only): magpie never signs Claude Code out.
 func ForgetLogin(agent, user string) error {
+	if nativeGPTBuiltinBlocked(agent) {
+		return errNativeGPTBuiltin
+	}
 	if settings.AccountDiscoveryOff() {
 		return errAccountDiscoveryOff
 	}

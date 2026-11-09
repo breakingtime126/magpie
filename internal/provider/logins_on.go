@@ -28,6 +28,9 @@ var savedTokenMu = filelock.Mutex{Path: func() string { return loginsPath() + ".
 // SetLoginOn puts a saved account in use beside the agent's own, or takes
 // it out. The account the agent is signed in to is always in use.
 func SetLoginOn(agent, user string, on bool) error {
+	if nativeGPTBuiltinBlocked(agent) {
+		return errNativeGPTBuiltin
+	}
 	if discoveryOff() {
 		return errAccountDiscoveryOff
 	}
@@ -223,6 +226,9 @@ func renewSavedLoginFrom(ctx context.Context, agent, user, stale string) (tok, a
 }
 
 func renewSaved(ctx context.Context, agent, user string, force bool, stale string) (tok, accountID string, err error) {
+	if nativeGPTBuiltinBlocked(agent) {
+		return "", "", errNativeGPTBuiltin
+	}
 	ctx = ViaLogin(ctx, agent, user) // refreshed through the account's own proxy
 	savedTokenMu.Lock()
 	defer savedTokenMu.Unlock()

@@ -104,6 +104,9 @@ func siwcSaved(l savedLogin) (siwcCreds, bool) {
 }
 
 func siwcSide() []sideLogin {
+	if nativeGPTBuiltinBlocked(ChatGPTAPIID) {
+		return nil
+	}
 	return sideLogins(ChatGPTAPIID, "", func(l savedLogin) bool {
 		_, ok := siwcSaved(l)
 		return ok
@@ -150,6 +153,9 @@ func forgetSIWCLogin(user string) error {
 }
 
 func siwcLookup(user string) (siwcCreds, bool) {
+	if nativeGPTBuiltinBlocked(ChatGPTAPIID) {
+		return siwcCreds{}, false
+	}
 	loginsMu.Lock()
 	defer loginsMu.Unlock()
 	for _, l := range readLogins() {
@@ -328,6 +334,9 @@ func (e *siwcTokenError) Error() string {
 }
 
 func siwcPostToken(ctx context.Context, form url.Values) (siwcTokenReply, error) {
+	if nativeGPTBuiltinBlocked(ChatGPTAPIID) {
+		return siwcTokenReply{}, errNativeGPTBuiltin
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, siwcTokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return siwcTokenReply{}, err
@@ -459,6 +468,9 @@ func siwcFresh(ctx context.Context, user string, force bool) (siwcCreds, error) 
 // siwcRevoke has OpenAI revoke an account's refresh token, at the
 // revocation endpoint its discovery document names.
 func siwcRevoke(ctx context.Context, c siwcCreds) error {
+	if nativeGPTBuiltinBlocked(ChatGPTAPIID) {
+		return errNativeGPTBuiltin
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(siwcIssuer, "/")+"/.well-known/openid-configuration", nil)
 	if err != nil {
 		return err

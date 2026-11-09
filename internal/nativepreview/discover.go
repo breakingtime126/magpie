@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yetone/magpie/internal/nativeconfigguard"
 	"github.com/yetone/magpie/internal/proc"
 )
 
@@ -273,39 +274,10 @@ func matchesProvider(data json.RawMessage, spec peerSpec) bool {
 	if spec.provider == "openai" {
 		return provider == "openai"
 	}
-	if provider != "magpie_preview_aihub" {
-		return false
-	}
-	var providers map[string]map[string]json.RawMessage
-	if json.Unmarshal(response.Config["model_providers"], &providers) != nil {
-		return false
-	}
-	selected := providers["magpie_preview_aihub"]
-	if selected == nil {
-		return false
-	}
-	// ConfigRead serializes native ModelProviderInfo defaults too. Admit only
-	// the fixed fields below plus inert known null/false defaults, never assume
-	// an unknown provider field is harmless or drop a managed auth override.
-	inertNull := map[string]bool{"model_catalog_url": true, "env_key_instructions": true, "experimental_bearer_token": true, "auth": true, "gateway_oauth": true, "aws": true, "project_id": true, "location": true, "credential_file": true, "capabilities": true, "query_params": true, "http_headers": true, "env_http_headers": true, "request_max_retries": true, "stream_max_retries": true, "stream_idle_timeout_ms": true, "websocket_connect_timeout_ms": true}
-	for key, value := range selected {
-		switch key {
-		case "name", "base_url", "env_key", "wire_api", "requires_openai_auth":
-		case "supports_websockets", "supports_standalone_web_search":
-			if !bytes.Equal(bytes.TrimSpace(value), []byte("false")) {
-				return false
-			}
-		default:
-			if !inertNull[key] || !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-				return false
-			}
-		}
-	}
-	for key, expected := range map[string]string{"name": "AIHub preview", "base_url": spec.endpoint, "env_key": keyName, "wire_api": "responses"} {
-		var got string
-		if json.Unmarshal(selected[key], &got) != nil || got != expected {
-			return false
-		}
-	}
-	return bytes.Equal(bytes.TrimSpace(selected["requires_openai_auth"]), []byte("false"))
+	return nativeconfigguard.MatchSecondary(data, nativeconfigguard.SecondarySpec{
+		Provider: "magpie_preview_aihub",
+		Name:     "AIHub preview",
+		Endpoint: spec.endpoint,
+		EnvKey:   keyName,
+	})
 }

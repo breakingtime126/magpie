@@ -24,6 +24,16 @@ type attestationRate struct {
 }
 
 type authCompatibility struct {
+	// Internal only: the shared-route owner controls startup and creation admission.
+	primaryProofCandidate   bool
+	primaryProofAdmitted    bool
+	primaryProofCalls       map[string]bool
+	primaryProofStartup     bool
+	primaryProofFailed      bool
+	primaryCreations        map[*request]bool
+	primaryProofCancelled   map[string]bool
+	primaryProofCancelOrder []string
+
 	authStatusNoAuth       bool
 	authStatusTrusted      bool
 	rejectHumanApproval    bool
@@ -51,8 +61,8 @@ func (a *authCompatibility) negotiate(caps object) error {
 		allowed bool
 		target  *bool
 	}{
-		{"requestAttestation", a.attestationUnavailable, &attestation},
-		{"explicitGatewayOauth", a.gatewayRead, &gateway},
+		{"requestAttestation", a.attestationUnavailable || a.primaryProofCandidate, &attestation},
+		{"explicitGatewayOauth", a.gatewayRead || a.primaryProofCandidate, &gateway},
 	} {
 		value, present := caps[item.name]
 		if !present {
@@ -143,6 +153,9 @@ func (a *authCompatibility) takeAttestation(backend string) bool {
 // and common.rs. This is a genuine RPC failure, never a fabricated token or
 // header. How the official server maps that failure is outside this bridge.
 func (r *Router) attestationMessage(backend string, line []byte) ([]Delivery, error) {
+	if r.auth.primaryProofCandidate {
+		return r.primaryProofRequest167(backend, line)
+	}
 	if r.byID[backend].ID == "" || r.phase != "ready" ||
 		!r.auth.attestationUnavailable || !r.auth.attestationNegotiated {
 		return nil, errAuthCompatibility
@@ -223,6 +236,9 @@ func (r *Router) gatewayNotification(backend string, line []byte) ([]Delivery, e
 	if !ok || !requirementsNull(p["authUrl"]) || !requirementsNull(p["error"]) ||
 		!requirementsEnum(p["providerId"], b.Provider) || !gatewayStatus(p["status"]) {
 		return nil, errAuthCompatibility
+	}
+	if r.auth.primaryProofCandidate && backend == r.backends[0].ID && !r.primaryRouteReady167() {
+		return nil, nil // Drop, never buffer, notifications from a changing route.
 	}
 	// Validate before suppression: no alternate shape can become an RPC call,
 	// and no authorization URL, error text or second account reaches the client.

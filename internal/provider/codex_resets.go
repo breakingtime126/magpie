@@ -360,6 +360,9 @@ func codexUserWindows(ctx context.Context, user string) (who string, windows []Q
 // consumeCodexReset spends the reset credit; id makes a retry of the same
 // request spend it once.
 func consumeCodexReset(ctx context.Context, base, token, accountID, credit, id string) (ResetOutcome, error) {
+	if nativeGPTBuiltinBlocked("codex") {
+		return ResetOutcome{}, errNativeGPTBuiltin
+	}
 	var out ResetOutcome
 	body, _ := json.Marshal(map[string]string{"credit_id": credit, "redeem_request_id": id})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/wham/rate-limit-reset-credits/consume", bytes.NewReader(body))

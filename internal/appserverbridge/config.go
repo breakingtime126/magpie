@@ -16,6 +16,9 @@ import (
 // Config names exactly two independently configured official app servers.
 // Loading it never creates directories, copies credentials or changes settings.
 type Config struct {
+	// SharedNativeRoute is an explicit state-sharing and route-admission opt-in.
+	SharedNativeRoute *SharedNativeRoute167 `json:"shared_native_route,omitempty"`
+
 	Backends []Backend `json:"backends"`
 
 	// ControlPlane exposes only bridge-owned routing defaults. Native execution
@@ -105,6 +108,9 @@ func LoadConfig(input io.Reader) (Config, error) {
 // Validate checks isolation before any subprocess starts. All paths must exist;
 // symlinks are resolved so aliases cannot silently share account state.
 func (cfg Config) Validate() error {
+	if err := cfg.validateSharedNative167(); err != nil {
+		return err
+	}
 	if cfg.BridgeModelSettings != "" && cfg.BridgeModelSettings != BridgeModelSettingsOwned167 {
 		return errors.New("unsupported bridge_model_settings mode")
 	}
@@ -164,7 +170,7 @@ func (cfg Config) Validate() error {
 		cfg.Attestation == AttestationUnavailable || cfg.GatewayOAuth == GatewayOAuthPrimaryRead ||
 		cfg.StartupProbe == StartupProbeCompareUnrestricted
 	current := cfg.RequirementsRead == ConfigRequirementsCompareNull167 ||
-		cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 ||
+		cfg.SharedNativeRoute != nil || cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 ||
 		cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167 || cfg.ControlPlane == ControlPlaneRouting167
 	if legacy && current {
 		return errors.New("incompatible versions in selected compatibility modes")
@@ -186,7 +192,7 @@ func (cfg Config) Validate() error {
 	ids := map[string]bool{}
 	var homes []string
 	for i, b := range cfg.Backends {
-		if b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" || cfg.ControlPlane != "" {
+		if cfg.SharedNativeRoute != nil || b.StartupProbeSHA256 != "" || cfg.StartupProbe != "" || cfg.RequirementsRead != "" || cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.AuthStatus != "" || cfg.DesktopPluginOverride != "" || cfg.ExperimentalFeatureList != "" || cfg.ControlPlane != "" {
 			digest, err := hex.DecodeString(b.StartupProbeSHA256)
 			if err != nil || len(digest) != 32 {
 				return errors.New("reviewed compatibility requires a SHA256 pin for each backend")
@@ -239,7 +245,7 @@ func (cfg Config) Validate() error {
 				return fmt.Errorf("backend %s home paths must be directories", b.ID)
 			}
 			for _, previous := range homes {
-				if pathsOverlap(previous, real) {
+				if cfg.SharedNativeRoute == nil && pathsOverlap(previous, real) {
 					return errors.New("all backend home paths must be distinct and non-overlapping")
 				}
 			}
@@ -275,13 +281,19 @@ func (cfg Config) Validate() error {
 		if err != nil || !st.IsDir() {
 			return errors.New("control_home must be a directory")
 		}
-		for _, home := range homes {
+		for i, home := range homes {
+			if cfg.SharedNativeRoute != nil && i%2 == 0 {
+				continue // Shared HOME may contain ordinary control/project directories.
+			}
 			if pathsOverlap(home, real) {
 				return errors.New("control_home must not overlap any backend home")
 			}
 		}
 	}
 	if cfg.WorkingDirectory != "" {
+		if cfg.SharedNativeRoute != nil && pathsOverlap(cfg.ControlHome, cfg.WorkingDirectory) {
+			return errors.New("shared native working directory must not overlap control state")
+		}
 		if !filepath.IsAbs(cfg.WorkingDirectory) {
 			return errors.New("working_directory must be absolute")
 		}
@@ -293,7 +305,10 @@ func (cfg Config) Validate() error {
 		if err != nil || !st.IsDir() {
 			return errors.New("working_directory must be a directory")
 		}
-		for _, home := range homes {
+		for i, home := range homes {
+			if cfg.SharedNativeRoute != nil && i%2 == 0 {
+				continue // Shared HOME may contain ordinary control/project directories.
+			}
 			if pathsOverlap(home, real) {
 				return errors.New("working_directory must not overlap any backend home")
 			}
@@ -351,7 +366,7 @@ func (cfg Config) auth167() bool {
 }
 
 func (cfg Config) authCompatibility() authCompatibility {
-	return authCompatibility{
+	a := authCompatibility{
 		authStatusNoAuth:       cfg.AuthStatus == AuthStatusPrimaryNoAuth167,
 		authStatusTrusted:      cfg.AuthStatus == AuthStatusPrimaryTrustedStdio167,
 		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167 || cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167 || cfg.ControlPlane == ControlPlaneRouting167,
@@ -359,4 +374,10 @@ func (cfg Config) authCompatibility() authCompatibility {
 		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167,
 		gatewayProviderName:    cfg.GatewayOAuthProviderName,
 	}
+	if cfg.SharedNativeRoute != nil {
+		a.primaryProofCandidate = true
+		a.gatewayRead = true
+		a.gatewayProviderName = "OpenAI"
+	}
+	return a
 }

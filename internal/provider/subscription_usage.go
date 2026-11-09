@@ -1048,6 +1048,9 @@ func chatgptUntil(now time.Time, tokens ...string) *time.Time {
 // a window is used up, "" when it holds none or they are unlimited. held
 // is whether the Codex app sends nothing for the account now (codexHeld).
 func codexWindows(ctx context.Context, token, accountID string) (plan string, out []QuotaWindow, resets *ResetCredits, credits string, held bool, err error) {
+	if nativeGPTBuiltinBlocked("codex") {
+		return "", nil, nil, "", false, errNativeGPTBuiltin
+	}
 	var data codexUsage
 	base := strings.TrimSuffix(CodexBase, "/codex")
 	out = []QuotaWindow{}

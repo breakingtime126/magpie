@@ -17,6 +17,9 @@ package provider
 // leftAlone says whether magpie leaves provider id alone in the
 // background: switched off, or its account removed from magpie.
 func leftAlone(id string) bool {
+	if nativeGPTBuiltinBlocked(id) {
+		return true
+	}
 	if id == "" {
 		return false
 	}

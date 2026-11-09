@@ -241,6 +241,9 @@ func StartSignInAt(agent, site string) (SignInState, error) {
 // StartSignInWith is StartSignIn with the sign-in's choices: its site and
 // the proxy it goes through.
 func StartSignInWith(agent string, o SignInOptions) (SignInState, error) {
+	if nativeGPTBuiltinBlocked(agent) {
+		return SignInState{}, errNativeGPTBuiltin
+	}
 	site := o.Site
 	if settings.AccountDiscoveryOff() {
 		return SignInState{}, errAccountDiscoveryOff
@@ -886,6 +889,9 @@ func codexLogin(idToken, accessToken, refreshToken, accountID string) (savedLogi
 // reading goes (StaleAllowance): it was read under the old sign-in, and
 // for a minute it would answer for the new one, a refusal and all.
 func addLogin(l savedLogin) (using bool, err error) {
+	if nativeGPTBuiltinBlocked(l.Agent) {
+		return false, errNativeGPTBuiltin
+	}
 	defer func() { // under the name it is kept by (codexName), once loginsMu is let go
 		if err == nil {
 			StaleAllowance(l.Agent, l.User)

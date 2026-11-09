@@ -66,6 +66,9 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 const codexSummaryPrefix = codexsummary.Prefix
 
 func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
+	if refuseLegacyCodexGateway(w) {
+		return
+	}
 	// Responses over a WebSocket, Codex's own way to its provider: each
 	// turn is served as its POST is (responses_ws.go), and Codex sends
 	// only a turn's new input after the reply it follows (#4058)
@@ -947,6 +950,9 @@ func (s *Server) codexUpstream(w http.ResponseWriter, r *http.Request, rest stri
 // codexUpstreamOn is codexUpstream signed by the account on instead of
 // Codex's own sign-in, when on isn't nil (compactOn).
 func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest string, body []byte, on *provider.Provider) {
+	if refuseLegacyCodexGateway(w) {
+		return
+	}
 	start := time.Now()
 	usage.Saw(agentOf(r))
 	// Codex's own turns come here from the mux, not through serve: the

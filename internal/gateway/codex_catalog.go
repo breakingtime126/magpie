@@ -50,6 +50,9 @@ func codexReadsWholeCatalog(v string) bool {
 // entries that would take the answer past codexCatalogMost are left out,
 // the last first, and the answer says how many in X-Magpie-Left-Out.
 func (s *Server) codexCatalog(w http.ResponseWriter, r *http.Request) {
+	if refuseLegacyCodexGateway(w) {
+		return
+	}
 	// the catalog, the groups and the windows read the providers over and
 	// over: held, they are built once (#746)
 	defer provider.Hold()()
