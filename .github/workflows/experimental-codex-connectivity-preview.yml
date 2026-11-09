@@ -134,7 +134,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Test host compilation failed.' }
       - name: Verify official package and run only the opted-in loopback test
         shell: pwsh
-        run: ./build/test-native-preview-official.ps1 -TestExecutable "$env:RUNNER_TEMP/native-preview-tests.exe"
+        run: |
+          $testExecutable = Join-Path $env:RUNNER_TEMP 'native-preview-tests.exe'
+          ./build/test-native-preview-official.ps1 -TestExecutable $testExecutable
       - name: Upload fixed-label acceptance report only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
