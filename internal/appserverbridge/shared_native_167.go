@@ -12,6 +12,7 @@ import (
 )
 
 const SharedNativeHome167 = "shared-native-home-v0.167.0-alpha.3.2"
+const SharedNativeLocalGateway167 = "magpie-loopback-placeholder-v1"
 const sharedSecondaryProvider167 = "magpie_shared_aihub"
 const sharedSecondaryName167 = "Magpie AIHub"
 const sharedInferenceURL167 = "https://chatgpt.com/backend-api/codex"
@@ -24,6 +25,7 @@ type SharedNativeRoute167 struct {
 	Mode             string `json:"mode"`
 	GatewayURL       string `json:"gateway_url"`
 	GatewayEnvKey    string `json:"gateway_env_key"`
+	GatewayAuth      string `json:"gateway_auth,omitempty"`
 	SecondaryCatalog string `json:"secondary_catalog"`
 }
 
@@ -45,8 +47,20 @@ func (cfg Config) validateSharedNative167() error {
 		return errors.New("unsupported shared native route combination")
 	}
 	a, b := cfg.Backends[0], cfg.Backends[1]
-	if a.Provider != "openai" || b.Provider != sharedSecondaryProvider167 || a.Models != nil || b.Models != nil || len(a.InheritEnv) != 0 || len(b.InheritEnv) != 1 || b.InheritEnv[0] != s.GatewayEnvKey {
+	if a.Provider != "openai" || b.Provider != sharedSecondaryProvider167 || a.Models != nil || b.Models != nil || len(a.InheritEnv) != 0 {
 		return errors.New("shared native route requires explicit primary and secondary identities")
+	}
+	switch s.GatewayAuth {
+	case "":
+		if len(b.InheritEnv) != 1 || b.InheritEnv[0] != s.GatewayEnvKey {
+			return errors.New("shared native route requires explicit gateway environment")
+		}
+	case SharedNativeLocalGateway167:
+		if len(b.InheritEnv) != 0 {
+			return errors.New("shared native local gateway does not inherit credentials")
+		}
+	default:
+		return errors.New("unsupported shared native gateway authentication mode")
 	}
 	if !environmentName.MatchString(s.GatewayEnvKey) || sharedNativeReservedGateway167(s.GatewayEnvKey) {
 		return errors.New("shared native route requires a dedicated gateway environment name")

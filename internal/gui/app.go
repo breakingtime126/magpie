@@ -25,7 +25,7 @@ import (
 	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/library"
-	"github.com/yetone/magpie/internal/nativepreview"
+	"github.com/yetone/magpie/internal/nativeconnect"
 	"github.com/yetone/magpie/internal/omarchy"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/settings"
@@ -74,7 +74,8 @@ func appIconFor() []byte {
 }
 
 type host struct {
-	nativeCodex *NativeCodexAPI
+	nativeCodex      *NativeCodexAPI
+	nativeConnection *nativeconnect.Controller
 
 	app   *application.App
 	panel *application.WebviewWindow
@@ -200,6 +201,8 @@ func (h *host) ChooseFolder(title string) (string, error) {
 
 // NativeCodexPreview is available only on this owning desktop host.
 func (h *host) NativeCodexPreview() *NativeCodexAPI { return h.nativeCodex }
+
+func (h *host) NativeCodexConnection() *nativeconnect.Controller { return h.nativeConnection }
 
 func (h *host) chooseNativeCodex() (string, error) {
 	d := h.app.Dialog.OpenFile().CanChooseDirectories(false).CanChooseFiles(true).SetTitle("Choose official Codex executable")
@@ -416,18 +419,10 @@ func Run(version string, showMain bool, link string) error {
 	if !buildvariant.NativeCodex {
 		handler = devShell(h)
 	}
-	var nativeController *nativepreview.Controller
 	if buildvariant.NativeCodex {
-		var err error
-		nativeController, err = nativepreview.New()
-		if err != nil {
-			return err
-		}
-		defer nativeController.Close()
-		h.nativeCodex, err = NewNativeCodexAPI(nativeController, h.chooseNativeCodex)
-		if err != nil {
-			return err
-		}
+		// The former separate account/test sheet is not a product entry.
+		// A missing supplier catalog blocks original Connect before any write.
+		h.nativeConnection = nativeconnect.New(filepath.Join(appdir.Config(), "native-codex-connection"), nativeconnect.SystemSelection(), nil)
 	}
 	ownPage := handler == nil
 	var gw *gateway.Server
@@ -468,10 +463,6 @@ func Run(version string, showMain bool, link string) error {
 		// leaves both to it: the failover goes on through the new one, and
 		// so do the threads.
 		OnShutdown: func() {
-			if nativeController != nil {
-				nativeController.Cancel()
-				_ = nativeController.Close()
-			}
 			proc.EndProbes()
 			if buildvariant.NativeCodex {
 				return

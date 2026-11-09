@@ -11,25 +11,36 @@ $package = Join-Path $env:RUNNER_TEMP 'native-magpie-package'
 $evidence = Join-Path $env:RUNNER_TEMP 'native-magpie-evidence'
 [void](New-Item -ItemType Directory -Path $package -ErrorAction Stop)
 [void](New-Item -ItemType Directory -Path $evidence -ErrorAction Stop)
-& go vet -tags nogui,nativecodex ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/gui ./internal/agent ./internal/library ./internal/codexsetup
+& go vet -tags nogui,nativecodex ./internal/nativeconnect ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/gui ./internal/agent ./internal/library ./internal/codexsetup
 Assert-Exit 'Windows native-mode vet'
 & go vet -tags production,nativecodex ./internal/gui
 Assert-Exit 'Windows original GUI vet'
 & go test -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestNative(Codex|GPT)' ./internal/provider ./internal/gateway ./internal/agent ./internal/library ./internal/gui
 Assert-Exit 'Synthetic native-mode write protection'
+& go test -tags nogui,nativecodex -count=1 -timeout=2m ./internal/nativeconnect
+Assert-Exit 'Synthetic launch selection transaction'
 & go run github.com/tc-hib/go-winres@v0.3.3 make --in build/windows/winres.json --arch amd64 --out rsrc --file-version '0.0.0' --product-version '0.0.0'
 Assert-Exit 'Original Windows resources'
 $exe = Join-Path $package 'Magpie-Native-Codex-Experimental.exe'
 # No comlauncher installer; the existing GUI/main remain the product entry.
 & go build -tags production,nativecodex -trimpath -ldflags "-s -w -H windowsgui -X main.version=native-codex-$($head.Substring(0,8))" -o $exe .
 Assert-Exit 'Original Magpie GUI build'
+$adapter = Join-Path $package 'magpie-codex-bridge.exe'
+# Console stdio component, not a new GUI or a bundled official Codex binary.
+& go build -tags nogui,nativecodex -trimpath -ldflags "-s -w -X main.buildVersion=$head" -o $adapter ./cmd/magpie-codex-bridge
+Assert-Exit 'Same-source stdio adapter build'
+$adapterVersion = (& $adapter --version | Out-String).Trim()
+Assert-Exit 'Adapter identity only'
+if (-not $adapterVersion.Contains($head)) { throw 'Adapter source identity mismatch.' }
+Copy-Item -LiteralPath 'docs/subsystems/native-codex-connect.md' -Destination (Join-Path $package 'CONNECT-STATUS.md')
+
 Copy-Item -LiteralPath 'LICENSE','THIRD_PARTY_NOTICES' -Destination $package
 Copy-Item -LiteralPath 'docs/subsystems/original-gui-native-codex.md' -Destination (Join-Path $package 'README.md')
 [IO.File]::WriteAllText((Join-Path $package '.portable'), '', [Text.UTF8Encoding]::new($false))
 [void](New-Item -ItemType Directory -Path (Join-Path $package 'data'))
 # Native Magpie setting, not a fake account state; explicit logins remain actions.
 [IO.File]::WriteAllText((Join-Path $package 'data/settings.json'), '{"noAccountDiscovery":true,"lang":"zh","theme":"light","guideHidden":true}', [Text.UTF8Encoding]::new($false))
-@{sourceCommit=$head;guiSHA256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant();unsigned=$true;originalGUI=$true;buildTags='production,nativecodex';portable=$true} |
+@{sourceCommit=$head;adapterSHA256=(Get-FileHash $adapter -Algorithm SHA256).Hash.ToLowerInvariant();guiSHA256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant();unsigned=$true;originalGUI=$true;buildTags='production,nativecodex';portable=$true} |
  ConvertTo-Json | Set-Content (Join-Path $package 'BUILD.json') -Encoding UTF8
 # Launch a copy, never the deliverable data directory. Only synthetic home files.
 $root = Join-Path $env:RUNNER_TEMP ('native-magpie-window-' + [guid]::NewGuid().ToString('N'))

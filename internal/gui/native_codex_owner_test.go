@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/nativepreview"
 )
 
@@ -63,9 +62,18 @@ func TestNativeCodexAPIIsOnlyOnItsOwningWindow(t *testing.T) {
 		t.Fatal("API construction failed")
 	}
 	owner := nativeOwnerFixture{api: api}
-	if (nativeCodexForWindow(owner) != nil) != buildvariant.NativeCodex {
-		t.Fatal("build variant ownership mismatch")
+	if nativeCodexForWindow(owner) != nil {
+		t.Fatal("product exposed the separate account/test sheet")
 	}
+	productBoot := map[string]any{}
+	productRequest := httptest.NewRequest("GET", "/boot.js", nil)
+	ownWindow(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		addNativeCodexBoot(productBoot, nativeCodexForWindow(owner), r)
+	})).ServeHTTP(httptest.NewRecorder(), productRequest)
+	if len(productBoot) != 0 {
+		t.Fatal("product boot advertised the old test button or account token")
+	}
+	// Explicit API mounting below tests the retained internal component only.
 	if nativeCodexForWindow(nil) != nil || nativeCodexForWindow(webHost{}) != nil || nativeCodexForWindow(appWebHost{app: owner}) != nil {
 		t.Fatal("nonowner inherited native API")
 	}

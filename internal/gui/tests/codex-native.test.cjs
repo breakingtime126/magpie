@@ -13,13 +13,13 @@ const words = {
 const state = { agents: [{ id: "codex", name: "Codex", icon: "generic", path: "/fixture/codex", fields: [{ key: "model", label: "model", value: "original-model", options: [{ value: "original-model", label: "Original model" }, { value: "relay/fixture", label: "Fixture", ref: "relay/fixture" }] }] }], profiles: [] };
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
   for (const lang of ["en", "zh"]) {
-    test(`${engine} ${lang}: Codex native test stays inside the original row and sheet`, async (t) => {
+    test(`${engine} ${lang}: product hides the retired test entry; internal component remains isolated`, async (t) => {
       const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
       t.after(() => browser.close());
       const page = await (await browser.newContext({ viewport: { width: 980, height: 700 }, reducedMotion: "reduce" })).newPage();
       page.setDefaultTimeout(5000);
       const calls = [], errors = [];
-      let ready = false, discovered = false, failLogin = false, pendingConfigure, enabled = true;
+      let ready = false, discovered = false, failLogin = false, pendingConfigure, enabled = false;
       page.on("pageerror", e => errors.push(e.message));
       const capabilities = () => ({ executableSelected: ready, aiHubConfigured: false, busy: false, canDiscover: ready, canLogin: ready, canSend: discovered });
       await page.route("**/*", async route => {
@@ -53,6 +53,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const w = words[lang];
       await page.goto("http://magpie.test/?view=agents");
       const row = page.locator('.row.agent[data-id="codex"]');
+      await row.waitFor();
+      assert.equal(await row.getByRole("button", { name: w.action, exact: true }).count(), 0, "product must hide retired test entry");
+      assert.equal(await row.locator('.ag-conn').count(), 1, "original Connect remains");
+      assert.equal(calls.length, 0, "product boot performs no preview account action");
+      // Explicit opt-in below exercises an internal retained component, not
+      // the product boot or the shared native Connect implementation.
+      enabled = true;
+      await page.reload();
       await row.getByRole("button", { name: w.action, exact: true }).click();
       const modal = page.locator("#modal .editor");
       await page.waitForFunction(() => !document.querySelector("#nativeResult")?.textContent.includes("…"));

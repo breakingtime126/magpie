@@ -1,20 +1,11 @@
 package gui
 
-import (
-	"net/http"
+import "net/http"
 
-	"github.com/yetone/magpie/internal/buildvariant"
-)
-
+// The separate account/test sheet is retained only as an internal component.
+// Product boot must not advertise it as the original Codex Connect workflow.
 func nativeCodexForWindow(w Windows) *NativeCodexAPI {
-	if !buildvariant.NativeCodex || isWeb(w) {
-		return nil
-	}
-	owner, ok := w.(interface{ NativeCodexPreview() *NativeCodexAPI })
-	if !ok {
-		return nil
-	}
-	return owner.NativeCodexPreview()
+	return nil
 }
 
 // Only ownWindow can attach this unexported transport context key. Origin or

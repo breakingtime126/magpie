@@ -2,20 +2,37 @@ package appserverbridge
 
 import (
 	"errors"
+	"net/url"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
 // sharedNativeEnvironment167 is shared-mode only. The runner retains its
 // existing isolated environment builder when this explicit mode is absent.
-// Values come only from the supplied process environment; nothing is logged,
-// synthesized for app-data/proxy paths, or written to the host environment.
+// Paths and transport settings come only from the supplied process environment.
+// The explicit local-gateway mode adds a public caller label to the secondary,
+// never a saved credential. Nothing is logged or written to the host environment.
 func (cfg Config) sharedNativeEnvironment167(b Backend, inherited []string) ([]string, error) {
 	unavailable := errors.New("shared native environment unavailable")
 	s := cfg.SharedNativeRoute
 	if s == nil || s.Mode != SharedNativeHome167 || len(cfg.Backends) != 2 {
 		return nil, unavailable
+	}
+	localGateway := s.GatewayAuth == SharedNativeLocalGateway167
+	if s.GatewayAuth != "" && !localGateway {
+		return nil, unavailable
+	}
+	if localGateway {
+		u, err := url.Parse(s.GatewayURL)
+		if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.Path != "/v1" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.RawPath != "" {
+			return nil, unavailable
+		}
+		port, err := strconv.Atoi(u.Port())
+		if err != nil || port < 1 || port > 65535 || len(cfg.Backends[1].InheritEnv) != 0 {
+			return nil, unavailable
+		}
 	}
 	secondary := b.ID == cfg.Backends[1].ID
 	index := 0
@@ -60,6 +77,9 @@ func (cfg Config) sharedNativeEnvironment167(b Backend, inherited []string) ([]s
 			continue // Includes Windows's private drive-current-directory entries.
 		}
 		identity := keyIdentity(key)
+		if localGateway && identity == gatewayKey {
+			return nil, unavailable
+		}
 		if identity == keyIdentity("CODEX_WINDOWS_REGISTERED_CORE") {
 			return nil, unavailable
 		}
@@ -95,6 +115,12 @@ func (cfg Config) sharedNativeEnvironment167(b Backend, inherited []string) ([]s
 			key = s.GatewayEnvKey
 		}
 		out = append(out, key+"="+value)
+	}
+	if localGateway && secondary {
+		// This is gateway.TokenFor("codex"), a public loopback caller label,
+		// not a gateway key or proof that the listener is this Magpie instance.
+		out = append(out, s.GatewayEnvKey+"=magpie-codex")
+		gatewaySeen = true
 	}
 	if !(homeSeen || (runtime.GOOS == "windows" && profileSeen)) || (secondary && !gatewaySeen) {
 		return nil, unavailable

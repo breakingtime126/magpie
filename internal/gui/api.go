@@ -1313,6 +1313,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			fail(rw, err)
 			return
 		}
+		if handleNativeCodexConnection(w, a, rw, r) {
+			return
+		}
 		var how *agent.Connection
 		switch r.PathValue("action") {
 		case "reapply":
