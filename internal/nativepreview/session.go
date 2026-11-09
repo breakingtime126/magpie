@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/yetone/magpie/internal/proc"
@@ -197,6 +196,7 @@ func (p *nativePeer) next() (map[string]json.RawMessage, error) {
 		return envelope, nil
 	}
 }
+
 // c407 ServerNotificationEnvelope adds optional emittedAtMs to method/params.
 // It is transport metadata, never thread ownership or permission authority.
 func validNotificationEnvelope(envelope map[string]json.RawMessage) bool {
@@ -235,12 +235,7 @@ func (p *nativePeer) acceptNotification(envelope map[string]json.RawMessage) err
 		err = p.notification(method, envelope["params"])
 	}
 	if err != nil && p.stage != nil {
-		label := "notification-unsupported"
-		switch method {
-		case "configWarning", "warning", "account/updated", "thread/started", "thread/settings/updated", "thread/status/changed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/completed":
-			label = "notification-" + strings.ReplaceAll(method, "/", "-")
-		}
-		p.stage(label)
+		p.stage(notificationDiagnosticLabel(method))
 	}
 	return err
 }

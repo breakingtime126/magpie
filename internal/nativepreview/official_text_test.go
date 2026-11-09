@@ -264,6 +264,11 @@ func previewDiagnosticStageAllowed(label string) bool {
 	case "notification-envelope", "config-rpc-write", "config-rpc-transport", "config-rpc-canceled", "config-rpc-eof", "config-rpc-envelope", "config-rpc-id", "notification-configWarning", "notification-warning", "notification-account-updated", "config-rpc-other", "config-rpc-invalid-params", "config-rpc-invalid-request", "config-rpc-method-not-found", "config-rpc-internal", "config-rpc-server", "test-isolation", "test-transport", "test-setup", "unclassified", "admission", "version", "start", "initialize", "initialize-receipt", "config-request", "config-provider", "config-mcp", "config-hooks-notify", "models", "model-selection", "thread-request", "thread-receipt", "turn-request", "turn-receipt", "turn-stream", "reply", "close", "cleanup", "done", "notification-unsupported", "notification-thread-started", "notification-thread-settings-updated", "notification-thread-status-changed", "notification-thread-tokenUsage-updated", "notification-turn-started", "notification-turn-completed", "notification-item-started", "notification-item-completed":
 		return true
 	}
+	for _, method := range publicNotificationMethods {
+		if label == notificationDiagnosticLabel(method) {
+			return true
+		}
+	}
 	for path := range textOverrides() {
 		if label == "config-"+strings.ReplaceAll(path, ".", "-") {
 			return true
