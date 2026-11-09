@@ -207,21 +207,7 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 			runErr = failure("unexpected_server_request")
 		}
 	}()
-	initialized, err := p.rpc("initialize", map[string]any{
-		"clientInfo":   map[string]any{"name": "magpie_synthetic_ci", "title": "Synthetic isolated CI", "version": "0.1.0"},
-		"capabilities": map[string]any{"experimentalApi": true},
-	})
-	if err != nil {
-		return err
-	}
-	initResult, err := object(initialized)
-	if err != nil || stringField(initResult, "codexHome") != controlHome {
-		return failure("control_home_mismatch")
-	}
-	if err := emptyDirectory(controlHome); err != nil {
-		return err
-	}
-	if err := p.send(map[string]any{"method": "initialized", "params": map[string]any{}}); err != nil {
+	if err := initializeNativePeer(p, controlHome); err != nil {
 		return err
 	}
 	report.Stage = "initial_config"
@@ -282,6 +268,70 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	report.Stage = "turns"
 	var previousTurns [2]string
 	for round := 1; round <= 2; round++ {
+		if round == 2 && o.acceptanceProfile == acceptanceSynthetic4239 {
+			report.Stage = "restart"
+			err := p.close(true)
+			closed = true
+			if err != nil {
+				return err
+			}
+			count, err := p.assistants.finishRounds(1)
+			if err != nil {
+				return err
+			}
+			report.AssistantMessages += count
+			if p.unexpected.Load() != 0 {
+				return failure("unexpected_server_request")
+			}
+			for _, ch := range homes {
+				if _, err := os.Lstat(filepath.Join(ch, "auth.json")); !os.IsNotExist(err) {
+					return failure("unexpected_auth_data")
+				}
+			}
+			for _, f := range fixtures {
+				if err := f.rotateSyntheticAuth(); err != nil {
+					return err
+				}
+			}
+			if err := verifyBinaryHash(o.codex, pinnedSHA); err != nil {
+				return err
+			}
+			renewedEnv := append(childEnvironment(frontHome, frontCodex), "MAGPIE_APP_SERVER_BRIDGE_CONFIG="+cfgPath)
+			renewedEnv = append(renewedEnv, syntheticAuthEnvironmentRenewed(true)...)
+			next, err := startPeer(ctx, o.bridge, renewedEnv, cwd)
+			if err != nil {
+				return err
+			}
+			p, closed = next, false
+			if err := initializeNativePeer(p, controlHome); err != nil {
+				return err
+			}
+			report.RestartCycles++
+			catalog, err := p.rpc("model/list", map[string]any{})
+			if err != nil {
+				return err
+			}
+			selected, modelsFound, err := checkCatalogForProfile(catalog, o.acceptanceProfile)
+			if err != nil || selected != defaultModel || modelsFound != 2 {
+				return failure("catalog_invalid")
+			}
+			// Fresh routers must learn ownership from real saved-thread discovery.
+			report.Stage = "thread_list"
+			if err := readThreadListsWithAvailability(p, threads, report, o.acceptanceProfile, true); err != nil {
+				return err
+			}
+			report.Stage = "resume"
+			for i, name := range []string{"alpha", "beta"} {
+				if err := resumeSyntheticThread(p, threads[i], name); err != nil {
+					return err
+				}
+				if err := p.assistants.owner(threads[i], name); err != nil {
+					return err
+				}
+				report.ResumedThreads++
+			}
+			report.Stage = "turns"
+		}
 		for i, name := range []string{"alpha", "beta"} {
 			turnID, err := assistantTurn(p, threads[i], name, round)
 			if err != nil {
@@ -295,8 +345,10 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		}
 	}
 	report.Stage = "thread_list"
-	if err := readThreadListsForProfile(p, threads, report, o.acceptanceProfile); err != nil {
-		return err
+	if o.acceptanceProfile != acceptanceSynthetic4239 {
+		if err := readThreadListsForProfile(p, threads, report, o.acceptanceProfile); err != nil {
+			return err
+		}
 	}
 	report.Stage = "ownership"
 	for i := range threads {
@@ -361,11 +413,15 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	report.AdapterCleanExit = true
-	count, err = p.assistants.finish()
+	rounds := 2
+	if o.acceptanceProfile == acceptanceSynthetic4239 {
+		rounds = 1
+	}
+	count, err = p.assistants.finishRounds(rounds)
 	if err != nil {
 		return err
 	}
-	report.AssistantMessages = count
+	report.AssistantMessages += count
 	return nil
 }
 

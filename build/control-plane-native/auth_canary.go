@@ -22,9 +22,16 @@ func syntheticCredential(name string) (key, value string, err error) {
 }
 
 func syntheticAuthEnvironment() []string {
+	return syntheticAuthEnvironmentRenewed(false)
+}
+
+func syntheticAuthEnvironmentRenewed(renewed bool) []string {
 	env := []string{"OPENAI_API_KEY=" + syntheticAmbientKey}
 	for _, name := range []string{"alpha", "beta"} {
 		key, value, _ := syntheticCredential(name)
+		if renewed {
+			value += "-RENEWED"
+		}
 		env = append(env, key+"="+value)
 	}
 	return env
@@ -65,4 +72,22 @@ func fixtureAuthAllowed(headers http.Header, expected string) bool {
 		return len(authorization) == 0
 	}
 	return len(authorization) == 1 && authorization[0] == expected
+}
+
+// Called once, only after the owning native generation exited cleanly. The
+// HTTP guard rechecks under the count lock, so a request inspected before this
+// change cannot commit an old credential afterward. No real token is rotated.
+func (f *fixture) rotateSyntheticAuth() error {
+	_, value, err := syntheticCredential(f.name)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.authRotated || f.requests != 1 || f.failures != 0 || f.expectedAuth != "Bearer "+value {
+		return failure("fixture_failed")
+	}
+	f.expectedAuth = "Bearer " + value + "-RENEWED"
+	f.authRotated = true
+	return nil
 }

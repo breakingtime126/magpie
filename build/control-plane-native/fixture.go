@@ -25,6 +25,7 @@ type fixture struct {
 	name                string
 	model, instructions string
 	expectedAuth        string
+	authRotated         bool
 	mu                  sync.Mutex
 	requests, failures  int
 }
@@ -73,7 +74,10 @@ func (f *fixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		f.fail(w)
 		return
 	}
-	if !fixtureAuthAllowed(r.Header, f.expectedAuth) {
+	f.mu.Lock()
+	authAllowed := fixtureAuthAllowed(r.Header, f.expectedAuth)
+	f.mu.Unlock()
+	if !authAllowed {
 		f.fail(w)
 		return
 	}
@@ -108,7 +112,10 @@ func (f *fixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	n := f.requests + 1
-	if n > 2 || !bytes.Contains(req["input"], []byte(fmt.Sprintf("synthetic-%s-turn-%d", f.name, n))) {
+	if !fixtureAuthAllowed(r.Header, f.expectedAuth) || n > 2 ||
+		!bytes.Contains(req["input"], []byte(fmt.Sprintf("synthetic-%s-turn-%d", f.name, n))) ||
+		(f.authRotated && (n != 2 || bytes.Contains(data, []byte("fixture-answer-"+other)) ||
+			!syntheticResumeHistory(req["input"], f.name))) {
 		f.failures++
 		f.mu.Unlock()
 		http.Error(w, "synthetic fixture rejected request", http.StatusBadRequest)

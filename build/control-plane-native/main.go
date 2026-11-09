@@ -58,6 +58,8 @@ type summary struct {
 	UnexpectedServerRequests int    `json:"unexpected_server_requests"`
 	AdapterCleanExit         bool   `json:"adapter_clean_exit"`
 	CleanupComplete          bool   `json:"cleanup_complete"`
+	RestartCycles            int    `json:"restart_cycles,omitempty"`
+	ResumedThreads           int    `json:"resumed_threads,omitempty"`
 }
 
 type options struct{ bridge, codex, catalog, scratch, acceptanceProfile string }

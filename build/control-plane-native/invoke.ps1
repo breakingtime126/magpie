@@ -16,12 +16,17 @@ function Assert-ControlPlaneNativeSummary($Report, [string]$AcceptanceProfile = 
         'adapter_clean_exit', 'cleanup_complete')
     if ($null -eq $Report -or $Report -isnot [pscustomobject]) { throw 'Invalid native control-plane summary.' }
     $actual = @($Report.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($AcceptanceProfile -ceq 'synthetic-models-4239') {
+        foreach ($name in @('restart_cycles', 'resumed_threads')) {
+            if ($actual -ccontains $name) { $names += $name }
+        }
+    }
     if ($actual.Count -ne $names.Count) { throw 'Invalid native control-plane summary.' }
     foreach ($name in $actual) {
         if ($names -cnotcontains $name) { throw 'Invalid native control-plane summary.' }
     }
     $stages = @('inputs', 'version', 'initialize', 'initial_config', 'catalog', 'resolved_config',
-        'threads', 'turns', 'thread_list', 'ownership', 'final_config', 'shutdown', 'complete', 'supervisor')
+        'threads', 'turns', 'thread_list', 'ownership', 'final_config', 'shutdown', 'restart', 'resume', 'complete', 'supervisor')
     $failures = @('', 'internal_failure', 'input_invalid', 'environment_rejected',
         'scratch_invalid', 'scratch_not_empty', 'native_hash_mismatch', 'catalog_hash_mismatch',
         'catalog_invalid', 'platform_rejected', 'process_start_failed', 'version_invalid',
@@ -51,6 +56,19 @@ function Assert-ControlPlaneNativeSummary($Report, [string]$AcceptanceProfile = 
     foreach ($name in $counts) {
         if (($Report.$name -isnot [int] -and $Report.$name -isnot [long]) -or
             $Report.$name -lt 0 -or $Report.$name -gt 2048) { throw 'Invalid native control-plane summary.' }
+    }
+    foreach ($entry in @(@('restart_cycles', 1), @('resumed_threads', 2))) {
+        $name = $entry[0]
+        if ($actual -ccontains $name) {
+            if (($Report.$name -isnot [int] -and $Report.$name -isnot [long]) -or
+                $Report.$name -lt 1 -or $Report.$name -gt $entry[1]) { throw 'Invalid native control-plane summary.' }
+        }
+        if ($Report.status -ceq 'passed' -and $AcceptanceProfile -ceq 'synthetic-models-4239') {
+            if ($actual -cnotcontains $name -or $Report.$name -ne $entry[1]) { throw 'Invalid native control-plane summary.' }
+        }
+    }
+    if ($actual -ccontains 'resumed_threads' -and $actual -cnotcontains 'restart_cycles') {
+        throw 'Invalid native control-plane summary.'
     }
     if ($Report.status -ceq 'passed') {
         $expected = @(9, 6, 3, 0, 2, 2, 4, 4, 2, 2, 4, 4, 2, 2, 2, 0, 0)

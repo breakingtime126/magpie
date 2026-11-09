@@ -18,7 +18,7 @@ function New-SyntheticSummary {
         catalog_models=2;threads=2;turns=4;assistant_messages=4;thread_reads=2
         thread_list_queries=2;thread_list_pages=4;thread_list_items=4;ownership_rejections=2
         alpha_requests=2;beta_requests=2;fixture_errors=0;unexpected_server_requests=0
-        adapter_clean_exit=$true;cleanup_complete=$true
+        adapter_clean_exit=$true;cleanup_complete=$true;restart_cycles=1;resumed_threads=2
     }
 }
 Assert-ControlPlaneNativeSummary (New-SyntheticSummary) -AcceptanceProfile 'synthetic-models-4239'
@@ -38,7 +38,7 @@ Expect-SyntheticReject {
 foreach ($field in @('config_reads','layer_reads','stable_layer_rereads','layer_version_changes',
     'catalog_models','threads','turns','assistant_messages','thread_reads','thread_list_queries',
     'thread_list_pages','thread_list_items','ownership_rejections','alpha_requests','beta_requests',
-    'fixture_errors','unexpected_server_requests')) {
+    'fixture_errors','unexpected_server_requests','restart_cycles','resumed_threads')) {
     Expect-SyntheticReject {
         $report = New-SyntheticSummary
         $report.$field++
@@ -49,6 +49,13 @@ foreach ($field in @('binary_verified','version_verified','adapter_clean_exit','
     Expect-SyntheticReject {
         $report = New-SyntheticSummary
         $report.$field = $false
+        Assert-ControlPlaneNativeSummary $report -AcceptanceProfile 'synthetic-models-4239'
+    }
+}
+foreach ($field in @('restart_cycles','resumed_threads')) {
+    Expect-SyntheticReject {
+        $report = New-SyntheticSummary
+        $report.PSObject.Properties.Remove($field)
         Assert-ControlPlaneNativeSummary $report -AcceptanceProfile 'synthetic-models-4239'
     }
 }

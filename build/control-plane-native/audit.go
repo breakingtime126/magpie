@@ -170,12 +170,19 @@ func (a *assistantAudit) claim(thread, turn, item string) error {
 }
 
 func (a *assistantAudit) finish() (int, error) {
+	return a.finishRounds(2)
+}
+
+// Each closed process generation must account for exactly one or two complete
+// rounds. Audits are never copied across processes (their mutex stays owned).
+func (a *assistantAudit) finishRounds(rounds int) (int, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.err != nil {
 		return 0, a.err
 	}
-	if a.active != nil || len(a.owners) != 2 || len(a.expected) != 4 || len(a.observed) != 4 {
+	if (rounds != 1 && rounds != 2) || a.active != nil || len(a.owners) != 2 ||
+		len(a.expected) != 2*rounds || len(a.observed) != 2*rounds {
 		return 0, a.reject(failure("unexpected_item"))
 	}
 	for _, completion := range a.observed {
@@ -190,7 +197,7 @@ func (a *assistantAudit) finish() (int, error) {
 				count++
 			}
 		}
-		if count != 2 {
+		if count != rounds {
 			return 0, a.reject(failure("unexpected_item"))
 		}
 	}

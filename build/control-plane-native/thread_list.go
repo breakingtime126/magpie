@@ -14,6 +14,10 @@ func readThreadLists(p configReader, threads [2]string, report *summary) error {
 }
 
 func readThreadListsForProfile(p configReader, threads [2]string, report *summary, profile string) error {
+	return readThreadListsWithAvailability(p, threads, report, profile, false)
+}
+
+func readThreadListsWithAvailability(p configReader, threads [2]string, report *summary, profile string, cold bool) error {
 	if threads[0] == "" || threads[1] == "" || threads[0] == threads[1] {
 		return failure("thread_list_invalid")
 	}
@@ -33,7 +37,7 @@ func readThreadListsForProfile(p configReader, threads [2]string, report *summar
 			if err != nil {
 				return err
 			}
-			id, next, err := checkThreadListPageForProfile(raw, threads, seen, page == 1, profile)
+			id, next, err := checkThreadListPageAvailability(raw, threads, seen, page == 1, profile, cold)
 			if err != nil {
 				return err
 			}
@@ -60,6 +64,10 @@ func checkThreadListPage(raw json.RawMessage, threads [2]string, seen map[string
 }
 
 func checkThreadListPageForProfile(raw json.RawMessage, threads [2]string, seen map[string]bool, terminal bool, profile string) (string, string, error) {
+	return checkThreadListPageAvailability(raw, threads, seen, terminal, profile, false)
+}
+
+func checkThreadListPageAvailability(raw json.RawMessage, threads [2]string, seen map[string]bool, terminal bool, profile string, cold bool) (string, string, error) {
 	bad := failure("thread_list_invalid")
 	models, err := acceptanceModels(profile)
 	if err != nil {
@@ -114,7 +122,7 @@ func checkThreadListPageForProfile(raw json.RawMessage, threads [2]string, seen 
 	if !present || (gotModel != nil && gotModel != model) {
 		return "", "", bad
 	}
-	if profile == acceptanceSynthetic4239 && gotModel != model {
+	if profile == acceptanceSynthetic4239 && !cold && gotModel != model {
 		return "", "", bad
 	}
 	return id, next, nil

@@ -827,3 +827,53 @@ cross-routing, but processes sharing a user and filesystem are not an OS secret
 isolation boundary. A single process is not a drop-in alternative: the pinned
 native input gate requires each thread's provider to match the current effective
 configuration, not merely its thread/start override.
+
+### One synthetic credential restart and saved-thread resume
+
+The standalone self-authored profile now deliberately closes its bridge after
+one completed Alpha turn and one completed Beta turn. It requires clean process
+closure, zero unexpected server requests, and exactly one fully audited reply
+per owner before proceeding. Only then does it rotate each public inert canary
+once. Both native homes, configurations, model records and workspace remain the
+same. No real token is acquired or renewed, no credential file is copied or
+opened, and no sandbox or permission setting is changed.
+
+A fresh bridge and two official children start with the renewed process-only
+values. The native executable hash is checked again; this remains a pre-launch
+check, not a race-free image lock. Real initialize/initialized and model/list
+must succeed with the original default. Real paginated thread/list must discover
+both original IDs before resume. During this cold discovery only, an explicitly
+null Thread.model is allowed: the pinned [native Thread schema](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs#L243-L247)
+defines it as unavailable metadata, not execution telemetry. A missing model,
+raw model name, foreign model/provider, unknown ID or wrong source remains an
+error. Loaded-list checks retain their prior non-null requirement.
+
+Each thread/resume must return the same actual thread ID, logical provider and
+own public model alias. A fresh per-process audit records the second round;
+no mutex or live audit state is copied. The Responses fixture then requires the
+renewed owning Bearer, original raw model, second prompt, first prompt and first
+assistant answer in its input. Old or foreign credentials and missing history
+fail closed. Each fixture still accepts exactly two requests total. Both
+cross-provider turn denials, final configuration/layer consistency, auth-file
+absence checks and final cleanup remain required. Failures stop the run without
+a retry; the report can retain partial progress but cannot mark success.
+
+Only this profile emits the bounded progress fields `restart_cycles` (one on
+success) and `resumed_threads` (two). Zero values are omitted; legacy wire output
+is unchanged. Both Go supervision and the PowerShell wrapper require these
+counts for successful self-authored runs. The existing thread-list query/page
+counts remain two/four because discovery moves to the restart boundary rather
+than being repeated after round two. The default profiles still use the original
+single process generation and four-reply audit.
+
+This tests the restart/resume mechanism described by the official
+[app-server token-renewal guide](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server)
+using only public canaries and loopback responses. It is not an OAuth flow,
+proof of entitlement, authenticated Desktop test, or evidence that real token
+refresh works. No new identity RPC is added: even token-free native identity
+reads may refresh credentials or use network when an actual account is present.
+Read-only native tool permissions are not a credential isolation boundary;
+processes share a user/filesystem, and this test does not execute tools or put
+real auth files in either home.
+
+The renewed request history check uses the pinned public [ResponseItem::Message / ContentItem schema](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/protocol/src/models.rs): ordered user/input_text, assistant/output_text, then user/input_text containing the fixed first prompt, fixed answer, and second prompt. Unstructured matching strings or wrong roles/content types do not count as resumed context. Unexpected native shapes fail rather than being normalized or guessed.

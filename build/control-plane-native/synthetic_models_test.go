@@ -108,12 +108,16 @@ func TestSelfAuthoredSummaryCannotMasqueradeAsLegacy(t *testing.T) {
 	s.NativeSHA256 = native4239SHA
 	legacy := s
 	s.Scope = selfAuthoredScope
+	s.RestartCycles, s.ResumedThreads = 1, 2
 	if !validSummaryForProfile(s, acceptanceSynthetic4239) || validSummary(s) ||
 		validSummaryForProfile(s, acceptance4239) || validSummaryForProfile(legacy, acceptanceSynthetic4239) {
 		t.Fatal("summary provenance was not bound to its explicit model profile")
 	}
 	for _, change := range []func(*summary){
 		func(s *summary) { s.NativeSHA256 = nativeSHA },
+		func(s *summary) { s.RestartCycles = 0 },
+		func(s *summary) { s.RestartCycles = 2 },
+		func(s *summary) { s.ResumedThreads = 1 },
 		func(s *summary) { s.Turns = 3 },
 		func(s *summary) { s.CatalogModels = 1 },
 		func(s *summary) { s.AssistantMessages = 5 },

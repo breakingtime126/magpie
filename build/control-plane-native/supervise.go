@@ -119,7 +119,7 @@ func validSummaryForProfile(s summary, profile string) bool {
 		return false
 	}
 	stages := map[string]bool{}
-	for _, v := range []string{"inputs", "version", "initialize", "initial_config", "catalog", "resolved_config", "threads", "turns", "thread_list", "ownership", "final_config", "shutdown", "complete"} {
+	for _, v := range []string{"inputs", "version", "initialize", "initial_config", "catalog", "resolved_config", "threads", "turns", "thread_list", "ownership", "final_config", "shutdown", "restart", "resume", "complete"} {
 		stages[v] = true
 	}
 	if !stages[s.Stage] {
@@ -147,8 +147,16 @@ func validSummaryForProfile(s summary, profile string) bool {
 			return false
 		}
 	}
+	if s.RestartCycles < 0 || s.RestartCycles > 1 || s.ResumedThreads < 0 || s.ResumedThreads > 2 ||
+		(s.ResumedThreads > 0 && s.RestartCycles != 1) ||
+		(profile != acceptanceSynthetic4239 && (s.RestartCycles != 0 || s.ResumedThreads != 0)) {
+		return false
+	}
 	if s.Status == "failed" {
 		return s.Failure != ""
+	}
+	if profile == acceptanceSynthetic4239 && (s.RestartCycles != 1 || s.ResumedThreads != 2) {
+		return false
 	}
 	want := []int{9, 6, 3, 0, 2, 2, 4, 4, 2, 2, 4, 4, 2, 2, 2, 0, 0}
 	for i, n := range counts {

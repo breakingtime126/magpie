@@ -34,7 +34,10 @@ Desktop change, a permission-policy change or proof of a hosted model.
 
 The standalone self-authored profile also uses two distinct **public synthetic**
 authentication canaries to test native per-provider Bearer routing to its local
-fixtures. It never reads real credentials or enables Desktop account support.
+fixtures. Its self-authored standalone profile additionally performs one public
+canary rotation, clean process restart and saved-thread resume; see the
+[restart contract](../../build/control-plane-native/README.md#one-synthetic-credential-restart-and-saved-thread-resume).
+It never reads real credentials or enables Desktop account support.
 See the [canary contract and real-account boundary](../../build/control-plane-native/README.md#synthetic-provider-authentication-canaries-standalone-only).
 
 ## Sources and entry points
