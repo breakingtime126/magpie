@@ -42,7 +42,9 @@ version is not cryptographic identification and path replacement races remain.
   to that store. A fresh path is not proof of no keyring entry or OS isolation.
   A zero exit status is only a native command result, not account verification.
   Subsequent discovery uses this attempt's context even after failure/cancel.
-- Send is deliberately unavailable pending a proven native tool-action boundary.
+- Send is a guarded, explicitly selected single short-text attempt on the reviewed
+  0.167.0-alpha.3.2 protocol only. The 0.166 discovery/login path does not enable it.
+  Discovery is not authentication or inference verification. See the boundary below.
   A prompt asking not to use tools is not a security control.
 
 No operation runs automatically, retries, logs out, imports an old context, or
@@ -109,3 +111,72 @@ Public source anchors for the narrow contract:
 - Existing authorized package harness `build/test-desktop-cold-start.ps1`
   observes registered OpenAI.Codex and app/resources/codex.exe. Auto lookup is
   limited to that known path/identity and does not infer new package layouts.
+
+
+## Guarded single-text boundary (next candidate)
+
+Each explicit Send requires a provider-owned discovered model and re-discovers it
+in the actual native process that will execute the request. The controller checks
+that process's effective config for the reviewed disabled tool/extension features,
+web search, agents, cloud skills and orchestrator MCP; MCP entries must be absent
+from the reported map or individually disabled, with no configured hooks/notify.
+Missing or conflicting required effective values fail closed, not silently replace
+managed requirements. The config/read check is **not** isolation before startup:
+native initialization, auth/cache handling or configured integrations may already
+have effects. This does not promise zero network or zero local native-state writes.
+
+A new ephemeral thread explicitly selects empty environments, dynamic tools and
+capability roots. Its native receipt must match the requested provider/model, own
+working directory, empty environment selection and instruction sources, with no
+parent/fork. No resume, sandbox mode, permission or approval-policy change is sent.
+The turn again selects empty environments. Public c407 execution handlers require
+a selected environment before filesystem/command access; the separately checked
+feature gates close non-environment extensions. A nonempty tool registry is not
+itself execution. Internal clock/plan/user-question events are not arbitrary local
+or third-party actions; this minimal reader may reject unsupported events instead
+of completing them. No server-originated request is answered or approved.
+
+Only a matching completed turn with no error and completed agent-message text
+can produce Reply. Native errors, wrong IDs, unknown/tool item kinds, excess data
+or ambiguous completion return the fixed failure, never a partial success. This
+notification rejection is additional protocol validation, **not** the tool-action
+safety gate. Every Send creates a new thread; this preview does not provide
+conversation history, resume or multi-turn state. Input is at most 4 KiB and final
+text at most 64 KiB. The controller never retries a failed operation, falls back or switches provider.
+Native transport/model-loop behavior, including its own configured retries, is
+not replaced by this controller; a single explicit test is not a one-HTTP-request
+or fixed-cost guarantee.
+
+Cancel closes this owned native operation using the existing process-tree helper;
+it does not retract an already sent request, undo native effects or guarantee no
+charge. The 90-second exchange context is not a hard total lifecycle deadline:
+cleanup has a further grace period and existing Stop/Wait limitations. Login still
+uses its separate root-only browser-preserving lifecycle. No real account, model
+endpoint or official runtime was invoked while writing this candidate. Synthetic
+coverage is not acceptance of real installed native/managed-policy compatibility.
+
+Fixed public source: c40729ea5cf8e947481b130c59807273eda2f8e9,
+`app-server-protocol/src/protocol/v2/thread.rs` (empty environments, thread receipt),
+`core/src/session/session.rs:1507-1522` and
+`core/src/environment_selection.rs:1097-1119` (empty snapshot),
+`core/src/tools/handlers/mod.rs:200-223` (no executor fallback),
+`core/src/tools/spec_plan.rs` and `features/src/lib.rs` (tool feature gates).
+Only these reviewed settings and narrow message projections are used; no upstream
+model catalog records are copied or generated.
+
+
+Code-mode is not assumed to share the empty-environment execution gate. Its
+startup `features.code_mode_host` must be the literal boolean false (not an
+object containing enabled=false), and code_mode, code_mode_only and prewarm are
+also requested and verified false. On c407 this boolean host form resolves
+`disable_in_process_fallback=false`; ThreadManager therefore installs the disabled
+session provider before serving threads. That provider rejects create_session,
+so even a model-metadata-selected CodeModeOnly task cannot execute a runtime cell.
+Metadata can override requested tool mode, so such a model may fail this preview;
+we do not rewrite model metadata to make it work. References:
+`core/src/config/mod.rs:2840-2869`, `core/src/thread_manager.rs:681-690`,
+`code-mode/src/remote_session.rs:103-116`, and
+`core/src/tools/code_mode/mod.rs:150-152,241-257` at the same fixed c407 commit.
+Browser/computer configuration tables are not on/off controls. In this fixed
+standalone app-server there is no independent built-in browser/computer handler;
+MCP, dynamic and injected host-tool sources remain excluded by this contract.

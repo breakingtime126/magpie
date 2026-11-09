@@ -10,6 +10,7 @@ function element(id) {
 }
 const state = {executableSelected:true,aiHubConfigured:true,canDiscover:true,canLogin:true,canSend:false};
 let finishConfigure, finishLogin;
+let failSend = false, sendCalls = 0;
 const context = {
   document:{getElementById:element,querySelector:()=>({content:'public-test-token'}),querySelectorAll:()=>[],createElement:()=>element('new-button')},
   confirm:()=>true,
@@ -17,6 +18,8 @@ const context = {
     assert.equal(options.headers['X-Preview-Token'],'public-test-token');
     if(url==='/api/configure') await new Promise(resolve=>{finishConfigure=resolve;});
     if(url==='/api/login') await new Promise(resolve=>{finishLogin=resolve;});
+    if(url==='/api/discover') return {ok:true,json:async()=>({models:[{id:'public-model',name:'Public model'}]})};
+    if(url==='/api/send') { sendCalls++; return {ok:!failSend,json:async()=>({text:'Public completed response'})}; }
     return {ok:true,json:async()=>state};
   }
 };
@@ -36,5 +39,18 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
   assert.equal(element('models-openai').children.length,0,'old-context models remain during fresh login');
   assert.equal(typeof finishLogin,'function');finishLogin();await tick();
   assert.equal(element('send').disabled,true,'unsupported send became enabled');
-  console.log('PASS: pending configuration locks inputs; fresh login clears old models; unsupported send stays disabled');
+  state.canSend=true;
+  element('discover-openai').onclick();await tick();
+  assert.equal(element('models-openai').children.length,1);
+  element('models-openai').children[0].onclick();
+  assert.equal(element('send').disabled,false);
+  element('prompt').value='Public test text';element('reply').textContent='Old completed reply';
+  failSend=true;element('send').onclick();await tick();
+  assert.equal(element('reply').textContent,'','failed new send displays stale reply');
+  assert.equal(sendCalls,1,'failed send retried');
+  failSend=false;element('send').onclick();await tick();
+  assert.equal(element('reply').textContent,'Public completed response');assert.equal(sendCalls,2);
+  element('models-openai').children[0].onclick();
+  assert.equal(element('reply').textContent,'','new selection retains previous reply');
+  console.log('PASS: configuration lock, fresh login, unsupported send, completed reply and no stale failure/retry');
 })().catch(error=>{console.error(error);process.exitCode=1;});
