@@ -4,4 +4,4 @@ package nativepreview
 
 import "context"
 
-func installedExecutable(context.Context)(string,error){return "",ErrUnsupported}
+func installedExecutable(context.Context) (string, error) { return "", ErrUnsupported }
