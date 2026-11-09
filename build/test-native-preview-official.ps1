@@ -44,7 +44,7 @@ $report = [ordered]@{schema=1;scope='official-native-loopback-text-only';source_
     desktop_verified=$false;real_account_used=$false;zero_egress_proven=$false;
     diagnostic_status='unavailable';native_stage=$null;native_class=$null;
     test_process_started=$false;host_error_line=0;host_error_category='none';
-    cleanup_error_line=0;cleanup_error_category='none';cleanup_error_hresult=0}
+    cleanup_error_line=0;cleanup_error_category='none';cleanup_error_hresult=0;cleanup_delete_attempts=0;cleanup_sharing_retries=0}
 $process = $null; $started = $false
 try {
     $package = Join-Path $root 'official.msix'
@@ -213,12 +213,32 @@ try {
 } finally {
     $report.test_process_started = [bool]$started
     try {
-        if ($started -and -not $process.HasExited) {
-            $process.Kill($true)
+        if ($started) {
+            if (-not $process.HasExited) { $process.Kill($true) }
             if (-not $process.WaitForExit(5000)) { throw 'Test cleanup incomplete.' }
         }
         if ($process) { $process.Dispose() }
-        Remove-Item -LiteralPath $root -Recurse -Force
+        # Only this invocation's newly created root; no ACL changes or foreign kills.
+        # Seven attempts at most, with a three-second retry window. The filesystem
+        # call itself is synchronous; this is not a hard I/O completion deadline.
+        $deleteWatch = [Diagnostics.Stopwatch]::StartNew()
+        while ($true) {
+            $report.cleanup_delete_attempts++
+            try {
+                Remove-Item -LiteralPath $root -Recurse -Force
+                break
+            } catch {
+                if ($_.Exception.GetBaseException().HResult -ne -2147024864 -or
+                    $report.cleanup_delete_attempts -ge 7 -or $deleteWatch.ElapsedMilliseconds -ge 3000) {
+                    throw
+                }
+                $remaining = 3000 - $deleteWatch.ElapsedMilliseconds
+                if ($remaining -le 0) { throw }
+                Start-Sleep -Milliseconds ([int][Math]::Min(500, $remaining))
+                if ($deleteWatch.ElapsedMilliseconds -ge 3000) { throw }
+                $report.cleanup_sharing_retries++
+            }
+        }
         if (Test-Path -LiteralPath $root) { throw 'Owned directory remains.' }
         $report.cleanup_complete = $true
     } catch {
