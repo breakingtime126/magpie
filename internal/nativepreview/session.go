@@ -197,8 +197,27 @@ func (p *nativePeer) next() (map[string]json.RawMessage, error) {
 		return envelope, nil
 	}
 }
+// c407 ServerNotificationEnvelope adds optional emittedAtMs to method/params.
+// It is transport metadata, never thread ownership or permission authority.
+func validNotificationEnvelope(envelope map[string]json.RawMessage) bool {
+	if envelope["method"] == nil || envelope["params"] == nil || len(envelope) < 2 || len(envelope) > 3 {
+		return false
+	}
+	if len(envelope) == 3 {
+		timestamp, present := envelope["emittedAtMs"]
+		if !present {
+			return false
+		}
+		var emittedAt *int64
+		if json.Unmarshal(timestamp, &emittedAt) != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *nativePeer) acceptNotification(envelope map[string]json.RawMessage) error {
-	if len(envelope) != 2 || envelope["method"] == nil || envelope["params"] == nil {
+	if !validNotificationEnvelope(envelope) {
 		if p.stage != nil {
 			p.stage("notification-envelope")
 		}

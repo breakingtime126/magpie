@@ -49,7 +49,7 @@ func fixtureProvider() string {
 	return "openai"
 }
 func fixtureNotice(method string, params any) {
-	data, _ := json.Marshal(map[string]any{"method": method, "params": params})
+	data, _ := json.Marshal(map[string]any{"method": method, "params": params, "emittedAtMs": 1234})
 	fmt.Println(string(data))
 }
 func textFixtureThread(request map[string]json.RawMessage, mode, home string) any {
@@ -514,5 +514,49 @@ func TestPreThreadNotificationsAndConfigErrorsRemainRejectedWithFixedLabels(t *t
 		if err != ErrUnavailable || stage != test.want {
 			t.Fatal("config failure identity or fixed label changed")
 		}
+	}
+}
+
+func TestNotificationEnvelopeAcceptsOnlyPublicOptionalTimestamp(t *testing.T) {
+	called := 0
+	peer := nativePeer{notification: func(string, json.RawMessage) error {
+		called++
+		return nil
+	}}
+	for _, raw := range []string{
+		`{"method":"thread/status/changed","params":{}}`,
+		`{"method":"thread/status/changed","params":{},"emittedAtMs":1234}`,
+		`{"method":"thread/status/changed","params":{},"emittedAtMs":null}`,
+	} {
+		var envelope map[string]json.RawMessage
+		if json.Unmarshal([]byte(raw), &envelope) != nil || peer.acceptNotification(envelope) != nil {
+			t.Fatal("public notification envelope rejected")
+		}
+	}
+	if called != 3 {
+		t.Fatal("notification handler not reached")
+	}
+	for _, raw := range []string{
+		`{"id":1,"method":"attestation/generate","params":{}}`,
+		`{"id":1,"method":"attestation/generate","params":{},"emittedAtMs":1234}`,
+		`{"method":"thread/status/changed","params":{},"jsonrpc":"2.0"}`,
+		`{"method":"thread/status/changed","params":{},"unknown":1234}`,
+		`{"method":"thread/status/changed","params":{},"emittedAtMs":"1234"}`,
+		`{"method":"thread/status/changed","params":{},"emittedAtMs":1.5}`,
+		`{"method":"thread/status/changed","params":{},"emittedAtMs":9223372036854775808}`,
+		`{"method":"thread/status/changed","emittedAtMs":1234}`,
+	} {
+		var envelope map[string]json.RawMessage
+		if json.Unmarshal([]byte(raw), &envelope) != nil || peer.acceptNotification(envelope) != ErrUnavailable {
+			t.Fatal("unknown envelope or server request accepted")
+		}
+	}
+	if called != 3 {
+		t.Fatal("rejected envelope reached handler")
+	}
+	stage := ""
+	peer = nativePeer{stage: func(label string) { stage = label }}
+	if peer.acceptNotification(map[string]json.RawMessage{"method": json.RawMessage(`"configWarning"`), "params": json.RawMessage(`{}`), "emittedAtMs": json.RawMessage(`1234`)}) != ErrUnavailable || stage != "notification-configWarning" {
+		t.Fatal("timestamp incorrectly bypassed nil-handler rejection or its fixed diagnostic")
 	}
 }
