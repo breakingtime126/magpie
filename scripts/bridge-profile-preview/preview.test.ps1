@@ -48,10 +48,70 @@ $fixture = New-Fixture
 $fixture[0].provider = 'https://example.invalid'
 Assert-Rejected { New-BridgeProfileDraft -Backends $fixture }
 
-# Structural guard against accidentally connecting this isolated utility to normal
-# Magpie startup or filesystem/process/network mutation. Not a sandbox proof.
+# Only temporary synthetic filesystem fixtures; the real adapter is never run.
+$root = Join-Path ([IO.Path]::GetTempPath()) ('bridge-profile-save-test-' + [guid]::NewGuid().ToString('N'))
+[void](New-Item -ItemType Directory -Path $root -ErrorAction Stop)
+$originalChecker = (Get-Item Function:Invoke-BridgeProfileCheck).ScriptBlock
+$beforeEnv = [Environment]::GetEnvironmentVariable('MAGPIE_APP_SERVER_BRIDGE_CONFIG', 'Process')
+try {
+    $exe = Join-Path $root 'synthetic.exe'
+    [IO.File]::WriteAllText($exe, 'public non-executable fixture')
+    $parent = Join-Path $root 'profiles'
+    [void](New-Item -ItemType Directory -Path $parent)
+    $backendRows = @()
+    foreach ($name in @('alpha', 'beta')) {
+        $homePath = Join-Path $root ($name + '-home')
+        $codexPath = Join-Path $root ($name + '-codex')
+        [void](New-Item -ItemType Directory -Path $homePath)
+        [void](New-Item -ItemType Directory -Path $codexPath)
+        $backendRows += @{ id=$name;provider=('fixture_' + $name);command=$exe;home=$homePath;codex_home=$codexPath }
+    }
+    function Invoke-BridgeProfileCheck([string]$ProfilePath) {
+        $readStream = [IO.File]::Open($ProfilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $reader = $null
+        try {
+            $reader = [IO.StreamReader]::new($readStream)
+            $read = $reader.ReadToEnd() | ConvertFrom-Json
+        } finally {
+            if ($null -ne $reader) { $reader.Dispose() } else { $readStream.Dispose() }
+        }
+        if ($read.backends.Count -ne 2 -or @($read.PSObject.Properties).Count -ne 1) { throw 'Bad saved shape.' }
+        $locked = $false
+        try { [IO.File]::WriteAllText($ProfilePath, 'must not replace') } catch [IO.IOException] { $locked = $true }
+        if (-not $locked) { throw 'Saved input was mutable during check.' }
+        return 'passed'
+    }
+    $first = Save-BridgeProfileDraft $backendRows $parent
+    if ($first.Status -cne 'passed' -or [IO.Path]::GetFileName($first.Path) -cne 'bridge.json') { throw 'Save/check failed.' }
+    $firstBytes = [IO.File]::ReadAllText($first.Path)
+    function Invoke-BridgeProfileCheck([string]$ProfilePath) { return 'timeout' }
+    $second = Save-BridgeProfileDraft $backendRows $parent
+    if ($second.Status -cne 'timeout' -or $second.Path -ceq $first.Path -or
+        [IO.File]::ReadAllText($first.Path) -cne $firstBytes) { throw 'Timeout or no-overwrite contract failed.' }
+    function Invoke-BridgeProfileCheck([string]$ProfilePath) { throw 'synthetic checker refusal' }
+    $third = Save-BridgeProfileDraft $backendRows $parent
+    if ($third.Status -cne 'failed' -or -not [IO.File]::Exists($third.Path)) { throw 'Failed draft was reported valid or lost.' }
+    Assert-Rejected { Save-BridgeProfileDraft $backendRows $backendRows[0].home }
+    Assert-Rejected { Save-BridgeProfileDraft $backendRows $root }
+    $backendRows[0].token = 'PUBLIC-NOT-A-CREDENTIAL'
+    Assert-Rejected { Save-BridgeProfileDraft $backendRows $parent }
+    if ([Environment]::GetEnvironmentVariable('MAGPIE_APP_SERVER_BRIDGE_CONFIG', 'Process') -cne $beforeEnv) {
+        throw 'Process-global environment changed.'
+    }
+} finally {
+    Set-Item Function:Invoke-BridgeProfileCheck $originalChecker
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
+}
+
+# Guard the deliberately narrow production capabilities, not a sandbox proof.
 $source = Get-Content -LiteralPath "$PSScriptRoot/preview.ps1" -Raw
-foreach ($forbidden in @('Start-Process', 'Invoke-WebRequest', 'Invoke-RestMethod', 'Set-Content', 'Out-File', 'WriteAllText', 'ReadAllText', 'Get-Content', 'SetEnvironmentVariable', 'Set-ItemProperty', 'auth.json', 'config.toml')) {
+foreach ($forbidden in @('Start-Process', 'Invoke-WebRequest', 'Invoke-RestMethod', 'SetEnvironmentVariable',
+    'Set-ItemProperty', 'Set-Acl', 'ExecutionPolicy', 'auth.json', 'config.toml', 'account/login', 'app-server --')) {
     if ($source.Contains($forbidden)) { throw "Unexpected capability: $forbidden" }
 }
-'PASS: pure draft generation, input rejection, field isolation and capability guard'
+foreach ($required in @('$psi.Arguments = ''--check''', '[IO.FileMode]::CreateNew',
+    'magpie-codex-bridge-windows-amd64.exe', 'nativeAdapterSHA256',
+    'Fields changed: previous check no longer applies.')) {
+    if (-not $source.Contains($required)) { throw "Missing contract: $required" }
+}
+'PASS: synthetic profile generation, new-file persistence, check outcomes and unchanged global environment'

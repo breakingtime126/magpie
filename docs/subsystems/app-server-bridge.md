@@ -2469,3 +2469,22 @@ validation, account-path preservation, unsupported auth capabilities, and
 clean EOF of both children. These are not official runtime or real-login
 experiments. Local Go/formatting/runtime checks were not available during
 candidate preparation; static patch checks are not a test pass.
+
+### Standalone save-and-check configuration helper
+
+The [independent Windows helper](../../scripts/bridge-profile-preview/README.md)
+now adds explicit new-file persistence and a bounded call to the fixed packaged
+adapter's `--check`. It never invokes normal Magpie startup or agent wiring.
+The ZIP includes `Open-Bridge-Profile.cmd`, the GUI script and its instructions;
+the launcher preserves normal PowerShell/enterprise execution policy.
+Only a new bridge-owned profile directory is written, outside all four backend
+homes, with no overwrite. Saved JSON contains only the original five backend
+fields. Checker identity is tied to the package manifest hash, not a user-selected
+executable; this does not establish package trust. Check failure/timeout retains
+an unchecked draft, and field changes invalidate the displayed result.
+
+This is a configuration aid, not a ready-to-chat flow. It still requires two
+program selections, provider IDs and four prepared directories. It does not
+configure providers, credentials, compatibility opt-ins or normal Desktop
+startup, and `--check` success establishes only the existing schema/path checks.
+Pure temporary-file fixtures do not establish actual Windows GUI acceptance.

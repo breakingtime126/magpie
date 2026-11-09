@@ -304,6 +304,14 @@ $dirty = & git status --porcelain
 Assert-NativeExit 'Recheck source status'
 if ($dirty) { throw 'Tests or build changed the source checkout.' }
 
+# Reuse the helper's synthetic tests without running a backend or opening its GUI.
+& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -File 'scripts/bridge-profile-preview/preview.test.ps1'
+Assert-NativeExit 'Isolated configuration helper synthetic tests'
+# Independent configuration helper only; never runs ordinary Magpie initialization.
+Copy-Item -LiteralPath 'scripts/bridge-profile-preview/preview.ps1' -Destination (Join-Path $package 'bridge-profile.ps1')
+Copy-Item -LiteralPath 'scripts/bridge-profile-preview/README.md' -Destination (Join-Path $package 'PROFILE-HELPER.md')
+$profileLauncher = '@echo off' + "`r`n" + '"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -STA -File "%~dp0bridge-profile.ps1"' + "`r`n" + 'if errorlevel 1 pause' + "`r`n"
+[IO.File]::WriteAllText((Join-Path $package 'Open-Bridge-Profile.cmd'), $profileLauncher, [Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath 'LICENSE' -Destination $package
 Copy-Item -LiteralPath 'THIRD_PARTY_NOTICES' -Destination $package
 Copy-Item -LiteralPath 'docs/examples/app-server-bridge.example.json' -Destination $package
@@ -395,6 +403,14 @@ refreshToken:false. It provides no proof, OAuth login, external-token refresh,
 OS credential isolation, or verified Desktop compatibility. The separate
 primary-no-auth diagnostic and example JSON remain unchanged and do not enable
 this relay. See DESIGN.md for the exact conservative response contract.
+
+Open-Bridge-Profile.cmd opens the separate configuration helper without ordinary
+Magpie startup. It can save a new isolated bridge.json and call only the bundled
+adapter --check. You still need two official executable selections, provider IDs
+and four separately prepared backend directories. This is not a ready-to-chat
+wizard and does not enable authentication or install normal Desktop integration.
+PowerShell execution-policy or enterprise restrictions must not be bypassed.
+See PROFILE-HELPER.md. Saved profiles do not change Codex or global settings.
 
 No installer, system configuration change, release publication or deployment is
 performed. Artifact availability does not authorize installation or operation.

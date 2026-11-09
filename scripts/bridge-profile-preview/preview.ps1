@@ -1,4 +1,4 @@
-# An isolated, draft-only Windows UI. No normal Magpie initialization is loaded.
+# An isolated configuration helper. No normal Magpie initialization is loaded.
 # Dot-source to test the pure draft builder without opening a window.
 Set-StrictMode -Version Latest
 
@@ -50,13 +50,129 @@ function New-BridgeProfileDraft {
     return ([ordered]@{ backends = $output } | ConvertTo-Json -Depth 5)
 }
 
+# Only local selected paths, with no junction/symlink traversal in this UI slice.
+function Get-BridgeProfileLocalPath([string]$Path, [switch]$Directory) {
+    if ($Path -notmatch '^[A-Za-z]:\\' -or $Path -match '[\x00-\x1f%]' -or $Path.Contains('..')) {
+        throw 'Select an existing local absolute path.'
+    }
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if ($full.Length -lt 3) { throw 'Select a directory below the drive root.' }
+    if ([IO.DriveInfo]::new([IO.Path]::GetPathRoot($full)).DriveType -eq [IO.DriveType]::Network) {
+        throw 'Mapped network drives are not supported by this configuration helper.'
+    }
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+    if ($Directory -and $item -isnot [IO.DirectoryInfo]) { throw 'Select an existing directory.' }
+    while ($null -ne $item) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Junctions and symbolic links are not supported by this configuration helper.'
+        }
+        if ($item -is [IO.DirectoryInfo]) { $item = $item.Parent } else { $item = $item.Directory }
+    }
+    return $full
+}
+
+function Test-BridgeProfileOverlap([string]$Left, [string]$Right) {
+    return $Left.Equals($Right, [StringComparison]::OrdinalIgnoreCase) -or
+        $Left.StartsWith($Right + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $Right.StartsWith($Left + '\', [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Invoke-BridgeProfileCheck([string]$ProfilePath) {
+    # The checker is fixed to this package, never selected by the UI or profile.
+    # BUILD.json verifies package consistency, not signatures or trusted origin.
+    $adapter = Get-BridgeProfileLocalPath (Join-Path $PSScriptRoot 'magpie-codex-bridge-windows-amd64.exe')
+    $manifestPath = Get-BridgeProfileLocalPath (Join-Path $PSScriptRoot 'BUILD.json')
+    $manifestInfo = Get-Item -LiteralPath $manifestPath -ErrorAction Stop
+    if ($manifestInfo.Length -gt 65536) { throw 'Package manifest is invalid.' }
+    $manifest = [IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
+    if ([string]$manifest.nativeAdapterSHA256 -cnotmatch '^[0-9a-f]{64}$' -or
+        (Get-FileHash -LiteralPath $adapter -Algorithm SHA256).Hash.ToLowerInvariant() -cne $manifest.nativeAdapterSHA256) {
+        throw 'The bundled adapter does not match BUILD.json.'
+    }
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $adapter; $psi.Arguments = '--check'
+    $psi.WorkingDirectory = [IO.Path]::GetDirectoryName($ProfilePath)
+    $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    # Only this child receives the profile. No user/process-global setting changes.
+    $psi.EnvironmentVariables.Clear()
+    $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot')
+    if (-not [IO.Path]::IsPathRooted($systemRoot)) { throw 'System root unavailable.' }
+    foreach ($name in @('SystemRoot', 'WINDIR')) { $psi.EnvironmentVariables[$name] = $systemRoot }
+    $psi.EnvironmentVariables['PATH'] = Join-Path $systemRoot 'System32'
+    foreach ($name in @('HOME', 'USERPROFILE', 'TEMP', 'TMP')) { $psi.EnvironmentVariables[$name] = $psi.WorkingDirectory }
+    $psi.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $ProfilePath
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $psi; $started = $false
+    try {
+        $started = $process.Start()
+        if (-not $started) { return 'failed' }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(15000)) { return 'timeout' }
+        if (-not $stdout.Wait(1000) -or -not $stderr.Wait(1000)) { return 'failed' }
+        $outText = $stdout.Result; $errText = $stderr.Result
+        if ($outText.Length -ne 0 -or $errText.Length -gt 4096) { return 'failed' }
+        if ($process.ExitCode -eq 0 -and $errText.Trim() -ceq 'magpie-codex-bridge: configuration valid; no children started') {
+            return 'passed'
+        }
+        return 'failed'
+    } finally {
+        if ($started -and -not $process.HasExited) {
+            # --check never starts children. Do not terminate unrelated processes.
+            $process.Kill()
+            if (-not $process.WaitForExit(3000)) { throw 'Configuration checker did not stop.' }
+        }
+        $process.Dispose()
+    }
+}
+
+function Save-BridgeProfileDraft([object[]]$Backends, [string]$ParentDirectory) {
+    foreach ($backend in $Backends) {
+        if ($backend -isnot [Collections.IDictionary] -or $backend.Count -ne 5) {
+            throw 'Only the five displayed profile fields may be saved; no secrets or advanced options.'
+        }
+        foreach ($name in $backend.Keys) {
+            if (@('id', 'provider', 'command', 'home', 'codex_home') -cnotcontains $name) {
+                throw 'Unsupported profile field.'
+            }
+        }
+    }
+    $json = New-BridgeProfileDraft -Backends $Backends
+    $parent = Get-BridgeProfileLocalPath $ParentDirectory -Directory
+    foreach ($backend in $Backends) {
+        [void](Get-BridgeProfileLocalPath ([string]$backend.command))
+        foreach ($name in @('home', 'codex_home')) {
+            $state = Get-BridgeProfileLocalPath ([string]$backend[$name]) -Directory
+            if (Test-BridgeProfileOverlap $parent $state) {
+                throw 'Choose a profile parent separate from all four backend state directories.'
+            }
+        }
+    }
+    $directory = Join-Path $parent ('magpie-bridge-profile-' + [guid]::NewGuid().ToString('N'))
+    # New-Item without Force rejects an existing directory; CreateNew also refuses
+    # to replace any existing file. Do not delete or overwrite a previous profile.
+    [void](New-Item -ItemType Directory -Path $directory -ErrorAction Stop)
+    $path = Join-Path $directory 'bridge.json'
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        $data = [Text.UTF8Encoding]::new($false).GetBytes($json)
+        $stream.Write($data, 0, $data.Length); $stream.Flush($true)
+        $status = 'failed'
+        try { $status = Invoke-BridgeProfileCheck $path } catch { $status = 'failed' }
+        if (@('passed', 'failed', 'timeout') -cnotcontains $status) { $status = 'failed' }
+        return [pscustomobject]@{ Path=$path; Status=$status }
+    } finally { if ($null -ne $stream) { $stream.Dispose() } }
+}
+
 function Show-BridgeProfilePreview {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Windows only.' }
     if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'Run PowerShell in STA mode.' }
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     $form = New-Object Windows.Forms.Form
-    $form.Text = 'Magpie Bridge - Draft profile only'
+    $form.Text = 'Magpie Bridge - Isolated profile helper'
     $form.Size = New-Object Drawing.Size(850, 820)
     $form.MinimumSize = $form.Size
     $form.StartPosition = 'CenterScreen'
@@ -65,7 +181,7 @@ function Show-BridgeProfilePreview {
     $notice = New-Object Windows.Forms.Label
     $notice.Location = New-Object Drawing.Point(16, 12)
     $notice.Size = New-Object Drawing.Size(800, 80)
-    $notice.Text = "EXPERIMENTAL PREVIEW: no files are saved or imported; no account or backend is contacted.`r`nSelect existing, separately prepared test homes. Do not select your ordinary Codex home.`r`nThis draft does NOT connect Codex, configure authentication, or enable Desktop compatibility."
+    $notice.Text = "EXPERIMENTAL: Save creates a new isolated profile and checks it; no account or backend is contacted.`r`nSelect existing, separately prepared test homes. Do not select your ordinary Codex home.`r`nThis draft does NOT connect Codex, configure authentication, or enable Desktop compatibility."
     $form.Controls.Add($notice)
     $rows = @()
     $y = 100
@@ -127,11 +243,11 @@ function Show-BridgeProfilePreview {
     $generate = New-Object Windows.Forms.Button
     $generate.Text = 'Preview draft'
     $generate.Location = New-Object Drawing.Point(16, $y)
-    $generate.Size = New-Object Drawing.Size(160, 30)
+    $generate.Size = New-Object Drawing.Size(150, 30)
     $form.Controls.Add($generate)
     $status = New-Object Windows.Forms.Label
-    $status.Location = New-Object Drawing.Point(190, $y)
-    $status.Size = New-Object Drawing.Size(620, 48)
+    $status.Location = New-Object Drawing.Point(345, $y)
+    $status.Size = New-Object Drawing.Size(465, 48)
     $status.Text = 'Provider means the existing backend config identifier, not a URL or API key.'
     $form.Controls.Add($status)
     $preview = New-Object Windows.Forms.TextBox
@@ -158,11 +274,48 @@ function Show-BridgeProfilePreview {
             $this.Tag.Status.Text = $_.Exception.Message
         }
     })
+    $save = New-Object Windows.Forms.Button
+    $save.Text = 'Save and check'
+    $save.Location = New-Object Drawing.Point(178, $y)
+    $save.Size = New-Object Drawing.Size(155, 30)
+    $save.Tag = @{ Rows = $rows; Preview = $preview; Status = $status }
+    $save.Add_Click({
+        $dialog = New-Object Windows.Forms.FolderBrowserDialog
+        $dialog.Description = 'Choose a separate profile parent; a new folder and bridge.json will be created. Existing files are never overwritten.'
+        $dialog.ShowNewFolderButton = $false
+        try {
+            if ($dialog.ShowDialog() -ne [Windows.Forms.DialogResult]::OK) { return }
+            $this.Enabled = $false
+            $this.Tag.Preview.Clear()
+            $inputs = @()
+            foreach ($row in $this.Tag.Rows) {
+                $inputRow = @{}
+                foreach ($key in $row.Keys) { $inputRow[$key] = $row[$key].Text }
+                $inputs += $inputRow
+            }
+            $this.Tag.Status.Text = 'Saving a new profile and checking paths; no backend starts.'
+            $result = Save-BridgeProfileDraft $inputs $dialog.SelectedPath
+            $this.Tag.Preview.Text = $result.Path
+            if ($result.Status -ceq 'passed') {
+                $this.Tag.Status.Text = 'Saved; structure/path check passed. Authentication, models and Desktop remain unverified.'
+            } elseif ($result.Status -ceq 'timeout') {
+                $this.Tag.Status.Text = 'Saved but UNCHECKED: checker timed out. No retry or connection was attempted.'
+            } else {
+                $this.Tag.Status.Text = 'Saved but UNCHECKED: bundled adapter missing/invalid or check failed. No connection attempted.'
+            }
+        } catch {
+            $this.Tag.Status.Text = 'Not validated. Check local paths and permissions; no existing profile was overwritten.'
+        } finally { $this.Enabled = $true; $dialog.Dispose() }
+    })
+    $form.Controls.Add($save)
     # Invalidate the old draft immediately when any selected value changes.
     foreach ($row in $rows) {
         foreach ($box in $row.Values) {
-            $box.Tag = $preview
-            $box.Add_TextChanged({ $this.Tag.Clear() })
+            $box.Tag = @{ Preview = $preview; Status = $status }
+            $box.Add_TextChanged({
+                $this.Tag.Preview.Clear()
+                $this.Tag.Status.Text = 'Fields changed: previous check no longer applies. Previously saved files remain unchanged.'
+            })
         }
     }
     try { [void]$form.ShowDialog() } finally { $form.Dispose() }

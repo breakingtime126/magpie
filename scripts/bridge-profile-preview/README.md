@@ -1,72 +1,76 @@
-# Isolated bridge-profile draft UI
+# Isolated bridge-profile helper
 
-This is a small Windows-only **draft preview**, not the ordinary Magpie GUI and
-not a finished Codex connection wizard. It runs independently of Magpie's normal
-startup, migrations, provider/account discovery, agent wiring and gateway.
+This independent Windows GUI can generate, save and check a minimal bridge
+profile. It never loads ordinary Magpie startup, account discovery, migrations,
+agent sync, Connect/Disconnect or the HTTP gateway. It is **not yet a complete
+Codex connection or ready-to-chat wizard**.
 
-Open `preview.ps1` using Windows PowerShell in STA mode, for example:
+## Windows ZIP entry
 
-```powershell
-powershell.exe -NoProfile -STA -File .\scripts\bridge-profile-preview\preview.ps1
-```
+Open `Open-Bridge-Profile.cmd` in the experimental Windows ZIP. It runs the
+bundled `bridge-profile.ps1` using standard Windows PowerShell 5.1, NoProfile
+and STA. It does not bypass execution policy, unblock downloaded files, elevate,
+install anything, or change user/global environment. If enterprise/PowerShell
+policy blocks it, stop; artifact availability is not deployment authorization.
+The script remains usable for developer preview via standard
+`powershell.exe -NoProfile -STA -File preview.ps1`; saving outside the packaged
+ZIP will remain unchecked if its fixed companion adapter/BUILD.json are absent.
 
-Do not bypass execution policy or other enterprise restrictions to run it.
-It is not yet included in an EXE or installer; this command is a developer
-verification entry, **not the requested final one-click experience**.
+1. Choose two official native executable paths, provider identifiers and four
+   **existing separately prepared test directories**. No account files are read
+   or imported. Do not select ordinary account homes or enter keys/tokens.
+2. `Preview draft` retains the original pure in-memory JSON builder.
+3. `Save and check` asks for an existing, separate profile parent directory.
+   It creates a fresh `magpie-bridge-profile-<random>` directory and fixed
+   `bridge.json` using CreateNew; existing profiles are never overwritten.
+4. Only the fixed companion `magpie-codex-bridge-windows-amd64.exe --check` runs.
+   Its bytes must match `BUILD.json`'s nativeAdapterSHA256 first. This verifies
+   package consistency, **not signature, publisher or trusted origin**.
+   The profile path is supplied only to that child's minimal environment.
+5. The UI distinguishes passed, failed and timeout. A failed check leaves a
+   saved **unchecked draft**, not a connected profile. There is no retry, backend
+   launch, authentication attempt, startup probe, clipboard or Desktop change.
+   Editing any field clears the displayed check result; old saved files remain.
 
-The native file and folder dialogs return real local Windows paths. Choose two
-native executable paths and four existing, separate test state directories.
-The provider field is the identifier already used by that backend's own
-configuration, not a service URL or secret. This utility neither prepares those
-directories nor reads their contents. Do not choose an ordinary account's home.
+The helper rejects nonlocal paths, drive-root selections, junction/symlink
+ancestors, and profile parents overlapping any selected backend state directory.
+Only the five displayed fields may be saved; secret/env/compatibility fields
+are not accepted. Paths are checked before creation and the profile file remains
+open without write/delete sharing during validation. These are ordinary owned-
+workspace checks, not an OS boundary against hostile concurrent same-user path
+replacement. Separate homes do not isolate credentials from same-user processes.
 
-`Preview draft` generates the actual minimal bridge `backends` JSON shape in a
-read-only text box. It checks identifiers, local absolute Windows path forms,
-`.exe` suffixes and lexical state-directory overlap. Changing any field clears
-the previous preview. It does **not** call `Config.Validate`, read binaries or
-configuration files, follow symlinks, verify signatures or claim runtime
-validation. Junctions, executable identity, file permissions, policy and
-compatibility remain unverified. The real bridge's strict `--check` remains
-necessary before any separately authorized use, and itself does not prove
-Desktop functionality.
+To remove this helper's outputs, close it and delete only its newly created
+profile directory and the extracted ZIP directory. It has not changed Codex,
+global settings or the backend homes.
 
-There are deliberately no save, connect, launch, login, account import,
-environment inheritance, security-mode or advanced compatibility controls.
-No clipboard operation is performed. All selected values stay in memory until
-the window closes. Windows dialogs may keep ordinary OS-managed navigation
-history; this is not a guarantee of zero operating-system writes.
+## What the check does and does not establish
 
-No real-account GPT/AIHub selection or production-ready profile is offered.
-The default-off compatibility modes, executable hash pinning, backend policy
-setup and normal Codex startup integration are not configured here. The draft
-alone will not make the Desktop work. This limitation avoids inventing policy,
-silently sharing homes or presenting current no-account experiments as supported
-authentication.
+The real adapter loads this JSON and calls `Config.Validate`: field shape,
+existing native-file and directory paths, executable/self checks, and resolved
+home overlap. It does not start either backend or read native account/config
+contents. A successful check is **not** authentication, provider availability,
+model service, executable provenance or Desktop integration acceptance.
+
+The smallest actual chat setup still needs legitimate provider definitions and
+credentials in those separately prepared native contexts, reviewed compatibility
+settings and a supported Desktop startup path. This helper supplies none of
+those and never silently enables the new trusted-token relay or other modes.
+It reduces JSON editing, but does not pretend those remaining steps are solved.
 
 ## Verification
 
-```powershell
-powershell.exe -NoProfile -File .\scripts\bridge-profile-preview\preview.test.ps1
-```
+`preview.test.ps1` reuses the original pure draft tests, then writes only fresh
+temporary synthetic directories and replaces the checker with an in-process
+fixture. It covers saved JSON, no-overwrite, write locking during check,
+failed/timeout outcomes, home overlap, unsupported extra fields and unchanged
+process-global environment. It never executes the fake .exe, real adapter,
+backend or account login. Static capability checks are regressions, not sandbox
+proofs. The existing preview workflow and Windows package job run these tests;
+no new workflow or test framework is added.
 
-Tests dot-source only the pure draft builder. Synthetic nonexistent paths ensure
-that generation does not depend on backend files. Tests cover two backend JSON
-shape, extra-field stripping, invalid identifiers and paths, same/nested homes,
-and a structural capability guard. That guard is not a security boundary.
-GUI dialogs, layout, STA behavior and actual Windows execution require a Windows
-runner/manual acceptance; no claim of those passing is implied by static review.
-
-The independent `Experimental bridge profile draft tests` workflow runs only
-for this experimental branch when the preview scripts or that workflow change.
-It checks out the exact triggering commit with read-only repository permissions
-and no persisted Git credentials, then runs these pure tests in Windows
-PowerShell 5.1. It does not open a window, launch a backend, run the Desktop job,
-publish artifacts, or deploy anything. The explicit shell does not override
-execution policy; a policy refusal is a failure, not permission to bypass it.
-This tests the builder only, not the visual UI or native selectors. No successful
-CI run is claimed by adding the workflow.
-
-The next product step is a single isolated compiled entry with these selectors
-and explicit bridge-owned persistence, **after** authentication and Desktop
-configuration semantics are settled. Do not wire this into the ordinary
-`Connect Codex` action, which has different HTTP-gateway configuration semantics.
+The actual adapter already has separate unit/lifecycle `--check` coverage. The
+new combined GUI, selectors, package-launch behavior and actual GUI-to-adapter
+flow still need Windows acceptance. Neither static review nor mocked success
+proves those passed. Local preparation had no usable PowerShell runtime, so its
+new tests were not run locally.

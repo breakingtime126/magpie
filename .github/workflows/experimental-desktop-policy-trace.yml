@@ -91,15 +91,15 @@ jobs:
             fi
           fi
           # Offline repair commits never activate Desktop or configure a sandbox.
-          # Keep the existing exclusion marker for the separate legacy workflows.
+          # Legacy cold-start and native-entry jobs independently reject this offline marker.
           if [[ "$PUSH_OFFLINE_ONLY" == 'true' && ( "$TRIGGER_EVENT" != 'push' ||
-                  "$PUSH_WINAPP_MARKER" != 'true' || "$PUSH_UNELEVATED_CHAT" == 'true' ||
+                  "$PUSH_UNELEVATED_CHAT" == 'true' ||
                   "$PUSH_PACKAGE_IDENTITY" == 'true' || "$PUSH_OWNED_CATALOG" == 'true' ||
                   "$PUSH_MODEL_SELECTION" == 'true' || "$PUSH_MODEL_SETTINGS" == 'true' ||
                   "$PUSH_SYNTHETIC_MODELS" == 'true' || "$PUSH_WELCOME_4239" == 'true' ||
                   "$PUSH_NATIVE_ENTRY" == 'true' || "$PUSH_BUILD_4239" == 'true' ||
                   "$PUSH_OTHER_DIAGNOSTIC" == 'true' ) ]]; then
-            echo 'Offline-only repair requires the exclusion marker and no live profile.' >&2
+            echo 'Offline-only repair requires a push with no live profile.' >&2
             exit 1
           fi
           # This action-time approved experiment is not a default or reusable setup
