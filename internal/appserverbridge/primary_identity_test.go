@@ -163,15 +163,15 @@ func TestPrimaryIdentityOnlyQueriesPrimaryAndCleanlyExits(t *testing.T) {
 
 func TestPrimaryIdentityFailsClosedWithoutEchoingNativeMessages(t *testing.T) {
 	for name, response := range map[string]string{
-		"token": strings.Replace(identityConfigured, `"authToken":null`, `"authToken":"PUBLIC-SECRET-CANARY"`, 1),
+		"token":          strings.Replace(identityConfigured, `"authToken":null`, `"authToken":"PUBLIC-SECRET-CANARY"`, 1),
 		"unknown method": strings.Replace(identityConfigured, `"chatgpt"`, `"new-private-type"`, 1),
-		"wrong id": strings.Replace(identityConfigured, `"identity-status"`, `"other"`, 1),
-		"duplicate": strings.Replace(identityConfigured, `"authToken":null`, `"authToken":null,"authToken":null`, 1),
+		"wrong id":       strings.Replace(identityConfigured, `"identity-status"`, `"other"`, 1),
+		"duplicate":      strings.Replace(identityConfigured, `"authToken":null`, `"authToken":null,"authToken":null`, 1),
 		"mixed envelope": strings.Replace(identityConfigured, `"result":`, `"error":{},"result":`, 1),
-		"native error": `{"id":"identity-status","error":{"code":-1,"message":"PUBLIC-SECRET-CANARY","data":{"token":"PUBLIC-SECRET-CANARY"}}}`,
+		"native error":   `{"id":"identity-status","error":{"code":-1,"message":"PUBLIC-SECRET-CANARY","data":{"token":"PUBLIC-SECRET-CANARY"}}}`,
 		"server request": `{"id":"native","method":"attestation/generate","params":{}}`,
-		"notification": `{"method":"account/updated","params":{}}`,
-		"oversized": strings.Repeat("x", startupProbeLimit+1),
+		"notification":   `{"method":"account/updated","params":{}}`,
+		"oversized":      strings.Repeat("x", startupProbeLimit+1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := primaryIdentityConfig(t, "normal", response)
@@ -192,12 +192,12 @@ func TestPrimaryIdentityFailsClosedWithoutEchoingNativeMessages(t *testing.T) {
 
 func TestPrimaryIdentityAdmissionDoesNotStartEitherChild(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
-		"wrong provider": func(c *Config) { c.Backends[0].Provider = "other" },
-		"missing pin": func(c *Config) { c.Backends[0].StartupProbeSHA256 = "" },
-		"wrong pin": func(c *Config) { c.Backends[0].StartupProbeSHA256 = strings.Repeat("0", 64) },
-		"inherited env": func(c *Config) { c.Backends[0].InheritEnv = []string{"OPENAI_API_KEY"} },
+		"wrong provider":   func(c *Config) { c.Backends[0].Provider = "other" },
+		"missing pin":      func(c *Config) { c.Backends[0].StartupProbeSHA256 = "" },
+		"wrong pin":        func(c *Config) { c.Backends[0].StartupProbeSHA256 = strings.Repeat("0", 64) },
+		"inherited env":    func(c *Config) { c.Backends[0].InheritEnv = []string{"OPENAI_API_KEY"} },
 		"token relay mode": func(c *Config) { c.AuthStatus = AuthStatusPrimaryTrustedStdio167 },
-		"startup probe": func(c *Config) { c.StartupProbe = StartupProbeCompareUnrestricted167 },
+		"startup probe":    func(c *Config) { c.StartupProbe = StartupProbeCompareUnrestricted167 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := primaryIdentityConfig(t, "normal", identityConfigured)

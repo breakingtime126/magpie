@@ -269,7 +269,7 @@ function New-BridgeProfileWindow {
     Add-Type -AssemblyName System.Drawing
     $form = New-Object Windows.Forms.Form
     $form.Text = 'Magpie Bridge - Isolated profile helper'
-    $form.ClientSize = [Drawing.Size]::new(850, 820)
+    $form.ClientSize = [Drawing.Size]::new(850, 700)
     $form.MinimumSize = $form.Size
     $form.StartPosition = 'CenterScreen'
     $form.AutoScroll = $true
@@ -347,8 +347,8 @@ function New-BridgeProfileWindow {
     $status.Text = 'Provider means the existing backend config identifier, not a URL or API key.'
     $form.Controls.Add($status)
     $preview = New-Object Windows.Forms.TextBox
-    $preview.Location = New-Object Drawing.Point(16, ($y + 54))
-    $preview.Size = New-Object Drawing.Size(794, 170)
+    $preview.Location = [Drawing.Point]::new(16, ($y + 120))
+    $preview.Size = [Drawing.Size]::new(794, 72)
     $preview.Multiline = $true
     $preview.ReadOnly = $true
     $preview.ScrollBars = 'Both'
@@ -404,10 +404,10 @@ function New-BridgeProfileWindow {
     $form.Controls.Add($save)
     $identity = New-Object Windows.Forms.Button
     $identity.Text = 'Inspect primary identity...'
-    $identity.Location = [Drawing.Point]::new(16, ($y + 232))
+    $identity.Location = [Drawing.Point]::new(16, ($y + 54))
     $identity.Size = [Drawing.Size]::new(215, 30)
     $identityStatus = New-Object Windows.Forms.Label
-    $identityStatus.Location = [Drawing.Point]::new(245, ($y + 232))
+    $identityStatus.Location = [Drawing.Point]::new(245, ($y + 54))
     $identityStatus.Size = [Drawing.Size]::new(565, 60)
     $identityStatus.Text = 'Optional native operation, separate consent required. Not a login or chat test.'
     $identity.Tag = @{ Rows=$rows; Status=$identityStatus }
