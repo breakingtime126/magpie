@@ -35,7 +35,7 @@ func sharedLiveComplete167(t *testing.T, r *Router, d Delivery, thread string) [
 	t.Helper()
 	return reply(t, r, d, string(raw(object{
 		"modelProvider": raw(r.byID[d.Backend].Provider),
-		"thread": raw(object{"id": raw(thread), "modelProvider": raw(r.byID[d.Backend].Provider)}),
+		"thread":        raw(object{"id": raw(thread), "modelProvider": raw(r.byID[d.Backend].Provider)}),
 	})))
 }
 

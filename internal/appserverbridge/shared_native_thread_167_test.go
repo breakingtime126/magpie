@@ -37,7 +37,7 @@ func sharedThreadRequest167(method, backend, cwd string) object {
 
 func sharedThreadConfigResult167(t *testing.T, r *Router, backend, cwd string) object {
 	t.Helper()
-		result := sharedNativeConfigResponse167(r, backend)
+	result := sharedNativeConfigResponse167(r, backend)
 	config, _ := child(result, "config")
 	config["projects"] = raw(object{cwd: raw(object{"trust_level": raw("trusted")})})
 	config["unusedPrivateMetadata"] = raw("PRIVATE_CANARY")
