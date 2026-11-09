@@ -123,7 +123,7 @@ type textStream struct {
 	spec                     peerSpec
 	model, thread, turn      string
 	completed, turnRequested bool
-	textBytes                int
+	textBytes, deltaBytes    int
 	items                    map[string]string
 	finished                 map[string]bool
 	parts                    []string
@@ -292,6 +292,34 @@ func (s *textStream) notification(method string, data json.RawMessage) error {
 		if json.Unmarshal(fields["itemId"], &id) != nil || s.items[id] == "" || s.finished[id] {
 			return ErrUnavailable
 		}
+		kind := "reasoning"
+		if method == "item/agentMessage/delta" {
+			kind = "agentMessage"
+		}
+		if s.items[id] != kind {
+			return ErrUnavailable
+		}
+		indexKey := ""
+		switch method {
+		case "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded":
+			indexKey = "summaryIndex"
+		case "item/reasoning/textDelta":
+			indexKey = "contentIndex"
+		}
+		if indexKey != "" {
+			var index *int64
+			if json.Unmarshal(fields[indexKey], &index) != nil || index == nil || *index < 0 {
+				return ErrUnavailable
+			}
+		}
+		if method != "item/reasoning/summaryPartAdded" {
+			var delta *string
+			if json.Unmarshal(fields["delta"], &delta) != nil || delta == nil || len(*delta) > 65536-s.deltaBytes {
+				return ErrUnavailable
+			}
+			s.deltaBytes += len(*delta)
+		}
+		// Deltas are validated and discarded, never displayed as final output.
 		return nil
 	default:
 		return ErrUnavailable

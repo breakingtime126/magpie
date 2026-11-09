@@ -43,7 +43,8 @@ $report = [ordered]@{schema=1;scope='official-native-loopback-text-only';source_
     status='failed';stage='download';package_verified=$false;test_passed=$false;cleanup_complete=$false;
     desktop_verified=$false;real_account_used=$false;zero_egress_proven=$false;
     diagnostic_status='unavailable';native_stage=$null;native_class=$null;
-    test_process_started=$false;host_error_line=0;host_error_category='none'}
+    test_process_started=$false;host_error_line=0;host_error_category='none';
+    cleanup_error_line=0;cleanup_error_category='none';cleanup_error_hresult=0}
 $process = $null; $started = $false
 try {
     $package = Join-Path $root 'official.msix'
@@ -135,7 +136,13 @@ try {
         'reply','start','test-isolation',
         'test-setup','test-transport','thread-receipt',
         'thread-request','turn-receipt','turn-request',
-        'turn-stream','unclassified','version'
+        'turn-stream','unclassified','version',
+        'notification-configWarning','notification-warning','notification-account-updated',
+        'config-rpc-other','config-rpc-invalid-params','config-rpc-invalid-request',
+        'config-rpc-method-not-found','config-rpc-internal','config-rpc-server',
+        'notification-envelope','config-rpc-write','config-rpc-transport',
+        'config-rpc-canceled','config-rpc-eof','config-rpc-envelope',
+        'config-rpc-id'
     )
     $allowedClasses = @('passed','failed-no-request','failed-request-seen','failed-fixture-rejected')
     $report.diagnostic_status = 'invalid'
@@ -189,7 +196,32 @@ try {
         Remove-Item -LiteralPath $root -Recurse -Force
         if (Test-Path -LiteralPath $root) { throw 'Owned directory remains.' }
         $report.cleanup_complete = $true
-    } catch { $report.status = 'failed'; $report.stage = 'cleanup' }
+    } catch {
+        $report.status = 'failed'; $report.stage = 'cleanup'
+        # Preserve the original host/native failure; record cleanup separately.
+        if ($_.InvocationInfo.ScriptName -ceq $PSCommandPath) {
+            $report.cleanup_error_line = [int]$_.InvocationInfo.ScriptLineNumber
+        }
+        $report.cleanup_error_hresult = [int]$_.Exception.GetBaseException().HResult
+        $report.cleanup_error_category = switch ($_.Exception.GetBaseException().GetType().FullName) {
+            'System.Management.Automation.RuntimeException' { 'powershell-runtime'; break }
+            'System.Management.Automation.MethodException' { 'method-binding'; break }
+            'System.Management.Automation.MethodInvocationException' { 'method-invocation'; break }
+            'System.Management.Automation.PropertyNotFoundException' { 'property-missing'; break }
+            'System.Management.Automation.PSInvalidOperationException' { 'powershell-operation'; break }
+            'System.InvalidOperationException' { 'invalid-operation'; break }
+            'System.ArgumentException' { 'argument'; break }
+            'System.ArgumentNullException' { 'argument-null'; break }
+            'System.IndexOutOfRangeException' { 'index-range'; break }
+            'System.NullReferenceException' { 'null-reference'; break }
+            'System.IO.IOException' { 'io'; break }
+            'System.ObjectDisposedException' { 'disposed'; break }
+            'System.UnauthorizedAccessException' { 'access'; break }
+            'System.ComponentModel.Win32Exception' { 'win32'; break }
+            'System.Threading.Tasks.TaskCanceledException' { 'task-cancelled'; break }
+            default { 'other' }
+        }
+    }
     [IO.File]::WriteAllText($reportPath, ($report | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
 }
 if ($report.status -cne 'passed') { throw 'Official native text test failed; inspect fixed-stage report.' }

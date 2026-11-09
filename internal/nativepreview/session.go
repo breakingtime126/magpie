@@ -198,18 +198,27 @@ func (p *nativePeer) next() (map[string]json.RawMessage, error) {
 	}
 }
 func (p *nativePeer) acceptNotification(envelope map[string]json.RawMessage) error {
-	if p.notification == nil || len(envelope) != 2 || envelope["method"] == nil || envelope["params"] == nil {
+	if len(envelope) != 2 || envelope["method"] == nil || envelope["params"] == nil {
+		if p.stage != nil {
+			p.stage("notification-envelope")
+		}
 		return ErrUnavailable
 	}
 	var method string
 	if json.Unmarshal(envelope["method"], &method) != nil {
+		if p.stage != nil {
+			p.stage("notification-envelope")
+		}
 		return ErrUnavailable
 	}
-	err := p.notification(method, envelope["params"])
+	err := ErrUnavailable
+	if p.notification != nil {
+		err = p.notification(method, envelope["params"])
+	}
 	if err != nil && p.stage != nil {
 		label := "notification-unsupported"
 		switch method {
-		case "thread/started", "thread/settings/updated", "thread/status/changed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/completed":
+		case "configWarning", "warning", "account/updated", "thread/started", "thread/settings/updated", "thread/status/changed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/completed":
 			label = "notification-" + strings.ReplaceAll(method, "/", "-")
 		}
 		p.stage(label)
@@ -219,11 +228,23 @@ func (p *nativePeer) acceptNotification(envelope map[string]json.RawMessage) err
 func (p *nativePeer) rpc(id, method string, params any) (json.RawMessage, error) {
 	request, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
 	if err != nil || writePeer(p.ctx, p.input, request) != nil {
+		if method == "config/read" && p.stage != nil {
+			p.stage("config-rpc-write")
+		}
 		return nil, ErrUnavailable
 	}
 	for {
 		envelope, err := p.next()
 		if err != nil {
+			if method == "config/read" && p.stage != nil {
+				label := "config-rpc-transport"
+				if p.ctx.Err() != nil {
+					label = "config-rpc-canceled"
+				} else if err == io.EOF {
+					label = "config-rpc-eof"
+				}
+				p.stage(label)
+			}
 			return nil, ErrUnavailable
 		}
 		if envelope["method"] != nil {
@@ -232,11 +253,42 @@ func (p *nativePeer) rpc(id, method string, params any) (json.RawMessage, error)
 			}
 			continue
 		}
+		// Classify only the fixed error code of a correlated config/read error.
+		// Error messages/data and unrecognized method names are never observed.
+		if method == "config/read" && len(envelope) == 2 && envelope["error"] != nil && p.stage != nil {
+			var errorID string
+			var failure struct {
+				Code *int `json:"code"`
+			}
+			if json.Unmarshal(envelope["id"], &errorID) == nil && errorID == id && json.Unmarshal(envelope["error"], &failure) == nil && failure.Code != nil {
+				label := "config-rpc-other"
+				switch *failure.Code {
+				case -32602:
+					label = "config-rpc-invalid-params"
+				case -32600:
+					label = "config-rpc-invalid-request"
+				case -32601:
+					label = "config-rpc-method-not-found"
+				case -32603:
+					label = "config-rpc-internal"
+				case -32000:
+					label = "config-rpc-server"
+				}
+				p.stage(label)
+				return nil, ErrUnavailable
+			}
+		}
 		if len(envelope) != 2 || envelope["result"] == nil {
+			if method == "config/read" && p.stage != nil {
+				p.stage("config-rpc-envelope")
+			}
 			return nil, ErrUnavailable
 		}
 		var gotID string
 		if json.Unmarshal(envelope["id"], &gotID) != nil || gotID != id {
+			if method == "config/read" && p.stage != nil {
+				p.stage("config-rpc-id")
+			}
 			return nil, ErrUnavailable
 		}
 		return envelope["result"], nil

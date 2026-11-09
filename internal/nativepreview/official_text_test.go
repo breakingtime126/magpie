@@ -235,9 +235,16 @@ func (f *previewTextFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
-	// Same assistant-text-only SSE shape as the existing official-runtime fixture.
+	// Exercise actual streaming text events, not only an output_item.done response.
+	// The native app-server must translate them to bound item deltas; final text
+	// remains authoritative only after completion. No tool events are emitted.
 	events := []any{
 		map[string]any{"type": "response.created", "response": map[string]any{"id": "preview-response"}},
+		map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "message", "role": "assistant", "id": "preview-message", "status": "in_progress", "content": []any{}}},
+		map[string]any{"type": "response.content_part.added", "item_id": "preview-message", "output_index": 0, "content_index": 0, "part": map[string]any{"type": "output_text", "text": ""}},
+		map[string]any{"type": "response.output_text.delta", "item_id": "preview-message", "output_index": 0, "content_index": 0, "delta": "fixture-answer-"},
+		map[string]any{"type": "response.output_text.delta", "item_id": "preview-message", "output_index": 0, "content_index": 0, "delta": "alpha"},
+		map[string]any{"type": "response.output_text.done", "item_id": "preview-message", "output_index": 0, "content_index": 0, "text": "fixture-answer-alpha"},
 		map[string]any{"type": "response.output_item.done", "item": map[string]any{"type": "message", "role": "assistant", "id": "preview-message", "content": []any{map[string]any{"type": "output_text", "text": "fixture-answer-alpha"}}}},
 		map[string]any{"type": "response.completed", "response": map[string]any{"id": "preview-response", "usage": map[string]any{"input_tokens": 0, "input_tokens_details": nil, "output_tokens": 0, "output_tokens_details": nil, "total_tokens": 0}}},
 	}
@@ -254,7 +261,7 @@ func (f *previewTextFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 func previewDiagnosticStageAllowed(label string) bool {
 	switch label {
-	case "test-isolation", "test-transport", "test-setup", "unclassified", "admission", "version", "start", "initialize", "initialize-receipt", "config-request", "config-provider", "config-mcp", "config-hooks-notify", "models", "model-selection", "thread-request", "thread-receipt", "turn-request", "turn-receipt", "turn-stream", "reply", "close", "cleanup", "done", "notification-unsupported", "notification-thread-started", "notification-thread-settings-updated", "notification-thread-status-changed", "notification-thread-tokenUsage-updated", "notification-turn-started", "notification-turn-completed", "notification-item-started", "notification-item-completed":
+	case "notification-envelope", "config-rpc-write", "config-rpc-transport", "config-rpc-canceled", "config-rpc-eof", "config-rpc-envelope", "config-rpc-id", "notification-configWarning", "notification-warning", "notification-account-updated", "config-rpc-other", "config-rpc-invalid-params", "config-rpc-invalid-request", "config-rpc-method-not-found", "config-rpc-internal", "config-rpc-server", "test-isolation", "test-transport", "test-setup", "unclassified", "admission", "version", "start", "initialize", "initialize-receipt", "config-request", "config-provider", "config-mcp", "config-hooks-notify", "models", "model-selection", "thread-request", "thread-receipt", "turn-request", "turn-receipt", "turn-stream", "reply", "close", "cleanup", "done", "notification-unsupported", "notification-thread-started", "notification-thread-settings-updated", "notification-thread-status-changed", "notification-thread-tokenUsage-updated", "notification-turn-started", "notification-turn-completed", "notification-item-started", "notification-item-completed":
 		return true
 	}
 	for path := range textOverrides() {

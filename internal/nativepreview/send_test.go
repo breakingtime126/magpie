@@ -423,3 +423,96 @@ func TestFixedStageObserverPreservesFailureAndRedaction(t *testing.T) {
 		}
 	}
 }
+
+func TestBoundTextDeltasAreTypedBoundedAndNeverFinalOutput(t *testing.T) {
+	fresh := func() *textStream {
+		return &textStream{thread: "thread", turn: "turn", turnRequested: true, items: map[string]string{"agent": "agentMessage", "reason": "reasoning", "user": "userMessage"}, finished: map[string]bool{}}
+	}
+	message := func(item string, fields map[string]any) json.RawMessage {
+		fields["threadId"], fields["turnId"], fields["itemId"] = "thread", "turn", item
+		raw, _ := json.Marshal(fields)
+		return raw
+	}
+	stream := fresh()
+	for _, event := range []struct {
+		method string
+		item   string
+		fields map[string]any
+	}{
+		{"item/agentMessage/delta", "agent", map[string]any{"delta": "partial"}},
+		{"item/reasoning/summaryPartAdded", "reason", map[string]any{"summaryIndex": 0}},
+		{"item/reasoning/summaryTextDelta", "reason", map[string]any{"summaryIndex": 0, "delta": "summary"}},
+		{"item/reasoning/textDelta", "reason", map[string]any{"contentIndex": 0, "delta": "reasoning"}},
+	} {
+		if stream.notification(event.method, message(event.item, event.fields)) != nil {
+			t.Fatal("valid bound text delta rejected")
+		}
+	}
+	if len(stream.parts) != 0 || stream.completed || stream.deltaBytes != len("partialsummaryreasoning") {
+		t.Fatal("delta became final output or escaped budget")
+	}
+	for _, event := range []struct {
+		method string
+		item   string
+		fields map[string]any
+	}{
+		{"item/agentMessage/delta", "user", map[string]any{"delta": "wrong type"}},
+		{"item/agentMessage/delta", "reason", map[string]any{"delta": "wrong type"}},
+		{"item/agentMessage/delta", "absent", map[string]any{"delta": "unknown"}},
+		{"item/agentMessage/delta", "agent", map[string]any{}},
+		{"item/agentMessage/delta", "agent", map[string]any{"delta": nil}},
+		{"item/agentMessage/delta", "agent", map[string]any{"delta": 1}},
+		{"item/reasoning/textDelta", "reason", map[string]any{"delta": "missing index"}},
+		{"item/reasoning/textDelta", "reason", map[string]any{"delta": "null index", "contentIndex": nil}},
+		{"item/reasoning/summaryTextDelta", "reason", map[string]any{"delta": "negative", "summaryIndex": -1}},
+		{"item/reasoning/summaryPartAdded", "reason", map[string]any{"summaryIndex": 0.5}},
+	} {
+		if fresh().notification(event.method, message(event.item, event.fields)) != ErrUnavailable {
+			t.Fatal("unbound or malformed text delta accepted")
+		}
+	}
+	stream = fresh()
+	stream.deltaBytes = 65535
+	if stream.notification("item/agentMessage/delta", message("agent", map[string]any{"delta": "ab"})) != ErrUnavailable {
+		t.Fatal("delta byte budget exceeded")
+	}
+	stream = fresh()
+	stream.finished["agent"] = true
+	if stream.notification("item/agentMessage/delta", message("agent", map[string]any{"delta": "late"})) != ErrUnavailable {
+		t.Fatal("late delta accepted")
+	}
+}
+
+func TestPreThreadNotificationsAndConfigErrorsRemainRejectedWithFixedLabels(t *testing.T) {
+	stage := ""
+	peer := nativePeer{stage: func(label string) { stage = label }}
+	for method, want := range map[string]string{"configWarning": "notification-configWarning", "warning": "notification-warning", "account/updated": "notification-account-updated", "PUBLIC-UNKNOWN-METHOD": "notification-unsupported"} {
+		encoded, _ := json.Marshal(method)
+		if peer.acceptNotification(map[string]json.RawMessage{"method": encoded, "params": json.RawMessage(`{"details":"PUBLIC-ERROR-CANARY"}`)}) != ErrUnavailable || stage != want {
+			t.Fatal("pre-thread notification acceptance or fixed label changed")
+		}
+	}
+	for _, test := range []struct {
+		data string
+		want string
+	}{
+		{`{"id":"config-id","error":{"code":-32602,"message":"PUBLIC-ERROR-CANARY","data":"PUBLIC-DATA-CANARY"}}`, "config-rpc-invalid-params"},
+		{`{"id":"config-id","error":{"code":-32000,"message":"PUBLIC-ERROR-CANARY"}}`, "config-rpc-server"},
+		{`{"id":"config-id","error":{"code":42,"message":"PUBLIC-ERROR-CANARY"}}`, "config-rpc-other"},
+		{`{"id":"config-id","error":{"code":null,"message":"PUBLIC-ERROR-CANARY"}}`, "config-rpc-envelope"},
+		{`{"id":"foreign","result":{}}`, "config-rpc-id"},
+	} {
+		input, err := os.CreateTemp(t.TempDir(), "rpc-input-")
+		if err != nil {
+			t.Fatal("fixture input")
+		}
+		events := make(chan peerEvent, 1)
+		events <- peerEvent{data: []byte(test.data)}
+		peer := nativePeer{ctx: context.Background(), input: input, events: events, stage: func(label string) { stage = label }}
+		_, err = peer.rpc("config-id", "config/read", map[string]any{})
+		_ = input.Close()
+		if err != ErrUnavailable || stage != test.want {
+			t.Fatal("config failure identity or fixed label changed")
+		}
+	}
+}
