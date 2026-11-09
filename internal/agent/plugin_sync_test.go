@@ -23,8 +23,13 @@ import (
 func TestPluginSignInReachesPiModels(t *testing.T) {
 	home := syncHome(t)
 	t.Setenv("MAGPIE_BUN", "")
+	// syncHome saves a provider and may queue plugin refresh/change hooks.
+	// Drain their producers as well as their callbacks before replacing the
+	// global callback; Told alone need not finish a pending refresh.
+	plugin.Settle()
+	changed := catalog.Changed
 	catalog.Changed = SyncCatalog
-	t.Cleanup(func() { plugin.Told(); catalog.Changed = nil })
+	t.Cleanup(func() { plugin.Settle(); catalog.Changed = changed })
 	if err := provider.Save(provider.Provider{ID: "deepseek", Name: "DeepSeek", Chat: "https://api.deepseek.com/v1", Key: "k", Models: []string{"pro"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +48,6 @@ func TestPluginSignInReachesPiModels(t *testing.T) {
 	write("plugin-auth.json", map[string]map[string]any{})
 	plugin.UseCached([]plugin.Provider{{ID: "trae-cn", Spec: spec, Name: "Trae CN",
 		Models: []plugin.Model{{ID: "kimi-k3-max", Name: "Kimi-K3 (Max)"}}}})
-	t.Cleanup(plugin.Settle)
 
 	p := pi(home)
 	if err := p.Pick("model", "magpie/deepseek/pro"); err != nil {

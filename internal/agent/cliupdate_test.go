@@ -556,9 +556,19 @@ func TestGrokInstalled(t *testing.T) {
 	}))
 	defer rel.Close()
 	says := "grok 1.0.46 (2765805b9442)"
-	oldRel, oldVer, oldRun := grokReleases, runVersion, runUpdate
+	oldRel, oldVer, oldRun, oldCheck := grokReleases, runVersion, runUpdate, runCheck
 	grokReleases = []string{rel.URL + "/"}
 	runVersion = func(string) string { return says }
+	// The MZ files model installer paths, not runnable executables. The
+	// post-update health check is a separate probe from the version cache.
+	checked := 0
+	runCheck = func(_ context.Context, got string, _ []string) (string, int, error) {
+		if got != bin {
+			t.Fatalf("checked %q, want installed binary %q", got, bin)
+		}
+		checked++
+		return says, 0, nil
+	}
 	versions, latests = memo{}, memo{}
 	var ran [][]string
 	runUpdate = func(_ context.Context, u *updater) ([]byte, error) {
@@ -568,7 +578,7 @@ func TestGrokInstalled(t *testing.T) {
 		return []byte("✓ grok v1.0.50 installed successfully!"), nil
 	}
 	t.Cleanup(func() {
-		grokReleases, runVersion, runUpdate = oldRel, oldVer, oldRun
+		grokReleases, runVersion, runUpdate, runCheck = oldRel, oldVer, oldRun, oldCheck
 		versions, latests = memo{}, memo{}
 	})
 
@@ -578,6 +588,9 @@ func TestGrokInstalled(t *testing.T) {
 	}
 	if c, err := a.UpdateCLI(); err != nil || c.Version != "1.0.50" || c.Update {
 		t.Fatalf("after: %+v, %v", c, err)
+	}
+	if checked != 1 {
+		t.Fatalf("post-update health checks: got %d, want 1", checked)
 	}
 	if len(ran) != 1 || !reflect.DeepEqual(ran[0], []string{bin, "update"}) {
 		t.Errorf("ran %q", ran)

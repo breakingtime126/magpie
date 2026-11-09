@@ -38,10 +38,10 @@ func TestNativeCodexGuardDirectHooks(t *testing.T) {
 			}
 			a := protectNativeCodex(&Agent{ID: id,
 				Fields: []Field{{Key: "model", Set: func(string) error { return change() }}},
-				Sync: change, Unwire: change, Restore: change, Follow: change, EndFailover: change,
-				Join: func() (bool, error) { return true, change() },
+				Sync:   change, Unwire: change, Restore: change, Follow: change, EndFailover: change,
+				Join:       func() (bool, error) { return true, change() },
 				RenameRefs: func(string, string) (bool, error) { return true, change() },
-				move: func(string, string) error { return change() },
+				move:       func(string, string) error { return change() },
 			})
 			calls := []func() error{func() error { return a.Fields[0].Set("x") }, a.Sync, a.Unwire, a.Restore, a.Follow, a.EndFailover,
 				func() error { _, err := a.Join(); return err },

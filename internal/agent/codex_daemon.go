@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/beat"
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/provider"
 )
