@@ -7,6 +7,7 @@ on:
       - internal/codexsetup/**
       - internal/nativepreview/**
       - build/package-codex-preview-windows.ps1
+      - build/test-native-preview-official.ps1
       - .github/workflows/experimental-codex-connectivity-preview.yml
       - docs/subsystems/codex-connectivity-preview.md
 permissions:
@@ -104,5 +105,41 @@ jobs:
         with:
           name: codex-connectivity-window-${{ github.sha }}
           path: ${{ runner.temp }}/codex-connectivity-evidence
+          if-no-files-found: warn
+          retention-days: 7
+
+  official-native-text:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && contains(github.event.head_commit.message, '[native-preview-text-v1]')
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: '0'
+      GOFLAGS: -mod=readonly
+      GOTOOLCHAIN: local
+      GOTELEMETRY: 'off'
+      PREVIEW_NATIVE_TEXT_OPT_IN: native-preview-text-v1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Compile synthetic test host without running it
+        shell: pwsh
+        run: |
+          go test -c -tags nogui -o "$env:RUNNER_TEMP/native-preview-tests.exe" ./internal/nativepreview
+          if ($LASTEXITCODE -ne 0) { throw 'Test host compilation failed.' }
+      - name: Verify official package and run only the opted-in loopback test
+        shell: pwsh
+        run: ./build/test-native-preview-official.ps1 -TestExecutable "$env:RUNNER_TEMP/native-preview-tests.exe"
+      - name: Upload fixed-label acceptance report only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-preview-text-${{ github.sha }}
+          path: ${{ runner.temp }}/native-preview-text-report.json
           if-no-files-found: warn
           retention-days: 7
