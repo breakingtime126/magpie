@@ -42,7 +42,8 @@ if (Test-Path -LiteralPath $reportPath) { throw 'Report already exists; no retry
 $report = [ordered]@{schema=1;scope='official-native-loopback-text-only';source_commit=$head;
     status='failed';stage='download';package_verified=$false;test_passed=$false;cleanup_complete=$false;
     desktop_verified=$false;real_account_used=$false;zero_egress_proven=$false;
-    diagnostic_status='unavailable';native_stage=$null;native_class=$null}
+    diagnostic_status='unavailable';native_stage=$null;native_class=$null;
+    test_process_started=$false;host_error_line=0;host_error_category='none'}
 $process = $null; $started = $false
 try {
     $package = Join-Path $root 'official.msix'
@@ -61,19 +62,19 @@ try {
     Export-Standalone4239Native $package $codex $identity
     $report.package_verified = $true
     $report.stage = 'native-text-test'
-    $home = Join-Path $root 'test-home'
-    [void][IO.Directory]::CreateDirectory($home)
+    $testHome = Join-Path $root 'test-home'
+    [void][IO.Directory]::CreateDirectory($testHome)
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = [IO.Path]::GetFullPath($TestExecutable)
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-    $psi.WorkingDirectory = $home
+    $psi.WorkingDirectory = $testHome
     $psi.Environment.Clear()
     $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot')
     if (-not [IO.Path]::IsPathFullyQualified($systemRoot)) { throw 'System root unavailable.' }
     $psi.Environment['SystemRoot'] = $systemRoot; $psi.Environment['WINDIR'] = $systemRoot
     $psi.Environment['PATH'] = Join-Path $systemRoot 'System32'
-    foreach ($name in @('HOME','USERPROFILE','TEMP','TMP','APPDATA','LOCALAPPDATA')) { $psi.Environment[$name] = $home }
+    foreach ($name in @('HOME','USERPROFILE','TEMP','TMP','APPDATA','LOCALAPPDATA')) { $psi.Environment[$name] = $testHome }
     # Keep existing transport/trust choices, including empty values. No bypass.
     $transportNames = @('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY',
         'http_proxy','https_proxy','all_proxy','no_proxy','CODEX_CA_CERTIFICATE',
@@ -155,7 +156,30 @@ try {
     $report.test_passed = $true; $report.status = 'passed'; $report.stage = 'complete'
 } catch {
     $report.status = 'failed'
+    # Fixed host-only metadata; never publish the exception message or source text.
+    if ($_.InvocationInfo.ScriptName -ceq $PSCommandPath) {
+        $report.host_error_line = [int]$_.InvocationInfo.ScriptLineNumber
+    }
+    $report.host_error_category = switch ($_.Exception.GetBaseException().GetType().FullName) {
+        'System.Management.Automation.RuntimeException' { 'powershell-runtime'; break }
+        'System.Management.Automation.MethodException' { 'method-binding'; break }
+        'System.Management.Automation.MethodInvocationException' { 'method-invocation'; break }
+        'System.Management.Automation.PropertyNotFoundException' { 'property-missing'; break }
+        'System.Management.Automation.PSInvalidOperationException' { 'powershell-operation'; break }
+        'System.InvalidOperationException' { 'invalid-operation'; break }
+        'System.ArgumentException' { 'argument'; break }
+        'System.ArgumentNullException' { 'argument-null'; break }
+        'System.IndexOutOfRangeException' { 'index-range'; break }
+        'System.NullReferenceException' { 'null-reference'; break }
+        'System.IO.IOException' { 'io'; break }
+        'System.ObjectDisposedException' { 'disposed'; break }
+        'System.UnauthorizedAccessException' { 'access'; break }
+        'System.ComponentModel.Win32Exception' { 'win32'; break }
+        'System.Threading.Tasks.TaskCanceledException' { 'task-cancelled'; break }
+        default { 'other' }
+    }
 } finally {
+    $report.test_process_started = [bool]$started
     try {
         if ($started -and -not $process.HasExited) {
             $process.Kill($true)
