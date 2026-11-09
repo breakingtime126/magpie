@@ -26,6 +26,33 @@ func TestOfficialNativePreviewText(t *testing.T) {
 	if os.Getenv("MAGPIE_PREVIEW_OFFICIAL_TEXT_TEST") != "1" {
 		t.Skip("official runtime loopback check is opt-in")
 	}
+	stage := "test-setup"
+	passed := false
+	var fixture *previewTextFixture
+	defer func() {
+		class := "failed-no-request"
+		if fixture != nil {
+			fixture.mu.Lock()
+			if fixture.requests > 0 {
+				class = "failed-request-seen"
+			}
+			if fixture.failures > 0 {
+				class = "failed-fixture-rejected"
+			}
+			fixture.mu.Unlock()
+		}
+		if passed {
+			class = "passed"
+		}
+		if !previewDiagnosticStageAllowed(stage) {
+			stage = "unclassified"
+		}
+		fmt.Printf("native-preview-diagnostic stage=%s class=%s\n", stage, class)
+	}()
+	if !officialPreviewTransportReady {
+		stage = "test-transport"
+		t.Fatal("official test transport preservation unavailable")
+	}
 	command := os.Getenv("MAGPIE_PREVIEW_OFFICIAL_NATIVE")
 	if command == "" || !filepath.IsAbs(command) {
 		t.Fatal("official native test input unavailable")
@@ -52,7 +79,7 @@ func TestOfficialNativePreviewText(t *testing.T) {
 	if os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(config), 0600) != nil {
 		t.Fatal("own native config write failed")
 	}
-	fixture := &previewTextFixture{}
+	fixture = &previewTextFixture{}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(fixture.serveHTTP))
 	server.Config.ReadHeaderTimeout = 5 * time.Second
 	server.Config.ReadTimeout = 10 * time.Second
@@ -62,6 +89,7 @@ func TestOfficialNativePreviewText(t *testing.T) {
 	server.Start()
 	defer server.Close()
 	spec := peerSpec{command: c.executable, digest: c.digest, home: home, codexHome: codexHome, provider: "aihub", endpoint: server.URL + "/v1", key: previewPublicKey, only167: true}
+	spec.stage = func(label string) { stage = label }
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
 	// This is the exact production single-text native protocol path. HTTP is
@@ -73,6 +101,8 @@ func TestOfficialNativePreviewText(t *testing.T) {
 	if err != nil || reply.Text != "fixture-answer-alpha" || requests != 1 || failures != 0 {
 		t.Fatal("official native loopback text did not complete")
 	}
+	passed = true
+	stage = "done"
 	t.Log("official-native-loopback-text: passed; synthetic service only")
 }
 
@@ -220,4 +250,17 @@ func (f *previewTextFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func previewDiagnosticStageAllowed(label string) bool {
+	switch label {
+	case "test-isolation", "test-transport", "test-setup", "unclassified", "admission", "version", "start", "initialize", "initialize-receipt", "config-request", "config-provider", "config-mcp", "config-hooks-notify", "models", "model-selection", "thread-request", "thread-receipt", "turn-request", "turn-receipt", "turn-stream", "reply", "close", "cleanup", "done", "notification-unsupported", "notification-thread-started", "notification-thread-settings-updated", "notification-thread-status-changed", "notification-thread-tokenUsage-updated", "notification-turn-started", "notification-turn-completed", "notification-item-started", "notification-item-completed":
+		return true
+	}
+	for path := range textOverrides() {
+		if label == "config-"+strings.ReplaceAll(path, ".", "-") {
+			return true
+		}
+	}
+	return false
 }

@@ -41,7 +41,8 @@ $reportPath = Join-Path $env:RUNNER_TEMP 'native-preview-text-report.json'
 if (Test-Path -LiteralPath $reportPath) { throw 'Report already exists; no retry.' }
 $report = [ordered]@{schema=1;scope='official-native-loopback-text-only';source_commit=$head;
     status='failed';stage='download';package_verified=$false;test_passed=$false;cleanup_complete=$false;
-    desktop_verified=$false;real_account_used=$false;zero_egress_proven=$false}
+    desktop_verified=$false;real_account_used=$false;zero_egress_proven=$false;
+    diagnostic_status='unavailable';native_stage=$null;native_class=$null}
 $process = $null; $started = $false
 try {
     $package = Join-Path $root 'official.msix'
@@ -111,6 +112,42 @@ try {
         Start-Sleep -Milliseconds 10
     }
     $output = $texts[0].ToString()
+    # Only a single exact allowlisted line is eligible for the public report.
+    # No native response, source error or other stdout/stderr is published.
+    $diagnostics = @($output -split '\r?\n' | Where-Object { $_.StartsWith('native-preview-diagnostic') })
+    $allowedStages = @(
+        'admission','cleanup','close',
+        'config-agents-enabled','config-cloud-skills-enabled','config-features-apps',
+        'config-features-code_mode','config-features-code_mode_host','config-features-code_mode_only',
+        'config-features-code_mode_prewarm','config-features-deferred_executor','config-features-executor_capability_discovery_v2',
+        'config-features-goals','config-features-hooks','config-features-image_generation',
+        'config-features-mcp_connection_sharing','config-features-memories','config-features-multi_agent_v2',
+        'config-features-multi_env_copy_file','config-features-plugin_hooks','config-features-plugins',
+        'config-features-request_permissions_tool','config-features-shell_tool','config-features-token_budget',
+        'config-features-tool_suggest','config-hooks-notify','config-mcp',
+        'config-orchestrator-mcp-enabled','config-provider','config-request',
+        'config-web_search','done','initialize',
+        'initialize-receipt','model-selection','models',
+        'notification-item-completed','notification-item-started','notification-thread-settings-updated',
+        'notification-thread-started','notification-thread-status-changed','notification-thread-tokenUsage-updated',
+        'notification-turn-completed','notification-turn-started','notification-unsupported',
+        'reply','start','test-isolation',
+        'test-setup','test-transport','thread-receipt',
+        'thread-request','turn-receipt','turn-request',
+        'turn-stream','unclassified','version'
+    )
+    $allowedClasses = @('passed','failed-no-request','failed-request-seen','failed-fixture-rejected')
+    $report.diagnostic_status = 'invalid'
+    if ($diagnostics.Count -ne 1 -or
+        $diagnostics[0] -cnotmatch '\Anative-preview-diagnostic stage=([^ ]+) class=([^ ]+)\z') {
+        throw 'Required fixed diagnostic missing or ambiguous.'
+    }
+    $nativeStage = $Matches[1]; $nativeClass = $Matches[2]
+    if ($allowedStages -cnotcontains $nativeStage -or $allowedClasses -cnotcontains $nativeClass) {
+        throw 'Required fixed diagnostic is not allowlisted.'
+    }
+    $report.native_stage = $nativeStage; $report.native_class = $nativeClass
+    $report.diagnostic_status = 'valid'
     if ($output.Length -gt 65536 -or  $texts[1].Length -gt 65536 -or $process.ExitCode -ne 0 -or
         $output -cnotmatch '(?m)^--- PASS: TestOfficialNativePreviewText \(' -or
         $output -cmatch '(?m)^--- SKIP: TestOfficialNativePreviewText' -or

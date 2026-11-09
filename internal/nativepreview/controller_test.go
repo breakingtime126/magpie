@@ -16,8 +16,10 @@ import (
 	"github.com/yetone/magpie/internal/testenv"
 )
 
-// Only a copied test program is executed. No official native runtime, account,
-// credential file, keyring or network endpoint is used by this test fixture.
+// Ordinary tests execute only the copied inert fixture. The separately explicit
+// official-runtime opt-in retains testenv isolation and restores transport policy.
+var officialPreviewTransportReady bool
+
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		version, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), "fixture-version"))
@@ -32,6 +34,37 @@ func TestMain(m *testing.M) {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "app-server" {
 		os.Exit(fixture())
+	}
+	if os.Getenv("MAGPIE_PREVIEW_OFFICIAL_TEXT_TEST") == "1" {
+		type savedValue struct {
+			value   string
+			present bool
+		}
+		saved := make(map[string]savedValue)
+		for _, name := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"} {
+			value, present := os.LookupEnv(name)
+			saved[name] = savedValue{value: value, present: present}
+		}
+		setupEntered := false
+		code := testenv.RunIn(m, func(string) {
+			setupEntered = true
+			officialPreviewTransportReady = true
+			for name, original := range saved {
+				var err error
+				if original.present {
+					err = os.Setenv(name, original.value)
+				} else {
+					err = os.Unsetenv(name)
+				}
+				if err != nil {
+					officialPreviewTransportReady = false
+				}
+			}
+		})
+		if !setupEntered {
+			fmt.Println("native-preview-diagnostic stage=test-isolation class=failed-no-request")
+		}
+		os.Exit(code)
 	}
 	testenv.Main(m)
 }

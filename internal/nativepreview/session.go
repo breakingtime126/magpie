@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yetone/magpie/internal/proc"
@@ -17,6 +18,7 @@ import (
 // One request at a time. The only asynchronous surface is a bounded,
 // operation-owned notification validator; native server requests never pass.
 type nativePeer struct {
+	stage                 func(string)
 	ctx                   context.Context
 	version               string
 	input                 io.WriteCloser
@@ -43,6 +45,7 @@ func nativeArguments(spec peerSpec, overrides map[string]string) []string {
 }
 
 func withNativePeer(parent context.Context, spec peerSpec, timeout time.Duration, overrides map[string]string, experimental bool, operation func(*nativePeer) error) (resultErr error) {
+	spec.markStage("admission")
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	if _, present := os.LookupEnv("CODEX_WINDOWS_REGISTERED_CORE"); present {
@@ -55,10 +58,12 @@ func withNativePeer(parent context.Context, spec peerSpec, timeout time.Duration
 	if err != nil || digest != spec.digest || ctx.Err() != nil {
 		return ErrUnavailable
 	}
+	spec.markStage("version")
 	version, valid := nativeVersionReport(ctx, spec)
 	if !valid {
 		return ErrUnavailable
 	}
+	spec.markStage("start")
 	command := proc.CommandContext(context.WithoutCancel(ctx), spec.command, nativeArguments(spec, overrides)...)
 	command.Env, command.Dir = nativeEnvironment(spec), spec.home
 	input, err := command.StdinPipe()
@@ -118,9 +123,15 @@ func withNativePeer(parent context.Context, spec peerSpec, timeout time.Duration
 		select {
 		case err := <-waited:
 			if err != nil {
+				if resultErr == nil {
+					spec.markStage("cleanup")
+				}
 				resultErr = ErrUnavailable
 			}
 		case <-time.After(500 * time.Millisecond):
+			if resultErr == nil {
+				spec.markStage("cleanup")
+			}
 			<-tree.Stop(time.Second)
 			<-waited
 			resultErr = ErrUnavailable
@@ -128,15 +139,17 @@ func withNativePeer(parent context.Context, spec peerSpec, timeout time.Duration
 		output.Close()
 		<-readerDone
 	}()
-	peer := &nativePeer{ctx: ctx, version: version, input: input, events: events}
+	peer := &nativePeer{ctx: ctx, version: version, input: input, events: events, stage: spec.stage}
 	capabilities := map[string]any{}
 	if experimental {
 		capabilities["experimentalApi"] = true
 	}
+	spec.markStage("initialize")
 	init, err := peer.rpc("preview-init", "initialize", map[string]any{"clientInfo": map[string]string{"name": "magpie_native_preview", "version": "1"}, "capabilities": capabilities})
 	if err != nil {
 		return ErrUnavailable
 	}
+	spec.markStage("initialize-receipt")
 	var initialized map[string]json.RawMessage
 	if json.Unmarshal(init, &initialized) != nil {
 		return ErrUnavailable
@@ -151,6 +164,7 @@ func withNativePeer(parent context.Context, spec peerSpec, timeout time.Duration
 	if operation(peer) != nil {
 		return ErrUnavailable
 	}
+	spec.markStage("close")
 	input.Close()
 	for {
 		envelope, err := peer.next()
@@ -191,7 +205,16 @@ func (p *nativePeer) acceptNotification(envelope map[string]json.RawMessage) err
 	if json.Unmarshal(envelope["method"], &method) != nil {
 		return ErrUnavailable
 	}
-	return p.notification(method, envelope["params"])
+	err := p.notification(method, envelope["params"])
+	if err != nil && p.stage != nil {
+		label := "notification-unsupported"
+		switch method {
+		case "thread/started", "thread/settings/updated", "thread/status/changed", "thread/tokenUsage/updated", "turn/started", "turn/completed", "item/started", "item/completed":
+			label = "notification-" + strings.ReplaceAll(method, "/", "-")
+		}
+		p.stage(label)
+	}
+	return err
 }
 func (p *nativePeer) rpc(id, method string, params any) (json.RawMessage, error) {
 	request, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})

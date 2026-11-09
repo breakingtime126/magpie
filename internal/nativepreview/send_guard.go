@@ -3,6 +3,7 @@ package nativepreview
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -54,6 +55,7 @@ func noHooksOrNotify(config map[string]json.RawMessage) bool {
 }
 func matchesTextGuard(data json.RawMessage, spec peerSpec) bool {
 	if !matchesProvider(data, spec) {
+		spec.markStage("config-provider")
 		return false
 	}
 	var response struct {
@@ -62,8 +64,16 @@ func matchesTextGuard(data json.RawMessage, spec peerSpec) bool {
 	if json.Unmarshal(data, &response) != nil || response.Config == nil {
 		return false
 	}
-	for path, want := range textOverrides() {
+	values := textOverrides()
+	paths := make([]string, 0, len(values))
+	for path := range values {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		want := values[path]
 		if !bytes.Equal(bytes.TrimSpace(configPath(response.Config, path)), []byte(want)) {
+			spec.markStage("config-" + strings.ReplaceAll(path, ".", "-"))
 			return false
 		}
 	}
@@ -72,12 +82,18 @@ func matchesTextGuard(data json.RawMessage, spec peerSpec) bool {
 	// entries; missing/invalid set is not evidence of an empty one.
 	var servers map[string]map[string]json.RawMessage
 	if value := response.Config["mcp_servers"]; len(value) == 0 || json.Unmarshal(value, &servers) != nil || servers == nil {
+		spec.markStage("config-mcp")
 		return false
 	}
 	for _, server := range servers {
 		if !bytes.Equal(bytes.TrimSpace(server["enabled"]), []byte("false")) {
+			spec.markStage("config-mcp")
 			return false
 		}
 	}
-	return noHooksOrNotify(response.Config)
+	if !noHooksOrNotify(response.Config) {
+		spec.markStage("config-hooks-notify")
+		return false
+	}
+	return true
 }

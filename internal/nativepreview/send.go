@@ -13,14 +13,17 @@ func sendText(parent context.Context, spec peerSpec, model, text string) (Reply,
 	spec.only167 = true
 	var answer string
 	err := withNativePeer(parent, spec, 90*time.Second, textOverrides(), true, func(peer *nativePeer) error {
+		spec.markStage("config-request")
 		effective, err := peer.rpc("preview-send-config", "config/read", map[string]any{"includeLayers": false, "cwd": spec.home})
 		if err != nil || !matchesTextGuard(effective, spec) {
 			return ErrUnavailable
 		}
+		spec.markStage("models")
 		models, err := readModels(peer, spec)
 		if err != nil {
 			return ErrUnavailable
 		}
+		spec.markStage("model-selection")
 		found := false
 		for _, candidate := range models {
 			if candidate.ID == model {
@@ -32,6 +35,7 @@ func sendText(parent context.Context, spec peerSpec, model, text string) (Reply,
 		}
 		stream := &textStream{spec: spec, model: model, items: map[string]string{}, finished: map[string]bool{}}
 		peer.notification = stream.notification
+		spec.markStage("thread-request")
 		started, err := peer.rpc("preview-thread", "thread/start", map[string]any{
 			"model": model, "modelProvider": nativeProvider(spec), "cwd": spec.home, "ephemeral": true,
 			"environments": []any{}, "dynamicTools": []any{}, "selectedCapabilityRoots": []any{}, "allowProviderModelFallback": false,
@@ -39,6 +43,7 @@ func sendText(parent context.Context, spec peerSpec, model, text string) (Reply,
 		if err != nil {
 			return ErrUnavailable
 		}
+		spec.markStage("thread-receipt")
 		var response struct {
 			Thread             json.RawMessage `json:"thread"`
 			Model              string          `json:"model"`
@@ -53,23 +58,27 @@ func sendText(parent context.Context, spec peerSpec, model, text string) (Reply,
 		// The server owns all execution. Empty environments is the actual native
 		// no-environment contract, not a prompt or a tool-notification race.
 		stream.turnRequested = true
+		spec.markStage("turn-request")
 		turn, err := peer.rpc("preview-turn", "turn/start", map[string]any{"threadId": stream.thread, "model": model, "environments": []any{},
 			"input": []any{map[string]any{"type": "text", "text": text}}})
 		if err != nil {
 			return ErrUnavailable
 		}
+		spec.markStage("turn-receipt")
 		var result struct {
 			Turn json.RawMessage `json:"turn"`
 		}
 		if json.Unmarshal(turn, &result) != nil || stream.bindTurn(result.Turn) != nil {
 			return ErrUnavailable
 		}
+		spec.markStage("turn-stream")
 		for !stream.completed {
 			envelope, err := peer.next()
 			if err != nil || peer.acceptNotification(envelope) != nil {
 				return ErrUnavailable
 			}
 		}
+		spec.markStage("reply")
 		if len(stream.parts) == 0 {
 			return ErrUnavailable
 		}

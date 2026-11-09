@@ -396,3 +396,30 @@ func TestCodeModeHostMustBeStartupBooleanFalse(t *testing.T) {
 		t.Fatal("host gate not installed at process startup")
 	}
 }
+
+func TestFixedStageObserverPreservesFailureAndRedaction(t *testing.T) {
+	c := prepareSend(t, "openai")
+	if os.WriteFile(filepath.Join(c.primaryHome, "fixture-mode"), []byte("send-policy"), 0600) != nil {
+		t.Fatal("fixture mode")
+	}
+	stage := ""
+	spec := peerSpec{command: c.executable, digest: c.digest, home: c.primaryHome, codexHome: c.primaryCodexHome, provider: "openai", stage: func(label string) { stage = label }}
+	reply, err := sendText(context.Background(), spec, "self-authored-test", "PUBLIC-PROMPT-CANARY")
+	if err != ErrUnavailable || reply.Text != "" || stage != "config-features-apps" {
+		t.Fatal("fixed guard stage or error identity changed")
+	}
+	peer := nativePeer{stage: func(label string) { stage = label }, notification: func(string, json.RawMessage) error { return ErrUnavailable }}
+	if peer.acceptNotification(map[string]json.RawMessage{"method": json.RawMessage(`"PUBLIC-NATIVE-METHOD-CANARY"`), "params": json.RawMessage(`{}`)}) != ErrUnavailable || stage != "notification-unsupported" {
+		t.Fatal("source method leaked or notification acceptance changed")
+	}
+	config := map[string]any{"model_provider": "openai"}
+	textFixtureConfig(config, "")
+	putFixtureConfig(config, "features.apps", true)
+	putFixtureConfig(config, "agents.enabled", true)
+	raw, _ := json.Marshal(map[string]any{"config": config})
+	for i := 0; i < 20; i++ {
+		if matchesTextGuard(raw, spec) || stage != "config-agents-enabled" {
+			t.Fatal("guard stage order is nondeterministic")
+		}
+	}
+}

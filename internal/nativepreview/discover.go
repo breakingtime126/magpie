@@ -22,7 +22,16 @@ type peerSpec struct {
 	command, home, codexHome, provider, endpoint, key string
 	digest                                            [32]byte
 	only167                                           bool
+	// Optional internal test observer; never receives native data. Production leaves it nil.
+	stage                                             func(string)
 }
+
+func (s peerSpec) markStage(label string) {
+	if s.stage != nil {
+		s.stage(label)
+	}
+}
+
 type peerEvent struct {
 	data []byte
 	err  error
