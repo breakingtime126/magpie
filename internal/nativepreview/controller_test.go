@@ -95,6 +95,14 @@ func fixture() int {
 		case "initialize":
 			result = map[string]string{"userAgent": "synthetic"}
 		case "initialized":
+			status := "disabled"
+			if string(mode) == "remote-connected" {
+				status = "connected"
+			}
+			version, _ := os.ReadFile(filepath.Join(home, "fixture-version"))
+			if len(version) == 0 || strings.TrimSpace(string(version)) == "codex-cli 0.167.0-alpha.3.2" {
+				fixtureNotice("remoteControl/status/changed", map[string]any{"status": status, "serverName": "synthetic", "installationId": "public-fixture", "environmentId": nil})
+			}
 			continue
 		case "config/read":
 			config := map[string]any{"model_provider": "openai"}
@@ -221,7 +229,7 @@ func TestNativeDiscoveryUsesSeparateHomesAndNarrowProjection(t *testing.T) {
 }
 
 func TestNativeDiscoveryFailsClosedWithoutSourceError(t *testing.T) {
-	for _, mode := range []string{"error", "request", "duplicate"} {
+	for _, mode := range []string{"error", "request", "duplicate", "remote-connected"} {
 		t.Run(mode, func(t *testing.T) {
 			c := fixtureController(t)
 			if os.WriteFile(filepath.Join(c.root, "openai", "home", "fixture-mode"), []byte(mode), 0600) != nil {

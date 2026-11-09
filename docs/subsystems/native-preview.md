@@ -180,3 +180,23 @@ we do not rewrite model metadata to make it work. References:
 Browser/computer configuration tables are not on/off controls. In this fixed
 standalone app-server there is no independent built-in browser/computer handler;
 MCP, dynamic and injected host-tool sources remain excluded by this contract.
+
+### Disabled remote-control status compatibility
+
+For the reviewed `0.167.0-alpha.3.2` protocol, the common native reader accepts
+`remoteControl/status/changed` only as a complete typed snapshot with
+`status="disabled"`, string `serverName`/`installationId`, and null
+`environmentId`. Identity fields are discarded without output or persistence.
+Other states, unknown fields, malformed values, and unreviewed protocol versions
+fail closed, both during discovery and text requests. No enable, disable,
+pairing, or other remote-control RPC is sent.
+
+This is receipt of the native-reported current state, not a lifetime remote-access
+isolation guarantee. Native startup still has its own persisted-state resolution
+and side effects; the client does not rewrite that state. In fixed c407 source,
+`app-server/src/lib.rs` sends this snapshot after initialization, and
+`app-server-transport/src/transport/remote_control/controller.rs` initializes the
+status to disabled before resolving startup state. The native `features.remote_control`
+key is explicitly ignored in `features/src/lib.rs`; setting it false would not
+prove remote control disabled. This compatibility change deliberately adds no
+such misleading override or internal daemon environment switch.
