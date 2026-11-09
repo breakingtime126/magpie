@@ -58,11 +58,36 @@ func sharedThreadAssertPolicy167(t *testing.T, r *Router, out []Delivery, backen
 
 func sharedThreadConfigCheck167(t *testing.T, r *Router, policy Delivery, cwd string) Delivery {
 	t.Helper()
+	original, _ := parseObject(policy.Message)
+	originalKey, _ := idKey(original["id"])
+	held, found := r.pending[originalKey]
+	if !found || held.backend != policy.Backend || !r.active[held.group.key] {
+		t.Fatal("policy check did not own an active request group")
+	}
+	before := make(map[string]pending, len(r.pending))
+	for key, value := range r.pending {
+		before[key] = value
+	}
+	active, activeBytes := len(r.active), r.activeBytes
 	out := reply(t, r, policy, controlPlaneNullRequirements)
-	if len(out) != 1 || out[0].Backend != policy.Backend || len(r.pending) != 1 || len(r.active) != 1 {
+	if len(out) != 1 || out[0].Backend != policy.Backend || len(r.pending) != len(before) || len(r.active) != active || r.activeBytes != activeBytes {
 		t.Fatal("valid policy did not retain group for same-target config")
 	}
 	m, _ := parseObject(out[0].Message)
+	key, _ := idKey(m["id"])
+	current, found := r.pending[key]
+	if !found || key == originalKey || current != held || !r.active[held.group.key] {
+		t.Fatal("config check replaced the original logical group or owner")
+	}
+	for key, value := range before {
+		if key == originalKey {
+			if _, found := r.pending[key]; found {
+				t.Fatal("consumed policy transport remained pending")
+			}
+		} else if current, found := r.pending[key]; !found || current != value {
+			t.Fatal("policy response changed an unrelated concurrent request")
+		}
+	}
 	p, _ := child(m, "params")
 	if text(m, "method") != "config/read" || len(p) != 2 || !sameJSON(p["includeLayers"], raw(false)) || text(p, "cwd") != cwd {
 		t.Fatal("project config check changed original cwd or included native layers")
