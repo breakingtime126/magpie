@@ -92,6 +92,7 @@ jobs:
           fi
           # Offline repair commits never activate Desktop or configure a sandbox.
           # Legacy cold-start and native-entry jobs independently reject this offline marker.
+          # Cold-start's standalone exclusion stays last for the shared workflow contract tests.
           if [[ "$PUSH_OFFLINE_ONLY" == 'true' && ( "$TRIGGER_EVENT" != 'push' ||
                   "$PUSH_UNELEVATED_CHAT" == 'true' ||
                   "$PUSH_PACKAGE_IDENTITY" == 'true' || "$PUSH_OWNED_CATALOG" == 'true' ||
