@@ -61,7 +61,7 @@ func NativeRequestID167Valid(data []byte) bool {
 // requests when either one is this strictly typed diagnostic operation.
 func (r *Router) nativeReadIDInUse(id json.RawMessage, method string) bool {
 	strict := func(method string) bool {
-		return (r.auth.authStatusNoAuth && method == "getAuthStatus") ||
+		return ((r.auth.authStatusNoAuth || r.auth.authStatusTrusted) && method == "getAuthStatus") ||
 			(r.experimentalFeatureList167 && method == "experimentalFeature/list") ||
 			(r.controlPlaneRouting167 && method == "config/read") ||
 			(r.windowsReadiness167 && method == "windowsSandbox/readiness")

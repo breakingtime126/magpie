@@ -165,7 +165,7 @@ func (r *Router) abandon(g *request) {
 func (r *Router) client(line []byte) ([]Delivery, error) {
 	// Exact 0.167 reviewed reads reject ambiguous routing
 	// keys before a map can hide the guarded method behind another.
-	if (r.configRequirementsNull167 || r.auth.authStatusNoAuth || r.experimentalFeatureList167 || r.controlPlaneRouting167) && validateServerEnvelopeKeys(line) != nil {
+	if (r.configRequirementsNull167 || r.auth.authStatusNoAuth || r.auth.authStatusTrusted || r.experimentalFeatureList167 || r.controlPlaneRouting167) && validateServerEnvelopeKeys(line) != nil {
 		return []Delivery{fail(nil, -32600, "invalid client envelope")}, nil
 	}
 	m, err := parseObject(line)
@@ -246,11 +246,18 @@ func (r *Router) client(line []byte) ([]Delivery, error) {
 	case "experimentalFeature/list":
 		return r.experimentalFeatureListRequest167(g, line, m["params"]), nil
 	case "getAuthStatus":
-		if !r.auth.authStatusNoAuth {
+		if !r.auth.authStatusNoAuth && !r.auth.authStatusTrusted {
 			return []Delivery{fail(g.id, -32601, "method is not supported by this experimental bridge")}, nil
 		}
-		if !validateAuthStatusRequest167(line) {
-			return []Delivery{fail(g.id, -32602, "invalid no-auth status request")}, nil
+		if !validateAuthStatusRequestMode167(line, r.auth.authStatusTrusted) {
+			message := "invalid no-auth status request"
+			if r.auth.authStatusTrusted {
+				message = "invalid trusted stdio auth status request"
+			}
+			return []Delivery{fail(g.id, -32602, message)}, nil
+		}
+		if r.auth.authStatusTrusted && r.backends[0].Provider != "openai" {
+			return []Delivery{fail(g.id, -32602, "trusted stdio auth status requires the primary openai provider")}, nil
 		}
 		r.active[key] = true
 		r.activeBytes += g.size

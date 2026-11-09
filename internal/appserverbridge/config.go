@@ -130,7 +130,7 @@ func (cfg Config) Validate() error {
 			return err
 		}
 	}
-	if cfg.AuthStatus != "" && cfg.AuthStatus != AuthStatusPrimaryNoAuth167 {
+	if cfg.AuthStatus != "" && cfg.AuthStatus != AuthStatusPrimaryNoAuth167 && cfg.AuthStatus != AuthStatusPrimaryTrustedStdio167 {
 		return errors.New("unsupported auth_status mode")
 	}
 	if cfg.Attestation != "" && cfg.Attestation != AttestationUnavailable && cfg.Attestation != AttestationUnavailable167 {
@@ -171,6 +171,9 @@ func (cfg Config) Validate() error {
 	}
 	if len(cfg.Backends) != 2 {
 		return errors.New("bridge requires exactly two backends")
+	}
+	if cfg.AuthStatus == AuthStatusPrimaryTrustedStdio167 && cfg.Backends[0].Provider != "openai" {
+		return errors.New("trusted stdio auth status requires the primary openai provider")
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -344,12 +347,13 @@ func reservedEnv(key string) bool {
 
 // auth167 selects only the exact reviewed auth contract; it enables no probe.
 func (cfg Config) auth167() bool {
-	return cfg.Attestation == AttestationUnavailable167 || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167 || cfg.AuthStatus == AuthStatusPrimaryNoAuth167
+	return cfg.Attestation == AttestationUnavailable167 || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167 || cfg.AuthStatus == AuthStatusPrimaryNoAuth167 || cfg.AuthStatus == AuthStatusPrimaryTrustedStdio167
 }
 
 func (cfg Config) authCompatibility() authCompatibility {
 	return authCompatibility{
 		authStatusNoAuth:       cfg.AuthStatus == AuthStatusPrimaryNoAuth167,
+		authStatusTrusted:      cfg.AuthStatus == AuthStatusPrimaryTrustedStdio167,
 		rejectHumanApproval:    cfg.auth167() || cfg.StartupProbe == StartupProbeCompareUnrestricted167 || cfg.RequirementsRead == ConfigRequirementsCompareNull167 || cfg.DesktopPluginOverride == DesktopPluginCodexAppTools167 || cfg.ExperimentalFeatureList == ExperimentalFeatureListCompare167 || cfg.ControlPlane == ControlPlaneRouting167,
 		attestationUnavailable: cfg.Attestation == AttestationUnavailable || cfg.Attestation == AttestationUnavailable167,
 		gatewayRead:            cfg.GatewayOAuth == GatewayOAuthPrimaryRead || cfg.GatewayOAuth == GatewayOAuthPrimaryRead167,

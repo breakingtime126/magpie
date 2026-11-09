@@ -11,12 +11,21 @@ import (
 // bridge before response rejection prevents its onward relay.
 const AuthStatusPrimaryNoAuth167 = "primary-no-auth-v0.167.0-alpha.3.2"
 
+// AuthStatusPrimaryTrustedStdio167 deliberately permits native credential relay
+// to an operator-trusted private stdio frontend. It is not frontend authentication
+// or OS credential isolation, and never grants another backend access.
+const AuthStatusPrimaryTrustedStdio167 = "primary-trusted-stdio-v0.167.0-alpha.3.2"
+
 const authStatusUnavailable = "primary no-auth status unavailable"
 
 // The pinned native GetAuthStatusParams contains two Option<bool> fields.
 // Preserve includeToken, including true; do not silently replace a token
 // request with false. Explicit refresh is never allowed by this CI mode.
 func validateAuthStatusRequest167(line []byte) bool {
+	return validateAuthStatusRequestMode167(line, false)
+}
+
+func validateAuthStatusRequestMode167(line []byte, trusted bool) bool {
 	if validateRequirementsJSON(line) != nil {
 		return false
 	}
@@ -44,7 +53,7 @@ func validateAuthStatusRequest167(line []byte) bool {
 				return false
 			}
 		case "refreshToken":
-			if !requirementsNull(value) && !bytes.Equal(bytes.TrimSpace(value), []byte("false")) {
+			if !requirementsNullableBool(value) || (!trusted && !requirementsNull(value) && !bytes.Equal(bytes.TrimSpace(value), []byte("false"))) {
 				return false
 			}
 		default:
@@ -62,17 +71,21 @@ func (r *Router) sendAuthStatus167(g *request, params json.RawMessage) Delivery 
 
 func (r *Router) authStatusFailure(g *request, code int64) []Delivery {
 	r.abandon(g)
+	message := authStatusUnavailable
+	if r.auth.authStatusTrusted {
+		message = "primary trusted stdio auth status unavailable"
+	}
 	return []Delivery{deliver("", object{
 		"id": g.id,
 		"error": raw(object{
-			"code": raw(code), "message": raw(authStatusUnavailable),
+			"code": raw(code), "message": raw(message),
 		}),
 	})}
 }
 
-// Only the genuine, complete native no-auth result can succeed. A non-null
-// token, auth method, requires-auth flag or unknown field rejects the entire
-// response; nothing is sanitized into a successful null result.
+// Validate the native envelope before either explicitly selected result policy.
+// The original diagnostic still permits only the genuine complete no-auth
+// triple; the separate trusted mode permits its narrow credential relay subset.
 func (r *Router) finishAuthStatus167(g *request, line []byte) []Delivery {
 	if !authStatusResponseJSON(line) {
 		return r.authStatusFailure(g, -32000)
@@ -101,7 +114,14 @@ func (r *Router) finishAuthStatus167(g *request, line []byte) []Delivery {
 		return r.authStatusFailure(g, code)
 	}
 	result, ok := requirementsObject(m["result"], "authMethod", "authToken", "requiresOpenaiAuth")
-	if !ok || !requirementsNull(result["authMethod"]) || !requirementsNull(result["authToken"]) ||
+	if !ok {
+		return r.authStatusFailure(g, -32000)
+	}
+	if r.auth.authStatusTrusted {
+		if !trustedAuthStatusResult167(result, g.params) {
+			return r.authStatusFailure(g, -32000)
+		}
+	} else if !requirementsNull(result["authMethod"]) || !requirementsNull(result["authToken"]) ||
 		!bytes.Equal(bytes.TrimSpace(result["requiresOpenaiAuth"]), []byte("false")) {
 		return r.authStatusFailure(g, -32000)
 	}
@@ -113,4 +133,32 @@ func (r *Router) finishAuthStatus167(g *request, line []byte) []Delivery {
 // decoding with the separately bounded experimental feature catalog.
 func authStatusResponseJSON(data []byte) bool {
 	return nativeReadJSON(data, requirementsJSONLimit, requirementsContainerLimit)
+}
+
+// The public schema permits requiresOpenaiAuth:null, but the pinned native
+// handler always emits a bool. Reject unobserved variants rather than claiming
+// broad schema compatibility. Nonexportable methods may report metadata only.
+func trustedAuthStatusResult167(result object, params object) bool {
+	if !requirementsBool(result["requiresOpenaiAuth"]) {
+		return false
+	}
+	methodNull, tokenNull := requirementsNull(result["authMethod"]), requirementsNull(result["authToken"])
+	if bytes.Equal(bytes.TrimSpace(result["requiresOpenaiAuth"]), []byte("false")) {
+		return methodNull && tokenNull
+	}
+	if !methodNull && !requirementsEnum(result["authMethod"], "apikey", "chatgpt", "chatgptAuthTokens", "headers", "agentIdentity", "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys") {
+		return false
+	}
+	if tokenNull {
+		return true
+	}
+	// This explicit relay supports only ordinary OpenAI API-key and managed
+	// ChatGPT tokens. External-host/internal and other credential modes do not
+	// gain export support merely because their metadata enum is recognized.
+	if !bytes.Equal(bytes.TrimSpace(params["includeToken"]), []byte("true")) ||
+		!requirementsEnum(result["authMethod"], "apikey", "chatgpt") {
+		return false
+	}
+	var token string
+	return json.Unmarshal(result["authToken"], &token) == nil && token != ""
 }

@@ -54,9 +54,16 @@ Both modes verify both backend pins before either child and fan out a fresh nati
 The exact 0.167 mode may accompany only the same-version startup/auth modes; each stays default off.
 It may refresh policy/authentication state. Empty homes and earlier probes do not establish a null policy.
 Independent pinned auth modes can report attestation unavailable and read only the primary gateway status.
-Exact 0.167 auth modes require unavailable-v0.167.0-alpha.3.2 or primary-read-only-v0.167.0-alpha.3.2.
+Exact 0.167 attestation/gateway modes require unavailable-v0.167.0-alpha.3.2 or primary-read-only-v0.167.0-alpha.3.2.
 They preserve true capability flags; no proof token, OAuth login or full Desktop compatibility is provided.
 Attestation RPC failure is not equivalent to Windows Desktop's opaque error-token response.
+getAuthStatus remains disabled by default. auth_status=primary-trusted-stdio-v0.167.0-alpha.3.2
+is an independent token-relay opt-in requiring backend[0].provider=openai and both SHA-256 pins.
+It may export the primary API key or ChatGPT bearer only to an operator-trusted private stdio frontend.
+A clientInfo name does not establish trust. Never expose this mode to an untrusted client or shared pipe.
+includeToken/refreshToken are preserved; even false refresh can trigger native authentication/network effects.
+This adds no proof, OAuth login, external-token refresh, credential isolation or verified Desktop support.
+The separate primary-no-auth-v0.167.0-alpha.3.2 diagnostic keeps rejecting all credentialed results.
 --check validates configuration without starting children or changing state.
 This is not the official Codex CLI. Desktop launcher compatibility is unverified.
 `

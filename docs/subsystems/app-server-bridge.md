@@ -125,7 +125,8 @@ replies. This correction changes ordering only, not capability negotiation,
 authentication authority, account RPC support, or policy comparison.
 `getAuthStatus` remains unsupported (`-32601`) by default after readiness.
 The separately selected [CI-only no-auth mode](#exact-0167-ci-only-no-auth-status)
-is the sole narrow exception; readiness alone never enables it.
+and the [trusted stdio relay](#exact-0167-primary-trusted-stdio-auth-status) are
+separate explicit exceptions; readiness alone never enables either.
 
 Supported requests are enumerated in `Router.Client` and `validateParams`:
 initialization, model listing, ordinary thread start/resume/fork/list/read,
@@ -1132,7 +1133,8 @@ for `file`). The bridge never changes this choice or reads a keychain.
 The explicit gateway flag still prevents automatic browser authorization, not
 credential reuse or refresh. Login, cancel and external-token refresh remain
 unsupported. `getAuthStatus` is rejected unless the separately selected
-[CI-only no-auth mode](#exact-0167-ci-only-no-auth-status) is enabled; none of
+[CI-only no-auth mode](#exact-0167-ci-only-no-auth-status) or
+[trusted stdio relay](#exact-0167-primary-trusted-stdio-auth-status) is enabled; none of
 these modes is an offline substitute.
 
 The exact-mode tests reuse native synthetic prewarm and primary-read assertions
@@ -1214,7 +1216,7 @@ inference, tool execution or corporate policy acceptance is established.
 [routing control plane](#exact-0167-owned-routing-control-plane) supplies only its
 own routing view. Login/cancel and external-token refresh remain unsupported.
 Requirements inspection does not enable `getAuthStatus`; only its separate
-CI-only no-auth mode can do so. This mode never produces a proof or grants
+CI-only no-auth or trusted stdio relay mode can do so. Requirements inspection never produces a proof or grants
 login authority.
 
 ### Native initialize readiness regression
@@ -2387,3 +2389,83 @@ identity and uncertain action receipts. They do not prove that waiting fixes the
 real Desktop case. Any further native setup run requires a newly approved
 single-VM experiment; offline-only CI must not consume that approval or rerun
 setup automatically.
+
+### Exact 0.167 primary trusted stdio auth status
+
+`auth_status: "primary-trusted-stdio-v0.167.0-alpha.3.2"` is a new, independent,
+**default-off credential relay capability**, not a relaxation disguised as the
+old no-auth diagnostic. It requires `backends[0].provider` exactly `openai` and
+both configured executable SHA-256 pins; existing legacy/current version
+exclusion, digest checks, JSON bounds and both-child readiness remain. The
+operator must verify the actual official executable version/provenance and
+control the entire private stdio frontend and review primary account/endpoint
+configuration. A provider label is not network destination authentication.
+A mode name/digest does not itself
+prove version, and `clientInfo.name` is not authentication. Do not enable this
+mode on an untrusted/shared pipe or simply because a client calls itself Codex
+Desktop. Examples, defaults and the older `primary-no-auth` mode are unchanged.
+
+This is an explicit expansion: the primary's real API key or managed ChatGPT
+bearer can reach that trusted frontend. Only primary receives `getAuthStatus`;
+the validated response goes only to frontend stdout, never to secondary. No
+response value is logged or cached by this path; native stderr remains discarded.
+Tokens do pass through Go/JSON temporary buffers; there is no secure zeroing
+guarantee and buffers may remain in memory until garbage collection.
+Source result bytes are retained subject to normal JSON compaction, with the
+original frontend ID. Wrong-backend replies fail correlation. No fallback,
+retry, token substitution or synthetic successful identity is performed.
+
+The exact request is the existing strict envelope and params object, with only
+optional nullable booleans `includeToken` and `refreshToken`. Unlike the no-auth
+diagnostic, explicit true refresh is allowed here. Absence/null/false/true are
+preserved, not rewritten; trace metadata is not forwarded. A non-null token is
+accepted only when the client explicitly requested `includeToken:true`, the
+native result has `requiresOpenaiAuth:true`, `authMethod` is `apikey` or
+`chatgpt`, and the token is a nonempty string. Without a token request, any
+non-null token rejects the whole result rather than silently stripping it.
+
+Results must contain exactly `authMethod`, `authToken`, `requiresOpenaiAuth`.
+For the pinned handler, requires-auth is a boolean: false requires null method
+and token; true allows null method/token or any known method with a null token.
+Unknown methods, fields, missing fields, duplicate keys and malformed values
+reject the whole result. The known metadata enums are `apikey`, `chatgpt`,
+`chatgptAuthTokens`, `headers`, `agentIdentity`, `personalAccessToken`,
+`bedrockApiKey`, `bedrockAccessKeys`. Recognition of metadata does not authorize
+those other authentication workflows. Non-null tokens for every method except
+`apikey`/`chatgpt` are deliberately rejected. This conservative subset is not
+full native authentication compatibility, particularly not the internal
+`chatgptAuthTokens` workflow.
+
+The public [v1 schema](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/v1.rs)
+allows nullable requires-auth, but the fixed
+[handler](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server/src/request_processors/account_processor.rs#L1097-L1168)
+always emits a boolean. This mode follows that narrower behavior, not the
+entire schema domain. The complete
+[API enum](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/app-server-protocol/src/protocol/common.rs)
+is a metadata oracle, not authorization to add internal login flows.
+
+Ordinary well-formed native errors preserve only their signed int64 code and
+return fixed `primary trusted stdio auth status unavailable`, omitting source
+message/data. Invalid results/errors use -32000 with that text. Malformed or
+uncorrelated routing envelopes may still close the connection. Nothing in
+failure handling fabricates null/null identity success.
+
+**Side effects and limits:** native explicit refresh can update authentication
+state, contact services and write storage. Even `refreshToken:false` or omitted
+can invoke `auth().await` and implicit refresh; `includeToken:false` is not a
+no-network/no-refresh promise. Account/read and account/updated retain their
+existing primary-only paths, not a new account model. This mode alone does not
+enable attestation, proof generation, gateway OAuth, account login/logout,
+external-token refresh or another mode's capabilities. Separately enabled modes
+retain their own contracts. Homes/environment separation is not an OS secret
+boundary: same-user processes and default read-only filesystem access may read
+sibling credentials. No real account, model-tool sandbox isolation, corporate
+network approval or Desktop compatibility is proven by enabling this option.
+
+`auth_status_trusted_167_test.go` uses only public fake strings and existing
+synthetic native-process fixtures. It checks explicit configuration/pins,
+nullable flags, primary-only relay, conservative token export, result/error
+validation, account-path preservation, unsupported auth capabilities, and
+clean EOF of both children. These are not official runtime or real-login
+experiments. Local Go/formatting/runtime checks were not available during
+candidate preparation; static patch checks are not a test pass.

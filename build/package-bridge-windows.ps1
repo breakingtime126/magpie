@@ -385,6 +385,17 @@ consult their exact commit reports rather than treating this package as Desktop 
 It does not establish working Desktop integration, real tools/model inference,
 full-suite correctness or complete Windows process-tree containment.
 
+The new auth_status="primary-trusted-stdio-v0.167.0-alpha.3.2" mode is OFF by
+default and requires backend[0].provider="openai" plus both executable pins.
+It explicitly permits the native primary API key or ChatGPT bearer to reach an
+operator-trusted private stdio frontend when includeToken:true requests it.
+A clientInfo name is not authentication. Do not expose this to untrusted clients
+or shared pipes. Native refresh/network/storage effects can occur even with
+refreshToken:false. It provides no proof, OAuth login, external-token refresh,
+OS credential isolation, or verified Desktop compatibility. The separate
+primary-no-auth diagnostic and example JSON remain unchanged and do not enable
+this relay. See DESIGN.md for the exact conservative response contract.
+
 No installer, system configuration change, release publication or deployment is
 performed. Artifact availability does not authorize installation or operation.
 Do not use this artifact to bypass an organization's download, software or

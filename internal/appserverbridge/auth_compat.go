@@ -25,6 +25,7 @@ type attestationRate struct {
 
 type authCompatibility struct {
 	authStatusNoAuth       bool
+	authStatusTrusted      bool
 	rejectHumanApproval    bool
 	attestationUnavailable bool
 	gatewayRead            bool
