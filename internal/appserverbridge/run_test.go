@@ -67,6 +67,12 @@ func fixtureServer() {
 		}
 		return
 	}
+	if handled, code := primaryIdentityFixture(); handled {
+		if code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
 	if handled, code := authStatusFixture(); handled {
 		if code != 0 {
 			os.Exit(code)

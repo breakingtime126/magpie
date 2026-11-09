@@ -26,6 +26,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Independent checker build failed.' }
     @{ nativeAdapterSHA256=(Get-FileHash -LiteralPath $adapter -Algorithm SHA256).Hash.ToLowerInvariant() } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $package 'BUILD.json') -Encoding UTF8
-    & "$PSScriptRoot/preview.gui.test.ps1" -PackageDirectory $package -EvidenceDirectory (Join-Path $env:RUNNER_TEMP 'bridge-helper-evidence')
+    $fixture = Join-Path $package 'synthetic-identity-peer.exe'
+    & go test -c -tags nogui -o $fixture ./internal/appserverbridge
+    if ($LASTEXITCODE -ne 0) { throw 'Synthetic identity peer build failed.' }
+    & "$PSScriptRoot/preview.gui.test.ps1" -PackageDirectory $package -EvidenceDirectory (Join-Path $env:RUNNER_TEMP 'bridge-helper-evidence') -IdentityFixture $fixture
     if (-not $?) { throw 'Owned-window acceptance failed.' }
 } finally { Remove-Item -LiteralPath $package -Recurse -Force -ErrorAction Stop }

@@ -77,7 +77,7 @@ function Test-BridgeProfileOverlap([string]$Left, [string]$Right) {
         $Right.StartsWith($Left + '\', [StringComparison]::OrdinalIgnoreCase)
 }
 
-function Invoke-BridgeProfileCheck([string]$ProfilePath) {
+function New-BridgeAdapterProcessInfo([string]$ProfilePath) {
     # The checker is fixed to this package, never selected by the UI or profile.
     # BUILD.json verifies package consistency, not signatures or trusted origin.
     $adapter = Get-BridgeProfileLocalPath (Join-Path $PSScriptRoot 'magpie-codex-bridge-windows-amd64.exe')
@@ -90,7 +90,7 @@ function Invoke-BridgeProfileCheck([string]$ProfilePath) {
         throw 'The bundled adapter does not match BUILD.json.'
     }
     $psi = New-Object Diagnostics.ProcessStartInfo
-    $psi.FileName = $adapter; $psi.Arguments = '--check'
+    $psi.FileName = $adapter
     $psi.WorkingDirectory = [IO.Path]::GetDirectoryName($ProfilePath)
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
@@ -102,6 +102,12 @@ function Invoke-BridgeProfileCheck([string]$ProfilePath) {
     $psi.EnvironmentVariables['PATH'] = Join-Path $systemRoot 'System32'
     foreach ($name in @('HOME', 'USERPROFILE', 'TEMP', 'TMP')) { $psi.EnvironmentVariables[$name] = $psi.WorkingDirectory }
     $psi.EnvironmentVariables['MAGPIE_APP_SERVER_BRIDGE_CONFIG'] = $ProfilePath
+    return $psi
+}
+
+function Invoke-BridgeProfileCheck([string]$ProfilePath) {
+    $psi = New-BridgeAdapterProcessInfo $ProfilePath
+    $psi.Arguments = '--check'
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $psi; $started = $false
     try {
@@ -166,6 +172,84 @@ function Save-BridgeProfileDraft([object[]]$Backends, [string]$ParentDirectory) 
     } finally { if ($null -ne $stream) { $stream.Dispose() } }
 }
 
+# A distinct consented native operation, never part of Save and check.
+function Confirm-BridgePrimaryIdentity([object]$Primary, [string]$Digest) {
+    $message = "Inspect ONLY the selected primary using the reviewed 0.167.0-alpha.3.2 contract?`r`n`r`nProgram: $($Primary.command)`r`nHOME: $($Primary.home)`r`nCODEX_HOME: $($Primary.codex_home)`r`nCurrent SHA-256: $Digest`r`n`r`nYES confirms you trust this reviewed program/version and native configuration, and these are dedicated contexts, not your ordinary account homes. The hash does not establish official origin or network destinations.`r`n`r`nThis starts the primary backend. It can read/refresh credentials, contact services and change native state even with refreshToken=false. Failure or cancellation does not undo those effects. No login, logout, chat, token request or secondary launch is initiated. No automatic retry."
+    return [Windows.Forms.MessageBox]::Show($message, 'Consent to one primary identity inspection',
+        [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Warning,
+        [Windows.Forms.MessageBoxDefaultButton]::Button2) -eq [Windows.Forms.DialogResult]::Yes
+}
+
+function Read-BridgeIdentityProjection([string]$Text) {
+    if ($Text.Length -gt 4096) { throw 'Invalid identity projection.' }
+    $p = $Text | ConvertFrom-Json
+    if ($null -eq $p -or @($p.PSObject.Properties).Count -ne 4) { throw 'Invalid identity projection.' }
+    foreach ($name in @('schema','scope','authMethod','requiresOpenaiAuth')) {
+        if ($null -eq $p.PSObject.Properties[$name]) { throw 'Invalid identity projection.' }
+    }
+    if (($p.schema -isnot [int] -and $p.schema -isnot [long]) -or $p.schema -ne 1 -or $p.scope -isnot [string] -or $p.scope -cne 'native-reported-identity-only' -or
+        $p.requiresOpenaiAuth -isnot [bool]) { throw 'Invalid identity projection.' }
+    if ($null -ne $p.authMethod -and ($p.authMethod -isnot [string] -or
+        @('apikey','chatgpt','chatgptAuthTokens','headers','agentIdentity','personalAccessToken','bedrockApiKey','bedrockAccessKeys') -cnotcontains $p.authMethod)) { throw 'Invalid identity projection.' }
+    if (-not $p.requiresOpenaiAuth -and $null -ne $p.authMethod) { throw 'Invalid identity projection.' }
+    return $p
+}
+
+function Invoke-BridgePrimaryIdentity([object[]]$Backends, [string]$ParentDirectory) {
+    # Rebuild from exactly the displayed fields. Never edit/import a saved profile.
+    foreach ($b in $Backends) {
+        if ($b -isnot [Collections.IDictionary] -or $b.Count -ne 5) { throw 'Only displayed fields allowed.' }
+        foreach ($key in $b.Keys) { if (@('id','provider','command','home','codex_home') -cnotcontains $key) { throw 'Unsupported field.' } }
+    }
+    $profile = New-BridgeProfileDraft $Backends | ConvertFrom-Json
+    if ($profile.backends[0].provider -cne 'openai') { throw 'Primary provider must be openai.' }
+    $parent = Get-BridgeProfileLocalPath $ParentDirectory -Directory
+    foreach ($b in $Backends) {
+        [void](Get-BridgeProfileLocalPath $b.command)
+        foreach ($name in @('home','codex_home')) {
+            $statePath = Get-BridgeProfileLocalPath $b[$name] -Directory
+            if (Test-BridgeProfileOverlap $parent $statePath) { throw 'Choose a separate snapshot parent.' }
+        }
+    }
+    $digest = (Get-FileHash -LiteralPath $Backends[0].command -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (-not (Confirm-BridgePrimaryIdentity $Backends[0] $digest)) { return 'Cancelled before launch; no native operation performed.' }
+    $profile.backends[0] | Add-Member -NotePropertyName startup_probe_sha256 -NotePropertyValue $digest
+    $dir = Join-Path $parent ('magpie-identity-once-' + [guid]::NewGuid().ToString('N'))
+    [void](New-Item -ItemType Directory -Path $dir -ErrorAction Stop)
+    $path = Join-Path $dir 'bridge.json'
+    $stream = $null; $process = $null; $started = $false
+    try {
+        $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        $data = [Text.UTF8Encoding]::new($false).GetBytes(($profile | ConvertTo-Json -Depth 5))
+        $stream.Write($data,0,$data.Length); $stream.Flush($true)
+        $psi = New-BridgeAdapterProcessInfo $path
+        $psi.Arguments = '--inspect-primary-identity-v0.167.0-alpha.3.2'
+        $process = New-Object Diagnostics.Process
+        $process.StartInfo = $psi
+        $started = $process.Start()
+        if (-not $started) { throw 'Inspection unavailable.' }
+        $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
+        # UI timeout is distinct from the core exchange deadline and native cleanup.
+        if (-not $process.WaitForExit(30000)) { throw 'Inspection unavailable.' }
+        if (-not $stdout.Wait(1000) -or -not $stderr.Wait(1000) -or $process.ExitCode -ne 0 -or $stderr.Result.Length -ne 0) { throw 'Inspection unavailable.' }
+        $p = Read-BridgeIdentityProjection $stdout.Result
+        $method = 'Native did not report an identity (not proof no account exists)'
+        if ($null -ne $p.authMethod) { $method = 'Native identity type: ' + $p.authMethod }
+        return ($method + '; requiresOpenaiAuth=' + $p.requiresOpenaiAuth + '. Not a chat-readiness result.')
+    } finally {
+        try {
+            if ($started -and -not $process.HasExited) {
+                $process.Kill()
+                if (-not $process.WaitForExit(3000)) { throw 'Inspection cleanup unconfirmed.' }
+            }
+        } finally {
+            if ($null -ne $process) { $process.Dispose() }
+            if ($null -ne $stream) { $stream.Dispose() }
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+        }
+    }
+}
+
 function Select-BridgeProfileParent {
     $dialog = New-Object Windows.Forms.FolderBrowserDialog
     $dialog.Description = 'Choose a separate profile parent; a new folder and bridge.json will be created. Existing files are never overwritten.'
@@ -185,7 +269,7 @@ function New-BridgeProfileWindow {
     Add-Type -AssemblyName System.Drawing
     $form = New-Object Windows.Forms.Form
     $form.Text = 'Magpie Bridge - Isolated profile helper'
-    $form.Size = New-Object Drawing.Size(850, 820)
+    $form.ClientSize = [Drawing.Size]::new(850, 820)
     $form.MinimumSize = $form.Size
     $form.StartPosition = 'CenterScreen'
     $form.AutoScroll = $true
@@ -193,7 +277,7 @@ function New-BridgeProfileWindow {
     $notice = New-Object Windows.Forms.Label
     $notice.Location = New-Object Drawing.Point(16, 12)
     $notice.Size = New-Object Drawing.Size(800, 80)
-    $notice.Text = "EXPERIMENTAL: Save creates a new isolated profile and checks it; no account or backend is contacted.`r`nSelect existing, separately prepared test homes. Do not select your ordinary Codex home.`r`nThis draft does NOT connect Codex, configure authentication, or enable Desktop compatibility."
+    $notice.Text = "EXPERIMENTAL: Save/check creates a profile without contacting a backend.`r`nIdentity inspection is separate and requires consent to possible native side effects.`r`nUse dedicated homes, not ordinary account homes. This helper does NOT connect Codex."
     $form.Controls.Add($notice)
     $rows = @()
     $y = 100
@@ -318,17 +402,46 @@ function New-BridgeProfileWindow {
         } finally { $this.Enabled = $true }
     })
     $form.Controls.Add($save)
+    $identity = New-Object Windows.Forms.Button
+    $identity.Text = 'Inspect primary identity...'
+    $identity.Location = [Drawing.Point]::new(16, ($y + 232))
+    $identity.Size = [Drawing.Size]::new(215, 30)
+    $identityStatus = New-Object Windows.Forms.Label
+    $identityStatus.Location = [Drawing.Point]::new(245, ($y + 232))
+    $identityStatus.Size = [Drawing.Size]::new(565, 60)
+    $identityStatus.Text = 'Optional native operation, separate consent required. Not a login or chat test.'
+    $identity.Tag = @{ Rows=$rows; Status=$identityStatus }
+    $identity.Add_Click({
+        $this.Tag.Status.Text = 'No identity result.'
+        try {
+            $parent = Select-BridgeProfileParent
+            if ([string]::IsNullOrEmpty($parent)) { $this.Tag.Status.Text = 'Cancelled before launch.'; return }
+            $inputs = @()
+            foreach ($row in $this.Tag.Rows) {
+                $inputRow = @{}
+                foreach ($key in $row.Keys) { $inputRow[$key] = $row[$key].Text }
+                $inputs += $inputRow
+            }
+            $this.Enabled = $false
+            $this.Tag.Status.Text = Invoke-BridgePrimaryIdentity $inputs $parent
+        } catch {
+            $this.Tag.Status.Text = 'Identity unavailable or cleanup unconfirmed. Native side effects are not rolled back; no retry performed.'
+        } finally { $this.Enabled = $true }
+    })
+    $form.Controls.Add($identity)
+    $form.Controls.Add($identityStatus)
     # Invalidate the old draft immediately when any selected value changes.
     foreach ($row in $rows) {
         foreach ($box in $row.Values) {
-            $box.Tag = @{ Preview = $preview; Status = $status }
+            $box.Tag = @{ Preview = $preview; Status = $status; IdentityStatus=$identityStatus }
             $box.Add_TextChanged({
                 $this.Tag.Preview.Clear()
+                $this.Tag.IdentityStatus.Text = 'Fields changed: previous identity result no longer applies.'
                 $this.Tag.Status.Text = 'Fields changed: previous check no longer applies. Previously saved files remain unchanged.'
             })
         }
     }
-    return [pscustomobject]@{ Form=$form; Rows=$rows; Save=$save; Preview=$preview; Status=$status }
+    return [pscustomobject]@{ Form=$form; Rows=$rows; Save=$save; Preview=$preview; Status=$status; Identity=$identity; IdentityStatus=$identityStatus }
 }
 
 function Show-BridgeProfilePreview {

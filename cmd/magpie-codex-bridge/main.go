@@ -25,6 +25,7 @@ Usage:
   magpie-codex-bridge [-c features.code_mode_host=true] app-server [--analytics-default-enabled] [--listen stdio:// | --stdio]
   magpie-codex-bridge [-c features.code_mode_host=true] app-server [--analytics-default-enabled] --print-startup-config --startup-client-info JSON
   magpie-codex-bridge --check
+  magpie-codex-bridge --inspect-primary-identity-v0.167.0-alpha.3.2
   magpie-codex-bridge --help
   magpie-codex-bridge --version
 
@@ -65,6 +66,14 @@ includeToken/refreshToken are preserved; even false refresh can trigger native a
 This adds no proof, OAuth login, external-token refresh, credential isolation or verified Desktop support.
 The separate primary-no-auth-v0.167.0-alpha.3.2 diagnostic keeps rejecting all credentialed results.
 --check validates configuration without starting children or changing state.
+--inspect-primary-identity-v0.167.0-alpha.3.2 is a separate explicit primary-only operation.
+It requires a minimal profile, primary provider=openai and its reviewed SHA-256 pin.
+No optional compatibility mode, inherited primary environment, model metadata or working directory is accepted.
+It requests includeToken:false and refreshToken:false; any returned token fails closed.
+Only native-reported auth type is shown, not account validity or chat readiness.
+It starts the primary and may refresh credentials, contact services or update native state.
+It does not start the secondary, list models, log in/out or request proof/inference.
+The executable pin is not provenance, endpoint binding or OS credential isolation.
 This is not the official Codex CLI. Desktop launcher compatibility is unverified.
 `
 
@@ -76,6 +85,7 @@ const (
 	version
 	check
 	startupProbe
+	primaryIdentity
 )
 
 const maxArgumentCount = 32
@@ -116,6 +126,8 @@ func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, appserv
 			return help, options, clientInfo, nil
 		case "--version", "-V":
 			return version, options, clientInfo, nil
+		case "--inspect-primary-identity-v0.167.0-alpha.3.2":
+			return primaryIdentity, options, clientInfo, nil
 		case "--check":
 			return check, options, clientInfo, nil
 		}
@@ -199,10 +211,11 @@ func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, appserv
 }
 
 type dependencies struct {
-	getenv func(string) string
-	load   func(string) (appserverbridge.Config, error)
-	run    func(context.Context, appserverbridge.Config, appserverbridge.LaunchOptions, io.ReadCloser, io.WriteCloser) error
-	probe  func(context.Context, appserverbridge.Config, appserverbridge.LaunchOptions, appserverbridge.StartupClientInfo) ([]byte, error)
+	getenv   func(string) string
+	load     func(string) (appserverbridge.Config, error)
+	run      func(context.Context, appserverbridge.Config, appserverbridge.LaunchOptions, io.ReadCloser, io.WriteCloser) error
+	probe    func(context.Context, appserverbridge.Config, appserverbridge.LaunchOptions, appserverbridge.StartupClientInfo) ([]byte, error)
+	identity func(context.Context, appserverbridge.Config) ([]byte, error)
 }
 
 func loadConfig(path string) (appserverbridge.Config, error) {
@@ -257,6 +270,21 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 		}
 		return 0
 	}
+	if op == primaryIdentity {
+		if deps.identity == nil {
+			return failPrimaryIdentity(output, diagnostics, nil)
+		}
+		result, err := deps.identity(ctx, cfg)
+		if err != nil {
+			return failPrimaryIdentity(output, diagnostics, err)
+		}
+		line := append(result, '\n')
+		if n, err := output.Write(line); err != nil || n != len(line) {
+			fmt.Fprintln(diagnostics, "magpie-codex-bridge: cannot write identity inspection result")
+			return 1
+		}
+		return 0
+	}
 	if op == startupProbe {
 		if ctx.Err() != nil || !appserverbridge.StartupProbeSupported(cfg.StartupProbe) {
 			return failStartupProbe(output, diagnostics)
@@ -293,10 +321,27 @@ func failStartupProbe(output io.Writer, diagnostics io.Writer) int {
 	return 1
 }
 
+func failPrimaryIdentity(output io.Writer, diagnostics io.Writer, err error) int {
+	kind := "unavailable"
+	if errors.Is(err, context.DeadlineExceeded) {
+		kind = "timeout"
+	} else if errors.Is(err, context.Canceled) {
+		kind = "cancelled"
+	}
+	fmt.Fprintf(output, "{\"error\":\"%s\"}\n", kind)
+	fmt.Fprintln(diagnostics, "magpie-codex-bridge: primary identity inspection failed; no account validity inferred")
+	return 1
+}
+
 func main() {
 	code := execute(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr, dependencies{
 		getenv: os.Getenv,
 		load:   loadConfig,
+		identity: func(parent context.Context, cfg appserverbridge.Config) ([]byte, error) {
+			ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return appserverbridge.InspectPrimaryIdentity167(ctx, cfg)
+		},
 		probe: func(parent context.Context, cfg appserverbridge.Config, options appserverbridge.LaunchOptions, clientInfo appserverbridge.StartupClientInfo) ([]byte, error) {
 			ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 			defer stop()

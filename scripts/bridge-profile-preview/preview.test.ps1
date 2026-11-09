@@ -115,3 +115,17 @@ foreach ($required in @('$psi.Arguments = ''--check''', '[IO.FileMode]::CreateNe
     if (-not $source.Contains($required)) { throw "Missing contract: $required" }
 }
 'PASS: synthetic profile generation, new-file persistence, check outcomes and unchanged global environment'
+
+# Projection only; no native process, credentials or consent UI.
+foreach ($method in @($null, 'apikey', 'chatgpt', 'headers', 'agentIdentity', 'personalAccessToken', 'bedrockApiKey', 'bedrockAccessKeys', 'chatgptAuthTokens')) {
+    $text = @{schema=1;scope='native-reported-identity-only';authMethod=$method;requiresOpenaiAuth=$true} | ConvertTo-Json
+    $p = Read-BridgeIdentityProjection $text
+    if ($p.authMethod -cne $method) { throw 'Identity type projection changed.' }
+}
+foreach ($bad in @(
+    '{"error":"unavailable"}',
+    '{"schema":1,"scope":"native-reported-identity-only","authMethod":null,"requiresOpenaiAuth":true,"authToken":"PUBLIC-NOT-A-CREDENTIAL"}',
+    '{"schema":1,"scope":"native-reported-identity-only","authMethod":"unknown","requiresOpenaiAuth":true}',
+    '{"schema":1,"scope":"native-reported-identity-only","authMethod":"chatgpt","requiresOpenaiAuth":false}',
+    '{"schema":1,"scope":"native-reported-identity-only","authMethod":null,"requiresOpenaiAuth":null}'
+)) { Assert-Rejected { Read-BridgeIdentityProjection $bad } }

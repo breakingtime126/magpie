@@ -310,6 +310,7 @@ Assert-NativeExit 'Isolated configuration helper synthetic tests'
 # Independent configuration helper only; never runs ordinary Magpie initialization.
 Copy-Item -LiteralPath 'scripts/bridge-profile-preview/preview.ps1' -Destination (Join-Path $package 'bridge-profile.ps1')
 Copy-Item -LiteralPath 'scripts/bridge-profile-preview/README.md' -Destination (Join-Path $package 'PROFILE-HELPER.md')
+Copy-Item -LiteralPath 'docs/subsystems/primary-identity-inspection.md' -Destination (Join-Path $package 'PRIMARY-IDENTITY.md')
 $profileLauncher = '@echo off' + "`r`n" + '"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -STA -File "%~dp0bridge-profile.ps1"' + "`r`n" + 'if errorlevel 1 pause' + "`r`n"
 [IO.File]::WriteAllText((Join-Path $package 'Open-Bridge-Profile.cmd'), $profileLauncher, [Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath 'LICENSE' -Destination $package
@@ -405,12 +406,16 @@ primary-no-auth diagnostic and example JSON remain unchanged and do not enable
 this relay. See DESIGN.md for the exact conservative response contract.
 
 Open-Bridge-Profile.cmd opens the separate configuration helper without ordinary
-Magpie startup. It can save a new isolated bridge.json and call only the bundled
-adapter --check. You still need two official executable selections, provider IDs
+Magpie startup. Save/check saves a new isolated bridge.json and calls the bundled
+adapter --check without launching backends. The separate Inspect primary identity
+button requires explicit consent to launch your selected, reviewed primary; it may
+refresh credentials, contact services and change native state. Failures do not
+roll those effects back. It does not request or display tokens. You still need two official executable selections, provider IDs
 and four separately prepared backend directories. This is not a ready-to-chat
 wizard and does not enable authentication or install normal Desktop integration.
 PowerShell execution-policy or enterprise restrictions must not be bypassed.
-See PROFILE-HELPER.md. Saved profiles do not change Codex or global settings.
+See PROFILE-HELPER.md and PRIMARY-IDENTITY.md for the native inspection limits.
+Saved profiles do not change Codex or global settings.
 
 No installer, system configuration change, release publication or deployment is
 performed. Artifact availability does not authorize installation or operation.
