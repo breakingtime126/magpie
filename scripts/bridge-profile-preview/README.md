@@ -74,3 +74,24 @@ new combined GUI, selectors, package-launch behavior and actual GUI-to-adapter
 flow still need Windows acceptance. Neither static review nor mocked success
 proves those passed. Local preparation had no usable PowerShell runtime, so its
 new tests were not run locally.
+
+### Owned-window CI acceptance
+
+The existing profile workflow additionally builds the real standalone adapter and
+shows this helper's own WinForms window in an interactive Windows runner session.
+It invokes the owned Save button twice, checks real `--check` success and no
+replacement of the first profile, edits a field to invalidate the result, closes
+the window, then deletes only this attempt's two new profiles. Four empty backend
+homes and the process environment must remain unchanged. The selected fake `.exe`
+contains non-executable public text; successful checking does not mean it can run.
+No backend, Desktop, account, service or sandbox setup is launched.
+
+Selectors are substituted with synthetic paths. Standard system dialogs, physical
+mouse/keyboard input and the ZIP `.cmd` entry remain unverified. Images are
+DrawToBitmap captures of the shown owned control tree, not whole-desktop screen
+captures or proof of unobscured visibility. No UIA or coordinate clicking is used.
+The checker retains its bounded timeout; CI has an overall 15-minute ceiling and
+failure cleanup removes only this test's fresh directories. Runner cancellation
+can prevent final cleanup/reporting and must not be reported as rollback success.
+A noninteractive session fails rather than claiming GUI acceptance. Local preparation
+has no PowerShell runtime, so these new checks require the resulting Windows run.

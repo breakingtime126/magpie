@@ -1,4 +1,4 @@
-name: Experimental bridge profile draft tests
+name: Experimental bridge profile helper tests
 
 on:
   push:
@@ -15,7 +15,14 @@ jobs:
   pure-profile-builder:
     if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
     runs-on: windows-2025
-    timeout-minutes: 5
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: '0'
+      GOOS: windows
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOTELEMETRY: 'off'
     steps:
       - name: Check out the exact triggering commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -23,10 +30,23 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 1
-      - name: Test pure draft generation without opening the GUI
+      - name: Set up the pinned compiler for the independent checker
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test helper logic and its own visible window
         # cmd creates a .cmd wrapper; PowerShell runs a real checked-out .ps1.
         # No execution-policy override: a policy refusal remains a failure.
         shell: cmd
         env:
           EXPECTED_SHA: ${{ github.sha }}
-        run: powershell.exe -NoLogo -NoProfile -NonInteractive -File scripts\bridge-profile-preview\preview.ci.ps1 -ExpectedSha "%EXPECTED_SHA%"
+        run: powershell.exe -NoLogo -NoProfile -STA -File scripts\bridge-profile-preview\preview.ci.ps1 -ExpectedSha "%EXPECTED_SHA%"
+      - name: Upload only owned-window captures and fixed outcome flags
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bridge-helper-window-${{ github.sha }}
+          path: ${{ runner.temp }}/bridge-helper-evidence
+          if-no-files-found: warn
+          retention-days: 7

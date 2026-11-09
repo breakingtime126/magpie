@@ -166,7 +166,19 @@ function Save-BridgeProfileDraft([object[]]$Backends, [string]$ParentDirectory) 
     } finally { if ($null -ne $stream) { $stream.Dispose() } }
 }
 
-function Show-BridgeProfilePreview {
+function Select-BridgeProfileParent {
+    $dialog = New-Object Windows.Forms.FolderBrowserDialog
+    $dialog.Description = 'Choose a separate profile parent; a new folder and bridge.json will be created. Existing files are never overwritten.'
+    $dialog.ShowNewFolderButton = $false
+    try {
+        if ($dialog.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) { return $dialog.SelectedPath }
+        return $null
+    } finally { $dialog.Dispose() }
+}
+
+# Construction is separate from the modal lifetime so the owned controls can be
+# exercised directly. This does not add a production automation/launch mode.
+function New-BridgeProfileWindow {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Windows only.' }
     if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'Run PowerShell in STA mode.' }
     Add-Type -AssemblyName System.Windows.Forms
@@ -280,11 +292,9 @@ function Show-BridgeProfilePreview {
     $save.Size = New-Object Drawing.Size(155, 30)
     $save.Tag = @{ Rows = $rows; Preview = $preview; Status = $status }
     $save.Add_Click({
-        $dialog = New-Object Windows.Forms.FolderBrowserDialog
-        $dialog.Description = 'Choose a separate profile parent; a new folder and bridge.json will be created. Existing files are never overwritten.'
-        $dialog.ShowNewFolderButton = $false
         try {
-            if ($dialog.ShowDialog() -ne [Windows.Forms.DialogResult]::OK) { return }
+            $parent = Select-BridgeProfileParent
+            if ([string]::IsNullOrEmpty($parent)) { return }
             $this.Enabled = $false
             $this.Tag.Preview.Clear()
             $inputs = @()
@@ -294,7 +304,7 @@ function Show-BridgeProfilePreview {
                 $inputs += $inputRow
             }
             $this.Tag.Status.Text = 'Saving a new profile and checking paths; no backend starts.'
-            $result = Save-BridgeProfileDraft $inputs $dialog.SelectedPath
+            $result = Save-BridgeProfileDraft $inputs $parent
             $this.Tag.Preview.Text = $result.Path
             if ($result.Status -ceq 'passed') {
                 $this.Tag.Status.Text = 'Saved; structure/path check passed. Authentication, models and Desktop remain unverified.'
@@ -305,7 +315,7 @@ function Show-BridgeProfilePreview {
             }
         } catch {
             $this.Tag.Status.Text = 'Not validated. Check local paths and permissions; no existing profile was overwritten.'
-        } finally { $this.Enabled = $true; $dialog.Dispose() }
+        } finally { $this.Enabled = $true }
     })
     $form.Controls.Add($save)
     # Invalidate the old draft immediately when any selected value changes.
@@ -318,7 +328,12 @@ function Show-BridgeProfilePreview {
             })
         }
     }
-    try { [void]$form.ShowDialog() } finally { $form.Dispose() }
+    return [pscustomobject]@{ Form=$form; Rows=$rows; Save=$save; Preview=$preview; Status=$status }
+}
+
+function Show-BridgeProfilePreview {
+    $window = New-BridgeProfileWindow
+    try { [void]$window.Form.ShowDialog() } finally { $window.Form.Dispose() }
 }
 
 if ($MyInvocation.InvocationName -ne '.') { Show-BridgeProfilePreview }
