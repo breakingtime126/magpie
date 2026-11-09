@@ -233,8 +233,25 @@ function Invoke-WinAppSyntheticChatCore([string]$Profile,[long]$WindowHandle,
             }
             if(@($page.Nodes|Where-Object {$_.Name -ceq 'Select model'}).Count -gt 0){
                 $mutating=$true;$receipt=& $Command collapse $current.Selector '';Assert-WinAppChatCollapse $receipt $WindowHandle $current;$mutating=$false
-                $page=& $ReadPage;Assert-WinAppChatPage $page
-                if(@($page.Nodes|Where-Object {$_.Name -ceq 'Select model'}).Count -gt 0){throw 'Model popover still open.'}
+                # UIA's action receipt is not evidence of rendered closure. Wait
+                # only by re-reading the same validated window; never collapse
+                # again or type while the popover remains visible. Each ReadPage
+                # retains its existing bounded tool call and identity checks.
+                $closeWait=[Diagnostics.Stopwatch]::StartNew()
+                for($closeRead=0;$closeRead -lt 8;$closeRead++){
+                    if($total.ElapsedMilliseconds -gt 120000){throw 'Chat slice deadline.'}
+                    $page=& $ReadPage;Assert-WinAppChatPage $page
+                    if($total.ElapsedMilliseconds -gt 120000){throw 'Chat slice deadline.'}
+                    if(@($page.Nodes|Where-Object {$_.Name -ceq 'Select model'}).Count -eq 0){
+                        $closed=Get-WinAppChatTarget $page ($provider+'-menu') $resolve
+                        if($closed.Selector -cne $current.Selector -or $closed.Name -cne $current.Name -or
+                            $closed.ExpandState -cnotin @('collapsed','expanded')){throw 'Chat model menu state unavailable.'}
+                        if($total.ElapsedMilliseconds -gt 120000){throw 'Chat slice deadline.'}
+                        if($closed.ExpandState -ceq 'collapsed'){break}
+                    }
+                    if($closeRead -eq 7 -or $closeWait.ElapsedMilliseconds -ge 2000){throw 'Model popover did not close.'}
+                    Start-Sleep -Milliseconds 100
+                }
             }
             foreach($round in 1,2){
                 if($total.ElapsedMilliseconds -gt 120000){throw 'Chat slice deadline.'}
@@ -281,6 +298,8 @@ function Invoke-WinAppSyntheticChatCore([string]$Profile,[long]$WindowHandle,
             'Composer not empty.' {'composer_not_empty'}
             'Composer value not verified.' {'composer_readback_mismatch'}
             'Protected chat screen.' {'protected_screen'}
+            'Model popover did not close.' {'model_popover_not_closed'}
+            'Chat model menu state unavailable.' {'model_menu_state_unavailable'}
             'Assistant text not observed.' {'assistant_text_not_observed'}
             'Unexpected chat history.' {'unexpected_history'}
             default {'chat_target_or_result_unverified'}

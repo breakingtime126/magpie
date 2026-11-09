@@ -7,7 +7,7 @@ foreach($f in @('desktop-live-welcome.ps1','desktop-winapp-inspect.ps1','desktop
 $script:checks=0
 function Pass($v,$n){if(-not $v){throw ('FAIL: '+$n)};$script:checks++}
 function Reject([scriptblock]$b,$n){$failed=$false;try{&$b}catch{$failed=$true};Pass $failed $n}
-function N($name,$type,$selector){[pscustomobject]@{Name=$name;Type=$type;Selector=$selector;Enabled=$true;Invokable=$true}}
+function N($name,$type,$selector){[pscustomobject]@{Name=$name;Type=$type;Selector=$selector;Enabled=$true;Invokable=$true;ExpandState=$(if($name -cin @('Synthetic Alpha [alpha] None','Synthetic Beta [beta] None')){'collapsed'}else{''})}}
 function ChatPage($nodes) {
     $counts=@{}
     foreach($n in $nodes){
@@ -65,6 +65,7 @@ $script:state=@{provider='alpha';answers=0;draft='';menu=$false;sends=0;newChats
 $readHappy={
     $nodes=@((N ('Synthetic '+$(if($script:state.provider -eq 'alpha'){'Alpha [alpha]'}else{'Beta [beta]'})+' None') Button 'btn-currentmodel-abcd'),
         (N 'Do anything' Edit 'txt-doanything-abcd'),(N 'Send' Button 'btn-send-abcd'),(N 'New chat' Button 'btn-newchat-abcd'))
+    $nodes[0].ExpandState=$(if($script:state.menu){'expanded'}else{'collapsed'})
     if($script:state.menu){$nodes+=@((N 'Select model' Text 'lbl-selectmodel-abcd'),(N 'Synthetic Beta [beta]' RadioButton 'rdo-syntheticbeta-abcd'))}
     for($i=0;$i -lt $script:state.answers;$i++){$nodes+=,(N ('fixture-answer-'+$script:state.provider) Text 'lbl-answer-abcd')}
     ChatPage $nodes
@@ -172,8 +173,8 @@ $corePromotedRead={
 $corePromotedCommand={param($operation,$selector,$text)
     $script:corePromoted.operations+=,$operation
     if($operation -ceq 'resolve'){
-        if($selector -cne 'alpha-menu' -or $text -cne 'Synthetic Alpha [alpha] None' -or -not $script:corePromoted.menu){throw 'Unexpected core resolution.'}
-        return (ResolvedMenu 'expanded')
+        if($selector -cne 'alpha-menu' -or $text -cne 'Synthetic Alpha [alpha] None'){throw 'Unexpected core resolution.'}
+        return (ResolvedMenu $(if($script:corePromoted.menu){'expanded'}else{'collapsed'}))
     }
     if($operation -ceq 'collapse'){
         if($selector -cne 'btn-modelpicker-abcd' -or $text -cne '' -or -not $script:corePromoted.menu){throw 'Unexpected core collapse.'}
@@ -183,6 +184,72 @@ $corePromotedCommand={param($operation,$selector,$text)
     throw 'Unexpected core target operation.'
 }
 $r=Invoke-WinAppSyntheticChatCore $profile 7 $corePromotedRead $corePromotedCommand {param($stage) $script:corePromoted.captures++}
-Pass (($script:corePromoted.operations -join ',') -ceq 'resolve,collapse' -and -not $script:corePromoted.menu -and $script:corePromoted.reads -eq 3) 'core promoted resolution then collapse wiring'
+Pass (($script:corePromoted.operations -join ',') -ceq 'resolve,collapse,resolve' -and -not $script:corePromoted.menu -and $script:corePromoted.reads -eq 3) 'core promoted resolution then collapse wiring'
 Pass ($r.status -ceq 'blocked' -and $r.stage -ceq 'alpha-turn-1' -and $r.reason -ceq 'target_absent_or_ambiguous' -and $r.sendAttempts -eq 0 -and $r.uiAnswers -eq 0 -and -not $r.partialActionUncertain -and $script:corePromoted.captures -eq 1) 'core stops at missing composer with zero sends'
 Write-Output ('SYNTHETIC_CHAT_CORE_RESOLUTION_CHECKS='+$script:checks)
+
+# A successful action receipt can precede rendering, or the renderer may never
+# close. These pure callbacks distinguish both without repeating an action.
+$deferredCollapse={param($operation,$selector,$text)
+    $receipt=& $corePromotedCommand $operation $selector $text
+    if($operation -ceq 'collapse'){$script:corePromoted.menu=$true;$script:corePromoted.pendingClose=2}
+    return $receipt
+}
+$delayedCloseRead={
+    if($script:corePromoted.pendingClose -gt 0){
+        $script:corePromoted.pendingClose--
+        if($script:corePromoted.pendingClose -eq 0){$script:corePromoted.menu=$false}
+    }
+    & $corePromotedRead
+}
+$script:corePromoted=@{menu=$true;reads=0;captures=0;operations=@();pendingClose=0}
+$r=Invoke-WinAppSyntheticChatCore $profile 7 $delayedCloseRead $deferredCollapse {param($stage) $script:corePromoted.captures++}
+Pass (($script:corePromoted.operations -join ',') -ceq 'resolve,collapse,resolve' -and $script:corePromoted.reads -eq 4 -and -not $script:corePromoted.menu) 'delayed rendered closure uses readonly recheck and one collapse'
+Pass ($r.stage -ceq 'alpha-turn-1' -and $r.reason -ceq 'target_absent_or_ambiguous' -and $r.sendAttempts -eq 0 -and -not $r.partialActionUncertain) 'delayed closure does not bypass composer checks'
+$script:corePromoted=@{menu=$true;reads=0;captures=0;operations=@();pendingClose=0}
+$r=Invoke-WinAppSyntheticChatCore $profile 7 $corePromotedRead $deferredCollapse {param($stage) $script:corePromoted.captures++}
+Pass (($script:corePromoted.operations -join ',') -ceq 'resolve,collapse' -and $script:corePromoted.reads -ge 2 -and $script:corePromoted.reads -le 9 -and $script:corePromoted.menu) 'persistent popover has bounded reads and no repeated action'
+Pass ($r.stage -ceq 'alpha-entry' -and $r.reason -ceq 'model_popover_not_closed' -and $r.sendAttempts -eq 0 -and $r.uiAnswers -eq 0 -and -not $r.partialActionUncertain -and $script:corePromoted.captures -eq 1) 'persistent popover stops before any input or send with exact reason'
+$protectedAfterCollapse={
+    if($script:corePromoted.pendingClose -gt 0){return (ChatPage @((N 'Sign in' Text 'lbl-signin-abcd')))}
+    & $corePromotedRead
+}
+$script:corePromoted=@{menu=$true;reads=0;captures=0;operations=@();pendingClose=0}
+$r=Invoke-WinAppSyntheticChatCore $profile 7 $protectedAfterCollapse $deferredCollapse {param($stage) $script:corePromoted.captures++}
+Pass (($script:corePromoted.operations -join ',') -ceq 'resolve,collapse' -and $r.reason -ceq 'protected_screen' -and $r.sendAttempts -eq 0) 'protected screen during closure stops immediately'
+$snapshotFailureAfterCollapse={
+    if($script:corePromoted.pendingClose -gt 0){throw 'Chat snapshot validation failed.'}
+    & $corePromotedRead
+}
+$script:corePromoted=@{menu=$true;reads=0;captures=0;operations=@();pendingClose=0}
+$r=Invoke-WinAppSyntheticChatCore $profile 7 $snapshotFailureAfterCollapse $deferredCollapse {param($stage) $script:corePromoted.captures++}
+Pass (($script:corePromoted.operations -join ',') -ceq 'resolve,collapse' -and $r.reason -ceq 'snapshot_validation_failed' -and $r.sendAttempts -eq 0) 'invalid snapshot during closure is not retried'
+Write-Output ('SYNTHETIC_CHAT_POPOVER_CHECKS='+$script:checks)
+
+# A disappearing title alone is insufficient: the same model button must be
+# observed collapsed, and uncertain action receipts must not enter the wait.
+$noTitleExpanded={
+    $page=& $corePromotedRead
+    if($script:corePromoted.pendingClose -gt 0){$page.Nodes=@($page.Nodes|Where-Object {$_.Name -cne 'Select model'})}
+    return $page
+}
+$script:corePromoted=@{menu=$true;reads=0;captures=0;operations=@();pendingClose=0}
+$r=Invoke-WinAppSyntheticChatCore $profile 7 $noTitleExpanded $deferredCollapse {param($stage)}
+Pass (@($script:corePromoted.operations|Where-Object {$_ -ceq 'collapse'}).Count -eq 1 -and $r.reason -ceq 'model_popover_not_closed' -and $r.sendAttempts -eq 0) 'missing title with expanded button never permits typing'
+$badCollapseReceipt={param($operation,$selector,$text)
+    if($operation -ceq 'collapse'){$script:corePromoted.operations+=,$operation;return '{}'}
+    & $corePromotedCommand $operation $selector $text
+}
+$script:corePromoted=@{menu=$true;reads=0;captures=0;operations=@();pendingClose=0}
+$r=Invoke-WinAppSyntheticChatCore $profile 7 $corePromotedRead $badCollapseReceipt {param($stage)}
+Pass (($script:corePromoted.operations -join ',') -ceq 'resolve,collapse' -and $script:corePromoted.reads -eq 1 -and $r.partialActionUncertain -and $r.sendAttempts -eq 0) 'uncertain collapse receipt stops without polling or repeating'
+Write-Output ('SYNTHETIC_CHAT_CLOSURE_STATE_CHECKS='+$script:checks)
+
+$changedClosedTarget={
+    if($script:corePromoted.pendingClose -gt 0){return (ChatPage @((N 'Synthetic Alpha [alpha] None' Button 'btn-different-abcd')))}
+    & $corePromotedRead
+}
+$script:corePromoted=@{menu=$true;reads=0;captures=0;operations=@();pendingClose=0}
+$r=Invoke-WinAppSyntheticChatCore $profile 7 $changedClosedTarget $deferredCollapse {param($stage)}
+Pass (($script:corePromoted.operations -join ',') -ceq 'resolve,collapse' -and $r.reason -ceq 'model_menu_state_unavailable' -and $r.sendAttempts -eq 0) 'changed model target during closure stops without input'
+Write-Output ('SYNTHETIC_CHAT_CLOSURE_IDENTITY_CHECKS='+$script:checks)

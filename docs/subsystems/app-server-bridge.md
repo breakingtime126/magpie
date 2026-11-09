@@ -2352,3 +2352,30 @@ read a native store, complete a resumed turn, or test Desktop restart, grouping,
 real account history retention or migration. No production routing or filter
 behavior is changed. Use the existing explicit offline-only CI markers so this
 check does not start Desktop, run the official runtime or configure a sandbox.
+
+### Post-action model-popover observation
+
+The `15b01977` disposable Desktop run completed both authorized unelevated
+read-only setups and native restart checks, but sent zero messages. Its first
+chat step received a successful `collapse` receipt, then observed the model
+popover still open; the final screenshot corroborates that state. The receipt
+is not proof of rendered closure, and this does not establish an asynchronous
+rendering bug or a model/backend failure.
+
+The chat helper now issues the close action only once, then performs up to eight
+validated read-only observations. It proceeds only when the popover title is
+absent and the same provider/model button is uniquely available and explicitly
+collapsed. Every observation retains the identity, full-snapshot and protected-
+screen checks. The two-second polling budget is checked between bounded tool
+calls, not a strict two-second wall-clock guarantee; the overall chat budget is
+also checked before and after those reads. No repeat close, blind key press,
+input, send or next provider follows a persistent popover, changed identity,
+invalid receipt or failed observation. Fixed failure reasons distinguish these
+stops without publishing raw UI or error data.
+
+Pure fixtures cover immediate and delayed closure, persistent visibility,
+missing title with expanded state, protected/invalid observations, changed
+identity and uncertain action receipts. They do not prove that waiting fixes the
+real Desktop case. Any further native setup run requires a newly approved
+single-VM experiment; offline-only CI must not consume that approval or rerun
+setup automatically.
