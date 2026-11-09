@@ -26,6 +26,7 @@ on:
       - build/desktop-live-welcome*.ps1
       - build/desktop-winapp-inspect*.ps1
       - build/desktop-winapp-welcome*.ps1
+      - build/desktop-winapp-chat*.ps1
       - build/review-desktop-contract*
       - build/desktop-welcome-step*.ps1
       - build/test-desktop-cold-start.ps1
