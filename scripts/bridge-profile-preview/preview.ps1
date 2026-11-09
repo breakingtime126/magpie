@@ -222,7 +222,7 @@ function New-BridgeProfileWindow {
                 $box.ReadOnly = $true
                 $browse = New-Object Windows.Forms.Button
                 $browse.Text = 'Choose...'
-                $browse.Location = New-Object Drawing.Point(704, $y - 1)
+                $browse.Location = [Drawing.Point]::new(704, ($y - 1))
                 $browse.Size = New-Object Drawing.Size(106, 28)
                 $browse.Tag = @{ Box = $box; IsFile = ($name -eq 'command') }
                 $browse.Add_Click({
