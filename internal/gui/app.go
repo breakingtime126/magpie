@@ -22,8 +22,10 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/autostart"
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/library"
+	"github.com/yetone/magpie/internal/nativepreview"
 	"github.com/yetone/magpie/internal/omarchy"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/settings"
@@ -72,6 +74,8 @@ func appIconFor() []byte {
 }
 
 type host struct {
+	nativeCodex *NativeCodexAPI
+
 	app   *application.App
 	panel *application.WebviewWindow
 	main  *application.WebviewWindow
@@ -188,6 +192,17 @@ func (h *host) RevealFolder(path string) error { return revealFolder(h.app, path
 func (h *host) Copy(text string) bool          { return copyText(h.app, text) }
 func (h *host) ChooseFolder(title string) (string, error) {
 	d := h.app.Dialog.OpenFile().CanChooseDirectories(true).CanChooseFiles(false).CanCreateDirectories(true).SetTitle(title)
+	if w := application.InvokeSyncWithResult(func() *application.WebviewWindow { return h.main }); w != nil {
+		d.AttachToWindow(w)
+	}
+	return d.PromptForSingleSelection()
+}
+
+// NativeCodexPreview is available only on this owning desktop host.
+func (h *host) NativeCodexPreview() *NativeCodexAPI { return h.nativeCodex }
+
+func (h *host) chooseNativeCodex() (string, error) {
+	d := h.app.Dialog.OpenFile().CanChooseDirectories(false).CanChooseFiles(true).SetTitle("Choose official Codex executable")
 	if w := application.InvokeSyncWithResult(func() *application.WebviewWindow { return h.main }); w != nil {
 		d.AttachToWindow(w)
 	}
@@ -326,57 +341,65 @@ func Run(version string, showMain bool, link string) error {
 	webkitDefaults()
 	// `make dev` runs the backend on its own, so a Go change restarts only
 	// that, behind windows that stay up.
-	if devRole() == "backend" {
+	if !buildvariant.NativeCodex && devRole() == "backend" {
 		return devBackend(func(w Windows) http.Handler { return Handler(w, startBackend()) })
 	}
 	// Windows: the app opened from Downloads (or the Desktop, or a zip)
 	// opens the copy installed in the user's programs folder, putting
 	// itself there first, and Open at login opens that one from now on
-	if from, to := update.Settle(); to != "" {
-		err := update.Forward(from, to)
-		if err == nil {
-			if err := autostart.Repoint(from, to); err != nil {
-				log.Println("open at login:", err)
+	before := 0
+	if !buildvariant.NativeCodex {
+		if from, to := update.Settle(); to != "" {
+			err := update.Forward(from, to)
+			if err == nil {
+				if err := autostart.Repoint(from, to); err != nil {
+					log.Println("open at login:", err)
+				}
+				return nil
 			}
+			log.Println("install:", err)
+		}
+		// A restart to update on a Mac or Linux started this one beside the
+		// magpie before, which hands it the gateway (handover.go).
+		startExe, _ = update.Executable()
+		handoverHost.Store(true)
+		if startExe != "" {
+			before = takeOver(startExe)
+		}
+		// After an update off the Mac, the old process starts this one and then
+		// quits; let it go before looking for the gateway.
+		update.AwaitPredecessor()
+		// installed from a download just now: what magpie left beside it goes
+		update.Settled()
+		// the Mac's second launch hands over to the magpie already running
+		if runningAlready(showMain || OpenPanel, link) {
 			return nil
 		}
-		log.Println("install:", err)
-	}
-	// A restart to update on a Mac or Linux started this one beside the
-	// magpie before, which hands it the gateway (handover.go).
-	startExe, _ = update.Executable()
-	handoverHost.Store(true)
-	before := 0
-	if startExe != "" {
-		before = takeOver(startExe)
-	}
-	// After an update off the Mac, the old process starts this one and then
-	// quits; let it go before looking for the gateway.
-	update.AwaitPredecessor()
-	// installed from a download just now: what magpie left beside it goes
-	update.Settled()
-	// the Mac's second launch hands over to the magpie already running
-	if runningAlready(showMain || OpenPanel, link) {
-		return nil
 	}
 	// a restart magpie made by itself: back as it was, taking no focus
 	// (quiet_restart.go)
-	quiet := takeQuietRestart()
+	quiet := false
+	if !buildvariant.NativeCodex {
+		quiet = takeQuietRestart()
+	}
 	quietShow.Store(quiet && showMain)
 	// before the first webview, which opens WebKit's data where programName says
 	keepWebData()
-	go func() {
-		if err := registerScheme(); err != nil {
-			log.Println("magpie:// links:", err)
-		}
-		// Windows has no installer to put magpie in the Start menu
-		shortcut.Ensure()
-		// Open at login as this version writes it (the Mac's, so a restart
-		// to update from a magpie opened at login comes back)
-		if err := autostart.Refresh(); err != nil {
-			log.Println("open at login:", err)
-		}
-	}()
+	if !buildvariant.NativeCodex {
+		go func() {
+			if err := registerScheme(); err != nil {
+				log.Println("magpie:// links:", err)
+			}
+			// Windows has no installer to put magpie in the Start menu
+			shortcut.Ensure()
+			// Open at login as this version writes it (the Mac's, so a restart
+			// to update from a magpie opened at login comes back)
+			if err := autostart.Refresh(); err != nil {
+				log.Println("open at login:", err)
+			}
+		}()
+	}
+
 	// MAGPIE_THEME=light|dark forces the palette; handy for screenshots.
 	theme := ""
 	if t := os.Getenv("MAGPIE_THEME"); t != "" {
@@ -389,7 +412,23 @@ func Run(version string, showMain bool, link string) error {
 	h.textSize.Store(int64(settings.Load().TextSize))
 	zoom := h.zoom()
 	go stats.Run(version, "app")
-	handler := devShell(h)
+	var handler http.Handler
+	if !buildvariant.NativeCodex {
+		handler = devShell(h)
+	}
+	var nativeController *nativepreview.Controller
+	if buildvariant.NativeCodex {
+		var err error
+		nativeController, err = nativepreview.New()
+		if err != nil {
+			return err
+		}
+		defer nativeController.Close()
+		h.nativeCodex, err = NewNativeCodexAPI(nativeController, h.chooseNativeCodex)
+		if err != nil {
+			return err
+		}
+	}
 	ownPage := handler == nil
 	var gw *gateway.Server
 	if ownPage {
@@ -429,7 +468,14 @@ func Run(version string, showMain bool, link string) error {
 		// leaves both to it: the failover goes on through the new one, and
 		// so do the threads.
 		OnShutdown: func() {
+			if nativeController != nil {
+				nativeController.Cancel()
+				_ = nativeController.Close()
+			}
 			proc.EndProbes()
+			if buildvariant.NativeCodex {
+				return
+			}
 			if handedOver.Load() {
 				return
 			}
@@ -507,6 +553,9 @@ func Run(version string, showMain bool, link string) error {
 	ver := menu.Add(labels.version).SetEnabled(false)
 	restart := menu.Add(labels.restart).SetHidden(true)
 	restart.OnClick(func(*application.Context) {
+		if buildvariant.NativeCodex {
+			return
+		}
 		// the window comes back if it was open; the tray alone if not
 		now := func() bool {
 			if restartToUpdate(false, h.MainShown(), "") {
@@ -544,13 +593,18 @@ func Run(version string, showMain bool, link string) error {
 	updates.onWait = func() { application.InvokeSync(relabel) }
 	// Settings' AutoRestart: the window comes back only if it was up (#2096)
 	updates.autoRestart = func() bool {
+		if buildvariant.NativeCodex {
+			return false
+		}
 		if restartInto(false, h.MainShown(), "", true) {
 			leave(h.app.Quit)
 			return true
 		}
 		return false
 	}
-	updates.start()
+	if !buildvariant.NativeCodex {
+		updates.start()
+	}
 	news.start()
 	// the library written into the agents again, once: one installed or
 	// updated since (or an edit by hand) gets it without a visit to the page
@@ -725,7 +779,11 @@ func singleInstance(h *host) *application.SingleInstanceOptions {
 	if runtime.GOOS == "darwin" || !sessionBus() {
 		return nil
 	}
-	sum := sha256.Sum256([]byte(settings.Dir()))
+	identity := settings.Dir()
+	if buildvariant.NativeCodex {
+		identity += "\x00native-codex-preview"
+	}
+	sum := sha256.Sum256([]byte(identity))
 	return &application.SingleInstanceOptions{
 		UniqueID: "ai.usemagpie.app.i" + hex.EncodeToString(sum[:6]),
 		OnSecondInstanceLaunch: func(d application.SecondInstanceData) {

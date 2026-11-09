@@ -508,6 +508,7 @@ function renderAgents() {
     row.oncontextmenu = (ev) => { ev.preventDefault(); openAgentMenu(row.querySelector(".ag-handle"), a, inFold); };
     const who = el("div", "who");
     who.append(el("div", "name", a.name));
+    window.codexNativeAction?.(a, who); // explicit native test; never the Connect switch
     // the model picker takes the wide column, everything else the narrow one,
     // so the controls line up down the list
     const fields = el("div", "fields");

@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
@@ -156,6 +157,9 @@ func longUndo(agent string) error {
 // the limit and the window it is told), so nothing changes for them. A
 // limit the user changed after tune wrote it is theirs and stays.
 func tuneMigrateCodex(home string) {
+	if buildvariant.NativeCodex {
+		return
+	}
 	st, ok := tuneStashed("codex", TuneCompact, "")
 	if !ok {
 		return
@@ -356,6 +360,9 @@ func tuneStashed(agent, knob, model string) (tuneStash, bool) {
 // was there before is kept, the first time only, for TuneUndo. A variable
 // that takes precedence is an error: the setting would change nothing.
 func TuneApply(home, agent, knob, model, value string) error {
+	if (&Agent{ID: agent}).LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	if agent == "codex" && knob == TuneAsync {
 		return asyncApply(home, value)
 	}
@@ -410,6 +417,9 @@ func TuneApply(home, agent, knob, model, value string) error {
 // TuneUndo puts back what a setting was before tune put one in, unless
 // the user has changed it since: then it is theirs, and only forgotten.
 func TuneUndo(home, agent, knob, model string) error {
+	if (&Agent{ID: agent}).LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	if agent == "codex" && knob == TuneAsync {
 		return asyncUndo()
 	}

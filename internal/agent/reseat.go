@@ -49,6 +49,9 @@ type pick struct {
 func picks() []pick {
 	var out []pick
 	for _, a := range Detected() {
+		if a.LegacyCodexWritesBlocked() {
+			continue
+		}
 		if len(a.Fields) == 0 {
 			continue
 		}

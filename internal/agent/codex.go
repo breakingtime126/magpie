@@ -24,6 +24,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/yetone/magpie/internal/access"
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/codexcat"
 	"github.com/yetone/magpie/internal/codexrelay"
@@ -2273,7 +2274,7 @@ func codexIn(at place) *Agent {
 		a.viaProxy = func() (bool, bool, string, string) { return codexThroughProxy(path, at.gw()) }
 		a.move = func(from, to string) error { return codexMoveGateway(path, from, to) }
 	}
-	return a
+	return protectNativeCodex(a)
 }
 
 // ccSwitchOfficial is the provider id CC Switch 3.17 to 3.20 gave the
@@ -2681,6 +2682,9 @@ func codexFailover() bool {
 // failover out: a thread open in the Codex app still sends to the
 // gateway's address, which the caller leaves a relay at (codexrelay).
 func EndCodexFailover() (ended bool, err error) {
+	if buildvariant.NativeCodex {
+		return false, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return false, err
@@ -2700,6 +2704,9 @@ func EndCodexFailover() (ended bool, err error) {
 // processes running as magpie quits (codexrelay.Start), when the address
 // is this computer's own and Codex is running at all.
 func RelayOpenCodex() error {
+	if buildvariant.NativeCodex {
+		return ErrNativeCodexLegacyWrite
+	}
 	u, err := url.Parse(gateway.URL())
 	if err != nil {
 		return err

@@ -39,6 +39,9 @@ func OnGateway() []*Agent {
 func Rewire(as []*Agent) (moved []string, err error) {
 	var off []*Agent
 	for _, a := range as {
+		if a.LegacyCodexWritesBlocked() {
+			continue
+		}
 		if d := a.Drift(); d != nil && d.Kind == "unwired" {
 			off = append(off, a)
 		}
@@ -60,6 +63,9 @@ func Rewire(as []*Agent) (moved []string, err error) {
 func Rekey(as []*Agent) (moved []string, err error) {
 	var away []*Agent
 	for _, a := range as {
+		if a.LegacyCodexWritesBlocked() {
+			continue
+		}
 		if a.Gateway != nil && onAnotherMachine(a.Gateway()) {
 			away = append(away, a)
 		}
@@ -72,6 +78,9 @@ func Rekey(as []*Agent) (moved []string, err error) {
 // magpie, and says the names of those it set and what one failed with.
 func setAgain(as []*Agent) (moved []string, errs []error) {
 	for _, a := range as {
+		if a.LegacyCodexWritesBlocked() {
+			continue
+		}
 		// set again on the old URL, an agent reads as not routed through
 		// magpie yet, and its set notes the old URL, magpie's token and
 		// model as what it had before magpie: what it really had is kept,
@@ -111,6 +120,9 @@ func joinErrs(errs []error) (err error) {
 // reset sets an agent's wiring again: one joined beside its own models
 // joined again, any other's fields set again.
 func reset(a *Agent) error {
+	if a.LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	if a.Native != nil {
 		return a.Native.Connect()
 	}

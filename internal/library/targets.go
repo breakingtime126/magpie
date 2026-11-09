@@ -137,6 +137,9 @@ func codexDir() string { return appdir.CodexHomeIn(home()) }
 // targetOf is where a known agent keeps them, or nil for one magpie can't
 // give any of them to.
 func targetOf(a *agent.Agent) *Target {
+	if a.LegacyCodexWritesBlocked() {
+		return nil
+	}
 	if a.WSL != "" {
 		return wslTargetOf(a)
 	}
@@ -644,6 +647,9 @@ func pluginTarget(a *agent.Agent) *Target {
 // Windows, and each skill is a link the distro makes to magpie's one copy
 // of it there (wsl_skills.go).
 func wslTargetOf(a *agent.Agent) *Target {
+	if a.LegacyCodexWritesBlocked() {
+		return nil
+	}
 	h := a.Home
 	if h == "" || !agent.WSLRunning(a.WSL) {
 		return nil
@@ -871,6 +877,9 @@ func targetsAsleep(gone bool) ([]*Target, []*agent.Agent) {
 		own[a.ID] = true
 	}
 	for _, a := range agent.All() {
+		if a.LegacyCodexWritesBlocked() {
+			continue
+		}
 		// the agents here, and a folder an agent shares with its vendor's
 		// other app when only that app is here: the Cursor editor reads
 		// ~/.cursor's mcp.json and skills with no cursor-agent installed
@@ -1049,6 +1058,9 @@ func Takes(q, kind string) (string, error) {
 		if a, err = agent.Find(q); err != nil {
 			return "", err
 		}
+	}
+	if a.LegacyCodexWritesBlocked() {
+		return "", agent.ErrNativeCodexLegacyWrite
 	}
 	what := map[string]string{"instructions": "instructions", "mcp": "MCP servers", "skills": "skills"}[kind]
 	// an app found by its program alone (Kiro CLI) that isn't here: told

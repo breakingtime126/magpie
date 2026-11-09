@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/edit"
 )
 
@@ -58,6 +59,9 @@ func CodexCompactHeld(home string) []CodexCompactHold {
 // DropCodexCompactHolds takes those keys out of the config, so Codex
 // compacts where Long conversations says.
 func DropCodexCompactHolds(home string) error {
+	if buildvariant.NativeCodex {
+		return ErrNativeCodexLegacyWrite
+	}
 	for _, h := range CodexCompactHeld(home) {
 		var err error
 		if h.Profile == "" {

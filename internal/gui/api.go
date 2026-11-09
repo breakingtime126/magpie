@@ -35,6 +35,7 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/applog"
 	"github.com/yetone/magpie/internal/autostart"
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/fonts"
@@ -132,6 +133,10 @@ func cliBehindRoutes(mux *http.ServeMux) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(rw, err)
+			return
+		}
+		if buildvariant.NativeCodex {
+			fail(rw, errors.New("CLI installation is unavailable in the native Codex preview"))
 			return
 		}
 		v, err := update.AddCLI(in.Shell)
@@ -1007,6 +1012,8 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		webPage.Store(true)
 	}
 	mux := http.NewServeMux()
+	nativeAPI := nativeCodexForWindow(w)
+	mountNativeCodex(mux, nativeAPI)
 	mux.Handle("/", devPage(revalidated(http.FileServer(http.FS(staticFS())))))
 	devRoutes(mux)
 	pluginPageRoutes(mux, isWeb(w))
@@ -1021,6 +1028,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// once another answers in its place (visamzh on X), as after its
 		// own restart to update (backAsNew)
 		boot["version"] = Version
+		addNativeCodexBoot(boot, nativeAPI, r)
 		if s.Colorblind {
 			boot["colorblind"] = true
 		}
@@ -1310,7 +1318,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		case "reapply":
 			err = a.Reapply()
 		case "keep":
-			a.Keep()
+			err = a.Keep()
 		case "connect":
 			var c agent.Connection
 			c, err = a.ConnectHow()
@@ -1395,11 +1403,22 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	uninstallRoutes(mux, w)
 	archiveRoutes(mux)
 	libraryRoutes(mux, w)
-	updateRoutes(mux, w)
+	if buildvariant.NativeCodex {
+		mux.HandleFunc("GET /api/update", func(rw http.ResponseWriter, r *http.Request) {
+			writeJSON(rw, map[string]string{"state": "source", "current": Version})
+		})
+		mux.HandleFunc("/api/update/", func(rw http.ResponseWriter, r *http.Request) {
+			fail(rw, errors.New("Self-update is unavailable in the native Codex preview"))
+		})
+	} else {
+		updateRoutes(mux, w)
+	}
 	whatsNewRoutes(mux)
 	cliBehindRoutes(mux)
 	configRepairRoutes(mux, !isWeb(w))
-	gatewayFixRoutes(mux)
+	if !buildvariant.NativeCodex {
+		gatewayFixRoutes(mux)
+	}
 	gatewayModeRoutes(mux)
 	if !isWeb(w) {
 		appPageRoutes(mux)
@@ -1453,14 +1472,14 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// an update check that failed, without the proxy set just now, is
 		// tried again through it, not in six hours (#294), and marked so
 		// before this answers: the page stops asking on the old error
-		if strings.TrimSpace(in.Proxy) != strings.TrimSpace(cur.Proxy) && updates.json().State == "error" && updates.begin() {
+		if !buildvariant.NativeCodex && strings.TrimSpace(in.Proxy) != strings.TrimSpace(cur.Proxy) && updates.json().State == "error" && updates.begin() {
 			go updates.run()
 		}
 		// another update channel: the feed is asked again on it, so the
 		// version row and the header's Update follow (a download from
 		// every version is dropped on Stable, run), unless automatic
 		// updates are off and nothing was found
-		if in.UpdateChannel != cur.UpdateChannel && (!in.NoAutoUpdate || updates.json().Latest != "") && updates.begin() {
+		if !buildvariant.NativeCodex && in.UpdateChannel != cur.UpdateChannel && (!in.NoAutoUpdate || updates.json().Latest != "") && updates.begin() {
 			go updates.run()
 		}
 		writeJSON(rw, settingsState())
@@ -2285,6 +2304,10 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		var in struct{ On bool }
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(rw, err)
+			return
+		}
+		if buildvariant.NativeCodex {
+			fail(rw, errors.New("Open at login is unavailable in the native Codex preview"))
 			return
 		}
 		if err := autostart.Set(in.On); err != nil {

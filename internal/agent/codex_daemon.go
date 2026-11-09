@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/beat"
 	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/provider"
@@ -46,6 +47,9 @@ var codexDaemonSeen struct {
 // against when magpie last changed what Codex reads at start, and
 // restarts it when no codex session is on it.
 func codexDaemonCheck(path string) provider.CodexDaemonCheck {
+	if buildvariant.NativeCodex {
+		return provider.CodexDaemonCheck{}
+	}
 	a := &Agent{ID: "codex", Path: path}
 	_, files, reads := a.startsWith()
 	changed := a.changedAt(files, reads)
@@ -85,6 +89,9 @@ const codexDaemonEvery = 15 * time.Second
 // otherwise only now and then, for another process's write (#3185: a
 // look every 15s woke an idle magpie).
 func KeepCodexDaemonCurrent(ctx context.Context) {
+	if buildvariant.NativeCodex {
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return

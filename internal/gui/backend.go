@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/agent"
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/codexrelay"
 	"github.com/yetone/magpie/internal/filememo"
@@ -51,10 +52,14 @@ func startBackend() (gw *gateway.Server) {
 	}()
 	// Codex's background app-server, restarted when it has the list from
 	// before a change and no codex session is on it (luci)
-	go agent.KeepCodexDaemonCurrent(backendCtx)
+	if !buildvariant.NativeCodex {
+		go agent.KeepCodexDaemonCurrent(backendCtx)
+	}
 	// the compactions magpie made in Codex's threads written as Codex's
 	// own, so a thread goes on when Codex talks to OpenAI itself
-	go agent.KeepCodexRolloutsPortable(backendCtx)
+	if !buildvariant.NativeCodex {
+		go agent.KeepCodexRolloutsPortable(backendCtx)
+	}
 	// Model lists are fetched, never compiled in: whatever the agents can see
 	// comes from the models.dev catalog plus each vendor's own /models answer.
 	// Keep both halves warm without making the user click anything.
@@ -131,7 +136,12 @@ func serveGatewayLocked() *gateway.Server {
 	// once this one listens beside it
 	// so is the one that handed this one its socket, still finishing its
 	// requests on it (gui/handover.go)
-	if !gateway.Handover && !gateway.Inherited() {
+	if buildvariant.NativeCodex {
+		// Never displace another Magpie or its relay, or adopt a handover.
+		if gateway.Handover || gateway.Inherited() || gateway.ServedBy().Running || gateway.Taken() {
+			return nil
+		}
+	} else if !gateway.Handover && !gateway.Inherited() {
 		// the Codex relay a magpie quitting left at the port (codexrelay)
 		// lets go of it, finishing the turns it streams
 		codexrelay.Leave()

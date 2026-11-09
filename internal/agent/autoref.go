@@ -48,6 +48,9 @@ func setToFoundGroups() map[string]bool {
 // group/auto-<slug>, or to an auto/<model> it is listed by no longer,
 // onto the group's auto/<model> now, the agent's prefix and suffix kept. It answers whether it moved any.
 func (a *Agent) renameFoundGroups() bool {
+	if a.LegacyCodexWritesBlocked() {
+		return false
+	}
 	if a.Native != nil || len(a.Fields) == 0 {
 		return false
 	}

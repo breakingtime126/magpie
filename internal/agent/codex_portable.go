@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/sessions"
 )
 
@@ -29,6 +30,9 @@ const codexPortUnwire = 3 * time.Second
 // portCodexHome makes the rollouts of the Codex home dir portable, for
 // up to d; left says Codex no longer goes through magpie.
 func portCodexHome(dir string, d time.Duration, left bool) {
+	if buildvariant.NativeCodex {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	port := sessions.PortCodexRollouts
@@ -47,6 +51,9 @@ func portCodexHome(dir string, d time.Duration, left bool) {
 // PortCodexRollouts makes this machine's Codex rollouts portable, for up
 // to d: as magpie quits.
 func PortCodexRollouts(d time.Duration) {
+	if buildvariant.NativeCodex {
+		return
+	}
 	if home, err := os.UserHomeDir(); err == nil {
 		portCodexHome(here(home).codexHome(), d, codexLeft(home))
 	}
@@ -62,6 +69,9 @@ func codexLeft(home string) bool {
 // KeepCodexRolloutsPortable makes this machine's Codex rollouts portable
 // every so often until ctx ends.
 func KeepCodexRolloutsPortable(ctx context.Context) {
+	if buildvariant.NativeCodex {
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return

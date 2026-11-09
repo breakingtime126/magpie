@@ -991,7 +991,7 @@ func wslAgent(k wslKind, d distro) *Agent {
 			}
 		}
 	}
-	return a
+	return protectNativeCodex(a)
 }
 
 // unreached is an agent in a distro whose folder is a link the distro
@@ -1090,7 +1090,7 @@ func asleep(live *Agent, k wslKind, d distro) *Agent {
 		}
 		a.Fields = append(a.Fields, f)
 	}
-	return a
+	return protectNativeCodex(a)
 }
 
 // wslAgents are the agents in this machine's WSL distros; none off Windows.

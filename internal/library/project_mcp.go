@@ -14,6 +14,8 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/tidwall/jsonc"
 
+	"github.com/yetone/magpie/internal/agent"
+	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/gateway"
 )
 
@@ -156,6 +158,17 @@ func (l *Library) syncProjectMCP(p *Project, fail func(what string, err error)) 
 		if !ok {
 			continue
 		}
+		if buildvariant.NativeCodex && format == fmtCodex {
+			// Preserve tracking as well as the native config: skipping a target
+			// must not turn its previous entries into removals on this sync.
+			if had, ok := p.Wrote[rel]; ok {
+				wrote[rel] = had
+			}
+			if was, ok := p.Startup[rel]; ok {
+				startup[rel] = was
+			}
+			continue
+		}
 		abs := filepath.Join(p.Dir, filepath.FromSlash(rel))
 		f := &mcpFile{Path: abs, Format: format}
 		had := p.Wrote[rel]
@@ -283,6 +296,11 @@ func blankMap(m map[string]any) bool {
 // ProjectServer sets which agents get a library server in a project; none
 // takes it out of the project.
 func ProjectServer(dir, name string, agents []string) (*Result, error) {
+	for _, id := range agents {
+		if (&agent.Agent{ID: id}).LegacyCodexWritesBlocked() {
+			return nil, agent.ErrNativeCodexLegacyWrite
+		}
+	}
 	return change(func(l *Library) error {
 		p := l.project(dir)
 		if p == nil {

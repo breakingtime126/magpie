@@ -1,22 +1,25 @@
-name: Experimental Codex connectivity preview GUI
+name: Experimental original Magpie native Codex
 on:
   push:
     branches: [experiment/app-server-bridge-v0.1.3035]
     paths:
-      - cmd/magpie-codex-setup/**
+      - internal/gui/**
+      - internal/agent/**
+      - internal/library/**
+      - internal/buildvariant/**
       - internal/codexsetup/**
       - internal/nativepreview/**
-      - build/package-codex-preview-windows.ps1
+      - build/package-native-magpie-windows.ps1
       - build/test-native-preview-official.ps1
       - .github/workflows/experimental-codex-connectivity-preview.yml
-      - docs/subsystems/codex-connectivity-preview.md
+      - docs/subsystems/original-gui-native-codex.md
 permissions:
   contents: read
 jobs:
   synthetic-linux:
     if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       CGO_ENABLED: '1'
       GOTOOLCHAIN: local
@@ -39,8 +42,8 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/preview-format"
           mkdir -p "$out"
-          gofmt -d cmd/magpie-codex-setup internal/codexsetup internal/nativepreview | tee "$out/gofmt.diff"
-          bad="$(gofmt -l cmd/magpie-codex-setup internal/codexsetup internal/nativepreview)"
+          gofmt -d internal/codexsetup internal/nativepreview internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
+          bad="$(gofmt -l internal/codexsetup internal/nativepreview internal/gui internal/agent internal/library internal/buildvariant)"
           while IFS= read -r file; do
             test -n "$file" || continue
             mkdir -p "$out/$(dirname "$file")"
@@ -50,11 +53,21 @@ jobs:
       - name: Vet the new pure packages
         id: vet
         continue-on-error: true
-        run: go vet -tags nogui ./internal/nativepreview ./internal/codexsetup
+        run: |
+          go vet -tags nogui ./internal/nativepreview ./internal/codexsetup ./internal/gui ./internal/agent ./internal/library
+          go vet -tags nogui,nativecodex ./internal/gui ./internal/agent ./internal/library
       - name: Race and page-state regressions with synthetic inputs only
         run: |
-          go test -race -tags nogui -count=1 -timeout=5m ./internal/nativepreview ./internal/codexsetup
+          go test -race -tags nogui -count=1 -timeout=10m ./internal/nativepreview ./internal/codexsetup ./internal/agent ./internal/library ./internal/gui
+          go test -race -tags nogui,nativecodex -count=1 -timeout=5m -run "^TestNativeCodex" ./internal/agent ./internal/library ./internal/gui
           node internal/codexsetup/app.test.cjs
+      - name: Original page browser regressions, both engines and languages
+        env:
+          NODE_PATH: ${{ runner.temp }}/magpie-ui/node_modules
+        run: |
+          npm install --prefix "$RUNNER_TEMP/magpie-ui" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.61.1
+          "$RUNNER_TEMP/magpie-ui/node_modules/.bin/playwright" install --with-deps chromium webkit
+          node --test internal/gui/tests/agent-connect.test.cjs internal/gui/tests/agent-connect-no-models.test.cjs internal/gui/tests/agent-connected-unfolded.test.cjs internal/gui/tests/codex-native.test.cjs
       - name: Upload formatting evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -89,22 +102,23 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Build independent GUI, run synthetic tests and capture its own window
-        shell: cmd
-        run: powershell.exe -NoLogo -NoProfile -STA -File build\package-codex-preview-windows.ps1
-      - name: Upload only the independent GUI package
+      - name: Build original portable GUI with native Codex protection and capture its window
+        shell: pwsh
+        run: ./build/package-native-magpie-windows.ps1
+      - name: Upload the original Magpie portable experimental package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Magpie-Codex-Connectivity-Preview-${{ github.sha }}
-          path: ${{ runner.temp }}/codex-connectivity-package
+          name: Magpie-Native-Codex-Experimental-${{ github.sha }}
+          path: ${{ runner.temp }}/native-magpie-package
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
       - name: Upload own-window evidence separately
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: codex-connectivity-window-${{ github.sha }}
-          path: ${{ runner.temp }}/codex-connectivity-evidence
+          name: native-magpie-window-${{ github.sha }}
+          path: ${{ runner.temp }}/native-magpie-evidence
           if-no-files-found: warn
           retention-days: 7
 

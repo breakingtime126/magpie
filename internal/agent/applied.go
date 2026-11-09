@@ -98,6 +98,9 @@ func record(id, key, v string) {
 // which read as changed outside magpie, and the drift kept the row up
 // among the connected ones while it said Not connected (#834).
 func (a *Agent) Apply(key, v string) error {
+	if a.LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	if a.Native != nil {
 		return a.Native.Apply(key, v)
 	}
@@ -398,6 +401,9 @@ func orDefault(v string) string {
 // catches. A replaced field brings back the others magpie set with it.
 // Either way the record is renewed, so a use before now no longer counts.
 func (a *Agent) Reapply() error {
+	if a.LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	if a.Native != nil {
 		return a.Native.Connect()
 	}
@@ -440,15 +446,19 @@ func (a *Agent) Reapply() error {
 // magpie set up (setUp): an entry with no fields is kept for it, so one
 // whose magpie is spelled as a provider of its own config still reads as
 // connected.
-func (a *Agent) Keep() {
+func (a *Agent) Keep() error {
+	if a.LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	appliedMu.Lock()
 	defer appliedMu.Unlock()
 	m := appliedLoad()
 	if _, ok := m[a.ID]; !ok {
-		return
+		return nil
 	}
 	m[a.ID] = applied{Kept: true}
 	appliedSave(m)
+	return nil
 }
 
 // forgetSetUp is Disconnect's Keep: what magpie set is forgotten, and so is
@@ -527,6 +537,9 @@ func (a *Agent) Wired() bool {
 // model picked in magpie in one click, both): the agent gets magpie's whole
 // list, and Disconnect puts back what it had before.
 func (a *Agent) Pick(key, v string) error {
+	if a.LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	if a.Native != nil {
 		value, err := a.Spell(key, v)
 		if err != nil {
@@ -617,6 +630,9 @@ func (a *Agent) rewired(err error) {
 
 // ConnectHow is Connect, saying how the model was chosen.
 func (a *Agent) ConnectHow() (c Connection, err error) {
+	if a.LegacyCodexWritesBlocked() {
+		return Connection{}, ErrNativeCodexLegacyWrite
+	}
 	defer func() { a.rewired(err) }()
 	if a.Native != nil {
 		return Connection{How: "joined"}, a.Native.Connect()
@@ -826,6 +842,9 @@ func connectWas(v string, opts []Option) string {
 // each one magpie set that reads as magpie set it (an effort). What magpie
 // remembered setting is forgotten.
 func (a *Agent) Disconnect() (err error) {
+	if a.LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	defer func() { a.rewired(err) }()
 	if a.Native != nil {
 		plan, err := a.Native.Disconnect()
@@ -906,6 +925,9 @@ func (a *Agent) Disconnect() (err error) {
 // DisconnectOffline restores a native agent's saved files only after an
 // explicit offline choice. Legacy callers of Disconnect keep live semantics.
 func (a *Agent) DisconnectOffline() error {
+	if a.LegacyCodexWritesBlocked() {
+		return ErrNativeCodexLegacyWrite
+	}
 	if a.Native == nil || a.Native.ExecuteOffline == nil {
 		return fmt.Errorf("%s does not support offline disconnect", a.Name)
 	}

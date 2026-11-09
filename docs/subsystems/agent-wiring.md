@@ -329,3 +329,33 @@ Settings included, so the form, the saved row and gateway traffic have not
 been tried end to end. As with Cindy and Lody, the TUI leaves the row out
 because there is nothing to pick. `magpie aionui add` opens the link.
 
+
+## Native Codex build variant
+
+The explicit `nativecodex` build tag sets `buildvariant.NativeCodex`; ordinary
+builds keep the legacy wiring behavior. In this variant, the existing GUI and
+other agents remain available, but `Agent.LegacyCodexWritesBlocked` identifies
+Codex's local, WSL and profile family before legacy wiring actions run.
+Apply, Pick, Connect, Disconnect, Reapply and Keep return
+`ErrNativeCodexLegacyWrite`, not a successful native connection. Direct Codex
+field setters and wiring hooks are guarded too, including stopped-WSL setters
+before they start a distro. Automatic legacy migration, catalog synchronization,
+provider/group reference rewrites and gateway rewiring skip Codex. Codex rollout
+porting and automatic daemon restart are disabled; reading compact tuning no
+longer migrates the Codex config. Explicit legacy tuning writes are rejected.
+
+The Library excludes Codex-specific targets, including WSL and retained targets,
+and preserves existing project Codex MCP files and their tracking when syncing.
+Other agents and the shared `~/.agents/skills` behavior remain unchanged: Codex
+may itself read those shared inputs. This is an application routing boundary,
+not an OS filesystem sandbox or a guarantee against another agent's user-defined
+path/symlink aliasing Codex's files. It does not migrate or roll back a previously
+wired installation. GUI/CLI callers must display the rejection rather than
+silently report a completed legacy action. `Keep` now returns an error; ordinary
+builds retain its previous writes and return nil.
+
+Synthetic guard checks (no real native backend or user home) are named
+`TestNativeCodexGuard*`, `TestNativeCodexTargetsGuard` and
+`TestNativeCodexProjectMCPGuardPreservesRemovedEntries`. Run them with and without
+`-tags nogui,nativecodex`, alongside ordinary-build regression tests. The guard
+alone does not implement or verify native Desktop attachment.

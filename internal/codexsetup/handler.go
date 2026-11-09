@@ -78,6 +78,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(data)
 		return
 	}
+	h.serveAction(w, r, r.URL.Path)
+}
+
+func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, action string) {
 	if r.Method != http.MethodPost || r.Header.Get("X-Preview-Token") != h.token {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -112,7 +116,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	switch r.URL.Path {
+	switch action {
 	case "/api/state":
 		write(h.controller.State())
 	case "/api/auto":
@@ -122,6 +126,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		write(h.controller.State())
 	case "/api/choose":
+		if h.choose == nil {
+			fail()
+			return
+		}
 		path, err := h.choose()
 		if err != nil {
 			fail()
