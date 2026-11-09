@@ -200,3 +200,16 @@ status to disabled before resolving startup state. The native `features.remote_c
 key is explicitly ignored in `features/src/lib.rs`; setting it false would not
 prove remote control disabled. This compatibility change deliberately adds no
 such misleading override or internal daemon environment switch.
+
+The same reviewed 0.167 reader accepts `account/rateLimits/updated` only after
+validating its public c407 `v2/account.rs` wire types, including nested required
+fields and numeric widths. Unknown fields and malformed snapshots fail closed.
+Optional wire fields may be absent or null, meaning unavailable in this update;
+no merging or recovery is attempted. Null does not establish that credits or
+account metadata are absent. Plan names
+accept strings, matching the public `PlanType` unknown-value fallback. The
+snapshot is discarded: it neither updates UI/account state nor changes model
+routing, permissions, retry behavior, or inference success criteria. No quota
+read/reset RPC is issued, and there is no cross-provider aggregation. Existing
+per-peer notification count/byte limits still apply. Final text still requires
+its matching successful completed turn and completed agent message.

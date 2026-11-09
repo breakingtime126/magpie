@@ -75,6 +75,7 @@ func textFixtureThread(request map[string]json.RawMessage, mode, home string) an
 func textFixtureTurn(request map[string]json.RawMessage, mode, home string) any {
 	turn := map[string]any{"id": "owned-turn", "status": "inProgress", "error": nil}
 	fixtureNotice("turn/started", map[string]any{"threadId": "owned-thread", "turn": turn})
+	fixtureNotice("account/rateLimits/updated", map[string]any{"rateLimits": map[string]any{"primary": map[string]any{"usedPercent": 0, "windowDurationMins": 5, "resetsAt": nil}}})
 	if mode == "send-cancel" {
 		if os.WriteFile(filepath.Join(home, "fixture-send-ready"), nil, 0600) != nil {
 			os.Exit(11)

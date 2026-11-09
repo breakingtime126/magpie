@@ -233,6 +233,8 @@ func (p *nativePeer) acceptNotification(envelope map[string]json.RawMessage) err
 	err := ErrUnavailable
 	if method == "remoteControl/status/changed" {
 		err = p.acceptDisabledRemoteControl(envelope["params"])
+	} else if method == "account/rateLimits/updated" {
+		err = p.acceptRateLimits(envelope["params"])
 	} else if p.notification != nil {
 		err = p.notification(method, envelope["params"])
 	}
