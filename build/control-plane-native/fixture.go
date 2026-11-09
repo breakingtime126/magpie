@@ -24,6 +24,7 @@ type fixture struct {
 	server              *httptest.Server
 	name                string
 	model, instructions string
+	expectedAuth        string
 	mu                  sync.Mutex
 	requests, failures  int
 }
@@ -33,7 +34,11 @@ func newFixture(name string) *fixture {
 }
 
 func newFixtureWithModel(name, model, instructions string) *fixture {
-	f := &fixture{name: name, model: model, instructions: instructions}
+	return newFixtureWithAuth(name, model, instructions, "")
+}
+
+func newFixtureWithAuth(name, model, instructions, expectedAuth string) *fixture {
+	f := &fixture{name: name, model: model, instructions: instructions, expectedAuth: expectedAuth}
 	s := httptest.NewUnstartedServer(http.HandlerFunc(f.serveHTTP))
 	s.Config.ReadHeaderTimeout = 5 * time.Second
 	s.Config.ReadTimeout = 10 * time.Second
@@ -68,11 +73,9 @@ func (f *fixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		f.fail(w)
 		return
 	}
-	for _, key := range []string{"Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Oai-Attestation"} {
-		if r.Header.Get(key) != "" {
-			f.fail(w)
-			return
-		}
+	if !fixtureAuthAllowed(r.Header, f.expectedAuth) {
+		f.fail(w)
+		return
 	}
 	data, err := io.ReadAll(io.LimitReader(r.Body, maxMessage+1))
 	if err != nil || len(data) > maxMessage {

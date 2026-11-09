@@ -115,10 +115,16 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 	var fixtures []*fixture
 	for i, name := range []string{"alpha", "beta"} {
 		instructions := ""
+		expectedAuth := ""
 		if o.acceptanceProfile == acceptanceSynthetic4239 {
 			instructions = syntheticInstructions(name)
+			_, value, err := syntheticCredential(name)
+			if err != nil {
+				return err
+			}
+			expectedAuth = "Bearer " + value
 		}
-		fixtures = append(fixtures, newFixtureWithModel(name, models[i], instructions))
+		fixtures = append(fixtures, newFixtureWithAuth(name, models[i], instructions, expectedAuth))
 	}
 	defer func() {
 		for _, f := range fixtures {
@@ -151,6 +157,9 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 			}
 		}
 		config, err := nativeConfigForModel(f.name+"_provider", f.server.URL, selectedCatalogPath, models[i])
+		if o.acceptanceProfile == acceptanceSynthetic4239 {
+			config, err = nativeSyntheticAuthConfig(f.name, f.server.URL, selectedCatalogPath)
+		}
 		if err != nil {
 			return err
 		}
@@ -161,8 +170,16 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		if err != nil || len(entries) != 1 || entries[0].Name() != "config.toml" {
 			return failure("scratch_not_empty")
 		}
-		backends = append(backends, map[string]any{"id": f.name, "provider": f.name + "_provider",
-			"command": o.codex, "home": home, "codex_home": ch, "startup_probe_sha256": pinnedSHA})
+		backend := map[string]any{"id": f.name, "provider": f.name + "_provider",
+			"command": o.codex, "home": home, "codex_home": ch, "startup_probe_sha256": pinnedSHA}
+		if o.acceptanceProfile == acceptanceSynthetic4239 {
+			key, _, err := syntheticCredential(f.name)
+			if err != nil {
+				return err
+			}
+			backend["inherit_env"] = []string{key}
+		}
+		backends = append(backends, backend)
 	}
 	cfg := map[string]any{"backends": backends, "working_directory": cwd, "control_plane": controlMode, "control_home": controlHome}
 	cfgPath := filepath.Join(root, "bridge.json")
@@ -170,6 +187,9 @@ func run(ctx context.Context, o options, report *summary) (runErr error) {
 		return err
 	}
 	env := append(childEnvironment(frontHome, frontCodex), "MAGPIE_APP_SERVER_BRIDGE_CONFIG="+cfgPath)
+	if o.acceptanceProfile == acceptanceSynthetic4239 {
+		env = append(env, syntheticAuthEnvironment()...)
+	}
 	report.Stage = "initialize"
 	p, err := startPeer(ctx, o.bridge, env, cwd)
 	if err != nil {

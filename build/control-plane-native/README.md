@@ -317,9 +317,12 @@ entitlement is synthesized. Every server-initiated RPC is a failure.
 The SSE fixture reuses the working event sequence from
 `../test-official-runtime.py`: response.created,
 response.output_item.done (assistant output_text), and response.completed.
-Each endpoint accepts exactly its two expected synthetic prompts, rejects
-authentication/cookie/proof headers, unexpected methods/routes, oversized
-bodies and cross-provider input, and retains only counts.
+Each endpoint accepts exactly its two expected synthetic prompts and rejects
+unexpected methods/routes, oversized bodies and cross-provider input. The
+original no-auth profiles reject authentication/cookie/proof headers; the
+standalone self-authored profile instead requires its own public canary Bearer
+as described below, while still rejecting other identity/proof headers. Only
+counts are retained.
 
 The program prints only the fixed summary schema, booleans, bounded counts,
 known status/failure labels and the verified binary hash. It never prints
@@ -759,3 +762,68 @@ CAS, restart persistence, thread migration, inference, real accounts or the
 absence of all background failures. Version/provenance/CAS behavior belongs to
 the separate production regressions. Existing cleanup evidence retains its
 original scope; a file read is not proof that the entire process tree stopped.
+
+### Synthetic provider-authentication canaries (standalone only)
+
+The existing `synthetic-models-4239` standalone profile now supplies two
+**public, inert test strings** through two distinct provider `env_key` names.
+Each bridge backend inherits only its own named variable. The bridge's freshly
+constructed environment additionally contains a different public
+`OPENAI_API_KEY` canary, which is not on either backend's inheritance list.
+No credential value is sourced from the runner environment for these requests. Only variable names,
+not values, are written to the two temporary native provider configurations.
+
+The two loopback Responses fixtures require exactly one Authorization field
+containing their own canary. Missing, wrong-provider, ambient, duplicated or
+combined values fail closed. Cookie, proxy/API-key, attestation, ChatGPT account,
+and OpenAI organization/project headers are rejected, including empty fields.
+The fixture validates authentication before counting an accepted request; the
+existing two requests per provider, four audited assistant replies, fixed thread
+ownership and clean-exit requirements therefore also cover this header check.
+The report stays count-only and contains no headers or canary values. HTTP unit
+fixtures independently exercise both owners and negative header cases. Those
+negative fixtures are not a native missing-key/fallback test.
+
+Other profiles, including the Desktop fixture path, still provide no credential
+environment and reject Authorization. No production bridge authentication route,
+config write, policy or Windows sandbox setting is changed. The shared fixture
+header guard also rejects empty/duplicate identity fields rather than relying
+on Header.Get. This profile does not launch Desktop, invoke setupStart, install
+or register the package, create sandbox users, change ACL/firewall settings, or
+send tool calls. It reuses the existing signed-package extraction, native hash,
+version, lifecycle and self-authored catalog checks; it does not load an upstream
+model record. CI selects it with both `[app-server-4239-v1]` and
+`[synthetic-models-v1]`. The ordinary runtime job already excludes the former
+marker, so its legacy catalog-download path does not run.
+
+A successful run is evidence of native custom-provider Bearer routing to local
+fixtures in this exact configuration, not proof of actual OpenAI/AIHub credential
+secrecy, missing-key behavior in the native process, Desktop authenticated UI,
+real service acceptance, OS isolation, or zero background egress. The native
+executable is checked before launch; this is not a race-free runtime image lock.
+No genuine login, token, proof or account store is used.
+
+#### Real-account design boundary (not enabled by this test)
+
+Keep the two official processes and their separate native homes. OpenAI account
+login and refresh must remain native/official; AIHub would require its own
+explicit provider endpoint and env-key, never an OpenAI fallback. The bridge
+must not forward an unscoped Desktop proof to the secondary provider. The
+current unavailable-proof mode returns an error, not a forged successful token,
+and may be insufficient for authenticated Desktop. The current
+`primary-no-auth-v0.167.0-alpha.3.2` mode accepts only a genuine no-auth result;
+it rejects non-null tokens and does not implement real-account getAuthStatus.
+It can receive such a token into memory before rejecting it, so it must not be
+presented as a credential-free firewall for a logged-in backend.
+
+The fixed public source's custom provider auth resolution and ambient-header
+regression are in [model-provider/auth.rs](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/model-provider/src/auth.rs).
+That Bearer-selection contract is narrower than proof destination safety:
+[ConfiguredModelProvider::supports_attestation](https://github.com/openai/codex/blob/c40729ea5cf8e947481b130c59807273eda2f8e9/codex-rs/model-provider/src/provider.rs#L621-L625)
+depends on cached ChatGPT login, and the callback has no independently verified
+recipient domain. No real-account compatibility or safe proof forwarding is
+implemented here. Per-process env allowlists and distinct homes reduce accidental
+cross-routing, but processes sharing a user and filesystem are not an OS secret
+isolation boundary. A single process is not a drop-in alternative: the pinned
+native input gate requires each thread's provider to match the current effective
+configuration, not merely its thread/start override.

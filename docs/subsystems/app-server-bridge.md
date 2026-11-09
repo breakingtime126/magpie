@@ -32,6 +32,11 @@ ownership/config/lifecycle oracles. Its report scope is distinct from legacy
 acceptance. This is CI-only harness behavior, not a production bridge or
 Desktop change, a permission-policy change or proof of a hosted model.
 
+The standalone self-authored profile also uses two distinct **public synthetic**
+authentication canaries to test native per-provider Bearer routing to its local
+fixtures. It never reads real credentials or enables Desktop account support.
+See the [canary contract and real-account boundary](../../build/control-plane-native/README.md#synthetic-provider-authentication-canaries-standalone-only).
+
 ## Sources and entry points
 
 - [`app_server_bridge.go`](../../internal/cli/app_server_bridge.go):
