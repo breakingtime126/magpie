@@ -387,6 +387,9 @@ func codexAppSwitched(spent, byMagpie bool) {
 // ctx ends. busy says how many of Codex's requests are in flight through
 // magpie and when the last ended.
 func KeepCodexAppOnItsProvider(ctx context.Context, busy func() (int, time.Time)) {
+	if nativeGPTBuiltinBlocked("codex") {
+		return
+	}
 	t := time.NewTicker(codexAppEvery)
 	defer t.Stop()
 	for {
@@ -406,6 +409,9 @@ func KeepCodexAppOnItsProvider(ctx context.Context, busy func() (int, time.Time)
 // have opened before: its app-servers are ended too. It says which pids it
 // ended.
 func codexAppStep(ctx context.Context, now time.Time, busy func() (int, time.Time)) []int {
+	if nativeGPTBuiltinBlocked("codex") {
+		return nil
+	}
 	if CodexAppRoute == nil {
 		return nil
 	}

@@ -141,6 +141,10 @@ func sharedNativeRouterFixture167(t *testing.T) *Router {
 
 func sharedNativeInitializePolicy167(t *testing.T, r *Router) []Delivery {
 	t.Helper()
+	initialSession := r.controlSession167
+	if initialSession == nil || initialSession.model != "" || len(r.models) != 0 {
+		t.Fatal("fixture did not start with the real empty bootstrap session")
+	}
 	init := client(t, r, `{"id":"shared-init","method":"initialize","params":{"clientInfo":{"name":"synthetic","version":"1"},"capabilities":{"experimentalApi":true}}}`)
 	if len(init) != 2 {
 		t.Fatal("initialize did not reach both native children")
@@ -153,9 +157,11 @@ func sharedNativeInitializePolicy167(t *testing.T, r *Router) []Delivery {
 		}
 		out = append(out, next...)
 	}
-	if len(out) != 2 || r.phase != "initializing" || r.controlSession167 != nil {
-		t.Fatal("initialize escaped admission barrier")
+	if len(out) != 2 || r.phase != "initializing" || r.controlSession167 != initialSession || initialSession.model != "" || len(r.models) != 0 || r.primaryRouteReady167() {
+		t.Fatalf("initialize escaped admission barrier: deliveries=%d phase=%s routes=%d session_changed=%t", len(out), r.phase, len(r.models), r.controlSession167 != initialSession)
 	}
+	// The real bootstrap session exists but cannot be published before readiness.
+	expectError(t, client(t, r, `{"id":"early-config","method":"config/read","params":{}}`))
 	for _, d := range out {
 		m, _ := parseObject(d.Message)
 		if d.Backend == "" || text(m, "method") != "configRequirements/read" || !requirementsNull(m["params"]) {
@@ -240,6 +246,7 @@ func TestSharedNative167BadAdmissionNeverLeaksOrStartsList(t *testing.T) {
 		for _, kind := range []string{"provider", "endpoint", "rpc-error"} {
 			r := sharedNativeRouterFixture167(t)
 			checks := sharedNativeInitialize167(t, r)
+			initialSession := r.controlSession167
 			d := checks[side]
 			m, _ := parseObject(d.Message)
 			result := sharedNativeConfigResponse167(r, d.Backend)
@@ -257,9 +264,10 @@ func TestSharedNative167BadAdmissionNeverLeaksOrStartsList(t *testing.T) {
 				response["error"] = raw(object{"code": raw(-32000), "message": raw("PRIVATE_CANARY")})
 			}
 			out, err := r.Server(d.Backend, raw(response))
-			if err != nil || len(out) != 1 || out[0].Backend != "" || strings.Contains(string(out[0].Message), "PRIVATE_CANARY") || r.phase != "failed" || len(r.pending) != 0 || r.controlSession167 != nil {
+			if err != nil || len(out) != 1 || out[0].Backend != "" || strings.Contains(string(out[0].Message), "PRIVATE_CANARY") || r.phase != "failed" || len(r.pending) != 0 || r.controlSession167 != initialSession || initialSession.model != "" || len(r.models) != 0 || r.primaryRouteReady167() {
 				t.Fatal("bad provider admission leaked native data or retained startup authority")
 			}
+			expectError(t, client(t, r, `{"id":"failed-config","method":"config/read","params":{}}`))
 		}
 	}
 }

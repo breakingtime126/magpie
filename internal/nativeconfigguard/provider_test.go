@@ -14,7 +14,7 @@ func secondaryFixture() (map[string]any, SecondarySpec) {
 		"wire_api": "responses", "requires_openai_auth": false,
 	}
 	return map[string]any{"config": map[string]any{
-		"model_provider": spec.Provider,
+		"model_provider":  spec.Provider,
 		"model_providers": map[string]any{spec.Provider: selected},
 	}}, spec
 }
