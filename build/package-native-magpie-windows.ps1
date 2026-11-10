@@ -37,11 +37,17 @@ $exe = Join-Path $package 'Magpie-Native-Codex-Experimental.exe'
 # Pin the actual same-source adapter inside the GUI, never from a mutable
 # sibling manifest or environment override. Keep the original GUI/main entry.
 $nativePins = "-X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSHA256=$adapterDigest -X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSourceRevision=$head"
+& go test -tags nogui,nativecodex -trimpath -ldflags $nativePins -count=1 -timeout=2m -run '^TestPackagedLauncherLinkerPins$' ./internal/nativeconnect -args "-native-package-sha256=$adapterDigest" "-native-package-revision=$head"
+Assert-Exit 'Compiled same-source launcher pin injection'
 & go build -tags production,nativecodex -trimpath -ldflags "-s -w -H windowsgui -X main.version=native-codex-$($head.Substring(0,8)) $nativePins" -o $exe .
 Assert-Exit 'Original Magpie GUI with pinned adapter build'
 $guiBuildInfo = & go version -m $exe
 Assert-Exit 'Read GUI build provenance'
-if (($guiBuildInfo -join "`n") -notmatch [regex]::Escape($nativePins)) { throw 'GUI linker pins are not recorded in build provenance.' }
+# Go deliberately omits -ldflags under -trimpath. Check source/tag provenance
+# here; the executed package test above checks the shared linker pin arguments.
+$provenance = $guiBuildInfo -join "`n"
+if ($provenance -notmatch '(?m)^\s*build\s+-tags=production,nativecodex\s*$' -or
+    $provenance -notmatch ('(?m)^\s*build\s+vcs\.revision=' + [regex]::Escape($head) + '\s*$')) { throw 'GUI source or native build tags do not match.' }
 Copy-Item -LiteralPath 'docs/subsystems/native-codex-connect.md' -Destination (Join-Path $package 'CONNECT-STATUS.md')
 
 Copy-Item -LiteralPath 'LICENSE','THIRD_PARTY_NOTICES' -Destination $package
