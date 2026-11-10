@@ -316,7 +316,7 @@ func extraOutputFailure(data []byte) error {
 	if len(frame) == len(tail) || bytes.Contains(frame, []byte("\n")) {
 		return errors.New("unexpected extra native stdout")
 	}
-	m, e := object(frame, "method", "params")
+	m, e := timestampedNotificationObject(frame)
 	if e != nil {
 		return errors.New("unexpected extra native stdout")
 	}
@@ -348,7 +348,7 @@ func extraOutputFailure(data []byte) error {
 
 func TestExtraOutputStructuralDiagnostics(t *testing.T) {
 	first := "{\"id\":1,\"result\":{}}\n"
-	status := `{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
+	status := `{"emittedAtMs":1234,"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
 	for _, tc := range []struct{ tail, reason string }{
 		{"\n", "extra_whitespace"},
 		{" \r\n\t", "extra_whitespace"},
@@ -416,7 +416,7 @@ func TestInitializeLifecycleEnvelope(t *testing.T) {
 		"userAgent": clientName + "/0.0.0 (Windows x; x64) terminal (" + clientName + "; 0.0.0)",
 		"codexHome": home, "platformFamily": "windows", "platformOs": "windows"}})
 	response := string(first) + "\n"
-	status := `{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
+	status := `{"emittedAtMs":1234,"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
 	for _, tc := range []struct {
 		data  string
 		count int
@@ -464,7 +464,7 @@ func diagnoseRejectedExtraOutput(tail []byte) error {
 		limit = 4
 	}
 	for _, frame := range frames[:limit] {
-		m, e := object(frame, "method", "params")
+		m, e := timestampedNotificationObject(frame)
 		if e == nil {
 			method, e := textField(m["method"])
 			if e == nil && method == "configWarning" {
@@ -475,7 +475,7 @@ func diagnoseRejectedExtraOutput(tail []byte) error {
 	if len(frames) != 1 {
 		return fail("multiple frames")
 	}
-	m, e := object(frames[0], "method", "params")
+	m, e := timestampedNotificationObject(frames[0])
 	if e != nil {
 		return fail("invalid envelope")
 	}
@@ -503,8 +503,8 @@ func TestRejectedExtraOutputDiagnostics(t *testing.T) {
 		"userAgent": clientName + "/0.0.0 (Windows x; x64) terminal (" + clientName + "; 0.0.0)",
 		"codexHome": home, "platformFamily": "windows", "platformOs": "windows"}})
 	response := string(first) + "\n"
-	status := `{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
-	warning := `{"method":"configWarning","params":{"summary":"private-sentinel","details":"private-sentinel","path":null,"range":null}}` + "\n"
+	status := `{"emittedAtMs":1234,"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
+	warning := `{"emittedAtMs":1234,"method":"configWarning","params":{"summary":"private-sentinel","details":"private-sentinel","path":null,"range":null}}` + "\n"
 	for _, tc := range []struct{ tail, reason string }{
 		{strings.TrimSuffix(status, "\n"), "extra_unterminated"},
 		{status + status, "extra_multiple_frames"},
@@ -536,6 +536,69 @@ func TestRejectedExtraOutputDiagnostics(t *testing.T) {
 		}
 		if _, ok := decodeFailure(b); !ok {
 			t.Fatal("finite diagnostic rejected")
+		}
+	}
+}
+
+// Pinned c40729ea app-server outgoing_message.rs always wraps notifications in
+// ServerNotificationEnvelope with emittedAtMs: Some(nonnegative Unix millis).
+// common.rs declares i64; transport serializes this envelope without JSON-RPC
+// version metadata. Older timestamp-free envelopes are not this exact target.
+func timestampedNotificationObject(data []byte) (map[string]json.RawMessage, error) {
+	m, e := object(data, "method", "params", "emittedAtMs")
+	if e != nil {
+		return nil, e
+	}
+	raw := bytes.TrimSpace(m["emittedAtMs"])
+	// Require an unsigned decimal spelling in the nonnegative i64 range.
+	// Reject null, strings, fractions, exponents, and negative zero as well.
+	if len(raw) == 0 {
+		return nil, errors.New("unexpected object shape")
+	}
+	for _, b := range raw {
+		if b < '0' || b > '9' {
+			return nil, errors.New("unexpected object shape")
+		}
+	}
+	var timestamp int64
+	if json.Unmarshal(raw, &timestamp) != nil || timestamp < 0 {
+		return nil, errors.New("unexpected object shape")
+	}
+	return m, nil
+}
+
+func TestTimestampedLifecycleEnvelope(t *testing.T) {
+	home := t.TempDir()
+	first, _ := json.Marshal(map[string]any{"id": 1, "result": map[string]string{
+		"userAgent": clientName + "/0.0.0 (Windows x; x64) terminal (" + clientName + "; 0.0.0)",
+		"codexHome": home, "platformFamily": "windows", "platformOs": "windows"}})
+	response := string(first) + "\n"
+	status := `{"emittedAtMs":1234,"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
+	for _, value := range []string{"0", "1234", "9223372036854775807"} {
+		n, e := assertInitializeStream([]byte(response+strings.Replace(status, "1234", value, 1)), "0.0.0", home)
+		if e != nil || n != 1 {
+			t.Fatal("documented timestamp rejected")
+		}
+	}
+	for _, value := range []string{`null`, `true`, `"1234"`, `{}`, `[]`, "-1", "-0", "1.5", "1e3", "9223372036854775808", "18446744073709551615"} {
+		n, e := assertInitializeStream([]byte(response+strings.Replace(status, "1234", value, 1)), "0.0.0", home)
+		if e == nil || n != 0 {
+			t.Fatal("invalid timestamp accepted")
+		}
+	}
+	for _, bad := range []string{
+		strings.Replace(status, `"emittedAtMs":1234,`, "", 1),
+		strings.Replace(status, `"emittedAtMs":1234`, `"emittedAtMs":1234,"emittedAtMs":1234`, 1),
+		strings.Replace(status, `"emittedAtMs":1234`, `"emittedAtMs":1234,"unknown":true`, 1),
+		strings.Replace(status, `"emittedAtMs":1234`, `"emittedAtMs":1234,"jsonrpc":"2.0"`, 1),
+		strings.Replace(status, `"method":`, `"result":{},"method":`, 1),
+		strings.Replace(status, `"method":`, `"error":{},"method":`, 1),
+		strings.Replace(status, "disabled", "errored", 1),
+		strings.Replace(status, "remoteControl/status/changed", "configWarning", 1),
+	} {
+		n, e := assertInitializeStream([]byte(response+bad), "0.0.0", home)
+		if e == nil || n != 0 {
+			t.Fatal("unapproved envelope accepted")
 		}
 	}
 }
