@@ -1,0 +1,793 @@
+{
+  "baseline_commit": "973e17ad9522977cb5bd4a4c0c2445ef444dfd76",
+  "baseline": [
+    {
+      "path": "go.mod",
+      "git_blob_sha1": "11642a8517086c7a452c94d5fa352b208a74c355",
+      "sha256": "ceee19c55b785efed15d4e68ad3fae4159d42defc28779a3193f8146f79fba57"
+    },
+    {
+      "path": "go.sum",
+      "git_blob_sha1": "0ddd5be8f538fa2ed89c3496491b539d16c0bd1e",
+      "sha256": "e756a619852f2d5dff86fd0bf2454d1328987efc03fe573761bb68deac645447"
+    },
+    {
+      "path": "internal/agentenv/agentenv.go",
+      "git_blob_sha1": "9f17b7309dff086252a95478bddc28d4b74ac99a",
+      "sha256": "619a5b14e634b7af6576ed89b60859dd0cb0976dd99b6f706f1382c069f1b000"
+    },
+    {
+      "path": "internal/appdir/appdir.go",
+      "git_blob_sha1": "0dc358ea0025572bc986646219fc513516ee28dd",
+      "sha256": "9858bbef34f5e805a854820591f4c07e8f2fbffa1cfa8f78802573d4ceab4c0d"
+    },
+    {
+      "path": "internal/appdir/blocked_windows.go",
+      "git_blob_sha1": "65da4901a55ecc2e9c73be168879d07811596eb6",
+      "sha256": "5de80eee256f3cd5d48742d6e21c0920caea484f0015e66f5ed3c1a639cad486"
+    },
+    {
+      "path": "internal/appdir/claude.go",
+      "git_blob_sha1": "68bfb6ebd5aa91a30e62b343f5a3b61b5a5b5ef7",
+      "sha256": "fe3028444ae5cd64dd08e5a4b01294ec527a5067c9caa65d6f125513f60b2d44"
+    },
+    {
+      "path": "internal/appdir/codex.go",
+      "git_blob_sha1": "cfb9b1ecbc6194dae352d977ae4ae58aeb61200e",
+      "sha256": "a7c810db436897da563915898472a29ba74be004cf08c24fdcd4c87df332d403"
+    },
+    {
+      "path": "internal/appdir/env.go",
+      "git_blob_sha1": "af32731b55a00e4e243d2ffc22b8261cbca137a9",
+      "sha256": "6674fafe740fff4f2d763302ad33b2ace0e7f3f4e9aa24992cb1115b6164a6cf"
+    },
+    {
+      "path": "internal/appdir/follow.go",
+      "git_blob_sha1": "bd0079f43739ea8b70c8993e1639e8e5608a66d2",
+      "sha256": "08b5fc348b121f5522413d8665a056e13b3c03891070723397837e60040dc295"
+    },
+    {
+      "path": "internal/appdir/follow_windows.go",
+      "git_blob_sha1": "562610648b7ad537818f467e93b7ef5c03dae78b",
+      "sha256": "306ae6861f8c677ddb6fb1e880516aaa2ce775895d3aa9f381b9ed15e850fae7"
+    },
+    {
+      "path": "internal/appdir/hermes.go",
+      "git_blob_sha1": "d3dff2054a6f73ea62aec06048eedddfc032fd68",
+      "sha256": "dd476a6ec8b65088f08f28ad3633cab924c9f2533e0b84bd14d3a820c2b54456"
+    },
+    {
+      "path": "internal/appdir/join.go",
+      "git_blob_sha1": "e92117f67a447f9313e8a1180acec1d62c604da0",
+      "sha256": "43ba0a56750ee80b65114cb8253ed6d8d158c95f33524a07ce3e50404e86330a"
+    },
+    {
+      "path": "internal/appdir/userdirs.go",
+      "git_blob_sha1": "b5cdf30e3040d61aaea1e450e0af6ea36e496b40",
+      "sha256": "fe16e69f9c34e322f24536788ad1b2e388918ba15a42a435f81499a14745b7b8"
+    },
+    {
+      "path": "internal/appdir/userdirs_windows.go",
+      "git_blob_sha1": "f7654bdb5d30b5c22b3f3077ac6a8989d0a31491",
+      "sha256": "32b1a9ae6a8fe14e8149a8f4c0b3a9d6132149f8e99deb7277648e9d90ec344a"
+    },
+    {
+      "path": "internal/appdir/zcode.go",
+      "git_blob_sha1": "df41d7b127422b0e29274c9ef980697a9aa80d91",
+      "sha256": "564be2629270f1d36b66183b3d952065c821b235325487d6ee7bf7d1e92d57b4"
+    },
+    {
+      "path": "internal/appserverbridge/auth_compat.go",
+      "git_blob_sha1": "1c169dd0c7f8e3f78a1b13128743b5edb385b462",
+      "sha256": "fc8a99a3c359c7396424293da46c4fc56d0bb372905972a3cbc46a11d43a2ef7"
+    },
+    {
+      "path": "internal/appserverbridge/auth_compat_run_test.go",
+      "git_blob_sha1": "dc31ef998b3a74f89326e5b6b57d3ca71f4a17ce",
+      "sha256": "73302f8d5fa95b5d3c1ca0ddd1a31c02e107651637fd4c36485488dde9299505"
+    },
+    {
+      "path": "internal/appserverbridge/auth_status_167.go",
+      "git_blob_sha1": "a1c0a02be92cdbeec61f9ad24069226acbec22c2",
+      "sha256": "23cc12caa8efa56a72113db59436ff8f76fd61fa12457b7b45881f06531a757f"
+    },
+    {
+      "path": "internal/appserverbridge/auth_status_run_test.go",
+      "git_blob_sha1": "b7650eff8dcbbd0ca571c31278411a660d98deac",
+      "sha256": "5b5ee2d21948e2a7fb096bcd00bf6dbd6f14ca6d869d23357ac6ed312fe6d389"
+    },
+    {
+      "path": "internal/appserverbridge/config.go",
+      "git_blob_sha1": "3705ec4bd0813d02663dd69166961e8d07c81508",
+      "sha256": "b4c244595051a6e57ba20ed016699a6b7b1e23f20c31760f2dbc523ee37ad7eb"
+    },
+    {
+      "path": "internal/appserverbridge/config_test.go",
+      "git_blob_sha1": "77fabb234b75ab382089dfe3bdb2f424ccc8396e",
+      "sha256": "ec8225d9bd39c27978ce6104ced77c40e320305e8ec4e146f25895dfe0c0f64e"
+    },
+    {
+      "path": "internal/appserverbridge/control_plane_167.go",
+      "git_blob_sha1": "f4b7cf52923091e9600795c887eba4741dda31db",
+      "sha256": "714ffe3185632acd0a3bbc01f3856b402f628f8d59989df28526bf0a9b280831"
+    },
+    {
+      "path": "internal/appserverbridge/control_plane_167_layers_test.go",
+      "git_blob_sha1": "12a397be32652a36ebc5e0e1785a1502aa1f6589",
+      "sha256": "0b744d31cbca6bd74307e4f2e1861c22aebd21cdf00a62020a2e6adc4da669ed"
+    },
+    {
+      "path": "internal/appserverbridge/control_plane_167_test.go",
+      "git_blob_sha1": "29e1792651c35bb58d0e6477903a6f0294abd2ab",
+      "sha256": "040d1d8dc919ca08d7fcf7f715ca34fb78e0c75927575497e7cd713d164ed251"
+    },
+    {
+      "path": "internal/appserverbridge/control_plane_run_test.go",
+      "git_blob_sha1": "33e073b6b26080bf64ff3059251176f0c1156e47",
+      "sha256": "242ccbe4d1197683ea6f97680c08a4fee410994c68fc33e3794ed1cecccde5c8"
+    },
+    {
+      "path": "internal/appserverbridge/control_plane_session_167.go",
+      "git_blob_sha1": "42098e9e43f5d8a4514658e5b06d6c212dcc5c62",
+      "sha256": "280bf5a7942d04e3b47afc7c5fc9cc24c485cd6f7ccce1372cbb5fcd5f5d3d98"
+    },
+    {
+      "path": "internal/appserverbridge/desktop_bootstrap_test.go",
+      "git_blob_sha1": "c55b6290e6cc30a72f8b4dfbe07bc9a3d5b0be53",
+      "sha256": "5f680b0cbdf6945b845ef0ecc32b47bfafb36f5ad30df4bfbbce4558b9cc6ca3"
+    },
+    {
+      "path": "internal/appserverbridge/experimental_feature_167.go",
+      "git_blob_sha1": "f7e5c3bb797a274ef6f7f221d014f05265c0c538",
+      "sha256": "368734bf1ddcb95ca19bad5c0c3dbd9e8c0e2121b88874e581701df74fd7ad31"
+    },
+    {
+      "path": "internal/appserverbridge/experimental_feature_run_test.go",
+      "git_blob_sha1": "4b7aaac8bdab9730241f981fb27c91caa0b05440",
+      "sha256": "f642a23f216b3216e67a340b982294e036003932fba11e4c61a798c497d00af1"
+    },
+    {
+      "path": "internal/appserverbridge/interrupt_test.go",
+      "git_blob_sha1": "6d6081821f7034e05fe02eb4b81e3ae00a8527f1",
+      "sha256": "6f57e171a16e300088a8b22bd8331bda1805640b605e63f55b5443f7f65c4f8c"
+    },
+    {
+      "path": "internal/appserverbridge/launch.go",
+      "git_blob_sha1": "5ed9e3a9291aabe1b4f704ed0d9cd9c26aa63eb6",
+      "sha256": "ee0eeec9bac640a54f44b80be7933324202f616562fd4abd21fdbb771e2c3597"
+    },
+    {
+      "path": "internal/appserverbridge/launch_test.go",
+      "git_blob_sha1": "767c8c437cabb28d1f93cee59ba04f64cbf935b2",
+      "sha256": "5b90e9195ec1ce41f1f5818392987475911340adfc6751d426b4039215f3b973"
+    },
+    {
+      "path": "internal/appserverbridge/native_json.go",
+      "git_blob_sha1": "082c18d362a98bb2738e12622fe7ab78bdf100b0",
+      "sha256": "1c826c05212ec181274ac52f9bb28d4fb26bdc997067dbabe30cf7f26113e020"
+    },
+    {
+      "path": "internal/appserverbridge/native_trace_167.go",
+      "git_blob_sha1": "2f034cc40c91b74c10f18bf747a855a89c41e529",
+      "sha256": "a901979eae9f4e810b3147217d3a8b244dcabafcd4fc30dfaf04d5dd0e9f302d"
+    },
+    {
+      "path": "internal/appserverbridge/owned_catalog.go",
+      "git_blob_sha1": "d36531b03cfbe7053be12aa425ae15af894de525",
+      "sha256": "d53a048344f4336272d78d285d14818a043c340b8b116da7fd5af54b5cb5a5ea"
+    },
+    {
+      "path": "internal/appserverbridge/owned_catalog_red_test.go",
+      "git_blob_sha1": "d8d0a1a21ea0654c6994ee6d8e3b6273edd10858",
+      "sha256": "02159b3b06b47b4276a93e842268db7a4f435e32a7baa926b3b48fcbeb21db27"
+    },
+    {
+      "path": "internal/appserverbridge/owned_settings_167.go",
+      "git_blob_sha1": "37a36d7d57da37cffd5e142df8a1f6e931ea5950",
+      "sha256": "20ef448376ffbc973d573a4d5fb7187a66a9e6290a5897d6f11579a0d0dce02a"
+    },
+    {
+      "path": "internal/appserverbridge/owned_settings_replace_windows.go",
+      "git_blob_sha1": "95ccff29b7ebc3703ad30eee34bcd9b9a733dc0d",
+      "sha256": "baf480ce0d302ca9d18353593c95478548112015703d456f68eb494588453184"
+    },
+    {
+      "path": "internal/appserverbridge/owned_settings_store.go",
+      "git_blob_sha1": "0cdc08de935267bb9be244ef12660e243c3736f2",
+      "sha256": "54b301943a7eff526ceadb0ad9d599a374e6befeb37769fc0019b1362d021018"
+    },
+    {
+      "path": "internal/appserverbridge/owned_settings_store_test.go",
+      "git_blob_sha1": "c75b2f52e4487840bba96f36e98a0fad4f697df5",
+      "sha256": "7e1cd7cea8b36ae4f8f155346ee76f15df08d9971e2aaf1ee130489ed24b48d8"
+    },
+    {
+      "path": "internal/appserverbridge/primary_identity.go",
+      "git_blob_sha1": "ce74d131f20046ff621080f75a14f6a817d8fcb9",
+      "sha256": "db9589d692ab4fda1c77000dc8faa2bfbd1365deaf699cd99032b717da551b58"
+    },
+    {
+      "path": "internal/appserverbridge/primary_identity_test.go",
+      "git_blob_sha1": "7b62d4773b1931c4a8c794f9174423605d206660",
+      "sha256": "e57b125f6537dcad40d8654ac27b5c2b46499f4abd1c9c7e351f292e2f248c3c"
+    },
+    {
+      "path": "internal/appserverbridge/primary_proof_167.go",
+      "git_blob_sha1": "bf231795bc013e145e09ae8255af12b0bacdeb0a",
+      "sha256": "c990ad99cc1efef41fe7cabe5c740dd9ba4600bb506510cbe708b0ae543e37b3"
+    },
+    {
+      "path": "internal/appserverbridge/probe.go",
+      "git_blob_sha1": "a3dcbdf8f4bd7d2458871a7e7a40672de599ecf1",
+      "sha256": "47d33047e0c134e72941543068a21db862e51f48d8b8328cedd3f602178a81b7"
+    },
+    {
+      "path": "internal/appserverbridge/probe_167_test.go",
+      "git_blob_sha1": "7dc013e069cb9cf9e4cfac3711ab341d66b7232a",
+      "sha256": "216bf29667bb2e38a6bbadf195a33aa3b7394e6d4286256f4aee8ce5daa3a21b"
+    },
+    {
+      "path": "internal/appserverbridge/probe_test.go",
+      "git_blob_sha1": "bd886a63173894eada667a51092a1b2fe4a13272",
+      "sha256": "90f74fe8480056b2b537c37cd9dcdcebca04e3fe6f9be85da7e1030d4e9a6bb9"
+    },
+    {
+      "path": "internal/appserverbridge/protocol.go",
+      "git_blob_sha1": "d72bd2b439ce0da88b70db49af478e3f16743607",
+      "sha256": "88ae621b14271c5da3ed41849770f1c8eac139289a047122adbefbb63bd3625d"
+    },
+    {
+      "path": "internal/appserverbridge/requirements.go",
+      "git_blob_sha1": "9c0d8734a163ef4e008d262b9d507054f826697b",
+      "sha256": "604edb37bb273de9e9441ec6783cced3010cd42757d97d025678c115e6ddba53"
+    },
+    {
+      "path": "internal/appserverbridge/requirements_167.go",
+      "git_blob_sha1": "138daadd24df8827ca23cc907993042212b95310",
+      "sha256": "1ae1a8d16c053c19e086f54bb5ff46354ca85adf7476d08f1898d5a428fcc9ab"
+    },
+    {
+      "path": "internal/appserverbridge/requirements_run_test.go",
+      "git_blob_sha1": "e635fbc4495efe5c0124773bf4fff2d2c3821852",
+      "sha256": "e6c2b68e3d700a5c6d325996af3fca7271df406af10bfc85a186c9c530ad2f34"
+    },
+    {
+      "path": "internal/appserverbridge/requirements_test.go",
+      "git_blob_sha1": "98ee8b904bf54812aef7484deb84c3a6c0163cb9",
+      "sha256": "fd7ca044544316f00352e39db4c0fa1f2ff96d2dce230ddb6a3fa2143779fc5a"
+    },
+    {
+      "path": "internal/appserverbridge/router.go",
+      "git_blob_sha1": "19ff6a9326d96c9ed4fae9e4b7e58c6a3d833465",
+      "sha256": "b89a9e119864081d3043d577a04ff42692c7b730ace1cff39ec63c25cb9ea8b2"
+    },
+    {
+      "path": "internal/appserverbridge/router_test.go",
+      "git_blob_sha1": "76d1fa67c7fad54a43a7fe8d34d235c211a514e4",
+      "sha256": "c15a63a479f00d97e90645a0839800d040fdd2cc44a2c12c2eeee39963f22876"
+    },
+    {
+      "path": "internal/appserverbridge/run.go",
+      "git_blob_sha1": "4c3cd4281bfdab2de6539fce44ed51ffec8f33f7",
+      "sha256": "5baac80a6ecb24cc6d6728e3ba25fae5ad28734f1f071d4c43b20b02e62732b4"
+    },
+    {
+      "path": "internal/appserverbridge/run_test.go",
+      "git_blob_sha1": "906d5a91aaf7889dca1b382e81e7d7688875222b",
+      "sha256": "11daee52cd87ddf412bed851743e490bac03fa94153b7cbcec3e0c94d21c52b0"
+    },
+    {
+      "path": "internal/appserverbridge/run_windows_test.go",
+      "git_blob_sha1": "4005a5f612bd5fcb125e4a160d692dc3b405da04",
+      "sha256": "46d6d7ee97b4331a660e8d88dd42e28188de43a1a644f3cbb38871f8ea58cc79"
+    },
+    {
+      "path": "internal/appserverbridge/shared_native_167.go",
+      "git_blob_sha1": "699e9016b2a19a41629ade4ef076907a44b41868",
+      "sha256": "48a48dc0c74c1a06691f997cc053e73691fe51921bacd471dedeba0bfae64fa8"
+    },
+    {
+      "path": "internal/appserverbridge/shared_native_environment_167.go",
+      "git_blob_sha1": "5070bddc215b54201faf3bec3c09a5dc33f0dc4a",
+      "sha256": "a65c5f30fbe23ccfc522d8eb603bb2b3b3d20d7be1f7e2a900c24dd3aa56016f"
+    },
+    {
+      "path": "internal/appserverbridge/windows_readiness_167.go",
+      "git_blob_sha1": "2193671b6bd29c927fae8b5de0af3e460c9ee219",
+      "sha256": "14d29def48a5757ae2aedfb0d2bf2ee76b11e0724780770d61ae53fee1116b12"
+    },
+    {
+      "path": "internal/filelock/filelock.go",
+      "git_blob_sha1": "38267c04446518d8d20730fe476bf0dca8b38ff4",
+      "sha256": "bbe40d4117ad84bcdbc205ab92c070d39bc080be14b2007ee9c684714253bf37"
+    },
+    {
+      "path": "internal/filelock/lock_windows.go",
+      "git_blob_sha1": "fb6328de45258779a5bf14eb83aa7b99871f3f7c",
+      "sha256": "5fcad2c5e435b10749856d91a578fb45c4c104ab4ad207ee2e983428a4ce45d0"
+    },
+    {
+      "path": "internal/nativeconfigguard/provider.go",
+      "git_blob_sha1": "bebb4728f96effd4868a1b8d9f052951540970f7",
+      "sha256": "957503b924765b90fce6946223287eeb118dc2a032f8481e1102df9e44957e80"
+    },
+    {
+      "path": "internal/nativeconnect/connect.go",
+      "git_blob_sha1": "ecb7a4f49399373a1a77c42d250faee69aff446f",
+      "sha256": "dc36dbe9c26da4c15e10c9dc9e9b5ffc8e0cba99c037818e460ed5112ddf8b35"
+    },
+    {
+      "path": "internal/nativeconnect/connect_test.go",
+      "git_blob_sha1": "d3329d6b03ec41e1459e755b404dab79bcc514c4",
+      "sha256": "e3cbd77fcb604b2418730bc6dfd2c5e2e5cf70803c8d5c431678ab455dc3b494"
+    },
+    {
+      "path": "internal/nativeconnect/selection_windows.go",
+      "git_blob_sha1": "fe83f8db25466a8e3592b3dc0ad7688a272dc32f",
+      "sha256": "3c7ffaf34df9239dd4a4c8745c5e9c725106a068e42da845c692fe87baff77b1"
+    },
+    {
+      "path": "internal/nativepreview/controller.go",
+      "git_blob_sha1": "2f7a5c41e942d10ccebc51f61f17664137e0a65e",
+      "sha256": "0c0a750d895b8b0edc9958dc1eefdfdab42f450116ebcbb1148427aade9d3131"
+    },
+    {
+      "path": "internal/nativepreview/discover.go",
+      "git_blob_sha1": "6604c738c6d5b46bb6566da6ad8164d110937a1e",
+      "sha256": "2aea3a11347dc38c7ae3c88f4953bb1de2b3db12ec0445df33c91600644b3395"
+    },
+    {
+      "path": "internal/nativepreview/discovery_windows.go",
+      "git_blob_sha1": "145103f38275e73433d0b202d1918c3db1e77cee",
+      "sha256": "f64d32e7567f65e16bd38b87b36448b8f527dc36be170a42e7c2a2694af2f8c7"
+    },
+    {
+      "path": "internal/nativepreview/login.go",
+      "git_blob_sha1": "ecaf16101cebc9673d9198725b46aeb00c8b373b",
+      "sha256": "8e5e37c5c02e9913b788957805d7b7873235fa6881c09016f0c69fc954f96c5a"
+    },
+    {
+      "path": "internal/nativepreview/login_windows.go",
+      "git_blob_sha1": "30e8590068a7ddb3500046925ed7d23c76822320",
+      "sha256": "e6f881b69628b3032e7f0c33aae11600c205aa6cb32d56ff3febaa775df739ca"
+    },
+    {
+      "path": "internal/nativepreview/notification_diagnostic.go",
+      "git_blob_sha1": "8e68ee53597c093c1c5baf06f1f8746ad1c46361",
+      "sha256": "8fc9961e71d2d72cbf86691be8fbdce293a22e08e947007a82903f5ab5be92c2"
+    },
+    {
+      "path": "internal/nativepreview/rate_limits.go",
+      "git_blob_sha1": "07aa6135f5343b44e851d3a20de5b30aa154f0da",
+      "sha256": "a4fd643f4998a505ff7a4bbc7ce3c053e70dec9e48d800ffc8719da3c80cb7ea"
+    },
+    {
+      "path": "internal/nativepreview/remote_status.go",
+      "git_blob_sha1": "e745e37359828de3b74fdd362da1a4d3f160dabb",
+      "sha256": "530460bfd4a20f95cc7a23fd2149cc4089f77c6384759902113115b29fd6e8c1"
+    },
+    {
+      "path": "internal/nativepreview/send.go",
+      "git_blob_sha1": "890ea96b3b2bffa2c15104cc4d4ff19ad79c20ea",
+      "sha256": "c12b206207138efbc743c3e4cb1d9ca953dff24d393225d7cf6559c12cd916d7"
+    },
+    {
+      "path": "internal/nativepreview/send_guard.go",
+      "git_blob_sha1": "84e34c57298d6b0a4d445594adec1789250bfa6b",
+      "sha256": "81fd1c50489107cdb5b00ff696cf41c934c740a06f0632c8d48c062883999feb"
+    },
+    {
+      "path": "internal/nativepreview/session.go",
+      "git_blob_sha1": "03349d63da4e40b0cf570d2f697765dd12f898e8",
+      "sha256": "6b9733aac252cc928216e6e7347a96f5824e58877f3adaae6d2047ad097b2184"
+    },
+    {
+      "path": "internal/nativepreview/state_windows.go",
+      "git_blob_sha1": "15fd8f705a5887b6363e3146006d221d38e82257",
+      "sha256": "819bbd1c623727c63f4cb85632b79288bff873a6c62f44b16ed2ea5f6808ba11"
+    },
+    {
+      "path": "internal/proc/appmain.go",
+      "git_blob_sha1": "27697b3c3c9069fa7f1ff85c9844f461a72acce1",
+      "sha256": "c08e049fbf155373c26f43b6e308106bfeafbf477b3cb6d7c831b2c8cac85491"
+    },
+    {
+      "path": "internal/proc/batch_windows.go",
+      "git_blob_sha1": "9f0f347e3dcb46c6be9034ea42c9e710c1b37ecf",
+      "sha256": "487c97a4d84315e65b21749cd3af19cfd18438f9f9c2c40790e5b6ae49c7e7a5"
+    },
+    {
+      "path": "internal/proc/browser.go",
+      "git_blob_sha1": "10403a2927145b38b1d0753ff45e5c6bf3c55fbc",
+      "sha256": "c44be3481aeab720055f390b6a8777fe549b866bdeed40c7c116f3d4830b33b4"
+    },
+    {
+      "path": "internal/proc/disclaim.go",
+      "git_blob_sha1": "b88346f29a36772c6a976d940fd9f064cb72a23a",
+      "sha256": "090121b8deb1f6509eb384aff2a73490748ea3d741b7c430ddfda91ec2a4a14d"
+    },
+    {
+      "path": "internal/proc/disclaim_other.go",
+      "git_blob_sha1": "c821b1b0118373a3697a043315bf4214533126b3",
+      "sha256": "a70f7ddef3decbfa1f5353759d6e60224b05ad5999830e2ca4fea28b1cf12489"
+    },
+    {
+      "path": "internal/proc/env.go",
+      "git_blob_sha1": "367916c0bda4f8d33a6002e1f390e688ad21a956",
+      "sha256": "d1f99be5f17b3d2e2f7c3c77f6377493a929916c2d886830c7febd5824efb6cc"
+    },
+    {
+      "path": "internal/proc/env_other.go",
+      "git_blob_sha1": "59daee7e27a7954500bab56c939b088a8407b119",
+      "sha256": "c3099db80f1ca0939b98adcb1c043fbf94486b7cf0e5612dd47abebdc74dd622"
+    },
+    {
+      "path": "internal/proc/family.go",
+      "git_blob_sha1": "0b7e1001ef9f91f611cc12145a1617e8474a0a44",
+      "sha256": "92ec3308f629b8b95befaf1ef9e18dd5eb6064c2e42999d67a6cdae159c4a6f0"
+    },
+    {
+      "path": "internal/proc/find.go",
+      "git_blob_sha1": "8a8b20d33a907bc3f148a2dfb163fe4de441a5b6",
+      "sha256": "b807fd9495d5e9f0b6a88e31b9c64001ed49d4922ee1fc31011b818444779bcf"
+    },
+    {
+      "path": "internal/proc/guiexe.go",
+      "git_blob_sha1": "6be3e260b6c2107014df2bdc64928255f42f6924",
+      "sha256": "1a85bd8ca89a6de2f4a32f11e925d122aa9b53fa0322c5f7aaecb6fe6505daa5"
+    },
+    {
+      "path": "internal/proc/killtree_windows.go",
+      "git_blob_sha1": "4b1eed483eb97b6c5f8899f9923e94cd0447eacd",
+      "sha256": "389091cf00a1b421ec089586c0460d2c01bf197ab332e4ab6d10e566749f3211"
+    },
+    {
+      "path": "internal/proc/list.go",
+      "git_blob_sha1": "1a0dba98079d2787572a3daa089bad164b64360a",
+      "sha256": "6019565d069f9bf86708834f579a11ff1fc1e11ee685a2a506df37ba3e75d7ca"
+    },
+    {
+      "path": "internal/proc/list_windows.go",
+      "git_blob_sha1": "8bd9f1ac7d80a8f47336374f85f229673ae76959",
+      "sha256": "59d1e8c127d2358385c0637a67d05e770d5cb75fe8817224c5efd8088fe55422"
+    },
+    {
+      "path": "internal/proc/listener.go",
+      "git_blob_sha1": "c9310f67bda7f10db427f2884c68110e79b3145a",
+      "sha256": "0a9b40078238a1dc38adb9f300722212800212160ebf57e97a80763a87f63769"
+    },
+    {
+      "path": "internal/proc/listener_windows.go",
+      "git_blob_sha1": "64e4232666fb55662203366dee14724c23361baa",
+      "sha256": "01da0ebdf1d364d195a265bb74ce93cd95859f0a628fedba475c217f282cd749"
+    },
+    {
+      "path": "internal/proc/listing.go",
+      "git_blob_sha1": "224f19c917d47acf1b42167982a332f1d736380a",
+      "sha256": "b3cb008a12583f5af3873d532b8d0dfac16c2200bb8a72cd92ed41dd540ceba6"
+    },
+    {
+      "path": "internal/proc/look.go",
+      "git_blob_sha1": "bebc59a9dfaa4c300d0bdf1872102c6bd3764aa3",
+      "sha256": "9e8e14d2631591c0b39070b8ba0396fb5a9d09c138171d30e114dab379977eff"
+    },
+    {
+      "path": "internal/proc/nodever.go",
+      "git_blob_sha1": "da2b1356e20cbcfc254f392ac26cc4581d8e23e1",
+      "sha256": "59c8e400f4c31aa61959db0cb6f8ff3233ed5fa00fa122c883506fa94e29f97f"
+    },
+    {
+      "path": "internal/proc/output.go",
+      "git_blob_sha1": "ce8e366fd81b11f9a3e068149409a53a5a368186",
+      "sha256": "a60259a990f32b3e4d9b02f80ab28061fec6bbc202dd4907e43cac3e988da93b"
+    },
+    {
+      "path": "internal/proc/path_windows.go",
+      "git_blob_sha1": "3aa9516764e2dbc09c768262105fc27ea329058c",
+      "sha256": "59f4c832582ef7de78abf62aa53e3de1aa104ba1d885ef8d5a23bd9cf0f6a620"
+    },
+    {
+      "path": "internal/proc/peak_other.go",
+      "git_blob_sha1": "13aeedebca34be776ce0bb34a334e022314fcc7c",
+      "sha256": "8b6aa88d22e83beddd76c1b592baee8f7b20ee954924289f75072933175f3fe1"
+    },
+    {
+      "path": "internal/proc/probe.go",
+      "git_blob_sha1": "33255f80efea15824125a4ab4f6f8a9e5893b6f8",
+      "sha256": "89cb4b6ac97128b1757c554f566db4fc1442ec3b9ac517195eadb1c2a5e890be"
+    },
+    {
+      "path": "internal/proc/probe_windows.go",
+      "git_blob_sha1": "51a5dd45b2d1b1f83889b50ad789195ed83c4d9a",
+      "sha256": "1592a10bfe10bc23744d419a73aeb646cfa8d750f98340c7b88d8f007948e8c5"
+    },
+    {
+      "path": "internal/proc/proc.go",
+      "git_blob_sha1": "fa5273f80016c1e4f87813877bca5c2de56caf81",
+      "sha256": "adb6749b9b6678aef0c3fac0f9fcc7891b6ea491ff71df84358abf1f0e84e58c"
+    },
+    {
+      "path": "internal/proc/proc_windows.go",
+      "git_blob_sha1": "39638d7cbf72325a89f0bd86d58b042dd921b26f",
+      "sha256": "e6da04318fa54c5eaa098d6661441e32a02f553656a0c35e0e9cb0510acdcce8"
+    },
+    {
+      "path": "internal/proc/realpath_windows.go",
+      "git_blob_sha1": "287a93d373618ae17c71090b3ceff187512d9cd6",
+      "sha256": "5b1d12a31e6851d72a65d4c1eb406a7117b3e63ac9810be194919442e747ab61"
+    },
+    {
+      "path": "internal/proc/rss.go",
+      "git_blob_sha1": "287002469fee3a8cb99cdf98dd33682f958bd9f8",
+      "sha256": "7da84d5c9341e98a7ca8123981a293047d6ab7c7b5f0553059dd940bc4543605"
+    },
+    {
+      "path": "internal/proc/rss_windows.go",
+      "git_blob_sha1": "6647f62c0bb181b24aeade351a77eb58201c8ad8",
+      "sha256": "636b849b00a45e24992913d5bd50329dbce661512306049d94e5a0c34db6dfa4"
+    },
+    {
+      "path": "internal/proc/started.go",
+      "git_blob_sha1": "36667a66c9c51081d2049a54867e51211326b016",
+      "sha256": "566a0970aaa18bad4490f342848655f8e5cce335aced885b7f6b6df8dac56501"
+    },
+    {
+      "path": "internal/proc/started_windows.go",
+      "git_blob_sha1": "b54bcda0fa6a050e9b855f183dc14b864322fda0",
+      "sha256": "5a23453d8265c811f55fb4e8dfe9b1be2480aaa14100a974e5122c2ba0f5b571"
+    },
+    {
+      "path": "internal/proc/tree.go",
+      "git_blob_sha1": "a8b0ec556d6526f9fa93d0412330f8243000e9b4",
+      "sha256": "17ec3ec008aaeb3dc184b1216c5dddaa68dfbf2cb364436279dfd0925b429adb"
+    },
+    {
+      "path": "internal/proc/tree_strict_windows.go",
+      "git_blob_sha1": "4b16ab55045ac09e2b445afebf8379f529d2cb28",
+      "sha256": "a48f8dc4acdb323bea6799017dab08d45d686a674657ef5c1e8480d26b04b730"
+    },
+    {
+      "path": "internal/proc/tree_strict_windows_test.go",
+      "git_blob_sha1": "74ef1bc24354c922ab31d97a922324ea2f34a12b",
+      "sha256": "cc3a12f439de03718141576231fc37bf6b51ccc228ac354d2530ac29a91a48df"
+    },
+    {
+      "path": "internal/proc/tree_windows.go",
+      "git_blob_sha1": "35f6042d6f2f464c69684ee23ebb5ca61993bdc1",
+      "sha256": "a1a0e86259dbeacf08e9e0cf4490d24d6dad18018f442f627846bbd4ff164c9d"
+    },
+    {
+      "path": "internal/proc/version.go",
+      "git_blob_sha1": "00fc095365c4566331497fb9752d7f07d0ccbd6d",
+      "sha256": "ac0f58e8adc68d417b135409863b3ffd09633b7222120e47bc8e1b5734024766"
+    },
+    {
+      "path": "internal/proc/wrapper.go",
+      "git_blob_sha1": "e58d2daf35617283a85594afe438c3161450e3aa",
+      "sha256": "a11da8b611a4af7d6bf62e768eb789e0c2d1f91d6ee16235e65785597693e450"
+    },
+    {
+      "path": "internal/testenv/bun.go",
+      "git_blob_sha1": "3fdbb1f671f7f809a696ed7d6f50b6b85f6d4acd",
+      "sha256": "6f5f19ca954b0ee99a8765496424ce0181893c5e70c3c41a9f5342927b3f6d5b"
+    },
+    {
+      "path": "internal/testenv/offline.go",
+      "git_blob_sha1": "f5811cf61872bfe06fb1337273fb8728aa706376",
+      "sha256": "5473763523e3f097cd69e8047da73bc8c7401d125c98c0c71610550ed70b6cba"
+    },
+    {
+      "path": "internal/testenv/program.go",
+      "git_blob_sha1": "724aba0a77d3e522c52ebc60f15ef46b72953a47",
+      "sha256": "60b5d9df7de54cdba2a28c1d1f697b6eb51014f1d04b067dbea7ca7abe69e9e6"
+    },
+    {
+      "path": "internal/testenv/testenv.go",
+      "git_blob_sha1": "3d0a3132f7218b221a5f7136ee6ea27f6e370f80",
+      "sha256": "bab8a633d945c68867f27aa5c56d1e7c704efbc9e89af59d62b29afa892cae6d"
+    },
+    {
+      "path": "internal/testenv/vendor.go",
+      "git_blob_sha1": "a5ee4ad877f8df491af83060d72a170bae855181",
+      "sha256": "b62e8eef10c45ae91d3bb566987bc9b81874e0b57f486ce0caf7fed0d39b645d"
+    }
+  ],
+  "overlay": [
+    {
+      "path": "internal/appserverbridge/config.go",
+      "sha256": "b4c244595051a6e57ba20ed016699a6b7b1e23f20c31760f2dbc523ee37ad7eb"
+    },
+    {
+      "path": "internal/appserverbridge/native_endpoint.go",
+      "sha256": "ace032c95038d5f71893d3ac6e001bf4754df41ac2f8570057ecc7291f136c45"
+    },
+    {
+      "path": "internal/appserverbridge/native_endpoint_streams.go",
+      "sha256": "44f3ddb54700e17471668ad9e5bd3329242d90657d2f752abd801491d9b41e8e"
+    },
+    {
+      "path": "internal/appserverbridge/native_endpoint_test.go",
+      "sha256": "f84871bda1f726587c4c9b6bf6092b1521d267b979cf3c9123f7c727d7fd2a54"
+    },
+    {
+      "path": "internal/appserverbridge/run.go",
+      "sha256": "3f36e9e1cd640b309c98ed0abac828bc46239ce8b6562524215436c5e6b14ff7"
+    },
+    {
+      "path": "internal/appserverbridge/shared_native_167.go",
+      "sha256": "48a48dc0c74c1a06691f997cc053e73691fe51921bacd471dedeba0bfae64fa8"
+    },
+    {
+      "path": "internal/nativebootstrap/await_windows.go",
+      "sha256": "bf528cc033a5dd4b1404f5daa65cfd8810c815f97c06fb403ac20fe560280728"
+    },
+    {
+      "path": "internal/nativebootstrap/await_windows_test.go",
+      "sha256": "85900de4f2bc6315993292c33e02000c49943d21848412f936485941a9b05242"
+    },
+    {
+      "path": "internal/nativebootstrap/bootstrap.go",
+      "sha256": "b7d1b6519bd91c0be4ee5070a40a130cf3bcd24b3bed135f8c15147ffdc13a85"
+    },
+    {
+      "path": "internal/nativebootstrap/bootstrap_test.go",
+      "sha256": "530d19cea578275b2a94a20277fd25e3e418821da4b9d26d14eecc8dfa73035e"
+    },
+    {
+      "path": "internal/nativebootstrap/bootstrap_windows.go",
+      "sha256": "6e53bd4fd449cf02ae0a9cd44cf1b250fa81c18e7d76f1c6ce63ce529548c924"
+    },
+    {
+      "path": "internal/nativebootstrap/bootstrap_windows_test.go",
+      "sha256": "2c2e13d5c299a86ae934f9380fb133db78e1c129388bd6681d66e6b0ac83a847"
+    },
+    {
+      "path": "internal/nativechannel/channel.go",
+      "sha256": "3f1bf6adc7b547ca47384a44ff15a6d49cd92d7d8ad54bcf445750ed3dd3f459"
+    },
+    {
+      "path": "internal/nativechannel/channel_test.go",
+      "sha256": "da7ca5b7ead12f86ef688b770891296ce3e07c408edc301392c91ffdcc4a185f"
+    },
+    {
+      "path": "internal/nativechannel/lifecycle.go",
+      "sha256": "c57ad3f06dc62120401ed254c50adc0f69ee3d3f5b261549b55f07ff5aa12c93"
+    },
+    {
+      "path": "internal/nativechannel/publication.go",
+      "sha256": "1bade45da4eb2c32b591d7633c37d8a9ddcfee183e37acf37fc85a2d1db6edc3"
+    },
+    {
+      "path": "internal/nativechannel/publication_path_windows.go",
+      "sha256": "8d7e299f9fb5028359be397d2b990c88b59e7fe986b788cc1b0ce39d2ed2eb34"
+    },
+    {
+      "path": "internal/nativechannel/publication_test.go",
+      "sha256": "84917a18a5c129949c62187f68956e0cc49c4b58bd947a04e36918b07f0040a5"
+    },
+    {
+      "path": "internal/nativechannel/relay.go",
+      "sha256": "87177c4f559f64691c5779b3ffefade96c68948da0983430051e6bc436fae8cc"
+    },
+    {
+      "path": "internal/nativechannel/relay_test.go",
+      "sha256": "bc908060551b03d8cbf4655ecd844ccd9cc25339b54b245eadf02193f3bed105"
+    },
+    {
+      "path": "internal/nativeconnect/connect.go",
+      "sha256": "48465fc3248ec76d94b3f87d656c51115d836fb77a09e64f8a40ec685a8c9423"
+    },
+    {
+      "path": "internal/nativeconnect/connect_test.go",
+      "sha256": "8ca7d18f288e357fadc62a854f7f166943b2d4f1443dfc3e9eabc8098dab1e78"
+    },
+    {
+      "path": "internal/nativeconnect/journal.go",
+      "sha256": "d1422b21d33aa62d88d08a8876c68aa8fed8372c0592529548779f7241123aad"
+    },
+    {
+      "path": "internal/nativeconnect/launcher.go",
+      "sha256": "2368249b1a30a5b2e2a5aa20841bdef8ba6515ac60d896721bdd9a440415eb0f"
+    },
+    {
+      "path": "internal/nativeconnect/launcher_test.go",
+      "sha256": "0eadd20a145b051b7fc5be5a6aa4d833f482e25e8aa68150922f3b7087730a64"
+    },
+    {
+      "path": "internal/nativeconnect/paths.go",
+      "sha256": "801c9063a88c761435edd92af4c1c9ab9d4bb5d82a0374bf72cbc6b2a44dfe4f"
+    },
+    {
+      "path": "internal/nativeconnect/prepared_profile_test.go",
+      "sha256": "0e86b6e299715a6e5499e29828398fec532ecf011ff9e1d1fe49037bae8420f9"
+    },
+    {
+      "path": "internal/nativeconnect/runtime_prepare.go",
+      "sha256": "d946e482b6537a8f1a93ad248ecde725f5f04e5d1f2132aee70c659ff3865f0b"
+    },
+    {
+      "path": "internal/nativeconnect/runtime_prepare_test.go",
+      "sha256": "3a993c4c9419f61809c39e684f565a2530d863d4347d13e864515ddc6b53093c"
+    },
+    {
+      "path": "internal/nativeconnect/selection_windows.go",
+      "sha256": "3c7ffaf34df9239dd4a4c8745c5e9c725106a068e42da845c692fe87baff77b1"
+    },
+    {
+      "path": "internal/nativeconnect/transaction_test.go",
+      "sha256": "fbc01af045fabd85fb718560c42f055740f295fb10c5ebd0c1b2e2076aa5c5b0"
+    },
+    {
+      "path": "internal/nativeendpoint/endpoint.go",
+      "sha256": "66cc8a8dc961d86b5643f05d77f73ccb94f84de29b81fa6b3f221cb3d726e9ab"
+    },
+    {
+      "path": "internal/nativeendpoint/endpoint_test.go",
+      "sha256": "459b3ef5e7089d24ef3ea542b7526fbfefe8d96eca6e937f4a3e703e5ee5695e"
+    },
+    {
+      "path": "internal/nativeendpoint/lifecycle_windows_test.go",
+      "sha256": "26671a6417f2ede795d1f798e066dac68b67a200d0381e3cfebf03c10ef05748"
+    },
+    {
+      "path": "internal/nativeendpoint/listen_windows.go",
+      "sha256": "4f355de101d96a7736aa229a0573dbaaca35b9239aaaec64b2032b7c9c617665"
+    },
+    {
+      "path": "internal/nativeendpoint/listen_windows_test.go",
+      "sha256": "c3fe51a926fcdc96d36b67f2632bad908765d84210dab2e84ce3e5514ab98bc7"
+    },
+    {
+      "path": "internal/nativeendpoint/retention_windows_test.go",
+      "sha256": "46f5ee88b7efef54cdfc683d1786e62c93772a4ad2504e49ade336e01f00d3ab"
+    },
+    {
+      "path": "internal/nativelaunch/launch.go",
+      "sha256": "88e3c951c57537b845fb89bbb4694f7691926dae1416129a7d3d4e409d929b44"
+    },
+    {
+      "path": "internal/nativelaunch/launch_test.go",
+      "sha256": "26b4ec85af1eae81e3a76c44bdae273800e369c411746dcd81f60ddeb739a6c6"
+    },
+    {
+      "path": "internal/nativelaunch/launch_windows.go",
+      "sha256": "ef60c575295c470cfb56c9a0c304e88dc10bf767e7f932521313bcdf9cf4068d"
+    },
+    {
+      "path": "internal/nativepreview/controller.go",
+      "sha256": "0c0a750d895b8b0edc9958dc1eefdfdab42f450116ebcbb1148427aade9d3131"
+    },
+    {
+      "path": "internal/nativepreview/discovery_windows.go",
+      "sha256": "f64d32e7567f65e16bd38b87b36448b8f527dc36be170a42e7c2a2694af2f8c7"
+    },
+    {
+      "path": "internal/nativepreview/runtime_prepare.go",
+      "sha256": "f1e1d51fe8dc64430c9619856f59fff0f4fa8c9d8fb85268ba9664d9e203d268"
+    },
+    {
+      "path": "internal/nativeprofile/profile.go",
+      "sha256": "95cfd3096549d44981fed61633472670c34a2718ae0af62eea40008347ee87de"
+    },
+    {
+      "path": "internal/nativeprofile/profile_test.go",
+      "sha256": "a6aad10192f1e773f1d105ec3b1224dd38118ae9218a7e5d085aeadc59c86d18"
+    },
+    {
+      "path": "internal/proc/tree_drained.go",
+      "sha256": "a5de81e4d7c8719aedcae2c8db4c276da23ad6999de68e22454f82cdaf30f64c"
+    },
+    {
+      "path": "internal/proc/tree_drained_test.go",
+      "sha256": "e7241740daba710792276f51c882ae87c1e55ac71ba9bd9ecb960696512444c5"
+    },
+    {
+      "path": "internal/proc/tree_drained_windows.go",
+      "sha256": "ac357e394d622af9797cef09cf206fb5a76036ef0d98a511283444006e1df2e2"
+    },
+    {
+      "path": "internal/proc/tree_strict_windows.go",
+      "sha256": "e41d0f4cc5e02a0b0ccb5dd93e47021fb41181a8f78a65e854023bbf201b37e8"
+    }
+  ]
+}

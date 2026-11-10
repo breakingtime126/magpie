@@ -2,20 +2,20 @@
 # This marker skips the existing broad experimental bridge jobs.
 # Source packages on this branch remain unchanged; exact candidate evidence is
 # copied only into an isolated checkout of the fixed baseline for synthetic tests.
-name: Synthetic Windows endpoint components
+name: Synthetic Windows staged components
 on:
   push:
     branches: ['experiment/app-server-bridge-v0.1.3035']
     paths:
       - '.github/workflows/synthetic-nativeendpoint.yml'
-      - 'evidence/windows-component-overlay/**'
+      - 'evidence/windows-next-component-overlay/**'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   components:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       GIT_CONFIG_COUNT: '1'
       GIT_CONFIG_KEY_0: core.autocrlf
@@ -44,6 +44,68 @@ jobs:
             /internal/appdir/userdirs.go
             /internal/appdir/userdirs_windows.go
             /internal/appdir/zcode.go
+            /internal/appserverbridge/auth_compat.go
+            /internal/appserverbridge/auth_compat_run_test.go
+            /internal/appserverbridge/auth_status_167.go
+            /internal/appserverbridge/auth_status_run_test.go
+            /internal/appserverbridge/config.go
+            /internal/appserverbridge/config_test.go
+            /internal/appserverbridge/control_plane_167.go
+            /internal/appserverbridge/control_plane_167_layers_test.go
+            /internal/appserverbridge/control_plane_167_test.go
+            /internal/appserverbridge/control_plane_run_test.go
+            /internal/appserverbridge/control_plane_session_167.go
+            /internal/appserverbridge/desktop_bootstrap_test.go
+            /internal/appserverbridge/experimental_feature_167.go
+            /internal/appserverbridge/experimental_feature_run_test.go
+            /internal/appserverbridge/interrupt_test.go
+            /internal/appserverbridge/launch.go
+            /internal/appserverbridge/launch_test.go
+            /internal/appserverbridge/native_json.go
+            /internal/appserverbridge/native_trace_167.go
+            /internal/appserverbridge/owned_catalog.go
+            /internal/appserverbridge/owned_catalog_red_test.go
+            /internal/appserverbridge/owned_settings_167.go
+            /internal/appserverbridge/owned_settings_replace_windows.go
+            /internal/appserverbridge/owned_settings_store.go
+            /internal/appserverbridge/owned_settings_store_test.go
+            /internal/appserverbridge/primary_identity.go
+            /internal/appserverbridge/primary_identity_test.go
+            /internal/appserverbridge/primary_proof_167.go
+            /internal/appserverbridge/probe.go
+            /internal/appserverbridge/probe_167_test.go
+            /internal/appserverbridge/probe_test.go
+            /internal/appserverbridge/protocol.go
+            /internal/appserverbridge/requirements.go
+            /internal/appserverbridge/requirements_167.go
+            /internal/appserverbridge/requirements_run_test.go
+            /internal/appserverbridge/requirements_test.go
+            /internal/appserverbridge/router.go
+            /internal/appserverbridge/router_test.go
+            /internal/appserverbridge/run.go
+            /internal/appserverbridge/run_test.go
+            /internal/appserverbridge/run_windows_test.go
+            /internal/appserverbridge/shared_native_167.go
+            /internal/appserverbridge/shared_native_environment_167.go
+            /internal/appserverbridge/windows_readiness_167.go
+            /internal/filelock/filelock.go
+            /internal/filelock/lock_windows.go
+            /internal/nativeconfigguard/provider.go
+            /internal/nativeconnect/connect.go
+            /internal/nativeconnect/connect_test.go
+            /internal/nativeconnect/selection_windows.go
+            /internal/nativepreview/controller.go
+            /internal/nativepreview/discover.go
+            /internal/nativepreview/discovery_windows.go
+            /internal/nativepreview/login.go
+            /internal/nativepreview/login_windows.go
+            /internal/nativepreview/notification_diagnostic.go
+            /internal/nativepreview/rate_limits.go
+            /internal/nativepreview/remote_status.go
+            /internal/nativepreview/send.go
+            /internal/nativepreview/send_guard.go
+            /internal/nativepreview/session.go
+            /internal/nativepreview/state_windows.go
             /internal/proc/appmain.go
             /internal/proc/batch_windows.go
             /internal/proc/browser.go
@@ -80,6 +142,11 @@ jobs:
             /internal/proc/tree_windows.go
             /internal/proc/version.go
             /internal/proc/wrapper.go
+            /internal/testenv/bun.go
+            /internal/testenv/offline.go
+            /internal/testenv/program.go
+            /internal/testenv/testenv.go
+            /internal/testenv/vendor.go
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
@@ -88,20 +155,57 @@ jobs:
           fetch-depth: 1
           sparse-checkout-cone-mode: false
           sparse-checkout: |
-            /evidence/windows-component-overlay/internal/nativeendpoint/endpoint.go
-            /evidence/windows-component-overlay/internal/nativeendpoint/endpoint_test.go
-            /evidence/windows-component-overlay/internal/nativeendpoint/lifecycle_windows_test.go
-            /evidence/windows-component-overlay/internal/nativeendpoint/listen_other.go
-            /evidence/windows-component-overlay/internal/nativeendpoint/listen_other_test.go
-            /evidence/windows-component-overlay/internal/nativeendpoint/listen_windows.go
-            /evidence/windows-component-overlay/internal/nativeendpoint/listen_windows_test.go
-            /evidence/windows-component-overlay/internal/proc/tree_drained.go
-            /evidence/windows-component-overlay/internal/proc/tree_drained_other.go
-            /evidence/windows-component-overlay/internal/proc/tree_drained_test.go
-            /evidence/windows-component-overlay/internal/proc/tree_drained_windows.go
-            /evidence/windows-component-overlay/internal/proc/tree_strict_windows.go
-            /evidence/windows-component-overlay/manifest.json
-            /evidence/windows-component-overlay/run.ps1
+            /evidence/windows-next-component-overlay/internal/appserverbridge/config.go
+            /evidence/windows-next-component-overlay/internal/appserverbridge/native_endpoint.go
+            /evidence/windows-next-component-overlay/internal/appserverbridge/native_endpoint_streams.go
+            /evidence/windows-next-component-overlay/internal/appserverbridge/native_endpoint_test.go
+            /evidence/windows-next-component-overlay/internal/appserverbridge/run.go
+            /evidence/windows-next-component-overlay/internal/appserverbridge/shared_native_167.go
+            /evidence/windows-next-component-overlay/internal/nativebootstrap/await_windows.go
+            /evidence/windows-next-component-overlay/internal/nativebootstrap/await_windows_test.go
+            /evidence/windows-next-component-overlay/internal/nativebootstrap/bootstrap.go
+            /evidence/windows-next-component-overlay/internal/nativebootstrap/bootstrap_test.go
+            /evidence/windows-next-component-overlay/internal/nativebootstrap/bootstrap_windows.go
+            /evidence/windows-next-component-overlay/internal/nativebootstrap/bootstrap_windows_test.go
+            /evidence/windows-next-component-overlay/internal/nativechannel/channel.go
+            /evidence/windows-next-component-overlay/internal/nativechannel/channel_test.go
+            /evidence/windows-next-component-overlay/internal/nativechannel/lifecycle.go
+            /evidence/windows-next-component-overlay/internal/nativechannel/publication.go
+            /evidence/windows-next-component-overlay/internal/nativechannel/publication_path_windows.go
+            /evidence/windows-next-component-overlay/internal/nativechannel/publication_test.go
+            /evidence/windows-next-component-overlay/internal/nativechannel/relay.go
+            /evidence/windows-next-component-overlay/internal/nativechannel/relay_test.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/connect.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/connect_test.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/journal.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/launcher.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/launcher_test.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/paths.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/prepared_profile_test.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/runtime_prepare.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/runtime_prepare_test.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/selection_windows.go
+            /evidence/windows-next-component-overlay/internal/nativeconnect/transaction_test.go
+            /evidence/windows-next-component-overlay/internal/nativeendpoint/endpoint.go
+            /evidence/windows-next-component-overlay/internal/nativeendpoint/endpoint_test.go
+            /evidence/windows-next-component-overlay/internal/nativeendpoint/lifecycle_windows_test.go
+            /evidence/windows-next-component-overlay/internal/nativeendpoint/listen_windows.go
+            /evidence/windows-next-component-overlay/internal/nativeendpoint/listen_windows_test.go
+            /evidence/windows-next-component-overlay/internal/nativeendpoint/retention_windows_test.go
+            /evidence/windows-next-component-overlay/internal/nativelaunch/launch.go
+            /evidence/windows-next-component-overlay/internal/nativelaunch/launch_test.go
+            /evidence/windows-next-component-overlay/internal/nativelaunch/launch_windows.go
+            /evidence/windows-next-component-overlay/internal/nativepreview/controller.go
+            /evidence/windows-next-component-overlay/internal/nativepreview/discovery_windows.go
+            /evidence/windows-next-component-overlay/internal/nativepreview/runtime_prepare.go
+            /evidence/windows-next-component-overlay/internal/nativeprofile/profile.go
+            /evidence/windows-next-component-overlay/internal/nativeprofile/profile_test.go
+            /evidence/windows-next-component-overlay/internal/proc/tree_drained.go
+            /evidence/windows-next-component-overlay/internal/proc/tree_drained_test.go
+            /evidence/windows-next-component-overlay/internal/proc/tree_drained_windows.go
+            /evidence/windows-next-component-overlay/internal/proc/tree_strict_windows.go
+            /evidence/windows-next-component-overlay/manifest.json
+            /evidence/windows-next-component-overlay/run.ps1
       - name: Verify exact sources and official toolchain, then run synthetic components
         shell: pwsh
-        run: ./overlay/evidence/windows-component-overlay/run.ps1
+        run: ./overlay/evidence/windows-next-component-overlay/run.ps1
