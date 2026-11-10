@@ -22,6 +22,13 @@ func StartTreeStrict(cmd *exec.Cmd) (*Tree, error) {
 // Per-call operations let tests fail assignment or resume without replacing
 // shared platform functions while other commands are starting.
 func startTreeStrict(cmd *exec.Cmd, assign func(windows.Handle, windows.Handle) error, resume func(windows.Handle) error) (*Tree, error) {
+	return startTreeStrictObserved(cmd, assign, resume, nil)
+}
+
+// observeReap reports only the owned command's actual Wait outcome on a failed start.
+// Existing callers retain their behavior; staged drain ownership must not infer
+// root reaping from a nil Tree or from an empty (possibly unassigned) Job.
+func startTreeStrictObserved(cmd *exec.Cmd, assign func(windows.Handle, windows.Handle) error, resume func(windows.Handle) error, observeReap func(bool, error)) (*Tree, error) {
 	attr := syscall.SysProcAttr{}
 	if cmd.SysProcAttr != nil {
 		attr = *cmd.SysProcAttr
@@ -75,6 +82,9 @@ func startTreeStrict(cmd *exec.Cmd, assign func(windows.Handle, windows.Handle) 
 		closeErr := windows.CloseHandle(job)
 		owned = false
 		waitErr := cmd.Wait()
+		if observeReap != nil {
+			observeReap(cmd.ProcessState != nil && cmd.ProcessState.Exited(), waitErr)
+		}
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) {
 			waitErr = nil // Termination's exit status is expected; reaping is not optional.

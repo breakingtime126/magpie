@@ -19,12 +19,12 @@ Assert-Exit 'Windows original GUI vet'
 Assert-Exit 'Synthetic native-mode write protection'
 & go test -tags nogui,nativecodex -count=1 -timeout=2m ./internal/nativeconnect
 Assert-Exit 'Synthetic launch selection transaction'
+& go vet -tags nogui,nativecodex ./internal/nativesupplier ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
+Assert-Exit 'Windows supplier and ownership stack vet'
+& go test -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativesupplier ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
+Assert-Exit 'Synthetic supplier and ownership stack'
 & go run github.com/tc-hib/go-winres@v0.3.3 make --in build/windows/winres.json --arch amd64 --out rsrc --file-version '0.0.0' --product-version '0.0.0'
 Assert-Exit 'Original Windows resources'
-$exe = Join-Path $package 'Magpie-Native-Codex-Experimental.exe'
-# No comlauncher installer; the existing GUI/main remain the product entry.
-& go build -tags production,nativecodex -trimpath -ldflags "-s -w -H windowsgui -X main.version=native-codex-$($head.Substring(0,8))" -o $exe .
-Assert-Exit 'Original Magpie GUI build'
 $adapter = Join-Path $package 'magpie-codex-bridge.exe'
 # Console stdio component, not a new GUI or a bundled official Codex binary.
 & go build -tags nogui,nativecodex -trimpath -ldflags "-s -w -X main.buildVersion=$head" -o $adapter ./cmd/magpie-codex-bridge
@@ -32,6 +32,16 @@ Assert-Exit 'Same-source stdio adapter build'
 $adapterVersion = (& $adapter --version | Out-String).Trim()
 Assert-Exit 'Adapter identity only'
 if (-not $adapterVersion.Contains($head)) { throw 'Adapter source identity mismatch.' }
+$adapterDigest = (Get-FileHash $adapter -Algorithm SHA256).Hash.ToLowerInvariant()
+$exe = Join-Path $package 'Magpie-Native-Codex-Experimental.exe'
+# Pin the actual same-source adapter inside the GUI, never from a mutable
+# sibling manifest or environment override. Keep the original GUI/main entry.
+$nativePins = "-X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSHA256=$adapterDigest -X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSourceRevision=$head"
+& go build -tags production,nativecodex -trimpath -ldflags "-s -w -H windowsgui -X main.version=native-codex-$($head.Substring(0,8)) $nativePins" -o $exe .
+Assert-Exit 'Original Magpie GUI with pinned adapter build'
+$guiBuildInfo = & go version -m $exe
+Assert-Exit 'Read GUI build provenance'
+if (($guiBuildInfo -join "`n") -notmatch [regex]::Escape($nativePins)) { throw 'GUI linker pins are not recorded in build provenance.' }
 Copy-Item -LiteralPath 'docs/subsystems/native-codex-connect.md' -Destination (Join-Path $package 'CONNECT-STATUS.md')
 
 Copy-Item -LiteralPath 'LICENSE','THIRD_PARTY_NOTICES' -Destination $package

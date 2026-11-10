@@ -12,11 +12,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/yetone/magpie/internal/appserverbridge"
 	"github.com/yetone/magpie/internal/filelock"
+	"github.com/yetone/magpie/internal/nativeprofile"
 )
 
 var (
@@ -51,15 +51,20 @@ type Store interface {
 // Plan is returned by trusted in-process preparation, not accepted from HTTP.
 // Prepare owns native discovery/version/provenance and supplier catalog checks;
 // it must not return until the launcher and secondary gateway handoff are ready.
+// Plans transfer no ownership. The generation owner retains resources even when
+// selection fails, and supplies a trusted launcher identity and frozen profile.
 type Plan struct {
-	Launcher string
-	Config   appserverbridge.Config
+	Launcher         string
+	LauncherIdentity TrustedLauncherIdentity
+	Config           appserverbridge.Config
+	PreparedProfile  *nativeprofile.Prepared
 }
 
 type Prepare func(context.Context) (Plan, error)
 
 type Status struct {
 	JournalPresent           bool `json:"journalPresent"`
+	RestoreAvailable         bool `json:"restoreAvailable"`
 	SelectionConfigured      bool `json:"selectionConfigured"`
 	BackendHandshakeVerified bool `json:"backendHandshakeVerified"`
 	ChatVerified             bool `json:"chatVerified"`
@@ -67,10 +72,11 @@ type Status struct {
 }
 
 type Controller struct {
-	mu      sync.Mutex
-	root    string
-	store   Store
-	prepare Prepare
+	mu         sync.Mutex
+	root       string
+	store      Store
+	prepare    Prepare
+	journalOps journalPublishOps
 }
 
 type journal struct {
@@ -114,6 +120,14 @@ func (c *Controller) lock() (func(), error) {
 func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Recover an existing transaction even when preparation is now unavailable.
+	// This read is side-effect free, preserving missing-input zero-write behavior.
+	if current, err := c.inspectLocked(); err != nil || current.JournalPresent {
+		if err != nil {
+			return current, err
+		}
+		return current, ErrConflict
+	}
 	// Missing metadata is checked before even creating the lock/profile folder.
 	if c.prepare == nil {
 		return Status{}, ErrMissingCatalog
@@ -121,7 +135,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	plan, err := c.prepare(ctx)
 	if err != nil {
 		if errors.Is(err, ErrMissingCatalog) {
-			return Status{}, ErrMissingCatalog
+			return Status{}, safeMissingCatalog(err)
 		}
 		return Status{}, ErrUnavailable
 	}
@@ -129,17 +143,23 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 		return Status{}, ErrUnavailable
 	}
 	for _, backend := range plan.Config.Backends {
-		rel, err := filepath.Rel(backend.CodexHome, c.root)
-		if err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		if !separateConnectionRoot(c.root, backend.Home, backend.CodexHome) {
 			return Status{}, ErrUnavailable
 		}
 	}
-	info, err := os.Stat(plan.Launcher)
-	if err != nil || !info.Mode().IsRegular() {
+	if !planLauncherMatches(plan) {
 		return Status{}, ErrUnavailable
 	}
-	data, err := json.MarshalIndent(plan.Config, "", "  ")
-	if err != nil || len(data) > 1<<20 {
+	var data []byte
+	if plan.PreparedProfile != nil {
+		if plan.PreparedProfile.ValidateFor(plan.Config) != nil {
+			return Status{}, ErrUnavailable
+		}
+		data = plan.PreparedProfile.Bytes()
+	} else {
+		data, err = json.MarshalIndent(plan.Config, "", "  ")
+	}
+	if err != nil || len(data) == 0 || len(data) > 1<<20 {
 		return Status{}, ErrUnavailable
 	}
 	unlock, err := c.lock()
@@ -148,7 +168,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	}
 	defer unlock()
 	if _, err := os.Lstat(filepath.Join(c.root, "selection.json")); !errors.Is(err, os.ErrNotExist) {
-		return Status{JournalPresent: err == nil, RecoveryRequired: true}, ErrConflict
+		return Status{JournalPresent: true, RecoveryRequired: true}, ErrConflict
 	}
 	before, err := c.store.Read()
 	if err != nil || !validSelection(before) {
@@ -166,11 +186,24 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	sum := sha256.Sum256(data)
 	j := journal{1, before, installed, hex.EncodeToString(sum[:])}
 	encoded, _ := json.Marshal(j)
-	if len(encoded) > 128<<10 || writeNew(filepath.Join(c.root, "selection.json"), encoded) != nil {
+	if len(encoded) > 128<<10 {
 		return Status{}, ErrUnavailable
 	}
-	// The journal file is flushed before the first external mutation. Do not roll back
-	// automatically after an uncertain result, and never retry a launch.
+	published, err := publishJournal(filepath.Join(c.root, "selection.json"), encoded, c.journalOps)
+	if err != nil {
+		if published {
+			return Status{JournalPresent: true, RestoreAvailable: true, RecoveryRequired: true}, ErrUnavailable
+		}
+		return Status{}, ErrUnavailable
+	}
+	// A complete non-overwriting journal is published before any registry
+	// mutation. This is crash recovery, not power-loss transaction durability.
+	// Recheck the caller's build pin immediately before selecting its path.
+	// This still cannot authenticate a later Desktop launch after replacement.
+	if !planLauncherMatches(plan) {
+		return Status{JournalPresent: true, RestoreAvailable: true, RecoveryRequired: true}, ErrUnavailable
+	}
+	// Never roll back automatically after an uncertain result or retry a launch.
 	if ctx.Err() != nil || c.store.Replace(before, installed) != nil {
 		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUncertain
 	}
@@ -178,7 +211,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	if err != nil || actual != installed {
 		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUncertain
 	}
-	return Status{JournalPresent: true, SelectionConfigured: true}, nil
+	return Status{JournalPresent: true, RestoreAvailable: true, SelectionConfigured: true}, nil
 }
 
 func writeNew(path string, data []byte) error {
@@ -202,7 +235,12 @@ func writeNew(path string, data []byte) error {
 
 func (c *Controller) readJournal() (journal, error) {
 	var j journal
-	f, err := os.Open(filepath.Join(c.root, "selection.json"))
+	path := filepath.Join(c.root, "selection.json")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return j, ErrUnavailable
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return j, ErrUnavailable
 	}
@@ -248,7 +286,7 @@ func (c *Controller) Disconnect() (Status, error) {
 	}
 	// Each value must still be ours or its exact prior value (crash recovery).
 	// Check the entire pair before restoring anything.
-	if (actual.CLI != j.Installed.CLI && actual.CLI != j.Before.CLI) || (actual.Profile != j.Installed.Profile && actual.Profile != j.Before.Profile) {
+	if !restorable(actual, j) {
 		return Status{JournalPresent: true, RecoveryRequired: true}, ErrConflict
 	}
 	if c.store.Replace(actual, j.Before) != nil {
@@ -264,4 +302,15 @@ func (c *Controller) Disconnect() (Status, error) {
 	// Keep the immutable Magpie profile for diagnostics; never delete native
 	// state or assume an already running Desktop changed its environment.
 	return Status{}, nil
+}
+
+// The expected identity belongs to trusted preparation, never a mutable sibling
+// manifest or a hash calculated from this candidate at verification time.
+func planLauncherMatches(plan Plan) bool {
+	verified, err := VerifyPackagedLauncher(filepath.Dir(plan.Launcher), plan.LauncherIdentity)
+	return err == nil && verified.Path == plan.Launcher
+}
+
+func restorable(actual Selection, j journal) bool {
+	return (actual.CLI == j.Installed.CLI || actual.CLI == j.Before.CLI) && (actual.Profile == j.Installed.Profile || actual.Profile == j.Before.Profile)
 }

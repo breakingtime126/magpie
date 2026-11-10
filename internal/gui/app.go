@@ -27,6 +27,7 @@ import (
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/library"
 	"github.com/yetone/magpie/internal/nativeconnect"
+	"github.com/yetone/magpie/internal/nativesupplier"
 	"github.com/yetone/magpie/internal/omarchy"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/settings"
@@ -430,9 +431,10 @@ func Run(version string, showMain bool, link string) error {
 	if ownPage {
 		gw = startBackend()
 		if buildvariant.NativeCodex {
-			// Host lifetime, not an HTTP request. Supplier preparation stays
-			// unavailable until runtime/catalog and owned gateway checks exist.
-			h.nativeConnection = nativeconnect.NewManager(context.Background(), filepath.Join(appdir.Config(), "native-codex-connection"), nativeconnect.SystemSelection(), nil)
+			// Original Connect uses the owned gateway and supplier pipeline. Its
+			// source gate rejects missing/currently unverified metadata first.
+			root := filepath.Join(appdir.Config(), "native-codex-connection")
+			h.nativeConnection = nativeconnect.NewManager(context.Background(), root, nativeconnect.SystemSelection(), nativesupplier.NewFactory(gw, root, os.Environ()))
 		}
 		handler = Handler(h, gw)
 	}

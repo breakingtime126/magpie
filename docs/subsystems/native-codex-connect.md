@@ -6,28 +6,47 @@ Legacy ConnectHow, Sync, history and provider guards remain intact. Other agents
 and ordinary builds keep their old paths. The separate account/test sheet is
 no longer constructed or advertised by the nativecodex desktop host.
 
-## Current product stop
+## Supplier preparation and current product stop
 
-The host has no supplier catalog preparer yet. Connect returns a missing verified
-AIHub catalog error before creating a lock, profile, journal or changing either
-launch variable. No backend JSON form replaces the missing preparation.
+The original desktop host now constructs a production `nativesupplier.NewFactory`
+with its actual gateway server and serialized lifecycle manager. The factory
+connects runtime discovery, owned-listener verification, the shared-native host,
+bootstrap channel and immutable prepared profile to the existing Connect action.
+There is no separate product UI or JSON setup form.
 
-A trusted in-process Prepare callback must discover the installed supported
-official executable/version and existing native home, check its provenance and
-pin, validate authorized supplier metadata, and prove that this Magpie owns the
-intended local listener. It then supplies a shared-native profile and the bundled
-adapter. Config.Validate is reused but is **not** runtime/provenance/catalog
-semantic verification. The test callback uses inert fixtures only.
+The production supplier source still deliberately returns a missing-metadata
+error. It has no independently validated, current full native catalog. This
+happens before runtime probing, files, locks, journals or launch-variable writes.
+A historical tool-call success, a declared context window, illustrative example,
+model/list projection or self-signed JSON file is not that catalog. No catalog
+builder or native model cache/bundle access is introduced by this integration.
 
-The Windows packager includes a same-source stdio adapter as an internal component.
-Do not enable a real Prepare callback until official-runtime discovery, listener
-ownership and the metadata source are wired. This patch does not run a catalog builder or access native
-model caches/bundles. A model/list projection is not a full catalog.
+An authorized source adapter must provide the exact supported native version's
+catalog with independently checked schema and capability semantics, attributable
+source and observation/expiry times, and a current gateway-qualified supplier
+route generation. It must revoke a captured generation when the route or
+capabilities change. The package-private source boundary cannot be supplied by
+an HTTP request, environment variable or arbitrary external catalog path.
 
-The separately reviewed local-placeholder gateway mode uses the original public
-caller label magpie-codex, injected only into the secondary child. It is not a
-secret or endpoint authentication. No key is written to the profile, journal or
-user environment. Listener ownership and existing gateway policy still matter.
+Given a validated synthetic source, preparation discovers and probes the exact
+supported official runtime, checks native-home separation and the bundled
+adapter's compile-time SHA-256/source-revision pin, verifies the actual owned
+gateway connection, freezes and hashes supplier bytes, then creates a disposable
+generation directory. The host retains an authenticated local bootstrap channel,
+endpoint lease and child lifetime. Admission rechecks supplier validity and pins
+before launch handoff and after transfer. Expiry or source revocation cancels the
+generation independently of another Connect request. A hash proves byte identity,
+not model capabilities or supplier policy.
+
+The Windows packager builds the adapter first and embeds its digest and exact
+source revision in the original GUI. It does not bundle, install or update the
+official runtime. Shared-native discovery remains pinned to 0.167.0-alpha.3.2.
+
+The local-placeholder caller label is injected only into the secondary child. It
+is public, not a secret or endpoint authentication. No supplier key is written to
+the profile, journal or user environment. Existing gateway and native policy
+checks remain necessary. These checks are not protection against a hostile
+same-user process or a substitute for an authorized provider metadata source.
 
 ## Persistence and recovery
 
@@ -69,5 +88,10 @@ Synthetic tests cover missing-input zero-write, validated fixture transaction,
 original value/type restoration, duplicate Connect, fresh-controller partial-write
 recovery and external-change conflict. Windows registry mutation, real native
 launch, credentials, network services and user devices are not exercised.
-Run go test with nogui and nogui,nativecodex for internal/nativeconnect and the
-focused GUI seam tests. Local Go/gofmt are unavailable; CI remains required.
+Run go test with nogui and nogui,nativecodex for internal/nativeconnect,
+internal/nativesupplier, the native host/channel/endpoint/profile/launch packages
+and the focused GUI seam tests. Supplier tests use an authored non-model JSON
+fixture and inert executable paths; they do not prove native catalog parsing,
+real-service capability or Desktop acceptance. Windows CI also checks packaging
+pins and captures the original GUI in a synthetic home. A successful build is
+not a successful real Connect or chat.

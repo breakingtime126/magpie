@@ -146,6 +146,12 @@ func (s *Server) ListenerFile() (*os.File, error) {
 	s.lnMu.Lock()
 	ln := s.ln
 	s.lnMu.Unlock()
+	if owned, ok := ln.(*ownedListener); ok {
+		// Exporting a duplicate gives another process potential ownership, even
+		// before HandOff. Never restore this generation after an uncertain export.
+		owned.exported.Store(true)
+		ln = owned.Listener
+	}
 	if t, ok := ln.(*tlsListener); ok {
 		ln = t.Listener
 	}

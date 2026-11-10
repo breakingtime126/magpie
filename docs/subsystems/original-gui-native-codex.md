@@ -6,8 +6,10 @@ Codex Desktop same-window release.
 
 The original Agents → Codex Connect/Disconnect path has a native-only launch
 selection transaction. The desktop host owns a serialized lifecycle manager, constructed after the
-local gateway starts and closed during application shutdown. It does not yet
-supply a prepared-generation factory, so Connect reports that a verified AIHub catalog is required before
+local gateway starts and closed during application shutdown. Its production
+supplier factory wires runtime preparation and the owned native launch host, but
+the supplier metadata source is not implemented. Connect reports that a current,
+independently validated AIHub catalog is required before
 creating transaction files or changing launch selection. The former **Native
 backend test** action and separate account/test sheet are no longer offered in
 the product UI. There is no replacement backend-ID or JSON setup form.
@@ -28,8 +30,8 @@ files. CONNECT-STATUS.md describes the unfinished preparation and recovery
 contract.
 
 Do not treat the available Connect control as a completed setup flow. Runtime
-discovery and provenance checks, ownership of Magpie's local gateway, and
-authorized full AIHub model metadata must be connected before that flow can
+discovery, provenance checks and ownership of Magpie's local gateway are now
+connected. Authorized full AIHub model metadata is still required before that flow can
 configure a future native launch. A model/list response alone is not a full
 native catalog. The reviewed shared-native adapter path is pinned to
 0.167.0-alpha.3.2; this package does not install or update the official runtime.
@@ -75,8 +77,10 @@ The original endpoint calls `nativeconnect.Manager`, not a separate preview.
 The manager serializes Connect/Disconnect and keeps prepared launch resources
 alive independently of the HTTP request. Its factory is in-process only and
 must validate supplier metadata, runtime provenance and the exact owned gateway.
-There is no production implementation of that factory yet. No staged native
-endpoint or bootstrap package is enabled by this wiring.
+The production factory now composes the owned native endpoint, bootstrap and
+profile packages. Its missing supplier-source gate runs before side effects.
+Synthetic adapter tests prove preparation and transaction wiring only; production
+cannot yet reach launch selection through Connect.
 
 `Controller.Inspect` reads journal/selection evidence without creating a lock or
 folder. An existing journal cannot be adopted as a live generation after a host
@@ -94,8 +98,12 @@ then explicitly closes owned resources with a bounded deadline. Cleanup errors
 are reported and ownership retained for retry; a timeout is not successful
 drain. Shutdown does not automatically restore registry selection. The manager
 is retained until process exit, which cannot guarantee another cleanup attempt.
-These contracts are covered by synthetic generations, not running native
-processes. Handshake and chat status remain false.
+Supplier evidence has an expiry, a captured route-generation validity context
+and launch-time admission checks. Expiry or explicit source revocation cancels
+its host lifetime without another Connect. Catalog bytes are pinned in the
+prepared profile and checked again before use. These contracts are covered by
+synthetic generations, not authenticated native processes. Handshake and chat
+status remain false.
 
 ## Evidence and remaining gap
 
@@ -112,8 +120,11 @@ An earlier internal short-text harness exercised the pinned official native
 program against a local Responses fixture. That is not the removed product
 entry and does not establish real-account or same-window usability.
 
-Runtime preparation, an owned local listener and a verified supplier catalog
-remain unfinished. Official Desktop handshake, real GPT/AIHub chat, and
+The independently validated supplier catalog source remains unfinished.
+Historical tool-call success and declared context size do not fill in its missing
+native schema, complete capability fields, freshness or current route identity.
+Runtime and owned-listener components are wired and synthetically tested, not
+accepted on a real user device. Official Desktop handshake, real GPT/AIHub chat, and
 restored-start acceptance have not been established for this integration.
 Do not present a successful build or selection transaction as a completed
 same-window release.

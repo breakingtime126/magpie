@@ -363,11 +363,15 @@ var hostIPs = func() []net.IP {
 // listen listens on addr, serving TLS to other computers when the gateway
 // does; under lnMu, or before serving.
 func (s *Server) listen(addr string) (net.Listener, error) {
+	unshared := !Handover && !Inherited()
 	ln, err := Listen(addr)
-	if err != nil || s.tls == nil {
-		return ln, err
+	if err != nil {
+		return nil, err
 	}
-	return newTLSListener(ln, s.tls), nil
+	if s.tls != nil {
+		ln = newTLSListener(ln, s.tls)
+	}
+	return &ownedListener{Listener: ln, unshared: unshared, plain: s.tls == nil}, nil
 }
 
 // Relisten moves the gateway to where settings now say it listens — onto

@@ -22,11 +22,12 @@ const sharedRouteUnavailable167 = "shared native route admission unavailable"
 // SharedNativeRoute167 explicitly declares a shared native state namespace.
 // It does not grant login/proof support or isolate the secondary from that state.
 type SharedNativeRoute167 struct {
-	Mode             string `json:"mode"`
-	GatewayURL       string `json:"gateway_url"`
-	GatewayEnvKey    string `json:"gateway_env_key"`
-	GatewayAuth      string `json:"gateway_auth,omitempty"`
-	SecondaryCatalog string `json:"secondary_catalog"`
+	Mode                   string `json:"mode"`
+	GatewayURL             string `json:"gateway_url"`
+	GatewayEnvKey          string `json:"gateway_env_key"`
+	GatewayAuth            string `json:"gateway_auth,omitempty"`
+	SecondaryCatalog       string `json:"secondary_catalog"`
+	SecondaryCatalogSHA256 string `json:"secondary_catalog_sha256,omitempty"`
 }
 
 func sameNativeDirectory167(a, b string) bool {
@@ -79,6 +80,9 @@ func (cfg Config) validateSharedNative167() error {
 	info, err := os.Stat(s.SecondaryCatalog)
 	if err != nil || !info.Mode().IsRegular() {
 		return errors.New("shared native secondary catalog must exist")
+	}
+	if s.SecondaryCatalogSHA256 != "" && !pinnedCatalogMatches(s.SecondaryCatalog, s.SecondaryCatalogSHA256) {
+		return errors.New("shared native secondary catalog identity unavailable")
 	}
 	if !sameNativeDirectory167(a.Home, b.Home) || !sameNativeDirectory167(a.CodexHome, b.CodexHome) {
 		return errors.New("shared native route requires identical native home identities")

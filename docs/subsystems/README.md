@@ -10,6 +10,8 @@ These pages describe current responsibilities, runtime paths, state, and contrac
 | Tools that plugins give, offered to every agent as an MCP server | [Plugin tools](plugin-tools.md) |
 | Plugins that await context recall and observe completed replies | [Asynchronous gateway request hooks](gateway-request-hooks.md) |
 | Two official Codex app servers behind an opt-in stdio protocol bridge | [Experimental app-server bridge](app-server-bridge.md) |
+| Original Agents Codex Connect, supplier preparation, launch selection and recovery | [Native Codex Connect transaction](native-codex-connect.md) |
+| Original portable GUI native-mode protections and incomplete acceptance status | [Original GUI native Codex](original-gui-native-codex.md) |
 | Independent Windows supplier connectivity preview (not Desktop integration) | [Codex connectivity preview](codex-connectivity-preview.md) |
 | Claude subscription turns across Claude Code runs | [Claude subscription bridge](claude-subscription-bridge.md) |
 | How the gateway picks a provider, key or account, and falls back | [Gateway routing and fallback](gateway-routing.md) |

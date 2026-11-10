@@ -12,6 +12,7 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/nativeconnect"
+	"github.com/yetone/magpie/internal/nativesupplier"
 )
 
 type nativeConnectionOwner struct {
@@ -25,7 +26,7 @@ func (w nativeConnectionOwner) NativeCodexConnection() nativeCodexConnection {
 
 func TestNativeCodexOriginalConnectMissingCatalog(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "not-created")
-	owner := nativeConnectionOwner{controller: nativeconnect.NewManager(context.Background(), root, nil, nil)}
+	owner := nativeConnectionOwner{controller: nativeconnect.NewManager(context.Background(), root, nil, nativesupplier.NewFactory(nil, root, nil))}
 	a := &agent.Agent{ID: "codex"}
 	r := httptest.NewRequest("POST", "/api/agents/connect/codex", nil)
 	r.SetPathValue("action", "connect")

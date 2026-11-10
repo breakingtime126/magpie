@@ -514,6 +514,17 @@ type Server struct {
 	// taken off it (see Relisten)
 	lnMu sync.Mutex
 	ln   net.Listener
+	// listenContext belongs to the current serving run, not its caller's
+	// optimistic Server pointer. It is read only under lnMu.
+	listenContext context.Context
+	// ownedHTTP is the exact serving stack, captured by in-process connections.
+	// It is published and cleared under lnMu.
+	ownedHTTP http.Handler
+	// ownedRequests tracks in-process requests that http.Server cannot see.
+	// All fields are guarded by lnMu.
+	ownedRequests map[*ownedRequest]struct{}
+	ownedStopped  bool
+	ownedDrained  chan struct{}
 	// front is Front's handler, built once
 	frontOnce sync.Once
 	front     http.Handler
@@ -731,6 +742,8 @@ var WhileServing []func(context.Context)
 // long as a stream takes. A bind error means another magpie is already
 // serving, which is fine for the caller to ignore.
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	ctx, stopServing := context.WithCancel(ctx)
+	defer stopServing()
 	migrateLANKeyBestEffort()
 	cfg, err := tlsConfig()
 	if err != nil {
@@ -750,7 +763,14 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 	s.lnMu.Lock()
 	s.ln = ln
+	s.listenContext = ctx
 	s.lnMu.Unlock()
+	defer func() {
+		s.lnMu.Lock()
+		s.listenContext = nil
+		s.ownedHTTP = nil
+		s.lnMu.Unlock()
+	}()
 	// the keys out of credit a magpie before this one rested go on
 	// resting, and climb on from their rung (rest_store.go)
 	loadRests()
@@ -803,6 +823,9 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// and the MCP hub's servers that the Library no longer gives are ended
 	go keepHubPruned(freshCtx)
 	srv := &http.Server{Handler: s.closesWhenHandedOff(s.Front()), ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 5 * time.Minute, ConnState: s.unread.note}
+	s.lnMu.Lock()
+	s.ownedHTTP = srv.Handler
+	s.lnMu.Unlock()
 	// the magpie serving the gateway, and only it, keeps the saved accounts
 	// signed in, so two never refresh one sign-in at once
 	go provider.KeepLoginsAlive(ctx)
@@ -861,9 +884,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// their network (wsl.go)
 	go s.serveWSL(ctx, srv)
 	drained := make(chan struct{})
+	// A terminal Serve error must run the same bounded shutdown as a normal
+	// cancellation before earlier defers tear down gates used by owned calls.
+	defer func() {
+		stopServing()
+		<-drained
+	}()
 	go func() {
 		defer close(drained)
 		<-ctx.Done()
+		s.stopOwnedRequests()
 		s.endStreams()
 		c, cancel := context.WithTimeout(context.Background(), s.drainFor())
 		defer cancel()
@@ -886,6 +916,9 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			log.Printf("gateway: ending after %s with requests still in flight; they are cut (%v)", s.drainFor(), err)
 		}
 		<-sockets
+		if err := s.drainOwnedRequests(c); err != nil {
+			log.Printf("gateway: owned requests did not finish before shutdown: %v", err)
+		}
 		// An inline description may still have to save after its request
 		// ended, or was canceled: wait for every such description to save or
 		// give up, rather than have the next start describe the images again.

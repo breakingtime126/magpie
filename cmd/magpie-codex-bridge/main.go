@@ -2,7 +2,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +15,8 @@ import (
 	"syscall"
 
 	"github.com/yetone/magpie/internal/appserverbridge"
+	"github.com/yetone/magpie/internal/nativelaunch"
+	"github.com/yetone/magpie/internal/nativeprofile"
 )
 
 // buildVersion may be set by the build to identify this adapter artifact.
@@ -211,11 +215,74 @@ func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, appserv
 }
 
 type dependencies struct {
+	// read is installed by production. A nil reader retains the original private
+	// legacy-config test seam; it is never selected from argv or environment.
+	read       func(string) ([]byte, error)
+	trustedRun func(context.Context, io.Reader, appserverbridge.LaunchOptions, io.ReadCloser, io.WriteCloser) error
+
 	getenv   func(string) string
 	load     func(string) (appserverbridge.Config, error)
 	run      func(context.Context, appserverbridge.Config, appserverbridge.LaunchOptions, io.ReadCloser, io.WriteCloser) error
 	probe    func(context.Context, appserverbridge.Config, appserverbridge.LaunchOptions, appserverbridge.StartupClientInfo) ([]byte, error)
 	identity func(context.Context, appserverbridge.Config) ([]byte, error)
+}
+
+// readProfile snapshots one byte-bounded regular file and checks that its
+// identity and metadata remain stable across the read. These checks are not a
+// universal filesystem I/O deadline or a boundary against a hostile same-user
+// actor. Live-owner authentication still validates the exact returned bytes.
+func readProfile(path string) ([]byte, error) {
+	return readProfileWith(path, nativeprofile.Read)
+}
+
+// readProfileWith keeps the acquisition checks identical in deterministic
+// replacement tests. Production always supplies the bounded nativeprofile reader.
+func readProfileWith(path string, read func(io.Reader) ([]byte, error)) ([]byte, error) {
+	before, err := os.Stat(path)
+	if err != nil || !profileFileRegular(before) {
+		return nil, nativeprofile.ErrProfile
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nativeprofile.ErrProfile
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !sameProfileFile(before, opened) {
+		return nil, nativeprofile.ErrProfile
+	}
+	data, err := read(f)
+	if err != nil || int64(len(data)) != opened.Size() {
+		return nil, nativeprofile.ErrProfile
+	}
+	after, fileErr := f.Stat()
+	current, pathErr := os.Stat(path)
+	if fileErr != nil || pathErr != nil || !sameProfileFile(opened, after) || !sameProfileFile(after, current) {
+		return nil, nativeprofile.ErrProfile
+	}
+	return data, nil
+}
+
+func profileFileRegular(info os.FileInfo) bool {
+	return info != nil && info.Mode().IsRegular() && info.Size() > 0 && info.Size() <= nativeprofile.Limit
+}
+func sameProfileFile(a, b os.FileInfo) bool {
+	return profileFileRegular(a) && profileFileRegular(b) && os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+}
+
+// classifyProfile rejects malformed JSON and alternate reserved-marker spelling
+// before any legacy Config validation. Exact envelopes use strict canonical parse.
+func classifyProfile(data []byte) (bool, error) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil || fields == nil {
+		return false, nativeprofile.ErrProfile
+	}
+	for key := range fields {
+		if strings.EqualFold(key, "native_bootstrap") && key != "native_bootstrap" {
+			return true, nativeprofile.ErrProfile
+		}
+	}
+	return nativeprofile.Inspect(data)
 }
 
 func loadConfig(path string) (appserverbridge.Config, error) {
@@ -254,7 +321,44 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 		fmt.Fprintln(diagnostics, "magpie-codex-bridge: MAGPIE_APP_SERVER_BRIDGE_CONFIG must name an absolute JSON file path")
 		return 2
 	}
-	cfg, err := deps.load(path)
+	var cfg appserverbridge.Config
+	if deps.read == nil {
+		cfg, err = deps.load(path)
+	} else {
+		var data []byte
+		data, err = deps.read(path)
+		if err == nil {
+			var trusted bool
+			trusted, err = classifyProfile(data)
+			if err == nil && trusted {
+				// These independent invocations cannot consume a one-use JSONL lease.
+				// No successful startup/config/identity result is synthesized.
+				if op == startupProbe {
+					return failStartupProbe(output, diagnostics)
+				}
+				if op == primaryIdentity {
+					return failPrimaryIdentity(output, diagnostics, nil)
+				}
+				if op != serve || deps.trustedRun == nil {
+					fmt.Fprintln(diagnostics, "magpie-codex-bridge: trusted native operation unavailable")
+					return 2
+				}
+				if err := ctx.Err(); err != nil {
+					return 0
+				}
+				if err := deps.trustedRun(ctx, bytes.NewReader(data), options, input, output); err != nil {
+					// Preserve cancellation plus cleanup failures; lease expiry is not a
+					// successful conversation or a clean process-tree shutdown.
+					fmt.Fprintln(diagnostics, "magpie-codex-bridge: trusted native launch failed")
+					return 1
+				}
+				return 0
+			}
+			if err == nil {
+				cfg, err = appserverbridge.LoadConfig(bytes.NewReader(data))
+			}
+		}
+	}
 	if err != nil {
 		if op == startupProbe {
 			return failStartupProbe(output, diagnostics)
@@ -336,7 +440,13 @@ func failPrimaryIdentity(output io.Writer, diagnostics io.Writer, err error) int
 func main() {
 	code := execute(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr, dependencies{
 		getenv: os.Getenv,
-		load:   loadConfig,
+		read:   readProfile,
+		trustedRun: func(parent context.Context, profile io.Reader, options appserverbridge.LaunchOptions, input io.ReadCloser, output io.WriteCloser) error {
+			ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return nativelaunch.Run(ctx, profile, options, input, output)
+		},
+		load: loadConfig,
 		identity: func(parent context.Context, cfg appserverbridge.Config) ([]byte, error) {
 			ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 			defer stop()

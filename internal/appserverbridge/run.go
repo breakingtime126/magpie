@@ -25,9 +25,12 @@ type bridgeEvent struct {
 }
 
 type childServer struct {
-	tree   *proc.Tree
-	input  io.WriteCloser
-	output io.ReadCloser
+	tree     *proc.Tree
+	shutdown func() error
+	streams  *ownedEndpointStreams
+	waited   <-chan struct{}
+	input    io.WriteCloser
+	output   io.ReadCloser
 }
 
 // Run owns input and output for the duration of the bridge and closes them on
@@ -41,6 +44,10 @@ func Run(parent context.Context, cfg Config, input io.ReadCloser, output io.Writ
 // RunWithOptions preserves the reviewed Desktop startup controls on both
 // children. It has the same stream ownership and shutdown contract as Run.
 func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, input io.ReadCloser, output io.WriteCloser) (resultErr error) {
+	return runWithEndpoint(parent, cfg, options, input, output, nil)
+}
+
+func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, input io.ReadCloser, output io.WriteCloser, owned *secondaryEndpoint) (resultErr error) {
 	if input == nil || output == nil {
 		return errors.New("bridge requires input and output")
 	}
@@ -141,7 +148,9 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 		cancel()
 		input.Close()
 		output.Close()
-		shutdownChildren(children)
+		if err := shutdownChildren(children); err != nil {
+			resultErr = errors.Join(resultErr, err)
+		}
 		readers.Wait()
 	}()
 	for _, b := range cfg.Backends {
@@ -149,6 +158,9 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 			return ctx.Err()
 		}
 		command := proc.CommandContext(processContext, b.Command, cfg.nativeArgs167(options, b)...)
+		if owned != nil && b.ID == cfg.Backends[1].ID {
+			command = proc.Command(b.Command, cfg.nativeArgs167(options, b)...)
+		}
 		command.Env = sharedEnvironments[b.ID]
 		if cfg.SharedNativeRoute == nil {
 			command.Env = backendEnvironment(b)
@@ -164,27 +176,72 @@ func RunWithOptions(parent context.Context, cfg Config, options LaunchOptions, i
 		// an io.Discard copy pipe, descendants cannot keep a copier alive.
 		// Backend diagnostics may contain credentials or model input.
 		command.Stderr = nil
-		in, err := command.StdinPipe()
-		if err != nil {
-			return fmt.Errorf("cannot prepare backend %s input", b.ID)
+		var in io.WriteCloser
+		var out io.ReadCloser
+		var closeChildEnds func()
+		var err error
+		if owned != nil {
+			in, out, closeChildEnds, err = ownedCommandPipes(command)
+		} else {
+			in, err = command.StdinPipe()
+			if err != nil {
+				return fmt.Errorf("cannot prepare backend %s input", b.ID)
+			}
+			out, err = command.StdoutPipe()
+			if err != nil {
+				in.Close()
+				return fmt.Errorf("cannot prepare backend %s output", b.ID)
+			}
 		}
-		out, err := command.StdoutPipe()
 		if err != nil {
-			in.Close()
-			return fmt.Errorf("cannot prepare backend %s output", b.ID)
+			return fmt.Errorf("cannot prepare backend %s pipes", b.ID)
 		}
-		tree, err := proc.StartTreeStrict(command)
+
+		var tree *proc.Tree
+		var shutdown func() error
+		var streams *ownedEndpointStreams
+		if owned != nil {
+			streams = newOwnedEndpointStreams(in, out)
+		}
+		if owned != nil && b.ID == cfg.Backends[1].ID {
+			owned.streams = streams
+			err = owned.start(command)
+			shutdown = owned.close
+		} else {
+			if owned != nil {
+				owned.primaryStreams = streams
+			}
+			tree, err = proc.StartTreeStrict(command)
+		}
+		if closeChildEnds != nil {
+			closeChildEnds()
+		}
 		if err != nil {
-			in.Close()
-			out.Close()
+			if shutdown == nil {
+				in.Close()
+				out.Close()
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			return fmt.Errorf("cannot start backend %s", b.ID)
 		}
-		children[b.ID] = &childServer{tree: tree, input: in, output: out}
+		child := &childServer{tree: tree, shutdown: shutdown, input: in, output: out, streams: streams}
+		if streams != nil {
+			child.input = streams
+			if tree != nil {
+				waited := make(chan struct{})
+				child.waited = waited
+				go func() { _ = tree.Wait(); close(waited); owned.cancel() }()
+			}
+		}
+		children[b.ID] = child
 		readers.Add(1)
-		go func(id string, src io.Reader) { defer readers.Done(); scanMessages(ctx, src, id, events) }(b.ID, out)
+		var source io.Reader = out
+		if streams != nil {
+			source = streams
+		}
+		go func(id string, src io.Reader) { defer readers.Done(); scanMessages(ctx, src, id, events) }(b.ID, source)
 	}
 	readers.Add(1)
 	go func() { defer readers.Done(); scanMessages(ctx, input, "", events) }()
@@ -327,14 +384,29 @@ func backendEnvironment(b Backend) []string {
 // Close every stdin before waiting for a child to exit. A Windows pipe Close
 // can wait for a concurrent Read, so stdout closure must not prevent the owned
 // tree's stop/reap path from running. Readers are joined by Run after this.
-func shutdownChildren(children map[string]*childServer) {
+func shutdownChildren(children map[string]*childServer) error {
 	for _, child := range children {
 		child.input.Close()
 	}
-	stopChildren(children)
+	errorsCh := make(chan error, len(children))
+	ownedCount := 0
 	for _, child := range children {
-		child.output.Close()
+		if child.shutdown != nil {
+			ownedCount++
+			go func(c *childServer) { errorsCh <- c.shutdown() }(child)
+		}
 	}
+	stopChildren(children)
+	var result error
+	for range ownedCount {
+		result = errors.Join(result, <-errorsCh)
+	}
+	for _, child := range children {
+		if child.shutdown == nil && child.streams == nil {
+			child.output.Close()
+		} // Owned streams close only after real I/O ends.
+	}
+	return result
 }
 
 // Give an EOF-aware app server a short opportunity to release its own locks.
@@ -342,8 +414,18 @@ func shutdownChildren(children map[string]*childServer) {
 func stopChildren(children map[string]*childServer) {
 	var waiters sync.WaitGroup
 	for _, child := range children {
+		if child.tree == nil {
+			continue
+		}
 		waiters.Add(1)
-		go func(child *childServer) { defer waiters.Done(); _ = child.tree.Wait() }(child)
+		go func(child *childServer) {
+			defer waiters.Done()
+			if child.waited != nil {
+				<-child.waited
+			} else {
+				_ = child.tree.Wait()
+			}
+		}(child)
 	}
 	done := make(chan struct{})
 	go func() { waiters.Wait(); close(done) }()
@@ -356,7 +438,9 @@ func stopChildren(children map[string]*childServer) {
 	}
 	stopped := make([]<-chan struct{}, 0, len(children))
 	for _, child := range children {
-		stopped = append(stopped, child.tree.Stop(time.Second))
+		if child.tree != nil {
+			stopped = append(stopped, child.tree.Stop(time.Second))
+		}
 	}
 	for _, stop := range stopped {
 		<-stop

@@ -2,6 +2,8 @@ package nativeconnect
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -59,7 +61,13 @@ func fixturePlan(t *testing.T) Plan {
 			{ID: "aihub", Provider: "magpie_shared_aihub", Command: command, Home: home, CodexHome: codex, StartupProbeSHA256: strings.Repeat("b", 64), InheritEnv: []string{"MAGPIE_SHARED_TEST_KEY"}},
 		},
 	}
-	return Plan{Launcher: command, Config: cfg}
+	launcher := filepath.Join(home, "magpie-codex-bridge.exe")
+	launcherBytes := []byte("inert packaged launcher fixture")
+	if err := os.WriteFile(launcher, launcherBytes, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(launcherBytes)
+	return Plan{Launcher: launcher, LauncherIdentity: TrustedLauncherIdentity{Filename: filepath.Base(launcher), SHA256: hex.EncodeToString(sum[:]), SourceRevision: strings.Repeat("c", 40)}, Config: cfg}
 }
 
 func TestNativeConnectMissingCatalogHasNoWrites(t *testing.T) {

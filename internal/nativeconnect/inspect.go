@@ -14,6 +14,10 @@ import (
 func (c *Controller) Inspect() (Status, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.inspectLocked()
+}
+
+func (c *Controller) inspectLocked() (Status, error) {
 	if !filepath.IsAbs(c.root) {
 		return Status{}, ErrUnavailable
 	}
@@ -36,6 +40,7 @@ func (c *Controller) Inspect() (Status, error) {
 	if err != nil {
 		return status, ErrUnavailable
 	}
+	status.RestoreAvailable = restorable(actual, j)
 	if actual == j.Installed {
 		status.SelectionConfigured, status.RecoveryRequired = true, false
 		return status, nil
