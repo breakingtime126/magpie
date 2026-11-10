@@ -211,6 +211,15 @@ var diagnosticReasons = map[string]string{
 	"native stderr bounded read failed":          "stderr_read",
 	"native exit/output deadline":                "exit_output_deadline",
 	"unexpected extra native stdout":             "extra_stdout",
+	"extra stdout unterminated frame":            "extra_unterminated",
+	"extra stdout multiple frames":               "extra_multiple_frames",
+	"extra stdout config warning present":        "extra_config_warning",
+	"extra stdout invalid envelope":              "extra_envelope",
+	"extra stdout other method":                  "extra_other_method",
+	"extra stdout remote params shape":           "extra_remote_shape",
+	"extra stdout remote status not disabled":    "extra_remote_status",
+	"extra stdout remote environment not null":   "extra_remote_environment",
+	"extra stdout remote identifier invalid":     "extra_remote_identifier",
 	"helper marker deadline":                     "gate_deadline",
 }
 
@@ -395,6 +404,9 @@ func assertInitializeStream(data []byte, version, home string) (int, error) {
 	if classification.Error() == "extra stdout single disabled remote status" {
 		return 1, nil
 	}
+	if classification.Error() == "unexpected extra native stdout" {
+		return 0, diagnoseRejectedExtraOutput(tail)
+	}
 	return 0, classification
 }
 
@@ -433,6 +445,97 @@ func TestInitializeLifecycleEnvelope(t *testing.T) {
 	} {
 		if _, e := assertInitializeStream([]byte(bad), "0.0.0", home); e == nil {
 			t.Fatal("invalid lifecycle accepted")
+		}
+	}
+}
+
+// Failure-only classifier. Never authorizes output, returns payloads, or reads
+// files. Called only after the unchanged exact stream allowlist rejects input.
+func diagnoseRejectedExtraOutput(tail []byte) error {
+	fail := func(code string) error { return errors.New("extra stdout " + code) }
+	if len(tail) == 0 || !bytes.HasSuffix(tail, []byte("\n")) {
+		return fail("unterminated frame")
+	}
+	frames := bytes.Split(bytes.TrimSuffix(tail, []byte("\n")), []byte("\n"))
+	// Inspect at most four already bounded frames for a pinned protocol method.
+	// Warning contents and every unknown method/value remain opaque.
+	limit := len(frames)
+	if limit > 4 {
+		limit = 4
+	}
+	for _, frame := range frames[:limit] {
+		m, e := object(frame, "method", "params")
+		if e == nil {
+			method, e := textField(m["method"])
+			if e == nil && method == "configWarning" {
+				return fail("config warning present")
+			}
+		}
+	}
+	if len(frames) != 1 {
+		return fail("multiple frames")
+	}
+	m, e := object(frames[0], "method", "params")
+	if e != nil {
+		return fail("invalid envelope")
+	}
+	method, e := textField(m["method"])
+	if e != nil || method != "remoteControl/status/changed" {
+		return fail("other method")
+	}
+	params, e := object(m["params"], "status", "serverName", "installationId", "environmentId")
+	if e != nil {
+		return fail("remote params shape")
+	}
+	status, e := textField(params["status"])
+	if e != nil || status != "disabled" {
+		return fail("remote status not disabled")
+	}
+	if string(bytes.TrimSpace(params["environmentId"])) != "null" {
+		return fail("remote environment not null")
+	}
+	return fail("remote identifier invalid")
+}
+
+func TestRejectedExtraOutputDiagnostics(t *testing.T) {
+	home := t.TempDir()
+	first, _ := json.Marshal(map[string]any{"id": 1, "result": map[string]string{
+		"userAgent": clientName + "/0.0.0 (Windows x; x64) terminal (" + clientName + "; 0.0.0)",
+		"codexHome": home, "platformFamily": "windows", "platformOs": "windows"}})
+	response := string(first) + "\n"
+	status := `{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
+	warning := `{"method":"configWarning","params":{"summary":"private-sentinel","details":"private-sentinel","path":null,"range":null}}` + "\n"
+	for _, tc := range []struct{ tail, reason string }{
+		{strings.TrimSuffix(status, "\n"), "extra_unterminated"},
+		{status + status, "extra_multiple_frames"},
+		{status + "\n", "extra_multiple_frames"},
+		{warning, "extra_config_warning"},
+		{warning + status, "extra_config_warning"},
+		{status + warning, "extra_config_warning"},
+		{"private-sentinel\n", "extra_envelope"},
+		{strings.Replace(status, `"method":`, `"id":2,"method":`, 1), "extra_envelope"},
+		{strings.Replace(status, "remoteControl/status/changed", "private-sentinel", 1), "extra_other_method"},
+		{strings.Replace(status, `"status":"disabled"`, `"status":"disabled","extra":"private-sentinel"`, 1), "extra_remote_shape"},
+		{strings.Replace(status, `"status":"disabled"`, `"status":"disabled","status":"disabled"`, 1), "extra_envelope"},
+		{strings.Replace(status, "disabled", "connected", 1), "extra_remote_status"},
+		{strings.Replace(status, "null", `"private-sentinel"`, 1), "extra_remote_environment"},
+		{strings.Replace(status, `"synthetic-host"`, `""`, 1), "extra_remote_identifier"},
+		{strings.Replace(status, `"synthetic-installation"`, `null`, 1), "extra_remote_identifier"},
+	} {
+		n, e := assertInitializeStream([]byte(response+tc.tail), "0.0.0", home)
+		if e == nil || n != 0 {
+			t.Fatal("diagnostic widened acceptance")
+		}
+		d := safeFailure("initialize_assertion", e)
+		if d.Reason != tc.reason {
+			t.Fatalf("diagnostic mismatch: got %s want %s", d.Reason, tc.reason)
+		}
+		b, _ := json.Marshal(d)
+		if bytes.Contains(b, []byte("private-sentinel")) || bytes.Contains(b, []byte("synthetic-host")) {
+			t.Fatal("native value disclosed")
+		}
+		if _, ok := decodeFailure(b); !ok {
+			t.Fatal("finite diagnostic rejected")
 		}
 	}
 }
