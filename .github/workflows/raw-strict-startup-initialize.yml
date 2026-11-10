@@ -1,0 +1,150 @@
+# Exact raw official strict startup + one initialize + EOF; no model/account calls.
+# Commit marker [app-server-4239-v1] is required to SKIP broad legacy jobs.
+# Never describe those skipped jobs as passes. Recheck branch workflows first.
+name: Raw Codex strict startup initialize
+on:
+  push:
+    branches: ['experiment/app-server-bridge-v0.1.3035']
+    paths:
+      - '.github/workflows/raw-strict-startup-initialize.yml'
+      - 'evidence/windows-native-initialize-plan/**'
+permissions:
+  contents: read
+jobs:
+  raw-strict-initialize:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /evidence/windows-native-initialize-plan/go.mod
+            /evidence/windows-native-initialize-plan/go.sum
+            /evidence/windows-native-initialize-plan/probe_windows_test.go
+            /evidence/windows-native-initialize-plan/protocol_test.go
+            /evidence/windows-native-initialize-plan/trust_windows_test.go
+      - name: Verify official metadata and bytes, then run strict initialize-only probe
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Do not silently strip application/policy/auth inputs to force a pass.
+          # Unknown proxy/CA/security environment also fails admission.
+          $trustNames=@('SystemRoot','WINDIR','HTTP_PROXY','HTTPS_PROXY','NO_PROXY','ALL_PROXY','SSL_CERT_FILE','SSL_CERT_DIR','NODE_EXTRA_CA_CERTS','REQUESTS_CA_BUNDLE','CURL_CA_BUNDLE')
+          foreach ($entry in Get-ChildItem Env:) {
+            $name=$entry.Name.ToUpperInvariant()
+            if ($name -match '^(CODEX_|OPENAI_|AWS_|AZURE_|GOOGLE_|GCP_|OTEL_)' -or $name -match '(_API_KEY|_ACCESS_TOKEN)$') { throw 'Inherited application/provider/auth environment rejected; values withheld' }
+            if ($name -match '(PROXY|CERT|SSL|TLS|TRUST|CA_BUNDLE)' -and $trustNames -notcontains $entry.Name) { throw 'Unreviewed trust/proxy environment rejected; values withheld' }
+          }
+          $root = Join-Path $env:RUNNER_TEMP ('raw-initialize-' + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $root | Out-Null
+          try {
+            $headers = @{ 'User-Agent' = 'magpie-inert-retention-ci'; 'Accept' = 'application/vnd.github+json' }
+            $tag = 'rust-v0.167.0-alpha.3.2'
+            $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/openai/codex/releases/tags/$tag"
+            if ($release.id -ne 435225522 -or $release.tag_name -cne $tag) { throw 'Official release identity mismatch' }
+            $assetName = 'codex-x86_64-pc-windows-msvc.exe'
+            $assetURL = "https://github.com/openai/codex/releases/download/$tag/$assetName"
+            $nativeSHA = '6774a77f5b6fb70df175f6cb3c2861dfd8600a0ac1d1c8f397e6d79d2efe9618'
+            $assets = @($release.assets | Where-Object { $_.name -ceq $assetName })
+            if ($assets.Count -ne 1) { throw 'Official asset not unique' }
+            $asset = $assets[0]
+            if ($asset.id -ne 713481688 -or $asset.size -ne 369018160 -or $asset.digest -cne "sha256:$nativeSHA" -or $asset.browser_download_url -cne $assetURL) { throw 'Official raw asset metadata mismatch' }
+            $ref = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/openai/codex/git/ref/tags/$tag"
+            if ($ref.object.type -cne 'tag' -or $ref.object.sha -cne 'b4b58be951a4fcbbda5cf50d48dcd7d4d8a41533') { throw 'Annotated tag identity mismatch' }
+            $tagObject = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/openai/codex/git/tags/b4b58be951a4fcbbda5cf50d48dcd7d4d8a41533'
+            if ($tagObject.object.type -cne 'commit' -or $tagObject.object.sha -cne 'c40729ea5cf8e947481b130c59807273eda2f8e9') { throw 'Source commit mismatch' }
+            $bin = Join-Path $root 'raw-bin'
+            New-Item -ItemType Directory -Path $bin | Out-Null
+            $exe = Join-Path $bin 'codex.exe'
+            Invoke-WebRequest -Uri $assetURL -OutFile $exe
+            if ((Get-Item -LiteralPath $exe).Length -ne 369018160 -or (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nativeSHA) { throw 'Raw EXE checksum/size mismatch' }
+            $signature = Get-AuthenticodeSignature -LiteralPath $exe
+            if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate -or $signature.SignerCertificate.Subject -notmatch '(?i)\bOpenAI\b') { throw 'OpenAI Authenticode validation failed' }
+            Write-Output "Raw EXE SHA256: $nativeSHA; source commit: c40729ea5cf8e947481b130c59807273eda2f8e9"
+            Write-Output "Signer: $($signature.SignerCertificate.Subject); certificate thumbprint: $($signature.SignerCertificate.Thumbprint)"
+            Write-Output 'Raw EXE package metadata is absent: version may report 0.0.0. No metadata is fabricated. Not installed-runtime identity proof.'
+            $goMetadata = Invoke-RestMethod 'https://go.dev/dl/?mode=json&include=all'
+            $goFiles = @($goMetadata | Where-Object version -EQ 'go1.26.8' | ForEach-Object files | Where-Object { $_.filename -ceq 'go1.26.8.windows-amd64.zip' -and $_.os -ceq 'windows' -and $_.arch -ceq 'amd64' -and $_.kind -ceq 'archive' })
+            if ($goFiles.Count -ne 1 -or $goFiles[0].sha256 -cne 'b92c3b2adae85a11ba71fe7216daf0d84e82af4c8ab6c5625807f28622043a59' -or $goFiles[0].size -ne 74957586) { throw 'Official Go metadata mismatch' }
+            $gozip = Join-Path $root 'go.zip'
+            Invoke-WebRequest -Uri 'https://go.dev/dl/go1.26.8.windows-amd64.zip' -OutFile $gozip
+            if ((Get-Item -LiteralPath $gozip).Length -ne 74957586 -or (Get-FileHash -LiteralPath $gozip -Algorithm SHA256).Hash.ToLowerInvariant() -cne 'b92c3b2adae85a11ba71fe7216daf0d84e82af4c8ab6c5625807f28622043a59') { throw 'Official Go checksum/size mismatch' }
+            Expand-Archive -LiteralPath $gozip -DestinationPath (Join-Path $root 'toolchain')
+            $go = Join-Path $root 'toolchain/go/bin/go.exe'
+            $workdir = Join-Path $env:GITHUB_WORKSPACE 'evidence/windows-native-initialize-plan'
+            $isolated = @{}
+            foreach ($name in @('SystemRoot','WINDIR')) { $isolated[$name] = [Environment]::GetEnvironmentVariable($name) }
+            # Preserve reviewed proxy/CA settings byte-for-byte into the test and
+            # native process; no machine/registry/proxy/security settings change.
+            foreach ($name in $trustNames) {
+              $value=[Environment]::GetEnvironmentVariable($name)
+              if ($null -ne $value) { $isolated[$name]=$value }
+            }
+            $isolated['PATH'] = "$(Split-Path -Parent $go);$(Join-Path $env:SystemRoot 'System32')"
+            foreach ($name in @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP','GOPATH','GOCACHE','GOMODCACHE')) {
+              $path = Join-Path $root $name
+              New-Item -ItemType Directory -Path $path | Out-Null
+              $isolated[$name] = $path
+            }
+            $isolated['GOTOOLCHAIN']='local'; $isolated['GOTELEMETRY']='off'; $isolated['CGO_ENABLED']='0'
+            $isolated['GOOS']='windows'; $isolated['GOARCH']='amd64'; $isolated['GOPROXY']='off'; $isolated['GOSUMDB']='off'
+            function Run-Go([string[]]$arguments, [hashtable]$processEnv, [string]$resultPath) {
+              $info = [Diagnostics.ProcessStartInfo]::new()
+              $info.FileName=$go; $info.WorkingDirectory=$workdir; $info.UseShellExecute=$false
+              $info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
+              $info.Environment.Clear()
+              foreach ($entry in $processEnv.GetEnumerator()) { $info.Environment[$entry.Key]=$entry.Value }
+              foreach ($arg in $arguments) { $info.ArgumentList.Add($arg) }
+              $process = [Diagnostics.Process]::Start($info)
+              try {
+                $stdout = $process.StandardOutput.ReadToEndAsync()
+                $stderr = $process.StandardError.ReadToEndAsync()
+                if (-not $process.WaitForExit(180000)) {
+                  $process.Kill($true)
+                  if (-not $process.WaitForExit(10000)) { throw 'Go process cleanup deadline exceeded' }
+                  throw 'Go command exceeded deadline'
+                }
+                if (-not $stdout.Wait(10000) -or -not $stderr.Wait(10000)) { throw 'Go output drain deadline exceeded' }
+                $output=$stdout.GetAwaiter().GetResult(); $errorOutput=$stderr.GetAwaiter().GetResult()
+                if ($resultPath) { [IO.File]::WriteAllText($resultPath,$output) }
+                Write-Output $output
+                if ($errorOutput) { Write-Output $errorOutput }
+                if ($process.ExitCode -ne 0) { throw "Go command failed: $($process.ExitCode)" }
+              } finally { $process.Dispose() }
+            }
+            Run-Go @('version') $isolated ''
+            # Download and native phases preserve ordinary reviewed proxy/CA
+            # settings without any inherited GitHub/runner/application tokens.
+            $downloadEnvironment=$isolated.Clone()
+            $downloadEnvironment['GOPROXY']='https://proxy.golang.org'
+            $downloadEnvironment['GOSUMDB']='sum.golang.org'
+            foreach ($name in @('HTTP_PROXY','HTTPS_PROXY','NO_PROXY','ALL_PROXY','http_proxy','https_proxy','no_proxy','all_proxy','SSL_CERT_FILE','SSL_CERT_DIR')) {
+              $value=[Environment]::GetEnvironmentVariable($name)
+              if ($value) { $downloadEnvironment[$name]=$value }
+            }
+            Run-Go @('mod','download','golang.org/x/sys@v0.46.0') $downloadEnvironment ''
+            $isolated['MAGPIE_NATIVE_INITIALIZE_EXE']=$exe
+            $isolated['MAGPIE_NATIVE_INITIALIZE_EXECUTE']='strict-initialize-only-v1'
+            $result = Join-Path $root 'go-test.jsonl'
+            Run-Go @('test','-buildvcs=false','-mod=readonly','-count=1','-json','-timeout=90s','-run','^(TestRawStrictStartupInitialize|TestStrictStartupResponse|TestStrictInitializeResponse|TestAmbientAdmissionRejectsApplicationSettings)$','.') $isolated $result
+            $events = @(Get-Content -LiteralPath $result | ForEach-Object { $_ | ConvertFrom-Json })
+            foreach ($testName in @('TestRawStrictStartupInitialize','TestStrictStartupResponse','TestStrictInitializeResponse','TestAmbientAdmissionRejectsApplicationSettings')) {
+              $passes = @($events | Where-Object { $_.Action -eq 'pass' -and $_.PSObject.Properties['Test'] -and $_.Test -ceq $testName })
+              if ($passes.Count -ne 1) { throw "Actual named PASS missing: $testName (skip/compile does not qualify)" }
+            }
+          } finally {
+            Set-Location -LiteralPath $env:GITHUB_WORKSPACE
+            if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+          }
