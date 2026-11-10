@@ -6,7 +6,7 @@ param(
  [switch]$RunAfterAudit
 )
 $ErrorActionPreference='Stop'; Set-StrictMode -Version Latest
-if ($env:OS -ne 'Windows_NT') { throw 'Windows fixture required.' }
+if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) { throw 'Windows fixture required.' }
 if ($SourceRevision -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact source revision required.' }
 function Check([string]$Name) { if ($LASTEXITCODE -ne 0) { throw "$Name failed." } }
 if (Test-Path -LiteralPath $OutputRoot) { throw 'Use a fresh output directory; artifacts are never overwritten.' }

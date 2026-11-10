@@ -29,25 +29,37 @@ const outputLimit = 64 << 10
 
 var trustedEnv = []string{"SystemRoot", "WINDIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"}
 
+// Source-reviewed runner CLI directory selectors, not a credential-free claim.
+// Native's audited OpenAI-only startup never invokes their CLI/auth chains.
+var reviewedRunnerDirectories = []string{"AZURE_CONFIG_DIR", "AZURE_EXTENSION_DIR", "AZURE_DEVOPS_CACHE_DIR", "AZ_DEVOPS_GLOBAL_CONFIG_DIR"}
+
 // Conservative admission check, not a claim of exhaustive native environment schema.
 // Unknown values are never forwarded. Proxy/CA names outside the reviewed inventory
 // abort rather than being silently dropped; recognized values are copied unchanged.
-func ambientAdmission() error {
+func ambientAdmission() error { return admitEntries(os.Environ()) }
+func admitEntries(entries []string) error {
+	reviewed := map[string]bool{}
+	for _, name := range reviewedRunnerDirectories {
+		reviewed[name] = true
+	}
 	known := map[string]bool{}
 	for _, k := range trustedEnv {
 		known[strings.ToUpper(k)] = true
 	}
-	for _, entry := range os.Environ() {
+	for _, entry := range entries {
 		name, value, ok := strings.Cut(entry, "=")
 		if !ok {
 			continue
 		}
 		u := strings.ToUpper(name)
+		if reviewed[u] {
+			continue
+		}
 		// Harness-owned Go offline mode is not a native proxy setting and is not forwarded.
 		if u == "GOPROXY" && value == "off" {
 			continue
 		}
-		for _, p := range []string{"CODEX_", "OPENAI_", "AWS_", "AZURE_", "GOOGLE_", "GCP_", "OTEL_"} {
+		for _, p := range []string{"CODEX_", "OPENAI_", "AWS_", "AZURE_", "AZ_", "GOOGLE_", "GCP_", "OTEL_"} {
 			if strings.HasPrefix(u, p) {
 				return errors.New("inherited application/provider environment rejected")
 			}
@@ -63,10 +75,12 @@ func ambientAdmission() error {
 	}
 	return nil
 }
-func baseEnv() []string {
+func baseEnv() []string { return preservedEnv(os.LookupEnv) }
+func preservedEnv(lookup func(string) (string, bool)) []string {
 	out := []string{}
-	for _, name := range trustedEnv {
-		if v, ok := os.LookupEnv(name); ok {
+	names := append(append([]string{}, trustedEnv...), reviewedRunnerDirectories...)
+	for _, name := range names {
+		if v, ok := lookup(name); ok {
 			out = append(out, name+"="+v)
 		}
 	}
@@ -591,4 +605,36 @@ func authoredConfig(home string) (string, error) {
 	}
 	config := "model = \"synthetic-lifecycle-only\"\nmodel_catalog_json = '" + catalog + "'\ncli_auth_credentials_store = \"file\"\nmcp_oauth_credentials_store = \"file\"\n[skills.bundled]\nenabled = false\n[features]\nplugins = false\n[analytics]\nenabled = false\n[otel]\nexporter = \"none\"\ntrace_exporter = \"none\"\nmetrics_exporter = \"none\"\n"
 	return config, nil
+}
+
+func TestReviewedRunnerDirectoriesPreserved(t *testing.T) {
+	values := map[string]string{}
+	entries := []string{}
+	for i, name := range reviewedRunnerDirectories {
+		value := "  synthetic directory = " + string(rune('A'+i)) + " \u7a7a  "
+		if i == 3 {
+			value = ""
+		} // Presence with an empty value must remain present.
+		values[name] = value
+		entries = append(entries, name+"="+value)
+	}
+	if admitEntries(entries) != nil {
+		t.Fatal("exact reviewed directory selectors rejected")
+	}
+	got := preservedEnv(func(name string) (string, bool) { v, ok := values[name]; return v, ok })
+	if len(got) != len(values) {
+		t.Fatal("directory-selector inventory changed")
+	}
+	for _, entry := range got {
+		name, value, ok := strings.Cut(entry, "=")
+		want, present := values[name]
+		if !ok || !present || value != want {
+			t.Fatal("directory-selector bytes not preserved")
+		}
+	}
+	for _, name := range []string{"AZURE_ACCESS_TOKEN", "AZURE_CLIENT_SECRET", "AZURE_CONFIG_DIR_EXTRA", "AZ_DEVOPS_EXT_PAT", "AZ_DEVOPS_GLOBAL_CONFIG_DIR_EXTRA"} {
+		if admitEntries(append(append([]string{}, entries...), name+"=synthetic")) == nil {
+			t.Fatal("unreviewed Azure authority variable accepted")
+		}
+	}
 }
