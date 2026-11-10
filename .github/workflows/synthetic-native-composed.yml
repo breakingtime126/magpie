@@ -1079,6 +1079,7 @@ jobs:
             /evidence/windows-composed-overlay/internal/nativeconnect/runtime_prepare.go
             /evidence/windows-composed-overlay/internal/nativeconnect/selection_windows.go
             /evidence/windows-composed-overlay/internal/nativeendpoint/endpoint.go
+            /evidence/windows-composed-overlay/internal/nativeendpoint/endpoint_accept_shutdown_test.go
             /evidence/windows-composed-overlay/internal/nativeendpoint/listen_windows.go
             /evidence/windows-composed-overlay/internal/nativehost/host.go
             /evidence/windows-composed-overlay/internal/nativehost/host_test.go
@@ -1099,8 +1100,13 @@ jobs:
             /evidence/windows-composed-overlay/fixture/main_windows.go
             /evidence/windows-composed-overlay/fixture/composed_windows_test.go
             /evidence/windows-composed-overlay/run-local.ps1
+            /evidence/windows-composed-overlay/relisten/fixture/backend_ledger.go
+            /evidence/windows-composed-overlay/relisten/fixture/backend_ledger_test.go
+            /evidence/windows-composed-overlay/relisten/fixture/composed_windows_test.go
+            /evidence/windows-composed-overlay/relisten/fixture/main_windows.go
+            /evidence/windows-composed-overlay/relisten/run-local.ps1
             /evidence/windows-composed-overlay/manifest.json
             /evidence/windows-composed-overlay/run.ps1
-      - name: Verify exact sources and official toolchain, then run actual adapter and composed synthetic delivery
+      - name: Verify exact sources and official toolchain, then run actual adapter, core composed delivery, and separate Relisten recovery
         shell: pwsh
         run: ./overlay/evidence/windows-composed-overlay/run.ps1

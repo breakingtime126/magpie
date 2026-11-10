@@ -148,6 +148,14 @@ func (e *Endpoint) Accept() (net.Conn, error) {
 	defer e.acceptors.Done()
 	raw, err := e.socket.Accept()
 	if err != nil {
+		e.mu.Lock()
+		stopping := e.stopping
+		e.mu.Unlock()
+		if stopping {
+			// stopAccept interrupts the pending call without releasing the bind.
+			// Its deadline error must not tell callers to retry revoked admission.
+			return nil, ErrState
+		}
 		return nil, err
 	}
 	e.mu.Lock()

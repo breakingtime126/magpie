@@ -1,6 +1,7 @@
 package nativeinitialize
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -180,6 +181,8 @@ type failureDiagnostic struct {
 
 var diagnosticStages = strings.Fields("helper_gate helper_policy raw_layout raw_signature_hash fixture native_policy native_inputs startup_command startup_exit_output startup_response initialize_command initialize_assertion initialize_exit_output cleanup report unknown")
 var diagnosticReasons = map[string]string{
+	"extra stdout whitespace only":                         "extra_whitespace",
+	"extra stdout single disabled remote status":           "extra_disabled_status",
 	"invalid JSON object":                                  "json_object",
 	"unexpected object shape":                              "object_shape",
 	"missing required field":                               "missing_field",
@@ -285,6 +288,151 @@ func TestFailureDiagnosticsSanitized(t *testing.T) {
 	} {
 		if _, ok := decodeFailure([]byte(b)); ok {
 			t.Fatal("invalid marker accepted")
+		}
+	}
+}
+
+// Classifies structure only, never exposes native values. Only the exact
+// disabled-status classification is eligible for the reviewed stream allowlist.
+func extraOutputFailure(data []byte) error {
+	_, tail, found := bytes.Cut(data, []byte("\n"))
+	if !found || len(tail) == 0 {
+		return errors.New("unexpected extra native stdout")
+	}
+	if len(bytes.TrimSpace(tail)) == 0 {
+		return errors.New("extra stdout whitespace only")
+	}
+	// Exactly one additional LF-terminated frame, no blank lines or suffix.
+	frame := bytes.TrimSuffix(tail, []byte("\n"))
+	if len(frame) == len(tail) || bytes.Contains(frame, []byte("\n")) {
+		return errors.New("unexpected extra native stdout")
+	}
+	m, e := object(frame, "method", "params")
+	if e != nil {
+		return errors.New("unexpected extra native stdout")
+	}
+	method, e := textField(m["method"])
+	if e != nil || method != "remoteControl/status/changed" {
+		return errors.New("unexpected extra native stdout")
+	}
+	params, e := object(m["params"], "status", "serverName", "installationId", "environmentId")
+	if e != nil {
+		return errors.New("unexpected extra native stdout")
+	}
+	status, e := textField(params["status"])
+	if e != nil || status != "disabled" || string(bytes.TrimSpace(params["environmentId"])) != "null" {
+		return errors.New("unexpected extra native stdout")
+	}
+	for _, key := range []string{"serverName", "installationId"} {
+		value, e := textField(params[key])
+		if e != nil || len(value) == 0 || len(value) > 2048 {
+			return errors.New("unexpected extra native stdout")
+		}
+		for _, r := range value {
+			if unicode.IsControl(r) {
+				return errors.New("unexpected extra native stdout")
+			}
+		}
+	}
+	return errors.New("extra stdout single disabled remote status")
+}
+
+func TestExtraOutputStructuralDiagnostics(t *testing.T) {
+	first := "{\"id\":1,\"result\":{}}\n"
+	status := `{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
+	for _, tc := range []struct{ tail, reason string }{
+		{"\n", "extra_whitespace"},
+		{" \r\n\t", "extra_whitespace"},
+		{status, "extra_disabled_status"},
+		{strings.ReplaceAll(status, "\n", "\r\n"), "extra_disabled_status"},
+		{status + status, "extra_stdout"},
+		{status + "\n", "extra_stdout"},
+		{strings.TrimSuffix(status, "\n"), "extra_stdout"},
+		{strings.Replace(status, "disabled", "connected", 1), "extra_stdout"},
+		{strings.Replace(status, "null", "\"private-environment\"", 1), "extra_stdout"},
+		{strings.Replace(status, "remoteControl/status/changed", "unknown/private-method", 1), "extra_stdout"},
+		{"private text\n", "extra_stdout"},
+		{"{}\n", "extra_stdout"},
+	} {
+		d := safeFailure("initialize_assertion", extraOutputFailure([]byte(first+tc.tail)))
+		if d.Reason != tc.reason {
+			t.Fatal("structural diagnostic mismatch")
+		}
+		b, _ := json.Marshal(d)
+		if bytes.Contains(b, []byte("synthetic-host")) || bytes.Contains(b, []byte("private")) {
+			t.Fatal("payload disclosed")
+		}
+	}
+	// ReadBytes returns owned storage. The current assembly does not duplicate
+	// the first frame or acquire an extra newline, with LF or CRLF transport.
+	for _, input := range []string{first, strings.ReplaceAll(first, "\n", "\r\n"), first + status} {
+		r := bufio.NewReader(strings.NewReader(input))
+		line, e := r.ReadBytes('\n')
+		if e != nil {
+			t.Fatal("authored frame read")
+		}
+		rest, e := io.ReadAll(r)
+		if e != nil || string(append(line, rest...)) != input {
+			t.Fatal("frame assembly altered bytes")
+		}
+	}
+}
+
+// The first response is validated independently before EOF is sent. Validate it
+// again here, permitting only one pinned-source disabled lifecycle notification.
+func assertInitializeStream(data []byte, version, home string) (int, error) {
+	first, tail, found := bytes.Cut(data, []byte("\n"))
+	if !found {
+		return 0, errors.New("unexpected extra native stdout")
+	}
+	if e := assertInitialize(first, version, home); e != nil {
+		return 0, e
+	}
+	if len(tail) == 0 {
+		return 0, nil
+	}
+	classification := extraOutputFailure(data)
+	if classification.Error() == "extra stdout single disabled remote status" {
+		return 1, nil
+	}
+	return 0, classification
+}
+
+func TestInitializeLifecycleEnvelope(t *testing.T) {
+	home := t.TempDir()
+	first, _ := json.Marshal(map[string]any{"id": 1, "result": map[string]string{
+		"userAgent": clientName + "/0.0.0 (Windows x; x64) terminal (" + clientName + "; 0.0.0)",
+		"codexHome": home, "platformFamily": "windows", "platformOs": "windows"}})
+	response := string(first) + "\n"
+	status := `{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"synthetic-host","installationId":"synthetic-installation","environmentId":null}}` + "\n"
+	for _, tc := range []struct {
+		data  string
+		count int
+	}{{response, 0}, {response + status, 1}, {strings.ReplaceAll(response+status, "\n", "\r\n"), 1}} {
+		n, e := assertInitializeStream([]byte(tc.data), "0.0.0", home)
+		if e != nil || n != tc.count {
+			t.Fatal("valid authored lifecycle rejected")
+		}
+	}
+	for _, bad := range []string{
+		response + status + status,
+		response + status + "\n",
+		response + "\n",
+		response + strings.Replace(status, "disabled", "connected", 1),
+		response + strings.Replace(status, "disabled", "connecting", 1),
+		response + strings.Replace(status, "null", `"synthetic-environment"`, 1),
+		response + strings.Replace(status, "remoteControl/status/changed", "unknown/method", 1),
+		response + strings.Replace(status, `"status":"disabled"`, `"status":"disabled","extra":true`, 1),
+		response + strings.Replace(status, `"status":"disabled"`, `"status":"disabled","status":"disabled"`, 1),
+		response + strings.Replace(status, `"synthetic-host"`, `7`, 1),
+		response + strings.Replace(status, `"synthetic-installation"`, `null`, 1),
+		response + strings.Replace(status, `"method":`, `"id":2,"method":`, 1),
+		response + strings.TrimSuffix(status, "\n"),
+		strings.Replace(response, `"id":1`, `"id":2`, 1) + status,
+		status + response,
+	} {
+		if _, e := assertInitializeStream([]byte(bad), "0.0.0", home); e == nil {
+			t.Fatal("invalid lifecycle accepted")
 		}
 	}
 }

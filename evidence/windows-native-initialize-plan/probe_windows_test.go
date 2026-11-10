@@ -141,7 +141,7 @@ type report struct {
 	ConfigSHA256, CatalogSHA256                                                              string
 	Version                                                                                  string
 	StartupExitZero, InitializeExitZero, PolicyAbsent                                        bool
-	InitializeRequests                                                                       int
+	InitializeRequests, InitializeNotifications                                              int
 	StartupStdout, StartupStderr, InitializeStdout, InitializeStderr                         int
 	StartupStdoutSHA256, StartupStderrSHA256, InitializeStdoutSHA256, InitializeStderrSHA256 string
 }
@@ -328,12 +328,9 @@ func runNative(exe, home, cwd string, initialize bool, version string, stage *st
 		}
 	}
 	if initialize {
-		// Exactly one response and terminal newline; no additional JSON/requests,
-		// notifications, diagnostics, or non-whitespace protocol output accepted.
 		*stage = "initialize_assertion"
-		line := bytes.TrimSuffix(so.data, []byte("\n"))
-		if bytes.Contains(line, []byte("\n")) || assertInitialize(line, version, home) != nil {
-			return nil, nil, errors.New("unexpected extra native stdout")
+		if _, e := assertInitializeStream(so.data, version, home); e != nil {
+			return nil, nil, e
 		}
 	}
 	return so.data, se.data, nil
@@ -445,6 +442,7 @@ func TestInitializeHelper(t *testing.T) {
 	}
 	result.InitializeExitZero = true
 	result.InitializeRequests = 1
+	result.InitializeNotifications = bytes.Count(out, []byte("\n")) - 1
 	result.InitializeStdout = len(out)
 	result.InitializeStderr = len(stderr)
 	result.InitializeStdoutSHA256 = digest(out)
@@ -576,7 +574,7 @@ func TestRawStrictStartupInitialize(t *testing.T) {
 	}
 	var r report
 	b, e := os.ReadFile(filepath.Join(dir, "result"))
-	if e != nil || json.Unmarshal(b, &r) != nil || !r.PolicyAbsent || !r.StartupExitZero || !r.InitializeExitZero || r.InitializeRequests != 1 {
+	if e != nil || json.Unmarshal(b, &r) != nil || !r.PolicyAbsent || !r.StartupExitZero || !r.InitializeExitZero || r.InitializeRequests != 1 || r.InitializeNotifications < 0 || r.InitializeNotifications > 1 {
 		t.Fatal("missing successful lifecycle report")
 	}
 	expectedConfig, configErr := authoredConfig(filepath.Join(dir, "codex-home"))
@@ -589,6 +587,7 @@ func TestRawStrictStartupInitialize(t *testing.T) {
 			t.Fatal("authored fixture bytes changed")
 		}
 	}
+	t.Logf("Accepted disabled remote-control lifecycle notification count=%d; opaque identifiers withheld", r.InitializeNotifications)
 	t.Logf("Authored fixture SHA256 config/catalog: %s %s", r.ConfigSHA256, r.CatalogSHA256)
 	t.Logf("Output SHA256 (startup stdout/stderr; initialize stdout/stderr): %s %s %s %s", r.StartupStdoutSHA256, r.StartupStderrSHA256, r.InitializeStdoutSHA256, r.InitializeStderrSHA256)
 	t.Logf("RAW STRICT INITIALIZE PASS ONLY: reported compile-time appServerVersion=%q; one initialize request; policy absent; successful EOF exit and owned Job drain; stdout sizes=%d/%d stderr sizes=%d/%d; no installed-runtime/model/chat claim", r.Version, r.StartupStdout, r.InitializeStdout, r.StartupStderr, r.InitializeStderr)

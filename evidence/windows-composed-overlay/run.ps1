@@ -23,7 +23,8 @@ foreach ($item in $manifest.overlay) {
 foreach ($item in $manifest.fixture) { Assert-Hash (Join-Path $overlay $item.path) $item.sha256 }
 Write-Host "Verified exact baseline $($manifest.baseline.Count) files and candidate overlay $($manifest.overlay.Count) files."
 $root = Join-Path $env:RUNNER_TEMP 'magpie-synthetic-composed'
-New-Item -ItemType Directory -Force $root | Out-Null
+if (Test-Path -LiteralPath $root) { throw 'Use a fresh synthetic runner root' }
+New-Item -ItemType Directory $root | Out-Null
 $filename = 'go1.26.8.windows-amd64.zip'
 $releases = Invoke-RestMethod 'https://go.dev/dl/?mode=json&include=all'
 $files = @($releases | Where-Object version -EQ 'go1.26.8' | ForEach-Object files | Where-Object { $_.filename -eq $filename -and $_.os -eq 'windows' -and $_.arch -eq 'amd64' -and $_.kind -eq 'archive' })
@@ -93,19 +94,57 @@ finally { $isolated.Remove('MAGPIE_BRIDGE_ADAPTER_TEST_EXE') }
 foreach ($test in @('TestBuiltAdapterAuthCompatPrewarmAndPrimaryRead','TestBuiltAdapterAuthStatusPrimaryOnlyAndSafeFailures','TestBuiltAdapterDesktopPluginOverride','TestBuiltAdapterExperimentalFeature167PagesAndSafeFailures','TestBuiltAdapterStdio','TestBuiltAdapterDesktopArguments','TestBuiltAdapterStartupProbe','TestBuiltAdapterConfigRequirements','TestProfileSnapshotRejectsMidReadChanges','TestProfileSnapshotStableIdentityAndByteLimit','TestProfileSnapshotRejectsDifferentFileWithSameMetadata')) {
  if (-not $passed.ContainsKey('github.com/yetone/magpie/cmd/magpie-codex-bridge/'+$test)) { throw "Required actual adapter test did not PASS: $test" }
 }
-# Launch the reviewed two-phase builder in a cleared environment. Only the
-# script's explicit switch runs the single genuine isolated gateway fixture.
+# Require the focused terminal-Accept regressions before either composed fixture.
+Run-Go @('test','-tags','nogui,nativecodex','-mod=readonly','-buildvcs=false','-count=1','-json','-timeout=60s','./internal/nativeendpoint')
+foreach($test in @('TestEndpointShutdownMakesBlockedAcceptTerminal','TestEndpointShutdownDoesNotLogHTTPAcceptRetry','TestEndpointAcceptPreservesErrorsBeforeShutdown')) {
+ if(-not $passed.ContainsKey('github.com/yetone/magpie/internal/nativeendpoint/'+$test)){throw "Required endpoint shutdown regression did not PASS: $test"}
+}
+# Run core composed delivery first. Each fixture gets a new builder home,
+# output/package, and cleared harness home; only the verified module cache is shared.
 $pwsh=(Get-Command pwsh -CommandType Application).Source
-$info=[Diagnostics.ProcessStartInfo]::new();$info.FileName=$pwsh;$info.WorkingDirectory=$baseline;$info.UseShellExecute=$false
-$info.Environment.Clear();foreach($entry in $isolated.GetEnumerator()){$info.Environment[$entry.Key]=$entry.Value}
-foreach($arg in @('-NoProfile','-File',(Join-Path $overlay 'run-local.ps1'),'-ModuleRoot',$baseline,'-SourceRevision',$env:GITHUB_SHA,'-OutputRoot',(Join-Path $root 'composed-output'),'-RunAfterAudit')){$info.ArgumentList.Add($arg)}
-$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
-$process=[Diagnostics.Process]::Start($info)
-$stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
-try {
- if(-not $process.WaitForExit(600000)){$process.Kill($true);if(-not $process.WaitForExit(10000)){throw 'Composed process exit unconfirmed after kill'};throw 'Composed build/test exceeded deadline'}
- if(-not $stdout.Wait(10000) -or -not $stderr.Wait(10000)){throw 'Composed output drain exceeded deadline'}
- Write-Host $stdout.GetAwaiter().GetResult();Write-Host $stderr.GetAwaiter().GetResult()
- if($process.ExitCode -ne 0){throw 'Actual adapter composed fixture failed'}
- Get-Content -LiteralPath (Join-Path $root 'composed-output/result.json') -Raw | Write-Host
-} finally {$process.Dispose()}
+$fixtureRuns=@(
+ @{Name='Composed';Script='run-local.ps1';Output='composed-output';Test='TestComposedHTTPDeliveryAndLeaseDrain'},
+ @{Name='Relisten';Script='relisten/run-local.ps1';Output='relisten-output';Test='TestComposedRelistenTakeoverAndRecovery'}
+)
+foreach($fixtureRun in $fixtureRuns) {
+ $fixtureOutput=Join-Path $root $fixtureRun.Output
+ $builderHome=Join-Path $root ($fixtureRun.Name.ToLowerInvariant()+'-builder-home')
+ if(Test-Path -LiteralPath $builderHome){throw 'Fixture builder home must be fresh'}
+ [void](New-Item -ItemType Directory -Path $builderHome)
+ $info=[Diagnostics.ProcessStartInfo]::new();$info.FileName=$pwsh;$info.WorkingDirectory=$baseline;$info.UseShellExecute=$false
+ $info.Environment.Clear();foreach($entry in $isolated.GetEnumerator()){$info.Environment[$entry.Key]=$entry.Value}
+ foreach($key in @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','CODEX_HOME','XDG_CONFIG_HOME','XDG_CONFIG_DIRS','XDG_DATA_HOME','XDG_CACHE_HOME','XDG_STATE_HOME','XDG_RUNTIME_DIR','TMP','TEMP')) {
+  $directory=Join-Path $builderHome $key.ToLowerInvariant()
+  [void](New-Item -ItemType Directory -Path $directory)
+  $info.Environment[$key]=$directory
+ }
+ foreach($arg in @('-NoProfile','-NonInteractive','-File',(Join-Path $overlay $fixtureRun.Script),'-ModuleRoot',$baseline,'-SourceRevision',$env:GITHUB_SHA,'-OutputRoot',$fixtureOutput,'-RunAfterAudit')){$info.ArgumentList.Add($arg)}
+ $info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+ $process=[Diagnostics.Process]::Start($info)
+ $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
+ try {
+  if(-not $process.WaitForExit(600000)){$process.Kill($true);if(-not $process.WaitForExit(10000)){throw "$($fixtureRun.Name) process exit unconfirmed after kill"};throw "$($fixtureRun.Name) build/test exceeded deadline"}
+  if(-not $stdout.Wait(10000) -or -not $stderr.Wait(10000)){throw "$($fixtureRun.Name) output drain exceeded deadline"}
+  $fixtureText=$stdout.GetAwaiter().GetResult()+"`n"+$stderr.GetAwaiter().GetResult()
+  Write-Host $fixtureText
+  if($process.ExitCode -ne 0){
+   if($fixtureRun.Name -eq 'Relisten') {
+    # Exact isolated authored actor logs only; no recursive file or environment dump.
+    foreach($name in @('host.log','bridge-first.log','bridge-stale.log','bridge-second.log','stale-backend-control.log','takeover.log')) {
+     $diagnostic=Join-Path (Join-Path $fixtureOutput 'actor-evidence') $name
+     if(Test-Path -LiteralPath $diagnostic){
+      if((Get-Item -LiteralPath $diagnostic).Length -gt 16384){throw 'Authored actor diagnostic exceeds bound'}
+      Write-Host ('Authored actor diagnostic: '+$name)
+      Get-Content -LiteralPath $diagnostic -Raw | Write-Host
+     }
+    }
+   }
+   throw "Actual adapter $($fixtureRun.Name) fixture failed"
+  }
+  $passPattern='(?m)^--- PASS: '+[Regex]::Escape($fixtureRun.Test)+' \('
+  if($fixtureText -notmatch $passPattern){throw "Required named fixture did not PASS: $($fixtureRun.Test)"}
+  $resultPath=Join-Path $fixtureOutput 'result.json'
+  if(-not (Test-Path -LiteralPath $resultPath)){throw "$($fixtureRun.Name) report missing; a skip is not acceptance"}
+  Get-Content -LiteralPath $resultPath -Raw | Write-Host
+ } finally {$process.Dispose()}
+}

@@ -175,9 +175,9 @@ jobs:
             $isolated['MAGPIE_NATIVE_INITIALIZE_EXE']=$exe
             $isolated['MAGPIE_NATIVE_INITIALIZE_EXECUTE']='strict-initialize-only-v1'
             $result = Join-Path $root 'go-test.jsonl'
-            Run-Go @('test','-buildvcs=false','-mod=readonly','-count=1','-json','-timeout=90s','-run','^(TestRawStrictStartupInitialize|TestStrictStartupResponse|TestStrictInitializeResponse|TestAmbientAdmissionRejectsApplicationSettings|TestReviewedRunnerDirectoriesPreserved|TestNormalPolicyLocationIdentity|TestFailureDiagnosticsSanitized)$','.') $isolated $result
+            Run-Go @('test','-buildvcs=false','-mod=readonly','-count=1','-json','-timeout=90s','-run','^(TestRawStrictStartupInitialize|TestStrictStartupResponse|TestStrictInitializeResponse|TestAmbientAdmissionRejectsApplicationSettings|TestReviewedRunnerDirectoriesPreserved|TestNormalPolicyLocationIdentity|TestFailureDiagnosticsSanitized|TestExtraOutputStructuralDiagnostics|TestInitializeLifecycleEnvelope)$','.') $isolated $result
             $events = @(Get-Content -LiteralPath $result | ForEach-Object { $_ | ConvertFrom-Json })
-            foreach ($testName in @('TestRawStrictStartupInitialize','TestStrictStartupResponse','TestStrictInitializeResponse','TestAmbientAdmissionRejectsApplicationSettings','TestReviewedRunnerDirectoriesPreserved','TestNormalPolicyLocationIdentity','TestFailureDiagnosticsSanitized')) {
+            foreach ($testName in @('TestRawStrictStartupInitialize','TestStrictStartupResponse','TestStrictInitializeResponse','TestAmbientAdmissionRejectsApplicationSettings','TestReviewedRunnerDirectoriesPreserved','TestNormalPolicyLocationIdentity','TestFailureDiagnosticsSanitized','TestExtraOutputStructuralDiagnostics','TestInitializeLifecycleEnvelope')) {
               $passes = @($events | Where-Object { $_.Action -eq 'pass' -and $_.PSObject.Properties['Test'] -and $_.Test -ceq $testName })
               if ($passes.Count -ne 1) { throw "Actual named PASS missing: $testName (skip/compile does not qualify)" }
             }

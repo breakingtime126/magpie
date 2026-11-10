@@ -5177,7 +5177,11 @@
     },
     {
       "path": "internal/nativeendpoint/endpoint.go",
-      "sha256": "66cc8a8dc961d86b5643f05d77f73ccb94f84de29b81fa6b3f221cb3d726e9ab"
+      "sha256": "7f20f1e5dca0a228492e15ca69aaa450032c25a20c976a7348c27a383e994418"
+    },
+    {
+      "path": "internal/nativeendpoint/endpoint_accept_shutdown_test.go",
+      "sha256": "3599f828c34c4ce0dba04a100481c174661ed68e5dda8cd52e35c07ff5a5125a"
     },
     {
       "path": "internal/nativeendpoint/listen_windows.go",
@@ -5248,7 +5252,7 @@
       "sha256": "e41d0f4cc5e02a0b0ccb5dd93e47021fb41181a8f78a65e854023bbf201b37e8"
     }
   ],
-  "scope": "Frozen validated host CI plus actual adapter, staged nativelaunch and authored composed fixture; excludes supplier changes.",
+  "scope": "Frozen composed source snapshot plus reviewed Relisten fixture; no supplier, startup or production Prepare integration changes. Includes only the frozen endpoint shutdown Accept-error normalization and its regression tests.",
   "fixture": [
     {
       "path": "fixture/main_windows.go",
@@ -5261,6 +5265,26 @@
     {
       "path": "run-local.ps1",
       "sha256": "d13b5883bac5385e043c2abc60c406a70ad227de9e9ccbc429a04acb04a9b3ed"
+    },
+    {
+      "path": "relisten/fixture/backend_ledger.go",
+      "sha256": "23ff307c06d1a642b7ced9b3f7c1505a3ffea951170db3735e19d2ec44e2ac36"
+    },
+    {
+      "path": "relisten/fixture/backend_ledger_test.go",
+      "sha256": "5b9b45f7fa640067f9be365894bcf4b268900cda6445137052a15d91c1440a58"
+    },
+    {
+      "path": "relisten/fixture/composed_windows_test.go",
+      "sha256": "52277c7a50fb56f3507427fbbfcac7da0f2a801fd737082b55c19828f6ebe6ea"
+    },
+    {
+      "path": "relisten/fixture/main_windows.go",
+      "sha256": "0a58d188364e9cc2f3973814a801099c5e227d2e123001f9ba1f777a3b8e226f"
+    },
+    {
+      "path": "relisten/run-local.ps1",
+      "sha256": "93effe360f489d04026f27667adcef2dd96cba2f3954304ea66039a36c688029"
     }
   ]
 }
