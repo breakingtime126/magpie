@@ -1,0 +1,47 @@
+# LOCAL PROPOSAL ONLY. External writes held pending parent reconciliation.
+# Required head commit marker: [app-server-4239-v1]
+# This existing marker skips BOTH broad bridge jobs; it does not enable native
+# execution because no native workflow path filters match these four files.
+# Proposed remote path: .github/workflows/synthetic-socket-retention.yml
+# Proposed probe path: evidence/windows-socket-acceptance/{go.mod,go.sum,probe_windows_test.go}
+# Push trigger allows a temporary branch run without changing the default branch.
+# Before pushing, inspect all existing workflows for other push-triggered effects.
+name: Synthetic Windows socket retention
+on:
+  push:
+    branches: ['experiment/app-server-bridge-v0.1.3035']
+    paths:
+      - '.github/workflows/synthetic-socket-retention.yml'
+      - 'evidence/windows-socket-acceptance/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  socket-retention:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: evidence/windows-socket-acceptance
+    env:
+      GOTOOLCHAIN: local
+      CGO_ENABLED: '0'
+      GOTELEMETRY: 'off'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # verified v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: evidence/windows-socket-acceptance
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # verified v5
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Record runtime and execute only synthetic tests
+        run: |
+          go version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          [System.Environment]::OSVersion.VersionString
+          go test -mod=readonly -count=1 -json -timeout=45s -run '^(TestInheritanceTransaction|TestSyntheticOriginalSocketRetention)$' .
+          exit $LASTEXITCODE
