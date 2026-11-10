@@ -1,0 +1,107 @@
+# Required publication commit marker: [app-server-4239-v1]
+# This marker skips the existing broad experimental bridge jobs.
+# Source packages on this branch remain unchanged; exact candidate evidence is
+# copied only into an isolated checkout of the fixed baseline for synthetic tests.
+name: Synthetic Windows endpoint components
+on:
+  push:
+    branches: ['experiment/app-server-bridge-v0.1.3035']
+    paths:
+      - '.github/workflows/synthetic-nativeendpoint.yml'
+      - 'evidence/windows-component-overlay/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  components:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: '973e17ad9522977cb5bd4a4c0c2445ef444dfd76'
+          path: baseline
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /go.mod
+            /go.sum
+            /internal/agentenv/agentenv.go
+            /internal/appdir/appdir.go
+            /internal/appdir/blocked_windows.go
+            /internal/appdir/claude.go
+            /internal/appdir/codex.go
+            /internal/appdir/env.go
+            /internal/appdir/follow.go
+            /internal/appdir/follow_windows.go
+            /internal/appdir/hermes.go
+            /internal/appdir/join.go
+            /internal/appdir/userdirs.go
+            /internal/appdir/userdirs_windows.go
+            /internal/appdir/zcode.go
+            /internal/proc/appmain.go
+            /internal/proc/batch_windows.go
+            /internal/proc/browser.go
+            /internal/proc/disclaim.go
+            /internal/proc/disclaim_other.go
+            /internal/proc/env.go
+            /internal/proc/env_other.go
+            /internal/proc/family.go
+            /internal/proc/find.go
+            /internal/proc/guiexe.go
+            /internal/proc/killtree_windows.go
+            /internal/proc/list.go
+            /internal/proc/list_windows.go
+            /internal/proc/listener.go
+            /internal/proc/listener_windows.go
+            /internal/proc/listing.go
+            /internal/proc/look.go
+            /internal/proc/nodever.go
+            /internal/proc/output.go
+            /internal/proc/path_windows.go
+            /internal/proc/peak_other.go
+            /internal/proc/probe.go
+            /internal/proc/probe_windows.go
+            /internal/proc/proc.go
+            /internal/proc/proc_windows.go
+            /internal/proc/realpath_windows.go
+            /internal/proc/rss.go
+            /internal/proc/rss_windows.go
+            /internal/proc/started.go
+            /internal/proc/started_windows.go
+            /internal/proc/tree.go
+            /internal/proc/tree_strict_windows.go
+            /internal/proc/tree_strict_windows_test.go
+            /internal/proc/tree_windows.go
+            /internal/proc/version.go
+            /internal/proc/wrapper.go
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: overlay
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /evidence/windows-component-overlay/internal/nativeendpoint/endpoint.go
+            /evidence/windows-component-overlay/internal/nativeendpoint/endpoint_test.go
+            /evidence/windows-component-overlay/internal/nativeendpoint/lifecycle_windows_test.go
+            /evidence/windows-component-overlay/internal/nativeendpoint/listen_other.go
+            /evidence/windows-component-overlay/internal/nativeendpoint/listen_other_test.go
+            /evidence/windows-component-overlay/internal/nativeendpoint/listen_windows.go
+            /evidence/windows-component-overlay/internal/nativeendpoint/listen_windows_test.go
+            /evidence/windows-component-overlay/internal/proc/tree_drained.go
+            /evidence/windows-component-overlay/internal/proc/tree_drained_other.go
+            /evidence/windows-component-overlay/internal/proc/tree_drained_test.go
+            /evidence/windows-component-overlay/internal/proc/tree_drained_windows.go
+            /evidence/windows-component-overlay/internal/proc/tree_strict_windows.go
+            /evidence/windows-component-overlay/manifest.json
+            /evidence/windows-component-overlay/run.ps1
+      - name: Verify exact sources and official toolchain, then run synthetic components
+        shell: pwsh
+        run: ./overlay/evidence/windows-component-overlay/run.ps1

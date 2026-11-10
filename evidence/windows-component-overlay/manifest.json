@@ -1,0 +1,310 @@
+{
+  "baseline_commit": "973e17ad9522977cb5bd4a4c0c2445ef444dfd76",
+  "baseline": [
+    {
+      "path": "go.mod",
+      "git_blob_sha1": "11642a8517086c7a452c94d5fa352b208a74c355",
+      "sha256": "ceee19c55b785efed15d4e68ad3fae4159d42defc28779a3193f8146f79fba57"
+    },
+    {
+      "path": "go.sum",
+      "git_blob_sha1": "0ddd5be8f538fa2ed89c3496491b539d16c0bd1e",
+      "sha256": "e756a619852f2d5dff86fd0bf2454d1328987efc03fe573761bb68deac645447"
+    },
+    {
+      "path": "internal/agentenv/agentenv.go",
+      "git_blob_sha1": "9f17b7309dff086252a95478bddc28d4b74ac99a",
+      "sha256": "619a5b14e634b7af6576ed89b60859dd0cb0976dd99b6f706f1382c069f1b000"
+    },
+    {
+      "path": "internal/appdir/appdir.go",
+      "git_blob_sha1": "0dc358ea0025572bc986646219fc513516ee28dd",
+      "sha256": "9858bbef34f5e805a854820591f4c07e8f2fbffa1cfa8f78802573d4ceab4c0d"
+    },
+    {
+      "path": "internal/appdir/blocked_windows.go",
+      "git_blob_sha1": "65da4901a55ecc2e9c73be168879d07811596eb6",
+      "sha256": "5de80eee256f3cd5d48742d6e21c0920caea484f0015e66f5ed3c1a639cad486"
+    },
+    {
+      "path": "internal/appdir/claude.go",
+      "git_blob_sha1": "68bfb6ebd5aa91a30e62b343f5a3b61b5a5b5ef7",
+      "sha256": "fe3028444ae5cd64dd08e5a4b01294ec527a5067c9caa65d6f125513f60b2d44"
+    },
+    {
+      "path": "internal/appdir/codex.go",
+      "git_blob_sha1": "cfb9b1ecbc6194dae352d977ae4ae58aeb61200e",
+      "sha256": "a7c810db436897da563915898472a29ba74be004cf08c24fdcd4c87df332d403"
+    },
+    {
+      "path": "internal/appdir/env.go",
+      "git_blob_sha1": "af32731b55a00e4e243d2ffc22b8261cbca137a9",
+      "sha256": "6674fafe740fff4f2d763302ad33b2ace0e7f3f4e9aa24992cb1115b6164a6cf"
+    },
+    {
+      "path": "internal/appdir/follow.go",
+      "git_blob_sha1": "bd0079f43739ea8b70c8993e1639e8e5608a66d2",
+      "sha256": "08b5fc348b121f5522413d8665a056e13b3c03891070723397837e60040dc295"
+    },
+    {
+      "path": "internal/appdir/follow_windows.go",
+      "git_blob_sha1": "562610648b7ad537818f467e93b7ef5c03dae78b",
+      "sha256": "306ae6861f8c677ddb6fb1e880516aaa2ce775895d3aa9f381b9ed15e850fae7"
+    },
+    {
+      "path": "internal/appdir/hermes.go",
+      "git_blob_sha1": "d3dff2054a6f73ea62aec06048eedddfc032fd68",
+      "sha256": "dd476a6ec8b65088f08f28ad3633cab924c9f2533e0b84bd14d3a820c2b54456"
+    },
+    {
+      "path": "internal/appdir/join.go",
+      "git_blob_sha1": "e92117f67a447f9313e8a1180acec1d62c604da0",
+      "sha256": "43ba0a56750ee80b65114cb8253ed6d8d158c95f33524a07ce3e50404e86330a"
+    },
+    {
+      "path": "internal/appdir/userdirs.go",
+      "git_blob_sha1": "b5cdf30e3040d61aaea1e450e0af6ea36e496b40",
+      "sha256": "fe16e69f9c34e322f24536788ad1b2e388918ba15a42a435f81499a14745b7b8"
+    },
+    {
+      "path": "internal/appdir/userdirs_windows.go",
+      "git_blob_sha1": "f7654bdb5d30b5c22b3f3077ac6a8989d0a31491",
+      "sha256": "32b1a9ae6a8fe14e8149a8f4c0b3a9d6132149f8e99deb7277648e9d90ec344a"
+    },
+    {
+      "path": "internal/appdir/zcode.go",
+      "git_blob_sha1": "df41d7b127422b0e29274c9ef980697a9aa80d91",
+      "sha256": "564be2629270f1d36b66183b3d952065c821b235325487d6ee7bf7d1e92d57b4"
+    },
+    {
+      "path": "internal/proc/appmain.go",
+      "git_blob_sha1": "27697b3c3c9069fa7f1ff85c9844f461a72acce1",
+      "sha256": "c08e049fbf155373c26f43b6e308106bfeafbf477b3cb6d7c831b2c8cac85491"
+    },
+    {
+      "path": "internal/proc/batch_windows.go",
+      "git_blob_sha1": "9f0f347e3dcb46c6be9034ea42c9e710c1b37ecf",
+      "sha256": "487c97a4d84315e65b21749cd3af19cfd18438f9f9c2c40790e5b6ae49c7e7a5"
+    },
+    {
+      "path": "internal/proc/browser.go",
+      "git_blob_sha1": "10403a2927145b38b1d0753ff45e5c6bf3c55fbc",
+      "sha256": "c44be3481aeab720055f390b6a8777fe549b866bdeed40c7c116f3d4830b33b4"
+    },
+    {
+      "path": "internal/proc/disclaim.go",
+      "git_blob_sha1": "b88346f29a36772c6a976d940fd9f064cb72a23a",
+      "sha256": "090121b8deb1f6509eb384aff2a73490748ea3d741b7c430ddfda91ec2a4a14d"
+    },
+    {
+      "path": "internal/proc/disclaim_other.go",
+      "git_blob_sha1": "c821b1b0118373a3697a043315bf4214533126b3",
+      "sha256": "a70f7ddef3decbfa1f5353759d6e60224b05ad5999830e2ca4fea28b1cf12489"
+    },
+    {
+      "path": "internal/proc/env.go",
+      "git_blob_sha1": "367916c0bda4f8d33a6002e1f390e688ad21a956",
+      "sha256": "d1f99be5f17b3d2e2f7c3c77f6377493a929916c2d886830c7febd5824efb6cc"
+    },
+    {
+      "path": "internal/proc/env_other.go",
+      "git_blob_sha1": "59daee7e27a7954500bab56c939b088a8407b119",
+      "sha256": "c3099db80f1ca0939b98adcb1c043fbf94486b7cf0e5612dd47abebdc74dd622"
+    },
+    {
+      "path": "internal/proc/family.go",
+      "git_blob_sha1": "0b7e1001ef9f91f611cc12145a1617e8474a0a44",
+      "sha256": "92ec3308f629b8b95befaf1ef9e18dd5eb6064c2e42999d67a6cdae159c4a6f0"
+    },
+    {
+      "path": "internal/proc/find.go",
+      "git_blob_sha1": "8a8b20d33a907bc3f148a2dfb163fe4de441a5b6",
+      "sha256": "b807fd9495d5e9f0b6a88e31b9c64001ed49d4922ee1fc31011b818444779bcf"
+    },
+    {
+      "path": "internal/proc/guiexe.go",
+      "git_blob_sha1": "6be3e260b6c2107014df2bdc64928255f42f6924",
+      "sha256": "1a85bd8ca89a6de2f4a32f11e925d122aa9b53fa0322c5f7aaecb6fe6505daa5"
+    },
+    {
+      "path": "internal/proc/killtree_windows.go",
+      "git_blob_sha1": "4b1eed483eb97b6c5f8899f9923e94cd0447eacd",
+      "sha256": "389091cf00a1b421ec089586c0460d2c01bf197ab332e4ab6d10e566749f3211"
+    },
+    {
+      "path": "internal/proc/list.go",
+      "git_blob_sha1": "1a0dba98079d2787572a3daa089bad164b64360a",
+      "sha256": "6019565d069f9bf86708834f579a11ff1fc1e11ee685a2a506df37ba3e75d7ca"
+    },
+    {
+      "path": "internal/proc/list_windows.go",
+      "git_blob_sha1": "8bd9f1ac7d80a8f47336374f85f229673ae76959",
+      "sha256": "59d1e8c127d2358385c0637a67d05e770d5cb75fe8817224c5efd8088fe55422"
+    },
+    {
+      "path": "internal/proc/listener.go",
+      "git_blob_sha1": "c9310f67bda7f10db427f2884c68110e79b3145a",
+      "sha256": "0a9b40078238a1dc38adb9f300722212800212160ebf57e97a80763a87f63769"
+    },
+    {
+      "path": "internal/proc/listener_windows.go",
+      "git_blob_sha1": "64e4232666fb55662203366dee14724c23361baa",
+      "sha256": "01da0ebdf1d364d195a265bb74ce93cd95859f0a628fedba475c217f282cd749"
+    },
+    {
+      "path": "internal/proc/listing.go",
+      "git_blob_sha1": "224f19c917d47acf1b42167982a332f1d736380a",
+      "sha256": "b3cb008a12583f5af3873d532b8d0dfac16c2200bb8a72cd92ed41dd540ceba6"
+    },
+    {
+      "path": "internal/proc/look.go",
+      "git_blob_sha1": "bebc59a9dfaa4c300d0bdf1872102c6bd3764aa3",
+      "sha256": "9e8e14d2631591c0b39070b8ba0396fb5a9d09c138171d30e114dab379977eff"
+    },
+    {
+      "path": "internal/proc/nodever.go",
+      "git_blob_sha1": "da2b1356e20cbcfc254f392ac26cc4581d8e23e1",
+      "sha256": "59c8e400f4c31aa61959db0cb6f8ff3233ed5fa00fa122c883506fa94e29f97f"
+    },
+    {
+      "path": "internal/proc/output.go",
+      "git_blob_sha1": "ce8e366fd81b11f9a3e068149409a53a5a368186",
+      "sha256": "a60259a990f32b3e4d9b02f80ab28061fec6bbc202dd4907e43cac3e988da93b"
+    },
+    {
+      "path": "internal/proc/path_windows.go",
+      "git_blob_sha1": "3aa9516764e2dbc09c768262105fc27ea329058c",
+      "sha256": "59f4c832582ef7de78abf62aa53e3de1aa104ba1d885ef8d5a23bd9cf0f6a620"
+    },
+    {
+      "path": "internal/proc/peak_other.go",
+      "git_blob_sha1": "13aeedebca34be776ce0bb34a334e022314fcc7c",
+      "sha256": "8b6aa88d22e83beddd76c1b592baee8f7b20ee954924289f75072933175f3fe1"
+    },
+    {
+      "path": "internal/proc/probe.go",
+      "git_blob_sha1": "33255f80efea15824125a4ab4f6f8a9e5893b6f8",
+      "sha256": "89cb4b6ac97128b1757c554f566db4fc1442ec3b9ac517195eadb1c2a5e890be"
+    },
+    {
+      "path": "internal/proc/probe_windows.go",
+      "git_blob_sha1": "51a5dd45b2d1b1f83889b50ad789195ed83c4d9a",
+      "sha256": "1592a10bfe10bc23744d419a73aeb646cfa8d750f98340c7b88d8f007948e8c5"
+    },
+    {
+      "path": "internal/proc/proc.go",
+      "git_blob_sha1": "fa5273f80016c1e4f87813877bca5c2de56caf81",
+      "sha256": "adb6749b9b6678aef0c3fac0f9fcc7891b6ea491ff71df84358abf1f0e84e58c"
+    },
+    {
+      "path": "internal/proc/proc_windows.go",
+      "git_blob_sha1": "39638d7cbf72325a89f0bd86d58b042dd921b26f",
+      "sha256": "e6da04318fa54c5eaa098d6661441e32a02f553656a0c35e0e9cb0510acdcce8"
+    },
+    {
+      "path": "internal/proc/realpath_windows.go",
+      "git_blob_sha1": "287a93d373618ae17c71090b3ceff187512d9cd6",
+      "sha256": "5b1d12a31e6851d72a65d4c1eb406a7117b3e63ac9810be194919442e747ab61"
+    },
+    {
+      "path": "internal/proc/rss.go",
+      "git_blob_sha1": "287002469fee3a8cb99cdf98dd33682f958bd9f8",
+      "sha256": "7da84d5c9341e98a7ca8123981a293047d6ab7c7b5f0553059dd940bc4543605"
+    },
+    {
+      "path": "internal/proc/rss_windows.go",
+      "git_blob_sha1": "6647f62c0bb181b24aeade351a77eb58201c8ad8",
+      "sha256": "636b849b00a45e24992913d5bd50329dbce661512306049d94e5a0c34db6dfa4"
+    },
+    {
+      "path": "internal/proc/started.go",
+      "git_blob_sha1": "36667a66c9c51081d2049a54867e51211326b016",
+      "sha256": "566a0970aaa18bad4490f342848655f8e5cce335aced885b7f6b6df8dac56501"
+    },
+    {
+      "path": "internal/proc/started_windows.go",
+      "git_blob_sha1": "b54bcda0fa6a050e9b855f183dc14b864322fda0",
+      "sha256": "5a23453d8265c811f55fb4e8dfe9b1be2480aaa14100a974e5122c2ba0f5b571"
+    },
+    {
+      "path": "internal/proc/tree.go",
+      "git_blob_sha1": "a8b0ec556d6526f9fa93d0412330f8243000e9b4",
+      "sha256": "17ec3ec008aaeb3dc184b1216c5dddaa68dfbf2cb364436279dfd0925b429adb"
+    },
+    {
+      "path": "internal/proc/tree_strict_windows.go",
+      "git_blob_sha1": "4b16ab55045ac09e2b445afebf8379f529d2cb28",
+      "sha256": "a48f8dc4acdb323bea6799017dab08d45d686a674657ef5c1e8480d26b04b730"
+    },
+    {
+      "path": "internal/proc/tree_strict_windows_test.go",
+      "git_blob_sha1": "74ef1bc24354c922ab31d97a922324ea2f34a12b",
+      "sha256": "cc3a12f439de03718141576231fc37bf6b51ccc228ac354d2530ac29a91a48df"
+    },
+    {
+      "path": "internal/proc/tree_windows.go",
+      "git_blob_sha1": "35f6042d6f2f464c69684ee23ebb5ca61993bdc1",
+      "sha256": "a1a0e86259dbeacf08e9e0cf4490d24d6dad18018f442f627846bbd4ff164c9d"
+    },
+    {
+      "path": "internal/proc/version.go",
+      "git_blob_sha1": "00fc095365c4566331497fb9752d7f07d0ccbd6d",
+      "sha256": "ac0f58e8adc68d417b135409863b3ffd09633b7222120e47bc8e1b5734024766"
+    },
+    {
+      "path": "internal/proc/wrapper.go",
+      "git_blob_sha1": "e58d2daf35617283a85594afe438c3161450e3aa",
+      "sha256": "a11da8b611a4af7d6bf62e768eb789e0c2d1f91d6ee16235e65785597693e450"
+    }
+  ],
+  "overlay": [
+    {
+      "path": "internal/nativeendpoint/endpoint.go",
+      "sha256": "66cc8a8dc961d86b5643f05d77f73ccb94f84de29b81fa6b3f221cb3d726e9ab"
+    },
+    {
+      "path": "internal/nativeendpoint/endpoint_test.go",
+      "sha256": "459b3ef5e7089d24ef3ea542b7526fbfefe8d96eca6e937f4a3e703e5ee5695e"
+    },
+    {
+      "path": "internal/nativeendpoint/lifecycle_windows_test.go",
+      "sha256": "26671a6417f2ede795d1f798e066dac68b67a200d0381e3cfebf03c10ef05748"
+    },
+    {
+      "path": "internal/nativeendpoint/listen_other.go",
+      "sha256": "c3ae35652c0148a0cc458d48b325c4d83906422518446ed784e99e4c17347857"
+    },
+    {
+      "path": "internal/nativeendpoint/listen_other_test.go",
+      "sha256": "e21314ae53051bcaca558c40b81ef1abce7c21beb9b2b009c1ad06818c1435f9"
+    },
+    {
+      "path": "internal/nativeendpoint/listen_windows.go",
+      "sha256": "4f355de101d96a7736aa229a0573dbaaca35b9239aaaec64b2032b7c9c617665"
+    },
+    {
+      "path": "internal/nativeendpoint/listen_windows_test.go",
+      "sha256": "c3fe51a926fcdc96d36b67f2632bad908765d84210dab2e84ce3e5514ab98bc7"
+    },
+    {
+      "path": "internal/proc/tree_drained.go",
+      "sha256": "a5de81e4d7c8719aedcae2c8db4c276da23ad6999de68e22454f82cdaf30f64c"
+    },
+    {
+      "path": "internal/proc/tree_drained_other.go",
+      "sha256": "5ab736dfa15c2c0016634cf704cd4b254ac6af0e0e9b32a1c5be3a6f93e6ef9d"
+    },
+    {
+      "path": "internal/proc/tree_drained_test.go",
+      "sha256": "e7241740daba710792276f51c882ae87c1e55ac71ba9bd9ecb960696512444c5"
+    },
+    {
+      "path": "internal/proc/tree_drained_windows.go",
+      "sha256": "ac357e394d622af9797cef09cf206fb5a76036ef0d98a511283444006e1df2e2"
+    },
+    {
+      "path": "internal/proc/tree_strict_windows.go",
+      "sha256": "e41d0f4cc5e02a0b0ccb5dd93e47021fb41181a8f78a65e854023bbf201b37e8"
+    }
+  ]
+}
