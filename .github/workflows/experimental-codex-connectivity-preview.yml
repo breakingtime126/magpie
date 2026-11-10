@@ -24,6 +24,7 @@ on:
       - internal/provider/**
       - internal/gateway/**
       - build/package-native-magpie-windows.ps1
+      - build/mutate-bridge-shutdown-order.py
       - build/test-native-preview-official.ps1
       - .github/workflows/experimental-codex-connectivity-preview.yml
       - docs/subsystems/original-gui-native-codex.md
