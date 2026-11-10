@@ -150,7 +150,7 @@ jobs:
           go test -race -v -count=20 -timeout=5m -tags nogui -run '^TestCombinedOutputOwn' ./internal/proc
           go build -race -tags nogui -o "$MAGPIE_BRIDGE_ADAPTER_TEST_EXE" ./cmd/magpie-codex-bridge
           go test -race -v -count=20 -timeout=5m -tags nogui -run '^TestThreadRevert' ./internal/appserverbridge
-          go test -race -v -count=1 -timeout=15m -tags nogui ./internal/appserverbridge ./internal/proc ./cmd/magpie-codex-bridge
+          go test -race -v -count=1 -timeout=15m -tags nogui ./internal/appserverbridge ./internal/proc ./internal/buildvariant ./cmd/magpie-codex-bridge
           go test -race -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^Test(DesktopPluginNativeChildrenReceiveExactOverride|BuiltAdapterDesktopPluginOverride)$'
           test -z "$(git status --porcelain)"
 

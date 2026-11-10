@@ -59,6 +59,7 @@ type Plan struct {
 type Prepare func(context.Context) (Plan, error)
 
 type Status struct {
+	JournalPresent           bool `json:"journalPresent"`
 	SelectionConfigured      bool `json:"selectionConfigured"`
 	BackendHandshakeVerified bool `json:"backendHandshakeVerified"`
 	ChatVerified             bool `json:"chatVerified"`
@@ -100,19 +101,8 @@ func (c *Controller) lock() (func(), error) {
 	if c.store == nil || !filepath.IsAbs(c.root) {
 		return nil, ErrUnavailable
 	}
-	// Reject existing linked path components rather than following them into
-	// another application's state. This is not a hostile same-user boundary.
-	for p := filepath.Clean(c.root); ; p = filepath.Dir(p) {
-		info, err := os.Lstat(p)
-		if err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
-			return nil, ErrUnavailable
-		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, ErrUnavailable
-		}
-		if filepath.Dir(p) == p {
-			break
-		}
+	if err := c.validateRoot(); err != nil {
+		return nil, err
 	}
 	unlock, held := filelock.Lock(filepath.Join(c.root, "selection.lock"), 0)
 	if !held {
@@ -158,7 +148,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	}
 	defer unlock()
 	if _, err := os.Lstat(filepath.Join(c.root, "selection.json")); !errors.Is(err, os.ErrNotExist) {
-		return Status{RecoveryRequired: true}, ErrConflict
+		return Status{JournalPresent: err == nil, RecoveryRequired: true}, ErrConflict
 	}
 	before, err := c.store.Read()
 	if err != nil || !validSelection(before) {
@@ -182,13 +172,13 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	// The journal file is flushed before the first external mutation. Do not roll back
 	// automatically after an uncertain result, and never retry a launch.
 	if ctx.Err() != nil || c.store.Replace(before, installed) != nil {
-		return Status{RecoveryRequired: true}, ErrUncertain
+		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUncertain
 	}
 	actual, err := c.store.Read()
 	if err != nil || actual != installed {
-		return Status{RecoveryRequired: true}, ErrUncertain
+		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUncertain
 	}
-	return Status{SelectionConfigured: true}, nil
+	return Status{JournalPresent: true, SelectionConfigured: true}, nil
 }
 
 func writeNew(path string, data []byte) error {
@@ -254,22 +244,22 @@ func (c *Controller) Disconnect() (Status, error) {
 	}
 	actual, err := c.store.Read()
 	if err != nil {
-		return Status{RecoveryRequired: true}, ErrUnavailable
+		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUnavailable
 	}
 	// Each value must still be ours or its exact prior value (crash recovery).
 	// Check the entire pair before restoring anything.
 	if (actual.CLI != j.Installed.CLI && actual.CLI != j.Before.CLI) || (actual.Profile != j.Installed.Profile && actual.Profile != j.Before.Profile) {
-		return Status{RecoveryRequired: true}, ErrConflict
+		return Status{JournalPresent: true, RecoveryRequired: true}, ErrConflict
 	}
 	if c.store.Replace(actual, j.Before) != nil {
-		return Status{RecoveryRequired: true}, ErrUncertain
+		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUncertain
 	}
 	restored, err := c.store.Read()
 	if err != nil || restored != j.Before {
-		return Status{RecoveryRequired: true}, ErrUncertain
+		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUncertain
 	}
 	if os.Remove(filepath.Join(c.root, "selection.json")) != nil {
-		return Status{RecoveryRequired: true}, ErrUncertain
+		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUncertain
 	}
 	// Keep the immutable Magpie profile for diagnostics; never delete native
 	// state or assume an already running Desktop changed its environment.

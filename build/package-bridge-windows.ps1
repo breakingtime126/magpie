@@ -83,6 +83,8 @@ if (($adapterHelp -join "`n") -notmatch 'Desktop launcher compatibility is unver
 $env:MAGPIE_BRIDGE_ADAPTER_TEST_EXE = $adapter
 
 # These synthetic tests do not start official Codex or contact model services.
+& go test -v -count=1 -timeout=2m -tags nogui ./internal/buildvariant
+Assert-NativeExit 'Staged evidence stays outside product package enumeration'
 & go test -v -count=1 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge
 Assert-NativeExit 'Native stdio adapter unit and lifecycle tests'
 & go test -v -count=20 -timeout=10m -tags nogui ./cmd/magpie-codex-bridge -run '^Test(BuiltAdapter(Stdio|DesktopArguments|DesktopPluginOverride|StartupProbe|ConfigRequirements|AuthCompat.*)|DesktopPluginNativeChildrenReceiveExactOverride)$'

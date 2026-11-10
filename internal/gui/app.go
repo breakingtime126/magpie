@@ -3,6 +3,7 @@
 package gui
 
 import (
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -75,7 +76,7 @@ func appIconFor() []byte {
 
 type host struct {
 	nativeCodex      *NativeCodexAPI
-	nativeConnection *nativeconnect.Controller
+	nativeConnection *nativeconnect.Manager
 
 	app   *application.App
 	panel *application.WebviewWindow
@@ -202,7 +203,12 @@ func (h *host) ChooseFolder(title string) (string, error) {
 // NativeCodexPreview is available only on this owning desktop host.
 func (h *host) NativeCodexPreview() *NativeCodexAPI { return h.nativeCodex }
 
-func (h *host) NativeCodexConnection() *nativeconnect.Controller { return h.nativeConnection }
+func (h *host) NativeCodexConnection() nativeCodexConnection {
+	if h.nativeConnection == nil {
+		return nil
+	}
+	return h.nativeConnection
+}
 
 func (h *host) chooseNativeCodex() (string, error) {
 	d := h.app.Dialog.OpenFile().CanChooseDirectories(false).CanChooseFiles(true).SetTitle("Choose official Codex executable")
@@ -419,15 +425,15 @@ func Run(version string, showMain bool, link string) error {
 	if !buildvariant.NativeCodex {
 		handler = devShell(h)
 	}
-	if buildvariant.NativeCodex {
-		// The former separate account/test sheet is not a product entry.
-		// A missing supplier catalog blocks original Connect before any write.
-		h.nativeConnection = nativeconnect.New(filepath.Join(appdir.Config(), "native-codex-connection"), nativeconnect.SystemSelection(), nil)
-	}
 	ownPage := handler == nil
 	var gw *gateway.Server
 	if ownPage {
 		gw = startBackend()
+		if buildvariant.NativeCodex {
+			// Host lifetime, not an HTTP request. Supplier preparation stays
+			// unavailable until runtime/catalog and owned gateway checks exist.
+			h.nativeConnection = nativeconnect.NewManager(context.Background(), filepath.Join(appdir.Config(), "native-codex-connection"), nativeconnect.SystemSelection(), nil)
+		}
 		handler = Handler(h, gw)
 	}
 	// Linux: the magpie before holds the app's D-Bus name until it quits,
@@ -465,6 +471,9 @@ func Run(version string, showMain bool, link string) error {
 		OnShutdown: func() {
 			proc.EndProbes()
 			if buildvariant.NativeCodex {
+				if err := closeNativeCodexConnection(h.NativeCodexConnection()); err != nil {
+					log.Println("native Codex cleanup incomplete:", err)
+				}
 				return
 			}
 			if handedOver.Load() {

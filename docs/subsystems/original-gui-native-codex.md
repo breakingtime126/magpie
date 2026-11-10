@@ -5,8 +5,9 @@ provider pages and controls. It is a partial integration, not a working
 Codex Desktop same-window release.
 
 The original Agents → Codex Connect/Disconnect path has a native-only launch
-selection transaction. The desktop host does not yet supply its preparation
-callback, so Connect reports that a verified AIHub catalog is required before
+selection transaction. The desktop host owns a serialized lifecycle manager, constructed after the
+local gateway starts and closed during application shutdown. It does not yet
+supply a prepared-generation factory, so Connect reports that a verified AIHub catalog is required before
 creating transaction files or changing launch selection. The former **Native
 backend test** action and separate account/test sheet are no longer offered in
 the product UI. There is no replacement backend-ID or JSON setup form.
@@ -68,9 +69,40 @@ Magpie's normal provider route, with existing gateway and native policy checks
 intact. Separate folders are not a credential security boundary. This design
 does not grant permission to use an account or transmit data to a supplier.
 
+## Host lifetime and selection ownership
+
+The original endpoint calls `nativeconnect.Manager`, not a separate preview.
+The manager serializes Connect/Disconnect and keeps prepared launch resources
+alive independently of the HTTP request. Its factory is in-process only and
+must validate supplier metadata, runtime provenance and the exact owned gateway.
+There is no production implementation of that factory yet. No staged native
+endpoint or bootstrap package is enabled by this wiring.
+
+`Controller.Inspect` reads journal/selection evidence without creating a lock or
+folder. An existing journal cannot be adopted as a live generation after a host
+restart. Repeated Connect can reuse only the same still-valid unconsumed
+in-memory generation and an unchanged regular installed profile whose bytes
+match the journal SHA-256; it does not overwrite the original journal or prepare
+another launch. Missing, tampered or linked profiles reject repeated Connect
+without blocking Disconnect recovery. Unknown inspection or a partial selection write retains
+resource ownership for explicit recovery. Missing supplier preparation remains
+zero-write.
+
+Disconnect restores selection but retains launch resources because a launch may
+already be consuming them. Shutdown cancels preparation before waiting for it,
+then explicitly closes owned resources with a bounded deadline. Cleanup errors
+are reported and ownership retained for retry; a timeout is not successful
+drain. Shutdown does not automatically restore registry selection. The manager
+is retained until process exit, which cannot guarantee another cleanup attempt.
+These contracts are covered by synthetic generations, not running native
+processes. Handshake and chat status remain false.
+
 ## Evidence and remaining gap
 
-Synthetic tests cover missing-input zero-write behavior, launch-selection
+Synthetic tests additionally exercise original endpoint dispatch, bounded host
+cleanup, concurrent/repeated Connect, cancellation, partial-start ownership,
+uncertain selection retention and cleanup retry. They cover missing-input
+zero-write behavior, launch-selection
 journaling and restoration, interrupted-write recovery, external-change
 conflicts, original-page behavior and native-mode protections. Windows
 packaging builds the original GUI and adapter, then captures the GUI in a
