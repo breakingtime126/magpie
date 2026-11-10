@@ -29,7 +29,7 @@ var (
 // Value preserves absence, empty values and the Windows string registry type.
 // Only REG_SZ (1) and REG_EXPAND_SZ (2) are supported.
 type Value struct {
-	Present bool `json:"present"`
+	Present bool   `json:"present"`
 	Kind    uint32 `json:"kind"`
 	Text    string `json:"text"`
 }

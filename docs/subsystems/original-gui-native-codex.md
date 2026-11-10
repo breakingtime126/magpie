@@ -1,80 +1,87 @@
 # Original Magpie GUI: native Codex experimental build
 
-This build uses Magpie's original `main`, tray, window, navigation, Agents page,
-provider pages and controls. It does not open the separate connectivity-preview
-window. The original Agents → Codex row has a **Native backend test** action in
-the existing editor. This action uses the reviewed official `app-server` path;
-it is not the old HTTP gateway Connect switch and does not claim that Codex
-Desktop's same-window multi-provider integration is complete.
+This build uses Magpie's original main, tray, window, navigation, Agents page,
+provider pages and controls. It is a partial integration, not a working
+Codex Desktop same-window release.
 
-## Try the portable build
+The original Agents → Codex Connect/Disconnect path has a native-only launch
+selection transaction. The desktop host does not yet supply its preparation
+callback, so Connect reports that a verified AIHub catalog is required before
+creating transaction files or changing launch selection. The former **Native
+backend test** action and separate account/test sheet are no longer offered in
+the product UI. There is no replacement backend-ID or JSON setup form.
+
+## Inspect the portable build
 
 Extract the entire archive into a new, private folder, then open
-`Magpie-Native-Codex-Experimental.exe`. Keep `.portable` and `data` beside it.
+Magpie-Native-Codex-Experimental.exe. Keep .portable and data beside it.
 These are Magpie's existing portable-mode files, not a new storage mechanism.
 The original provider/settings interface uses this new data folder; it does not
 import an existing Magpie library. Account discovery is off in the supplied
 settings. Other original pages and explicit actions retain their normal meaning.
 
-Open **Agents → Codex → Native backend test**. Find the installed official
-program automatically, or choose an executable you already trust. Use its
-explicit browser login for the official account, or explicitly configure your
-trusted AIHub HTTPS address/key. Discover a model, select it and confirm one
-short-text test. You never need to enter backend IDs, internal homes or JSON.
-Native-discovered models are not entitlement or service-capability proof.
+The archive also contains magpie-codex-bridge.exe, an internal stdio adapter
+built from the same source commit. It is not another GUI or a bundled official
+Codex executable. BUILD.json and SHA256SUMS identify the packaged source and
+files. CONNECT-STATUS.md describes the unfinished preparation and recovery
+contract.
 
-The short-text path currently requires the reviewed native
-`0.167.0-alpha.3.2`. `0.166.0-alpha.6` is limited to login/discovery; unknown
-versions stop. Do not bypass company update or executable restrictions.
+Do not treat the available Connect control as a completed setup flow. Runtime
+discovery and provenance checks, ownership of Magpie's local gateway, and
+authorized full AIHub model metadata must be connected before that flow can
+configure a future native launch. A model/list response alone is not a full
+native catalog. The reviewed shared-native adapter path is pinned to
+0.167.0-alpha.3.2; this package does not install or update the official runtime.
+
 The EXE is unsigned and requires an existing approved WebView2 Runtime. It
-does not install WebView2 or change Windows sandbox/security settings.
+does not install WebView2 or change Windows sandbox/security settings. Do not
+bypass company update, executable, proxy or certificate restrictions.
 
 ## What is protected, and what is not
 
-The `nativecodex` build tag sets the constant in `internal/buildvariant` before
-normal startup. Agent-level guards stop legacy Codex gateway wiring, automatic
-Codex configuration/rollout migrations, and Codex-specific Library targets,
-including the WSL/profile family. Existing Codex Connect/Disconnect is not a
-native connection and is rejected in this mode, rather than silently performing
-the old gateway migration. Ordinary builds keep the old behavior. Synthetic
-fixtures exercise unchanged files; they are not a claim about a user's data.
+The nativecodex build tag applies guards before normal startup. They stop
+legacy Codex gateway wiring, automatic Codex configuration/rollout migrations,
+and Codex-specific Library targets, including the WSL/profile family. Only the
+owning desktop window's local Codex Connect/Disconnect path uses the new
+selection transaction. Legacy ConnectHow and Sync remain guarded; ordinary
+builds keep their old behavior.
+
+The transaction has explicit journal-based recovery for changes to the two
+launch-selection variables. SelectionConfigured means only that their values
+were read back, not that a backend started or a chat succeeded. Disconnect
+restores journal-matching previous values, refuses external changes, and does
+not rewrite native authentication or history. Already running Codex windows
+are not changed. See CONNECT-STATUS.md in the package, or
+docs/subsystems/native-codex-connect.md in the repository, for the full
+failure and recovery rules.
 
 The experimental GUI does not install itself over an existing Magpie, refresh
 shortcuts/autostart/link registration, take over another Magpie's gateway, or
 self-update into an upstream release. These actions are unavailable here.
-It still is the original application: other providers, account-discovery choices,
-explicit history edits, other agents, shared Library inputs and normal gateway
-activity retain their original side effects. This is not a promise that the
-whole GUI is read-only, offline, or that every file visible to Codex is frozen.
+Other providers, account-discovery choices, explicit history edits, other
+agents, shared Library inputs and normal gateway activity retain their
+original side effects. The whole GUI is not read-only or offline.
 
-The new native action does not import the old Magpie account store. Each preview
-uses dedicated native contexts, but all processes run as the same OS user;
-separate folders are not a credential security boundary. Native managed auth,
-proxy and certificate rules continue to apply. Login/discovery can contact
-services and write authentication state. Exact provider ID checks do not by
-themselves establish the complete endpoint provenance of managed configuration.
-Use only trusted executables and service addresses.
-
-Each Send is a new ephemeral thread with empty environments and reviewed tool
-guards, not a continuing developer session. It may incur costs. Native
-transports can retry, so it is not a fixed-cost or single-HTTP-request guarantee.
-Cancel/close cannot retract a transmitted request. Closing cancels the owned
-operation, but does not close the login browser, revoke/logout credentials or
-delete native authentication state. Deleting the portable app folder removes
-its portable settings, not any native login context elsewhere. The normal
-Codex launch selection is not changed by this test action.
+The built-in ChatGPT account and legacy Codex gateway paths remain blocked in
+this build. The intended route is official Codex GPT directly and AIHub through
+Magpie's normal provider route, with existing gateway and native policy checks
+intact. Separate folders are not a credential security boundary. This design
+does not grant permission to use an account or transmit data to a supplier.
 
 ## Evidence and remaining gap
 
-The existing scoped test has run the signed, pinned official native program
-against a wholly original local Responses fixture through guarded discovery,
-thread start, streaming and final text. No real account or GPT/AIHub service was
-used. That evidence does not establish real-account usability, zero egress,
-all Windows security modes, or official Desktop same-window chat.
+Synthetic tests cover missing-input zero-write behavior, launch-selection
+journaling and restoration, interrupted-write recovery, external-change
+conflicts, original-page behavior and native-mode protections. Windows
+packaging builds the original GUI and adapter, then captures the GUI in a
+temporary synthetic home. Capturing a window is not acceptance of its controls.
 
-This original-GUI integration must separately pass its original-page browser
-tests, Go protections and Windows build/window checks at the published commit.
-A captured window is not proof of account login or native-button completion.
-The same-window production design still has separate model-catalog ownership,
-credential/proof isolation and Windows sandbox-ownership requirements; this
-native test must not be presented as solving them.
+An earlier internal short-text harness exercised the pinned official native
+program against a local Responses fixture. That is not the removed product
+entry and does not establish real-account or same-window usability.
+
+Runtime preparation, an owned local listener and a verified supplier catalog
+remain unfinished. Official Desktop handshake, real GPT/AIHub chat, and
+restored-start acceptance have not been established for this integration.
+Do not present a successful build or selection transaction as a completed
+same-window release.

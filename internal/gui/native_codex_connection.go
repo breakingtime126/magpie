@@ -17,7 +17,9 @@ func handleNativeCodexConnection(w Windows, a *agent.Agent, rw http.ResponseWrit
 		return false
 	}
 	rw.Header().Set("Cache-Control", "no-store")
-	owner, ok := w.(interface{ NativeCodexConnection() *nativeconnect.Controller })
+	owner, ok := w.(interface {
+		NativeCodexConnection() *nativeconnect.Controller
+	})
 	if !ok || isWeb(w) || !nativeCodexOwnedRequest(r) || owner.NativeCodexConnection() == nil {
 		http.NotFound(rw, r)
 		return true
