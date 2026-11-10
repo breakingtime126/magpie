@@ -171,3 +171,120 @@ func TestStrictInitializeResponse(t *testing.T) {
 		}
 	}
 }
+
+// Diagnostics contain only harness-authored finite codes. Never serialize errors.
+type failureDiagnostic struct {
+	Stage  string
+	Reason string
+}
+
+var diagnosticStages = strings.Fields("helper_gate helper_policy raw_layout raw_signature_hash fixture native_policy native_inputs startup_command startup_exit_output startup_response initialize_command initialize_assertion initialize_exit_output cleanup report unknown")
+var diagnosticReasons = map[string]string{
+	"invalid JSON object":                                  "json_object",
+	"unexpected object shape":                              "object_shape",
+	"missing required field":                               "missing_field",
+	"invalid string":                                       "invalid_string",
+	"invalid app-server version":                           "version_invalid",
+	"invalid version characters":                           "version_characters",
+	"unexpected managed requirements":                      "requirements_unexpected",
+	"initialize ID mismatch":                               "id_mismatch",
+	"unexpected platform":                                  "platform_mismatch",
+	"initialize home mismatch":                             "home_mismatch",
+	"initialize user agent mismatch":                       "agent_mismatch",
+	"unexpected local auth/environment/config input":       "local_input_present",
+	"ancestor project configuration present or unreadable": "ancestor_config",
+
+	"native start failed":                        "start_failed",
+	"native process reaping unproven":            "reap_unproven",
+	"native process did not exit successfully":   "exit_unsuccessful",
+	"initialize write failed":                    "write_failed",
+	"initialize write deadline":                  "write_deadline",
+	"initialize response assertion failed":       "response_assertion",
+	"native stderr limit/read failure":           "stderr_read",
+	"native stderr closed before initialization": "stderr_closed",
+	"initialize response deadline":               "response_deadline",
+	"native stdin EOF failed":                    "stdin_close",
+	"native stdout bounded read failed":          "stdout_read",
+	"native stderr bounded read failed":          "stderr_read",
+	"native exit/output deadline":                "exit_output_deadline",
+	"unexpected extra native stdout":             "extra_stdout",
+	"helper marker deadline":                     "gate_deadline",
+}
+
+func knownStage(s string) bool {
+	for _, v := range diagnosticStages {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+func knownReason(s string) bool {
+	if s == "operation_failed" {
+		return true
+	}
+	for _, v := range diagnosticReasons {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+func safeFailure(stage string, err error) failureDiagnostic {
+	if !knownStage(stage) {
+		stage = "unknown"
+	}
+	reason := "operation_failed"
+	if err != nil {
+		// Exact equality only: wrapped/joined errors and arbitrary values are opaque.
+		if code, ok := diagnosticReasons[err.Error()]; ok {
+			reason = code
+		}
+	}
+	return failureDiagnostic{stage, reason}
+}
+func decodeFailure(b []byte) (failureDiagnostic, bool) {
+	var d failureDiagnostic
+	if len(b) > 1024 || uniqueJSON(b) != nil {
+		return d, false
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&d) != nil || dec.Decode(new(any)) != io.EOF {
+		return failureDiagnostic{}, false
+	}
+	if !knownStage(d.Stage) || !knownReason(d.Reason) {
+		return failureDiagnostic{}, false
+	}
+	return d, true
+}
+func TestFailureDiagnosticsSanitized(t *testing.T) {
+	for _, stage := range diagnosticStages {
+		for text, reason := range diagnosticReasons {
+			d := safeFailure(stage, errors.New(text))
+			b, _ := json.Marshal(d)
+			got, ok := decodeFailure(b)
+			if !ok || got.Stage != stage || got.Reason != reason {
+				t.Fatal("known code lost")
+			}
+		}
+	}
+	for _, err := range []error{nil, errors.New("C:\\private\\secret token=value"), errors.Join(errors.New("native start failed"), errors.New("private")), errors.New("native start failed\nprivate")} {
+		d := safeFailure("private stage", err)
+		if d.Stage != "unknown" || d.Reason != "operation_failed" {
+			t.Fatal("unknown detail disclosed")
+		}
+	}
+	for _, b := range []string{
+		`{"Stage":"fixture","Reason":"private"}`,
+		`{"Stage":"private","Reason":"operation_failed"}`,
+		`{"Stage":"fixture","Reason":"operation_failed","Extra":"private"}`,
+		`{"Stage":"fixture","Stage":"cleanup","Reason":"operation_failed"}`,
+		`{"Stage":"fixture","Reason":"operation_failed"}{}`,
+		strings.Repeat("x", 1025),
+	} {
+		if _, ok := decodeFailure([]byte(b)); ok {
+			t.Fatal("invalid marker accepted")
+		}
+	}
+}

@@ -169,12 +169,18 @@ func exited(c *exec.Cmd, e error) error {
 
 // Each native process inherits root's non-breakaway Job through this helper.
 // File stdio stays owned here; no exec.Cmd I/O copying goroutines are relied on.
-func runNative(exe, home, cwd string, initialize bool, version string) (out, errout []byte, result error) {
+func runNative(exe, home, cwd string, initialize bool, version string, stage *string) (out, errout []byte, result error) {
+	*stage = "native_policy"
 	if e := policyAbsent(); e != nil {
 		return nil, nil, e
 	}
+	*stage = "native_inputs"
 	if e := localInputsAbsent(home, cwd); e != nil {
 		return nil, nil, e
+	}
+	*stage = "startup_command"
+	if initialize {
+		*stage = "initialize_command"
 	}
 	args := []string{"app-server", "--strict-config", "--print-startup-config"}
 	if initialize {
@@ -226,9 +232,11 @@ func runNative(exe, home, cwd string, initialize bool, version string) (out, err
 			case <-wait:
 				waited = true
 				if c.ProcessState == nil || !c.ProcessState.Exited() {
+					*stage = "cleanup"
 					result = errors.Join(result, errors.New("failed native cleanup reaping"))
 				}
 			case <-time.After(3 * time.Second):
+				*stage = "cleanup"
 				result = errors.Join(result, errors.New("native cleanup deadline"))
 			}
 		}
@@ -264,10 +272,14 @@ func runNative(exe, home, cwd string, initialize bool, version string) (out, err
 		case <-time.After(3 * time.Second):
 			return nil, nil, errors.New("initialize write deadline")
 		}
+		*stage = "initialize_assertion"
 		select {
 		case frame := <-first:
-			if frame.err != nil || assertInitialize(frame.data, version, home) != nil {
+			if frame.err != nil {
 				return nil, nil, errors.New("initialize response assertion failed")
+			}
+			if assertionErr := assertInitialize(frame.data, version, home); assertionErr != nil {
+				return nil, nil, assertionErr
 			}
 		case s := <-stderrDone:
 			if s.err != nil {
@@ -282,6 +294,10 @@ func runNative(exe, home, cwd string, initialize bool, version string) (out, err
 		if e = stdinW.Close(); e != nil {
 			return nil, nil, errors.New("native stdin EOF failed")
 		}
+	}
+	*stage = "startup_exit_output"
+	if initialize {
+		*stage = "initialize_exit_output"
 	}
 	until := time.NewTimer(20 * time.Second)
 	defer until.Stop()
@@ -314,6 +330,7 @@ func runNative(exe, home, cwd string, initialize bool, version string) (out, err
 	if initialize {
 		// Exactly one response and terminal newline; no additional JSON/requests,
 		// notifications, diagnostics, or non-whitespace protocol output accepted.
+		*stage = "initialize_assertion"
 		line := bytes.TrimSuffix(so.data, []byte("\n"))
 		if bytes.Contains(line, []byte("\n")) || assertInitialize(line, version, home) != nil {
 			return nil, nil, errors.New("unexpected extra native stdout")
@@ -378,22 +395,31 @@ func TestInitializeHelper(t *testing.T) {
 		t.Fatal(e)
 	}
 	go func() { time.Sleep(55 * time.Second); os.Exit(90) }()
-	fail := func(e error) { _ = marker(dir, "failure", e.Error()); t.Fatal(e) }
+	stage := "helper_gate"
+	fail := func(e error) {
+		d := safeFailure(stage, e)
+		_ = marker(dir, "failure", d)
+		t.Fatalf("helper failure stage=%s reason=%s", d.Stage, d.Reason)
+	}
 	if e = waitMarker(dir, "go", time.Now().Add(10*time.Second)); e != nil {
 		fail(e)
 	}
+	stage = "helper_policy"
 	if e = policyAbsent(); e != nil {
 		fail(e)
 	}
 	exe := os.Getenv(prefix + "EXE")
+	stage = "raw_layout"
 	if e = rawLayout(exe); e != nil {
 		fail(e)
 	}
+	stage = "raw_signature_hash"
 	locked, e := verifyNative(exe)
 	if e != nil {
 		fail(e)
 	}
 	defer locked.Close()
+	stage = "fixture"
 	home, cwd, locks, fixtureHashes, e := fixture(dir)
 	defer func() {
 		for _, f := range locks {
@@ -403,16 +429,17 @@ func TestInitializeHelper(t *testing.T) {
 	if e != nil {
 		fail(e)
 	}
-	out, stderr, e := runNative(exe, home, cwd, false, "")
+	out, stderr, e := runNative(exe, home, cwd, false, "", &stage)
 	if e != nil {
 		fail(e)
 	}
+	stage = "startup_response"
 	version, e := startupVersion(out)
 	if e != nil {
 		fail(e)
 	}
 	result := report{ConfigSHA256: fixtureHashes["config.toml"], CatalogSHA256: fixtureHashes["synthetic-catalog.json"], Version: version, StartupExitZero: true, PolicyAbsent: true, StartupStdout: len(out), StartupStderr: len(stderr), StartupStdoutSHA256: digest(out), StartupStderrSHA256: digest(stderr)}
-	out, stderr, e = runNative(exe, home, cwd, true, version)
+	out, stderr, e = runNative(exe, home, cwd, true, version, &stage)
 	if e != nil {
 		fail(e)
 	}
@@ -422,6 +449,7 @@ func TestInitializeHelper(t *testing.T) {
 	result.InitializeStderr = len(stderr)
 	result.InitializeStdoutSHA256 = digest(out)
 	result.InitializeStderrSHA256 = digest(stderr)
+	stage = "report"
 	if e = marker(dir, "result", result); e != nil {
 		fail(e)
 	}
@@ -528,7 +556,17 @@ func TestRawStrictStartupInitialize(t *testing.T) {
 	case e = <-wait:
 		waited = true
 		if e = exited(c, e); e != nil {
-			t.Fatal("helper native lifecycle assertion failed; raw stdout/stderr not disclosed")
+			f, openErr := os.Open(filepath.Join(dir, "failure"))
+			if openErr == nil {
+				b, readErr := io.ReadAll(io.LimitReader(f, 1025))
+				f.Close()
+				if readErr == nil {
+					if d, ok := decodeFailure(b); ok {
+						t.Fatalf("helper native lifecycle failed: stage=%s reason=%s; raw output withheld", d.Stage, d.Reason)
+					}
+				}
+			}
+			t.Fatal("helper native lifecycle failed: bounded diagnostic unavailable; raw output withheld")
 		}
 	case <-time.After(60 * time.Second):
 		t.Fatal("helper deadline")
