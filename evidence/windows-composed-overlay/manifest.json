@@ -5196,6 +5196,14 @@
       "sha256": "d076880824d2ebae5ab4161558fa4e01c90669cb605fff14cd6ffa0232d1f9eb"
     },
     {
+      "path": "internal/nativehost/manager.go",
+      "sha256": "16489a8e718047302b528cf685daaafc5a3c6f56aca2bf71911d833940da2046"
+    },
+    {
+      "path": "internal/nativehost/manager_test.go",
+      "sha256": "df5a1c30b22144242c7cf173fd40f91fe3a576ac31312eac16607f60f45caa60"
+    },
+    {
       "path": "internal/nativehost/owner_windows.go",
       "sha256": "8d26987dbdb7954ebb4c9037d66db869e0ee899c2e4461c579309b69493753e2"
     },

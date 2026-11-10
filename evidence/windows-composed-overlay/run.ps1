@@ -99,6 +99,12 @@ Run-Go @('test','-tags','nogui,nativecodex','-mod=readonly','-buildvcs=false','-
 foreach($test in @('TestEndpointShutdownMakesBlockedAcceptTerminal','TestEndpointShutdownDoesNotLogHTTPAcceptRetry','TestEndpointAcceptPreservesErrorsBeforeShutdown')) {
  if(-not $passed.ContainsKey('github.com/yetone/magpie/internal/nativeendpoint/'+$test)){throw "Required endpoint shutdown regression did not PASS: $test"}
 }
+# The window-lifetime coordinator must pass with the real Controller transaction
+# as well as injected failure states, before any actual composed actor runs.
+Run-Go @('test','-tags','nogui,nativecodex','-mod=readonly','-buildvcs=false','-count=1','-json','-timeout=120s','./internal/nativehost')
+foreach ($test in @('TestManagerMissingCatalogWritesNothing','TestManagerRequestCancellationAndRepeatedConnect','TestManagerFailureCleanupAndUncertainRetention','TestManagerUnknownInspectionRetainsFailedStartOwner','TestManagerPartialStartCleanupRequiresSuccessfulClose','TestManagerDisconnectRetainsConsumedOwnerAndStartsFresh','TestManagerCloseRetriesDrainAndRejectsConnect','TestManagerConcurrentConnectSerializesPreparation','TestManagerCloseCancelsBeforeJoiningPreparation','TestManagerRealControllerOwnsSelectionNotGeneration')) {
+ if (-not $passed.ContainsKey('github.com/yetone/magpie/internal/nativehost/'+$test)) { throw "Required manager lifetime test did not PASS: $test" }
+}
 # Run core composed delivery first. Each fixture gets a new builder home,
 # output/package, and cleared harness home; only the verified module cache is shared.
 $pwsh=(Get-Command pwsh -CommandType Application).Source
@@ -148,3 +154,4 @@ foreach($fixtureRun in $fixtureRuns) {
   Get-Content -LiteralPath $resultPath -Raw | Write-Host
  } finally {$process.Dispose()}
 }
+

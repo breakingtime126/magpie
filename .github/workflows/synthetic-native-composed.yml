@@ -1081,6 +1081,8 @@ jobs:
             /evidence/windows-composed-overlay/internal/nativeendpoint/endpoint.go
             /evidence/windows-composed-overlay/internal/nativeendpoint/endpoint_accept_shutdown_test.go
             /evidence/windows-composed-overlay/internal/nativeendpoint/listen_windows.go
+            /evidence/windows-composed-overlay/internal/nativehost/manager.go
+            /evidence/windows-composed-overlay/internal/nativehost/manager_test.go
             /evidence/windows-composed-overlay/internal/nativehost/host.go
             /evidence/windows-composed-overlay/internal/nativehost/host_test.go
             /evidence/windows-composed-overlay/internal/nativehost/owner_windows.go
@@ -1110,3 +1112,4 @@ jobs:
       - name: Verify exact sources and official toolchain, then run actual adapter, core composed delivery, and separate Relisten recovery
         shell: pwsh
         run: ./overlay/evidence/windows-composed-overlay/run.ps1
+
