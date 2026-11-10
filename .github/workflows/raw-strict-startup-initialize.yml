@@ -51,6 +51,38 @@ jobs:
             if ($name -match '^(CODEX_|OPENAI_|AWS_|AZURE_|AZ_|GOOGLE_|GCP_|OTEL_)' -or $name -match '(_API_KEY|_ACCESS_TOKEN)$') { throw 'Inherited application/provider/auth environment rejected; values withheld' }
             if ($name -match '(PROXY|CERT|SSL|TLS|TRUST|CA_BUNDLE)' -and $trustNames -notcontains $entry.Name) { throw 'Unreviewed trust/proxy environment rejected; values withheld' }
           }
+          # Capture the machine's NORMAL KnownFolder before environment clearing.
+          # Never substitute an environment/default/temporary path on API failure.
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.IO;
+          using System.Text;
+          using System.Security.Cryptography;
+          using System.Runtime.InteropServices;
+          public static class NormalPolicyFolder {
+            [DllImport("shell32.dll", ExactSpelling=true)]
+            private static extern int SHGetKnownFolderPath(ref Guid id, uint flags, IntPtr token, out IntPtr path);
+            public static string CaptureDigest() {
+              Guid id=new Guid("62AB5D82-FDC1-4DC3-A9DD-070D1D495D97");
+              IntPtr pointer=IntPtr.Zero;
+              try {
+                int hr=SHGetKnownFolderPath(ref id,0,IntPtr.Zero,out pointer);
+                if (hr!=0) throw new InvalidOperationException("Normal ProgramData HRESULT=0x"+unchecked((uint)hr).ToString("X8"));
+                string normal=Marshal.PtrToStringUni(pointer);
+                if (String.IsNullOrEmpty(normal)||!Path.IsPathFullyQualified(normal)) throw new InvalidOperationException("Normal KnownFolder did not return an absolute path");
+                string ambient=Environment.GetEnvironmentVariable("ProgramData");
+                if (String.IsNullOrEmpty(ambient)||!Path.IsPathFullyQualified(ambient)) throw new InvalidOperationException("Original ProgramData environment unavailable or nonabsolute");
+                string resolved;
+                try { resolved=Path.TrimEndingDirectorySeparator(Path.GetFullPath(ambient)); }
+                catch { throw new InvalidOperationException("Original ProgramData environment validation failed"); }
+                if (!String.Equals(resolved,normal,StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Original ProgramData environment differs from normal KnownFolder");
+                return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normal))).ToLowerInvariant();
+              } finally { if (pointer!=IntPtr.Zero) Marshal.FreeCoTaskMem(pointer); }
+            }
+          }
+          '@
+          $normalProgramDataDigest=[NormalPolicyFolder]::CaptureDigest()
+          $machineDirectoryNames=@('ProgramData','SystemDrive','ALLUSERSPROFILE')
           $root = Join-Path $env:RUNNER_TEMP ('raw-initialize-' + [Guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory -Path $root | Out-Null
           try {
@@ -92,7 +124,7 @@ jobs:
             foreach ($name in @('SystemRoot','WINDIR')) { $isolated[$name] = [Environment]::GetEnvironmentVariable($name) }
             # Preserve reviewed proxy/CA settings byte-for-byte into the test and
             # native process; no machine/registry/proxy/security settings change.
-            foreach ($name in ($trustNames + $directoryNames)) {
+            foreach ($name in ($trustNames + $directoryNames + $machineDirectoryNames)) {
               $value=[Environment]::GetEnvironmentVariable($name)
               if ($null -ne $value) { $isolated[$name]=$value }
             }
@@ -139,12 +171,13 @@ jobs:
               if ($value) { $downloadEnvironment[$name]=$value }
             }
             Run-Go @('mod','download','golang.org/x/sys@v0.46.0') $downloadEnvironment ''
+            $isolated['MAGPIE_NATIVE_INITIALIZE_PROGRAMDATA_SHA256']=$normalProgramDataDigest
             $isolated['MAGPIE_NATIVE_INITIALIZE_EXE']=$exe
             $isolated['MAGPIE_NATIVE_INITIALIZE_EXECUTE']='strict-initialize-only-v1'
             $result = Join-Path $root 'go-test.jsonl'
-            Run-Go @('test','-buildvcs=false','-mod=readonly','-count=1','-json','-timeout=90s','-run','^(TestRawStrictStartupInitialize|TestStrictStartupResponse|TestStrictInitializeResponse|TestAmbientAdmissionRejectsApplicationSettings|TestReviewedRunnerDirectoriesPreserved)$','.') $isolated $result
+            Run-Go @('test','-buildvcs=false','-mod=readonly','-count=1','-json','-timeout=90s','-run','^(TestRawStrictStartupInitialize|TestStrictStartupResponse|TestStrictInitializeResponse|TestAmbientAdmissionRejectsApplicationSettings|TestReviewedRunnerDirectoriesPreserved|TestNormalPolicyLocationIdentity)$','.') $isolated $result
             $events = @(Get-Content -LiteralPath $result | ForEach-Object { $_ | ConvertFrom-Json })
-            foreach ($testName in @('TestRawStrictStartupInitialize','TestStrictStartupResponse','TestStrictInitializeResponse','TestAmbientAdmissionRejectsApplicationSettings','TestReviewedRunnerDirectoriesPreserved')) {
+            foreach ($testName in @('TestRawStrictStartupInitialize','TestStrictStartupResponse','TestStrictInitializeResponse','TestAmbientAdmissionRejectsApplicationSettings','TestReviewedRunnerDirectoriesPreserved','TestNormalPolicyLocationIdentity')) {
               $passes = @($events | Where-Object { $_.Action -eq 'pass' -and $_.PSObject.Properties['Test'] -and $_.Test -ceq $testName })
               if ($passes.Count -ne 1) { throw "Actual named PASS missing: $testName (skip/compile does not qualify)" }
             }

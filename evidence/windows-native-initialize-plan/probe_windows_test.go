@@ -11,11 +11,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unsafe"
@@ -31,6 +33,9 @@ var trustedEnv = []string{"SystemRoot", "WINDIR", "HTTP_PROXY", "HTTPS_PROXY", "
 
 // Source-reviewed runner CLI directory selectors, not a credential-free claim.
 // Native's audited OpenAI-only startup never invokes their CLI/auth chains.
+// Fixed/common KnownFolder expansion context, preserved only from originals.
+var machineDirectoryEnv = []string{"ProgramData", "SystemDrive", "ALLUSERSPROFILE"}
+
 var reviewedRunnerDirectories = []string{"AZURE_CONFIG_DIR", "AZURE_EXTENSION_DIR", "AZURE_DEVOPS_CACHE_DIR", "AZ_DEVOPS_GLOBAL_CONFIG_DIR"}
 
 // Conservative admission check, not a claim of exhaustive native environment schema.
@@ -78,7 +83,7 @@ func admitEntries(entries []string) error {
 func baseEnv() []string { return preservedEnv(os.LookupEnv) }
 func preservedEnv(lookup func(string) (string, bool)) []string {
 	out := []string{}
-	names := append(append([]string{}, trustedEnv...), reviewedRunnerDirectories...)
+	names := append(append(append([]string{}, trustedEnv...), reviewedRunnerDirectories...), machineDirectoryEnv...)
 	for _, name := range names {
 		if v, ok := lookup(name); ok {
 			out = append(out, name+"="+v)
@@ -88,8 +93,12 @@ func preservedEnv(lookup func(string) (string, bool)) []string {
 }
 func policyAbsent() error {
 	programData, e := windows.KnownFolderPath(windows.FOLDERID_ProgramData, 0)
-	if e != nil || !filepath.IsAbs(programData) {
-		return errors.New("normal ProgramData lookup unavailable")
+	if e = assertNormalProgramData(programData, e, os.Getenv(prefix+"PROGRAMDATA_SHA256")); e != nil {
+		return e
+	}
+	// A native env-based ProgramData route must agree with the independent API.
+	if e = assertProgramDataVariable(programData, os.Getenv("ProgramData")); e != nil {
+		return e
 	}
 	// Stronger than the two config/requirements files: refuse the entire vendor
 	// policy directory if present, without reading any policy/config contents.
@@ -451,6 +460,7 @@ func TestRawStrictStartupInitialize(t *testing.T) {
 	if e := policyAbsent(); e != nil {
 		t.Fatal(e)
 	}
+	t.Log("Normal policy location matches original KnownFolder; normal machine policy absent (paths withheld)")
 	exe := os.Getenv(prefix + "EXE")
 	if e := rawLayout(exe); e != nil {
 		t.Fatal(e)
@@ -482,7 +492,7 @@ func TestRawStrictStartupInitialize(t *testing.T) {
 	c := exec.Command(os.Args[0], "-test.run=^TestInitializeHelper$", "-test.timeout=60s")
 	c.Dir = dir
 	c.Env = baseEnv()
-	c.Env = append(c.Env, prefix+"ROLE=parent", prefix+"DIR="+dir, prefix+"TOKEN="+token, prefix+"EXE="+exe)
+	c.Env = append(c.Env, prefix+"ROLE=parent", prefix+"DIR="+dir, prefix+"TOKEN="+token, prefix+"EXE="+exe, prefix+"PROGRAMDATA_SHA256="+os.Getenv(prefix+"PROGRAMDATA_SHA256"))
 	if e = c.Start(); e != nil {
 		t.Fatal(e)
 	}
@@ -637,4 +647,69 @@ func TestReviewedRunnerDirectoriesPreserved(t *testing.T) {
 			t.Fatal("unreviewed Azure authority variable accepted")
 		}
 	}
+}
+
+// The reference is captured by the workflow's normal KnownFolder API BEFORE
+// environment clearing. It is an equality witness, never a fallback path.
+func assertNormalProgramData(path string, lookupErr error, expected string) error {
+	if lookupErr != nil {
+		var hr syscall.Errno
+		if errors.As(lookupErr, &hr) {
+			return fmt.Errorf("normal ProgramData lookup unavailable (HRESULT=0x%08X)", uint32(hr))
+		}
+		return errors.New("normal ProgramData lookup unavailable (non-HRESULT error)")
+	}
+	if !filepath.IsAbs(path) {
+		return errors.New("normal ProgramData lookup returned nonabsolute path")
+	}
+	decoded, e := hex.DecodeString(expected)
+	if e != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != expected {
+		return errors.New("missing/invalid original KnownFolder reference")
+	}
+	if digest([]byte(path)) != expected {
+		return errors.New("post-clear KnownFolder result differs from original")
+	}
+	return nil
+}
+func TestNormalPolicyLocationIdentity(t *testing.T) {
+	path, _ := filepath.Abs("synthetic-knownfolder")
+	expected := digest([]byte(path))
+	if assertNormalProgramData(path, nil, expected) != nil {
+		t.Fatal("matching authored reference rejected")
+	}
+	for _, test := range []struct {
+		path, expected string
+		err            error
+	}{
+		{path, "", nil}, {path, "not-a-digest", nil}, {path, digest([]byte(path + "-other")), nil}, {"relative", expected, nil}, {path, expected, syscall.Errno(0x800700cb)},
+	} {
+		if assertNormalProgramData(test.path, test.err, test.expected) == nil {
+			t.Fatal("unproven original policy location accepted")
+		}
+	}
+	e := assertNormalProgramData(path, syscall.Errno(0x800700cb), expected)
+	if e == nil || !strings.Contains(e.Error(), "HRESULT=0x800700CB") || strings.Contains(e.Error(), path) {
+		t.Fatal("HRESULT diagnostic absent or path disclosed")
+	}
+	if assertProgramDataVariable(path, path) != nil || assertProgramDataVariable(path, path+"-other") == nil || assertProgramDataVariable(path, "") == nil {
+		t.Fatal("ProgramData environment agreement failed")
+	}
+	values := map[string]string{"ProgramData": "synthetic data directory", "SystemDrive": "synthetic drive", "ALLUSERSPROFILE": ""}
+	env := preservedEnv(func(name string) (string, bool) { v, ok := values[name]; return v, ok })
+	if len(env) != len(values) {
+		t.Fatal("system-directory preservation inventory mismatch")
+	}
+	for _, entry := range env {
+		k, v, _ := strings.Cut(entry, "=")
+		if want, ok := values[k]; !ok || v != want {
+			t.Fatal("original system-directory value changed")
+		}
+	}
+}
+
+func assertProgramDataVariable(normal, ambient string) error {
+	if !filepath.IsAbs(ambient) || !strings.EqualFold(filepath.Clean(normal), filepath.Clean(ambient)) {
+		return errors.New("original ProgramData environment does not match normal KnownFolder")
+	}
+	return nil
 }

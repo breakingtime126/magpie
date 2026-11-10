@@ -22,8 +22,8 @@ try {
  & go build -buildvcs=false -tags nogui,nativecodex -trimpath -o $bridge ./cmd/magpie-codex-bridge; Check 'Actual adapter build'
  $digest=(Get-FileHash -LiteralPath $bridge -Algorithm SHA256).Hash.ToLowerInvariant()
  & go build -buildvcs=false -tags nogui,nativecodex -trimpath -o (Join-Path $package 'synthetic-backend.exe') ./build/native-composed-fixture; Check 'Authored backend helper build'
- $host=Join-Path $package 'Magpie-Native-Codex-Experimental.exe'
- & go build -buildvcs=false -tags nogui,nativecodex -trimpath -ldflags "-X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSHA256=$digest -X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSourceRevision=$SourceRevision" -o $host ./build/native-composed-fixture
+ $hostExe=Join-Path $package 'Magpie-Native-Codex-Experimental.exe'
+ & go build -buildvcs=false -tags nogui,nativecodex -trimpath -ldflags "-X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSHA256=$digest -X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSourceRevision=$SourceRevision" -o $hostExe ./build/native-composed-fixture
  Check 'Authored pinned host fixture build'
  & go test -c -tags nogui,nativecodex -o (Join-Path $OutputRoot 'composed.test.exe') ./build/native-composed-fixture; Check 'Synthetic harness build'
  & go vet -tags nogui,nativecodex ./build/native-composed-fixture; Check 'Fixture vet'
@@ -34,17 +34,17 @@ try {
   # Caller must first review gateway-startup-audit/README.md and supply a fixed
   # disposable Windows runner without WSL/network changes. No firewall edits.
   # Clear environment BEFORE importing/initializing gateway in the harness.
-  $home=Join-Path $OutputRoot 'harness-home'; [void](New-Item -ItemType Directory -Path $home)
+  $harnessHome=Join-Path $OutputRoot 'harness-home'; [void](New-Item -ItemType Directory -Path $harnessHome)
   $psi=[Diagnostics.ProcessStartInfo]::new()
   $psi.FileName=Join-Path $OutputRoot 'composed.test.exe'
   $psi.Arguments='-test.run=^TestComposedHTTPDeliveryAndLeaseDrain$ -test.v -test.timeout=120s'
-  $psi.WorkingDirectory=$home; $psi.UseShellExecute=$false
+  $psi.WorkingDirectory=$harnessHome; $psi.UseShellExecute=$false
   $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
   $psi.Environment.Clear()
   foreach($key in @('SystemRoot','WINDIR','ComSpec')) { $value=[Environment]::GetEnvironmentVariable($key); if($value){$psi.Environment[$key]=$value} }
   $psi.Environment['PATH']=''; $psi.Environment['PATHEXT']='.COM;.EXE;.BAT;.CMD'
   $dirs=@{HOME='.';USERPROFILE='.';APPDATA='AppData/Roaming';LOCALAPPDATA='AppData/Local';XDG_CONFIG_HOME='.config';XDG_CONFIG_DIRS='etc/xdg';XDG_CACHE_HOME='.cache';XDG_DATA_HOME='.local/share';XDG_STATE_HOME='.local/state';XDG_RUNTIME_DIR='runtime';CODEX_HOME='native';TEMP='tmp';TMP='tmp';TMPDIR='tmp'}
-  foreach($key in $dirs.Keys){$path=Join-Path $home $dirs[$key];[void](New-Item -ItemType Directory -Force -Path $path);$psi.Environment[$key]=$path}
+  foreach($key in $dirs.Keys){$path=Join-Path $harnessHome $dirs[$key];[void](New-Item -ItemType Directory -Force -Path $path);$psi.Environment[$key]=$path}
   $psi.Environment['MAGPIE_NO_ACCOUNTS']='1';$psi.Environment['MAGPIE_PARTNERS']='off';$psi.Environment['MAGPIE_ADDR']='127.0.0.1:0'
   $psi.Environment['MAGPIE_COMPOSED_FIXTURE_PACKAGE']=$package
   $psi.Environment['MAGPIE_COMPOSED_REPORT']=Join-Path $OutputRoot 'result.json'
@@ -58,7 +58,19 @@ try {
    $text=$stdout.GetAwaiter().GetResult()+"`n"+$stderr.GetAwaiter().GetResult()
    [IO.File]::WriteAllText((Join-Path $OutputRoot 'run.log'),$text,[Text.UTF8Encoding]::new($false))
    Write-Output $text
-   if($process.ExitCode -ne 0){throw 'Synthetic composed HTTP and drain test failed.'}
+   if($process.ExitCode -ne 0){
+    # These two authored, isolated fixture actors never receive real accounts.
+    # Expose only bounded actor diagnostics, not arbitrary files/environment.
+    foreach($name in @('Magpie-Native-Codex-Experimental.exe.log','magpie-codex-bridge.exe.log')) {
+     $diagnostic=Join-Path (Join-Path $OutputRoot 'actor-evidence') $name
+     if(Test-Path -LiteralPath $diagnostic){
+      if((Get-Item -LiteralPath $diagnostic).Length -gt 16384){throw 'Authored actor diagnostic exceeds bound.'}
+      Write-Output ("Authored actor diagnostic: "+$name)
+      Get-Content -LiteralPath $diagnostic -Raw | Write-Output
+     }
+    }
+    throw 'Synthetic composed HTTP and drain test failed.'
+   }
    if($text -notmatch '(?m)^--- PASS: TestComposedHTTPDeliveryAndLeaseDrain \('){throw 'Named composed test PASS missing.'}
    $resultPath=Join-Path $OutputRoot 'result.json'
    if(-not (Test-Path -LiteralPath $resultPath)){throw 'No composed result: a skip or missing report is not acceptance.'}
