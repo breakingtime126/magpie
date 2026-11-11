@@ -1,4 +1,6 @@
 # Build the upstream main/GUI, using its existing portable-data contract.
+[CmdletBinding()]
+param([switch]$DiscoverOriginalConnect)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 function Assert-Exit([string]$Name) { if ($LASTEXITCODE -ne 0) { throw "$Name failed." } }
@@ -7,6 +9,14 @@ if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or
     $env:GITHUB_REF -cne 'refs/heads/experiment/app-server-bridge-v0.1.3035') { throw 'Scoped temporary CI required.' }
 $head = (& git rev-parse HEAD).Trim(); Assert-Exit 'Read source'
 if ($head -cne $env:GITHUB_SHA) { throw 'Source mismatch.' }
+if ($DiscoverOriginalConnect) {
+ if ($env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:GITHUB_EVENT_NAME -cne 'push' -or
+     $env:MAGPIE_ORIGINAL_CONNECT_DISCOVERY -cne 'read-only-v1') { throw 'Explicit hosted discovery context required.' }
+ $message = (& git log -1 --format=%B) -join "`n"; Assert-Exit 'Read discovery opt-in'
+ if (-not $message.Contains('[original-connect-discovery-v1]')) { throw 'Discovery commit marker required.' }
+ & (Join-Path $PSScriptRoot 'original-connect-discovery.tests.ps1')
+ . (Join-Path $PSScriptRoot 'original-connect-discovery.ps1')
+} elseif ($env:MAGPIE_ORIGINAL_CONNECT_DISCOVERY) { throw 'Discovery marker without explicit option.' }
 $package = Join-Path $env:RUNNER_TEMP 'native-magpie-package'
 $evidence = Join-Path $env:RUNNER_TEMP 'native-magpie-evidence'
 [void](New-Item -ItemType Directory -Path $package -ErrorAction Stop)
@@ -65,6 +75,13 @@ $root = Join-Path $env:RUNNER_TEMP ('native-magpie-window-' + [guid]::NewGuid().
 [void](New-Item -ItemType Directory -Path $root)
 $homeRoot = Join-Path $root 'home'; [void](New-Item -ItemType Directory -Path $homeRoot)
 $run = Join-Path $root 'app'; Copy-Item -LiteralPath $package -Destination $run -Recurse
+if ($DiscoverOriginalConnect) {
+ # Only the disposable run copy changes language; the deliverable remains zh.
+ $runSettings = Join-Path $run 'data/settings.json'
+ $settings = [IO.File]::ReadAllText($runSettings) | ConvertFrom-Json
+ $settings.lang = 'en'
+ [IO.File]::WriteAllText($runSettings, ($settings | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+}
 $codexHome = Join-Path $homeRoot '.codex'; [void](New-Item -ItemType Directory -Path $codexHome)
 $fixture = Join-Path $codexHome 'config.toml'
 [IO.File]::WriteAllText($fixture, "model = `"native-gui-fixture`"`n", [Text.UTF8Encoding]::new($false))
@@ -115,6 +132,18 @@ try {
  try { if (-not [NativeMagpieCapture]::PrintWindow($process.MainWindowHandle,$dc,2)) { throw 'Window capture failed.' } }
  finally { $graphics.ReleaseHdc($dc); $graphics.Dispose() }
  try { $bitmap.Save((Join-Path $evidence 'original-magpie.png'),[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+ if ($DiscoverOriginalConnect) {
+  $discovery = $null
+  try {
+   $discovery = Invoke-OriginalConnectDiscovery -OwnedProcess $process -ExpectedExecutable $psi.FileName
+  } catch {
+   # Fixed failure metadata only; no worker exception/UI text is published.
+   $discovery = [ordered]@{schema=1;scope='original-magpie-controls-read-only';status='blocked';reason='supervisor';
+    nodes=0;counts=$null;actions=0;connectVerified=$false;desktopVerified=$false}
+  }
+  $discovery | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $evidence 'original-connect-discovery.json') -Encoding UTF8
+  if ($discovery.status -cne 'observed') { throw 'Read-only original control discovery blocked; see fixed report.' }
+ }
 } finally {
  if ($started -and -not $process.HasExited) {
   [void]$process.CloseMainWindow()

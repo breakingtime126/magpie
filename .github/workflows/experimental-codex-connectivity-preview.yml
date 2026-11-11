@@ -25,6 +25,7 @@ on:
       - internal/provider/**
       - internal/gateway/**
       - build/package-native-magpie-windows.ps1
+      - build/original-connect-discovery*.ps1
       - build/mutate-bridge-shutdown-order.py
       - build/test-native-preview-official.ps1
       - .github/workflows/experimental-codex-connectivity-preview.yml
@@ -127,7 +128,10 @@ jobs:
           cache: false
       - name: Build original portable GUI with native Codex protection and capture its window
         shell: pwsh
-        run: ./build/package-native-magpie-windows.ps1
+        env:
+          ORIGINAL_CONNECT_DISCOVERY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-discovery-v1]') }}
+          MAGPIE_ORIGINAL_CONNECT_DISCOVERY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-discovery-v1]') && 'read-only-v1' || '' }}
+        run: ./build/package-native-magpie-windows.ps1 -DiscoverOriginalConnect:($env:ORIGINAL_CONNECT_DISCOVERY -ceq 'true')
       - name: Upload the original Magpie portable experimental package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
