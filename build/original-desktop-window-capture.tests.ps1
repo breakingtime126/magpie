@@ -2,15 +2,32 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1')
 function Assert($Condition,[string]$Message) { if (-not $Condition) { throw "FAIL: $Message" } }
 function Reject($Action,[string]$Message) { $failed=$false;try { & $Action } catch { $failed=$true };Assert $failed $Message }
+# Desktop PowerShell Remove-Item can prompt for a directory symlink even when
+# only the link is intended. Never recurse through this fixture's link target.
+function Remove-TestDirectoryLink([string]$Path) {
+    try { $attributes=[IO.File]::GetAttributes($Path) }
+    catch [IO.FileNotFoundException] { return }
+    catch [IO.DirectoryNotFoundException] { return }
+    Assert (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'cleanup refuses a non-link directory'
+    [IO.Directory]::Delete($Path,$false)
+    Assert (-not [IO.Directory]::Exists($Path)) 'directory link removed without recursion'
+}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('capture-tests-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
+$link=Join-Path $root 'linked'
 try {
     Reject { Assert-OriginalCaptureContext } 'production gate rejects ordinary local use'
     Reject { Assert-OriginalCaptureRegularPath '../relative' } 'relative path refused'
-    $link=Join-Path $root 'linked'
-    New-Item -ItemType SymbolicLink -Path $link -Target $root | Out-Null
-    Reject { Assert-OriginalCaptureRegularPath (Join-Path $link 'new.png') } 'linked ancestor refused'
-    Remove-Item -LiteralPath $link
+    $linkTarget=Join-Path $root 'link-target'
+    [void][IO.Directory]::CreateDirectory($linkTarget)
+    $sentinel=Join-Path $linkTarget 'preserve.txt'
+    [IO.File]::WriteAllText($sentinel,'original target bytes')
+    Reject { Remove-TestDirectoryLink $linkTarget } 'link cleanup refuses ordinary target directory'
+    New-Item -ItemType SymbolicLink -Path $link -Target $linkTarget | Out-Null
+    try {
+        Reject { Assert-OriginalCaptureRegularPath (Join-Path $link 'new.png') } 'linked ancestor refused'
+    } finally { Remove-TestDirectoryLink $link }
+    Assert ([IO.Directory]::Exists($linkTarget) -and [IO.File]::ReadAllText($sentinel) -ceq 'original target bytes') 'link cleanup preserves target and original bytes'
     # Real owned child supervisor, offline. No desktop or target process exists.
     function New-TestStart([string]$Code) {
         $s=[Diagnostics.ProcessStartInfo]::new();$s.FileName=(Get-Process -Id $PID).Path
@@ -90,4 +107,9 @@ try {
     $r=Invoke-OriginalDesktopWindowCapture -OwnedProcess (Get-Process -Id $PID) -PrivateDirectory $script:fixture
     Assert ($r.status -eq 'blocked' -and -not (Test-Path (Join-Path $script:fixture 'window-capture.attempt'))) 'saved-report attestation required before attempt'
     'PASS: capture context, ancestor links, real bounded children, identity drift, publication, no retry and no overwrite'
-} finally { Remove-Item -LiteralPath $root -Recurse -Force }
+} finally {
+    # If unlinking fails, stop here rather than letting Desktop's recursive cleanup
+    # encounter a surviving directory link. The private fixture may be retained.
+    Remove-TestDirectoryLink $link
+    Remove-Item -LiteralPath $root -Recurse -Force
+}
