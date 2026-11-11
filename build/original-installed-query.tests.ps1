@@ -21,6 +21,70 @@ Assert ($parseErrors.Count -eq 0) 'query parses'
 $definitions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$true))
 Assert ($definitions.Count -eq 2) 'only fixed query helpers'
 foreach ($definition in $definitions) { . ([scriptblock]::Create($definition.Extent.Text)) }
+# Test-only observations, never admission criteria. No metadata values are printed.
+function Get-FixedModuleMetadata([string]$Label,[object[]]$Modules) {
+    $moduleName='';$assemblyName='';$commands=@()
+    switch -CaseSensitive ($Label) {
+        management { $moduleName='Microsoft.PowerShell.Management';$assemblyName='Microsoft.PowerShell.Commands.Management';$commands=@('Join-Path','Test-Path') }
+        utility { $moduleName='Microsoft.PowerShell.Utility';$assemblyName='Microsoft.PowerShell.Commands.Utility';$commands=@('ConvertTo-Json') }
+        appx { $moduleName='Appx';$assemblyName='Microsoft.Windows.Appx.PackageManager.Commands';$commands=@('Get-AppxPackage') }
+        default { throw 'invalid fixed metadata label' }
+    }
+    $count='zero';if ($Modules.Count -eq 1) {$count='one'} elseif ($Modules.Count -gt 1) {$count='multiple'}
+    $type='unknown';$name='unknown';$path='unknown';$base='unknown';$exports='unknown';$assembly='unknown';$assemblyPath='unknown'
+    if ($Modules.Count -eq 1) {
+        $entry=$Modules[0]
+        $type='other'
+        if ($entry -is [Management.Automation.PSModuleInfo]) {
+            $type='module';$name=if ($entry.Name -ceq $moduleName) {'expected'} else {'other'}
+            try {
+                $moduleRoot=[IO.Path]::Combine($PSHOME,'Modules',$moduleName)
+                $manifest=[IO.Path]::Combine($moduleRoot,$moduleName+'.psd1')
+                $binary=[IO.Path]::Combine($PSHOME,$assemblyName+'.dll')
+                $moduleBinary=[IO.Path]::Combine($moduleRoot,$assemblyName+'.dll')
+                $pathValue=$entry.Path
+                $path='other'
+                if ([string]::IsNullOrEmpty($pathValue)) {$path='empty'}
+                elseif ([string]::Equals($pathValue,$assemblyName,[StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($pathValue,$assemblyName+'.dll',[StringComparison]::OrdinalIgnoreCase)) {$path='bare-known-assembly'}
+                elseif ([IO.Path]::IsPathRooted($pathValue)) {
+                    if ([string]::Equals([IO.Path]::GetFullPath($pathValue),$manifest,[StringComparison]::OrdinalIgnoreCase)) {$path='manifest'}
+                    elseif ([string]::Equals([IO.Path]::GetFullPath($pathValue),$binary,[StringComparison]::OrdinalIgnoreCase)) {$path='pshome-binary'}
+                    elseif ([string]::Equals([IO.Path]::GetFullPath($pathValue),$moduleBinary,[StringComparison]::OrdinalIgnoreCase)) {$path='module-binary'}
+                }
+                $base='other'
+                if ([string]::IsNullOrEmpty($entry.ModuleBase)) {$base='empty'}
+                elseif ([string]::Equals([IO.Path]::GetFullPath($entry.ModuleBase),$moduleRoot,[StringComparison]::OrdinalIgnoreCase)) {$base='module-root'}
+                elseif ([string]::Equals([IO.Path]::GetFullPath($entry.ModuleBase),$PSHOME,[StringComparison]::OrdinalIgnoreCase)) {$base='pshome'}
+                $exports='expected';$assembly='expected';$assemblyPath='match'
+                foreach ($commandName in $commands) {
+                    $command=$entry.ExportedCommands[$commandName]
+                    if ($command -isnot [Management.Automation.CmdletInfo] -or $command.Name -cne $commandName -or $command.CommandType -ne [Management.Automation.CommandTypes]::Cmdlet) {
+                        $exports='other';$assembly='unknown';$assemblyPath='unknown';break
+                    }
+                    $commandAssembly=$command.ImplementingType.Assembly
+                    if ($commandAssembly.GetName().Name -cne $assemblyName) {$assembly='other'}
+                    if ([string]::IsNullOrEmpty($pathValue) -or -not [IO.Path]::IsPathRooted($pathValue) -or -not [string]::Equals([IO.Path]::GetFullPath($pathValue),$commandAssembly.Location,[StringComparison]::OrdinalIgnoreCase)) {$assemblyPath='different'}
+                }
+            } catch { $path='unknown';$base='unknown';$exports='unknown';$assembly='unknown';$assemblyPath='unknown' }
+        }
+    }
+    return "fixed-module-metadata-v1 module=$Label count=$count type=$type name=$name path=$path base=$base exports=$exports assembly-name=$assembly export-assembly-path=$assemblyPath"
+}
+# Bound schema/redaction fixtures run on both hosts before actual metadata imports.
+$emptyMetadata=Get-FixedModuleMetadata 'management' @()
+Assert ($emptyMetadata -ceq 'fixed-module-metadata-v1 module=management count=zero type=unknown name=unknown path=unknown base=unknown exports=unknown assembly-name=unknown export-assembly-path=unknown') 'empty metadata stays unknown'
+$untypedMetadata=Get-FixedModuleMetadata 'utility' @([pscustomobject]@{Path='PRIVATE-SENTINEL';Name='PRIVATE-SENTINEL'})
+Assert ($untypedMetadata -notmatch 'PRIVATE-SENTINEL' -and $untypedMetadata.Contains('type=other name=unknown')) 'untyped metadata never exposes arbitrary fields'
+# All fixed imports are observed before the unchanged strict helper can fail.
+$metadataSpecs=@(@('management','Microsoft.PowerShell.Management'),@('utility','Microsoft.PowerShell.Utility'))
+if ($PSVersionTable.PSEdition -ceq 'Desktop') {$metadataSpecs+=,@('appx','Appx')}
+foreach ($spec in $metadataSpecs) {
+    try {
+        $metadataManifest=[IO.Path]::Combine($PSHOME,'Modules',$spec[1],$spec[1]+'.psd1')
+        $metadataModules=@(Microsoft.PowerShell.Core\Import-Module -Name $metadataManifest -PassThru -ErrorAction Stop 3>$null 4>$null 5>$null 6>$null)
+        Write-Output (Get-FixedModuleMetadata $spec[0] $metadataModules)
+    } catch { Write-Output ('fixed-module-metadata-v1 module='+$spec[0]+' import=unavailable') }
+}
 # Real official module metadata only; neither helper executes an exported query.
 $management=Import-QueryModule 'Microsoft.PowerShell.Management'
 $utility=Import-QueryModule 'Microsoft.PowerShell.Utility'
