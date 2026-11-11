@@ -2,6 +2,57 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1')
 function Assert($Condition,[string]$Message) { if (-not $Condition) { throw "FAIL: $Message" } }
 function Reject($Action,[string]$Message) { $failed=$false;try { & $Action } catch { $failed=$true };Assert $failed $Message }
+# Fixed fixture-only evidence. Never publish child output, error text or paths.
+function Get-TestCompileFacts($Child) {
+    $phase='unverified'
+    $prefix="probe-entered`nsource-loaded`n"
+    if ($Child.Output -ceq '') { $phase='not-observed' }
+    elseif ($Child.Output -ceq "probe-entered`n") { $phase='probe-entered' }
+    elseif ($Child.Output -ceq $prefix) { $phase='source-loaded' }
+    elseif ($Child.Output -ceq "probe-entered`nsource-error") { $phase='source-error' }
+    else {
+        foreach ($label in @('native-ready','initialization-error','type-missing','compiler-error',
+            'compiler-error-cs0012','compiler-error-cs0234','compiler-error-cs0246','compiler-error-cs0103')) {
+            if ($Child.Output -ceq ($prefix+$label)) { $phase=$label;break }
+        }
+    }
+    $exitZero=$Child.Exited -and $Child.ExitCode -eq 0
+    $outputExact=$Child.Output -ceq ($prefix+'native-ready')
+    $category=if ($Child.TimedOut) { 'deadline' } elseif ($Child.Overflow) { 'overflow-or-read-error' }
+        elseif ($Child.ErrorOutput) { 'stderr-present' } elseif (-not $Child.Drained) { 'streams-incomplete' }
+        elseif (-not $exitZero) { 'exit-not-zero' } elseif (-not $outputExact) { 'output-invalid' } else { 'none' }
+    return [pscustomobject][ordered]@{category=$category;phase=$phase;deadline=[bool]$Child.TimedOut;
+        overflowOrReadError=[bool]$Child.Overflow;stderrPresent=[bool]$Child.ErrorOutput;
+        streamsComplete=[bool]$Child.Drained;exitConfirmed=[bool]$Child.Exited;exitZero=[bool]$exitZero;outputExact=[bool]$outputExact}
+}
+function New-TestCompileCode([string]$NativeScript) {
+    $code=@'
+$ErrorActionPreference='Stop'
+$stage='source'
+try {
+    [Console]::Out.Write("probe-entered`n");[Console]::Out.Flush()
+    . '__NATIVE_SCRIPT__'
+    [Console]::Out.Write("source-loaded`n");[Console]::Out.Flush()
+    $stage='compile'
+    Initialize-OriginalCaptureNative
+    if (-not ('OriginalCapture.Native' -as [type])) { [Console]::Out.Write('type-missing');exit 1 }
+    [Console]::Out.Write('native-ready');exit 0
+} catch {
+    $label=if ($stage -eq 'source') { 'source-error' } else { 'initialization-error' }
+    $id=($_.FullyQualifiedErrorId -split ',')[0]
+    if ($id -cin @('SOURCE_CODE_ERROR','COMPILER_ERRORS')) {
+        $label='compiler-error'
+        # Read privately, emit only one of these fixed known compiler labels.
+        $details=[string]$_.Exception.Message+' '+[string]$_.ErrorDetails.Message
+        foreach ($code in @('CS0012','CS0234','CS0246','CS0103')) {
+            if ($details -cmatch ('\b'+$code+'\b')) { $label='compiler-error-'+$code.ToLowerInvariant();break }
+        }
+    }
+    [Console]::Out.Write($label);exit 1
+}
+'@
+    return $code.Replace('__NATIVE_SCRIPT__',$NativeScript.Replace("'","''"))
+}
 # Desktop PowerShell Remove-Item can prompt for a directory symlink even when
 # only the link is intended. Never recurse through this fixture's link target.
 function Remove-TestDirectoryLink([string]$Path) {
@@ -16,6 +67,24 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('capture-tests-'+[guid]::NewGuid().T
 [void][IO.Directory]::CreateDirectory($root)
 $link=Join-Path $root 'linked'
 try {
+    $compileFactsInput=@{Output="probe-entered`nsource-loaded`nnative-ready";TimedOut=$false;
+        Overflow=$false;ErrorOutput=$false;Drained=$true;Exited=$true;ExitCode=0}
+    Assert ((Get-TestCompileFacts $compileFactsInput).category -eq 'none') 'compile facts accept only exact healthy completion'
+    foreach ($case in @(@('TimedOut',$true,'deadline'),@('Overflow',$true,'overflow-or-read-error'),
+        @('ErrorOutput',$true,'stderr-present'),@('Drained',$false,'streams-incomplete'),
+        @('ExitCode',1,'exit-not-zero'),@('Output','private arbitrary text','output-invalid'))) {
+        $changed=$compileFactsInput.Clone();$changed[$case[0]]=$case[1]
+        $facts=Get-TestCompileFacts $changed
+        Assert ($facts.category -eq $case[2]) 'compile evidence classifies exact failure flag'
+        Assert (($facts | ConvertTo-Json -Compress) -notmatch 'private arbitrary text') 'compile facts never echo child text'
+    }
+    $changed=$compileFactsInput.Clone();$changed.Output="probe-entered`nsource-loaded`ncompiler-error-cs0246";$changed.ExitCode=1
+    Assert ((Get-TestCompileFacts $changed).phase -eq 'compiler-error-cs0246') 'compiler evidence preserves only fixed category'
+    $changed.Output="probe-entered`nsource-loaded`nnative-ready`nextra"
+    Assert ((Get-TestCompileFacts $changed).phase -eq 'unverified') 'extra compile output stays unverified'
+    $probeTokens=$null;$probeErrors=$null
+    [void][Management.Automation.Language.Parser]::ParseInput((New-TestCompileCode "fixture's native.ps1"),[ref]$probeTokens,[ref]$probeErrors)
+    Assert ($probeErrors.Count -eq 0) 'compile probe code parses with quoted source path'
     Reject { Assert-OriginalCaptureContext } 'production gate rejects ordinary local use'
     Reject { Assert-OriginalCaptureRegularPath '../relative' } 'relative path refused'
     $linkTarget=Join-Path $root 'link-target'
@@ -36,6 +105,23 @@ try {
     }
     . (Join-Path $PSScriptRoot 'original-desktop-window-capture-supervisor.ps1')
     Initialize-OriginalCaptureSupervisor
+    # Exercise caught compiler/source failures with a real bounded child and no
+    # compiler/native window invocation. Raw fixture error text must not escape.
+    $fakeNative=Join-Path $root 'compile-failure.ps1'
+    [IO.File]::WriteAllText($fakeNative,"function Initialize-OriginalCaptureNative { throw [Management.Automation.ErrorRecord]::new([Exception]::new('CS0246 private fixture path'),'SOURCE_CODE_ERROR',[Management.Automation.ErrorCategory]::InvalidData,`$null) }")
+    foreach ($probeCase in @(@($fakeNative,'compiler-error-cs0246'),@((Join-Path $root 'missing-native.ps1'),'source-error'))) {
+        $probeChild=[OriginalCaptureSupervisor.BoundedProcess]::new((New-TestStart (New-TestCompileCode $probeCase[0])),256,8000)
+        try {
+            $probeChild.CloseInput()
+            Assert ($probeChild.Wait(8000) -and $probeChild.Exited) 'fixed error probe exits within budget'
+            $probeWatch=[Diagnostics.Stopwatch]::StartNew()
+            while (-not $probeChild.Drained -and $probeWatch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
+            $probeFacts=Get-TestCompileFacts $probeChild
+            Assert ($probeFacts.phase -ceq $probeCase[1] -and $probeFacts.category -eq 'exit-not-zero' -and
+                -not $probeFacts.stderrPresent -and $probeFacts.streamsComplete) 'caught probe failure emits fixed category and nonzero exit'
+            Assert ($probeChild.Output -notmatch 'private fixture path') 'caught compile error text never leaves child'
+        } finally { $probeChild.Dispose() }
+    }
     $associated=[OriginalCaptureSupervisor.BoundedProcess]::TestFailureDuringStart((New-TestStart 'Start-Sleep -Seconds 60'),$true)
     Assert ($associated[0] -and $associated[1]) 'throwing start with retained association is stopped and exit confirmed'
     $unassociated=[OriginalCaptureSupervisor.BoundedProcess]::TestFailureDuringStart((New-TestStart 'Start-Sleep -Seconds 60'),$false)
@@ -78,17 +164,22 @@ try {
         # process/window and no Capture call. This isolates startup plus Add-Type.
         # It inherits fixture environment, not the live child environment allowlist.
         Assert ($PSVersionTable.PSEdition -eq 'Desktop') 'Windows fixture uses production Desktop host'
-        $nativeScript=(Join-Path $PSScriptRoot 'original-desktop-window-capture-native.ps1').Replace("'","''")
-        $compileCode=". '$nativeScript'; Initialize-OriginalCaptureNative; [Console]::Out.Write('native-ready')"
+        $nativeScript=Join-Path $PSScriptRoot 'original-desktop-window-capture-native.ps1'
+        $compileCode=New-TestCompileCode $nativeScript
         $compileWatch=[Diagnostics.Stopwatch]::StartNew()
         $compileChild=[OriginalCaptureSupervisor.BoundedProcess]::new((New-TestStart $compileCode),256,8000)
         try {
             $compileChild.CloseInput()
-            Assert ($compileChild.Wait(8000) -and $compileChild.Exited) 'native startup/compile child exits within existing budget'
+            $compileWaited=$compileChild.Wait(8000)
+            if (-not $compileWaited -or -not $compileChild.Exited) {
+                'COMPILE_PROBE '+((Get-TestCompileFacts $compileChild) | ConvertTo-Json -Compress)
+                Assert $false 'native startup/compile child exits within existing budget'
+            }
             $drainWatch=[Diagnostics.Stopwatch]::StartNew()
             while (-not $compileChild.Drained -and $drainWatch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
-            Assert (-not $compileChild.TimedOut -and -not $compileChild.Overflow -and -not $compileChild.ErrorOutput -and
-                $compileChild.Drained -and $compileChild.ExitCode -eq 0 -and $compileChild.Output -ceq 'native-ready') 'native startup/compile succeeds without window access'
+            $compileFacts=Get-TestCompileFacts $compileChild
+            'COMPILE_PROBE '+($compileFacts | ConvertTo-Json -Compress)
+            Assert ($compileFacts.category -ceq 'none') 'native startup/compile succeeds without window access'
             "PASS: Windows Desktop startup/native compile elapsedMs=$($compileWatch.ElapsedMilliseconds)"
         } finally { $compileChild.Dispose() }
         Initialize-OriginalCaptureNative
