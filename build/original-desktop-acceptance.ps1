@@ -7,7 +7,8 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-desktop-package.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-sequence.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-quit-discovery.ps1')
-. (Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1')
+$stageDiagnosticsOnly=$env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS -ceq 'stage-diagnostics-v1'
+if (-not $stageDiagnosticsOnly) { . (Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1') }
 . (Join-Path $PSScriptRoot 'original-connect-preconditions.ps1')
 . (Join-Path $PSScriptRoot 'original-connect-stages.ps1')
 function Assert-AcceptanceContext {
@@ -20,6 +21,8 @@ function Assert-AcceptanceContext {
     if ($LASTEXITCODE -ne 0 -or $head -cne $SourceCommit) { throw 'Source mismatch.' }
     $message=(& git log -1 --format=%B) -join "`n"
     if ($LASTEXITCODE -ne 0 -or -not $message.Contains('[original-connect-desktop-v1]')) { throw 'Acceptance marker required.' }
+    if ($env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS -and (-not $stageDiagnosticsOnly -or -not $message.Contains('[original-connect-stages-only-v1]'))) { throw 'Stage diagnostics marker required.' }
+    if ($message.Contains('[original-connect-stages-only-v1]') -ne $stageDiagnosticsOnly) { throw 'Stage diagnostics mode mismatch.' }
     foreach ($path in @($PackageDirectory,$EvidenceDirectory)) { Assert-OriginalRegularPath $path }
     if ($PackageDirectory -cne (Join-Path $env:RUNNER_TEMP 'native-magpie-package') -or
         $EvidenceDirectory -cne (Join-Path $env:RUNNER_TEMP 'native-magpie-evidence') -or
@@ -102,7 +105,7 @@ namespace OriginalAcceptanceCapture {
     } finally { $bitmap.Dispose() }
 }
 $report=[ordered]@{schema=1;scope='original-magpie-connect-desktop-restore';sourceCommit=$SourceCommit;
-    status='blocked';stage='context';preparation=$null;package=$null;sequence=$null;images=$null;diagnosticCapture=$null;trayDiscovery=$null;connectPreconditions=$null;connectStages=$null;
+    status='blocked';diagnosticOnly=[bool]$stageDiagnosticsOnly;stage='context';preparation=$null;package=$null;sequence=$null;images=$null;diagnosticCapture=$null;trayDiscovery=$null;connectPreconditions=$null;connectStages=$null;
     originalWindowCaptured=$false;desktopWindowCaptured=$false;adapterImageObserved=$false;
     selectionRestored=$false;journalRemoved=$false;ownedRootExitsConfirmed=$false;descendantExitVerified=$false;cleanupScope='retained-process-roots-only';preserveRecovery=$true;
     nativeHomeInitiallyEmpty=$false;realAccountsUsed=$false;providerTurnAttempted=$false;
@@ -214,7 +217,7 @@ try {
     Save-AcceptanceReport
     # Diagnostics follow the completed recovery checks and saved report. Neither
     # result changes uncertainty, cleanup authority, or the original failure.
-    $diagnostics=Get-AcceptanceDiagnostics -CaptureFailure ($report.sequence.status -cne 'verified') -Capture {
+    $diagnostics=Get-AcceptanceDiagnostics -CaptureFailure (-not $stageDiagnosticsOnly -and $report.sequence.status -cne 'verified') -Capture {
         Invoke-OriginalDesktopWindowCapture -OwnedProcess $process -ExpectedExecutable $exe -PrivateDirectory $root -EvidenceDirectory $EvidenceDirectory -SequenceReportSaved
     } -Tray {
         Invoke-OriginalQuitDiscovery -OwnedProcess $process -ExpectedExecutable $exe
@@ -224,17 +227,19 @@ try {
     $report.diagnosticCapture=$diagnostics.capture;$report.trayDiscovery=$diagnostics.tray;$report.connectPreconditions=$diagnostics.preconditions
     Save-AcceptanceReport
     if ($report.sequence.status -cne 'verified') { throw 'Original transaction not verified.' }
-    # Capture only after recovery. A slow/failing screenshot must never postpone
-    # the original Restore action or stand in for its registry/journal readback.
-    $report.stage='owned-window-evidence'
-    Save-AcceptanceWindow $process $exe $ticks (Join-Path $EvidenceDirectory 'original-magpie-restored.png')
-    $report.originalWindowCaptured=$true
-    if ($context.Evidence.activated) {
-        Save-AcceptanceWindow $context.ActivationProcess $context.DesktopExecutable $context.ActivationCreatedTicks (Join-Path $EvidenceDirectory 'official-desktop-after-restore.png')
-        $report.desktopWindowCaptured=$true
+    if (-not $stageDiagnosticsOnly) {
+        # Capture only after recovery. A slow/failing screenshot must never postpone
+        # the original Restore action or stand in for its registry/journal readback.
+        $report.stage='owned-window-evidence'
+        Save-AcceptanceWindow $process $exe $ticks (Join-Path $EvidenceDirectory 'original-magpie-restored.png')
+        $report.originalWindowCaptured=$true
+        if ($context.Evidence.activated) {
+            Save-AcceptanceWindow $context.ActivationProcess $context.DesktopExecutable $context.ActivationCreatedTicks (Join-Path $EvidenceDirectory 'official-desktop-after-restore.png')
+            $report.desktopWindowCaptured=$true
+        }
+        if (-not $report.adapterImageObserved) { throw 'Desktop activation did not establish adapter image observation.' }
+        $report.status='verified';$report.stage='complete'
     }
-    if (-not $report.adapterImageObserved) { throw 'Desktop activation did not establish adapter image observation.' }
-    $report.status='verified';$report.stage='complete'
 } catch {
     # Report fixed stages only, never arbitrary UI text, paths, child stderr,
     # profile data, credentials or full process command lines.
@@ -260,6 +265,7 @@ try {
     if ($null -ne $process) { $process.Dispose() }
     if ($null -ne $context) { try { Close-OriginalDesktopPackage $context } catch { $cleanupError=$true } }
     if ($cleanupError) { $report.status='blocked';$report.stage='owned-cleanup' }
+    if ($stageDiagnosticsOnly) { $report.status='diagnostic-only' }
     Save-AcceptanceReport
 }
 if ($report.status -cne 'verified') { throw 'Original Desktop acceptance blocked; see fixed stage report.' }

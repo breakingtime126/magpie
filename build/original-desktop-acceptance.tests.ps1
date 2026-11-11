@@ -83,3 +83,51 @@ $workflow=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\.github\workflows\
 Assert ($workflow.Contains('[original-connect-desktop-v1]') -and $workflow.Contains('MAGPIE_ORIGINAL_DESKTOP_ACCEPTANCE')) 'workflow action opt-in'
 Assert (-not $workflow.Contains('secrets.')) 'acceptance workflow has no provider secrets'
 Write-Output 'ORIGINAL_DESKTOP_ACCEPTANCE_CALLER_TESTS_PASSED'
+# Diagnostic-only mode has no capture calls and cannot become full acceptance.
+$callerText=$caller.Extent.Text
+Assert ($callerText.Contains("'[original-connect-stages-only-v1]'")) 'diagnostic mode requires exact source marker'
+Assert ($callerText.Contains("'stage-diagnostics-v1'")) 'diagnostic mode requires exact environment value'
+$script:diagnosticCaptureCalls=0
+function Save-AcceptanceWindow { $script:diagnosticCaptureCalls++;throw 'capture must not run' }
+$stageDiagnosticsOnly=$true
+$report=@{sequence=@{status='verified'};status='blocked'}
+$successGuard=@($caller.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if (-not $stageDiagnosticsOnly)') -and $n.Extent.Text.Contains('Save-AcceptanceWindow')},$true))
+Assert ($successGuard.Count -eq 1) 'all successful captures have diagnostic-mode guard'
+Invoke-Expression $successGuard[0].Extent.Text
+Assert ($script:diagnosticCaptureCalls -eq 0 -and $report.status -cne 'verified') 'diagnostic mode never captures successful windows or verifies acceptance'
+foreach ($sequenceStatus in @('verified','uncertain','blocked')) {
+    $report.sequence.status=$sequenceStatus
+    $result=Get-AcceptanceDiagnostics (-not $stageDiagnosticsOnly -and $report.sequence.status -cne 'verified') {throw 'failure capture must not run'} {return @{status='observed'}} {return @{status='snapshot'}}
+    Assert ($null -eq $result.capture) 'diagnostic mode never invokes failure capture'
+}
+$finalGuard=@($caller.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -ceq "if (`$stageDiagnosticsOnly) { `$report.status='diagnostic-only' }"},$true))
+Assert ($finalGuard.Count -eq 1) 'final report unconditionally marks diagnostic-only'
+$report.status='verified';Invoke-Expression $finalGuard[0].Extent.Text
+Assert ($report.status -ceq 'diagnostic-only') 'even verified transaction cannot enable full acceptance'
+Assert ($callerText.Contains("if (-not `$stageDiagnosticsOnly) { . (Join-Path `$PSScriptRoot 'original-desktop-window-capture.ps1') }")) 'diagnostic mode does not import capture code'
+Assert ($package.Extent.Text.Contains("if (`$env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS) { throw 'Stage diagnostics cannot publish an acceptance package.' }")) 'packager cannot succeed in diagnostic mode'
+$workflow=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '../.github/workflows/experimental-codex-connectivity-preview.yml'))
+Assert ($workflow.Contains("if: success() && !contains(github.event.head_commit.message, '[original-connect-stages-only-v1]')")) 'diagnostic package upload explicitly prohibited'
+$independent=$workflow.Substring($workflow.IndexOf('  diagnostic-capture-fixtures:'))
+Assert ($independent.Contains('original-desktop-window-capture.tests.ps1') -and $independent.Contains('original-desktop-window-capture.mutations.ps1')) 'independent capture job reports genuine fixtures'
+Assert ($workflow -notmatch '(?m)^\s+needs:') 'capture failure cannot gate or enable transaction job'
+$modeGuards=@($caller.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and ($n.Extent.Text.Contains("throw 'Stage diagnostics marker required.'") -or $n.Extent.Text.Contains("throw 'Stage diagnostics mode mismatch.'"))},$true))
+Assert ($modeGuards.Count -eq 2) 'exact two coordinator mode guards'
+$savedMode=$env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS
+try {
+    foreach ($case in @(
+        @{env='';marker=$false;allow=$true},
+        @{env='stage-diagnostics-v1';marker=$true;allow=$true},
+        @{env='stage-diagnostics-v1';marker=$false;allow=$false},
+        @{env='';marker=$true;allow=$false},
+        @{env='wrong';marker=$true;allow=$false}
+    )) {
+        $env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS=$case.env
+        $stageDiagnosticsOnly=$case.env -ceq 'stage-diagnostics-v1'
+        $message='[original-connect-desktop-v1]';if ($case.marker) {$message+=' [original-connect-stages-only-v1]'}
+        $allowed=$true
+        try { foreach ($guard in $modeGuards) {Invoke-Expression $guard.Extent.Text} } catch {$allowed=$false}
+        Assert ($allowed -eq $case.allow) 'diagnostic marker and environment must match'
+    }
+} finally {$env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS=$savedMode}
+Write-Output 'STAGE_DIAGNOSTICS_ONLY_CALLER_TESTS_PASSED'

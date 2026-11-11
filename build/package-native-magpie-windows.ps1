@@ -17,6 +17,8 @@ if ($AcceptOriginalConnect) {
  $message = (& git log -1 --format=%B) -join "`n"; Assert-Exit 'Read acceptance opt-in'
  if (-not $message.Contains('[original-connect-desktop-v1]')) { throw 'Original acceptance commit marker required.' }
 } elseif ($env:MAGPIE_ORIGINAL_CONNECT_ACTION -or $env:MAGPIE_ORIGINAL_DESKTOP_ACCEPTANCE) { throw 'Acceptance marker without explicit option.' }
+if ($env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS -and (-not $AcceptOriginalConnect -or $env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS -cne 'stage-diagnostics-v1' -or -not $message.Contains('[original-connect-stages-only-v1]'))) { throw 'Exact stage diagnostics opt-in required.' }
+if ($AcceptOriginalConnect -and ($message.Contains('[original-connect-stages-only-v1]') -ne ($env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS -ceq 'stage-diagnostics-v1'))) { throw 'Stage diagnostics mode mismatch.' }
 if ($DiscoverOriginalConnect) {
  if ($env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:GITHUB_EVENT_NAME -cne 'push' -or
      $env:MAGPIE_ORIGINAL_CONNECT_DISCOVERY -cne 'read-only-v1') { throw 'Explicit hosted discovery context required.' }
@@ -89,6 +91,7 @@ if ($AcceptOriginalConnect) {
  # No policy override or environment shortcut; a policy refusal remains blocked.
  $desktop = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
  & $desktop -NoLogo -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'original-desktop-acceptance.ps1') -PackageDirectory $package -EvidenceDirectory $evidence -SourceCommit $head
+ if ($env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS) { throw 'Stage diagnostics cannot publish an acceptance package.' }
  Assert-Exit 'Original UI Connect, official activation and original recovery'
  Get-ChildItem -LiteralPath $package -File -Recurse -Force | Sort-Object FullName | ForEach-Object {
   ((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $_.FullName.Substring($package.Length + 1).Replace('\','/'))

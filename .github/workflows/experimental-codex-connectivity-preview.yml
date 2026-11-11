@@ -162,6 +162,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Owned tray discovery fixtures failed.' }
           & pwsh -NoProfile -NonInteractive -File build/original-desktop-quit-discovery.mutations.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Owned tray discovery mutations failed.' }
+      - name: Require capture fixtures for full acceptance
+        if: contains(github.event.head_commit.message, '[original-connect-desktop-v1]') && !contains(github.event.head_commit.message, '[original-connect-stages-only-v1]')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
           & powershell -NoProfile -NonInteractive -File build/original-desktop-window-capture.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Owned diagnostic capture fixtures failed.' }
           & powershell -NoProfile -NonInteractive -File build/original-desktop-window-capture.mutations.ps1
@@ -169,6 +174,7 @@ jobs:
       - name: Build original portable GUI with native Codex protection and capture its window
         shell: pwsh
         env:
+          MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-stages-only-v1]') && 'stage-diagnostics-v1' || '' }}
           ORIGINAL_CONNECT_DISCOVERY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-discovery-v1]') }}
           ORIGINAL_CONNECT_ACCEPTANCE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-desktop-v1]') }}
           MAGPIE_ORIGINAL_CONNECT_ACTION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-desktop-v1]') && 'original-ui-v1' || '' }}
@@ -178,6 +184,7 @@ jobs:
           MAGPIE_ORIGINAL_CONNECT_DISCOVERY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-discovery-v1]') && 'read-only-v1' || '' }}
         run: ./build/package-native-magpie-windows.ps1 -DiscoverOriginalConnect:($env:ORIGINAL_CONNECT_DISCOVERY -ceq 'true') -AcceptOriginalConnect:($env:ORIGINAL_CONNECT_ACCEPTANCE -ceq 'true')
       - name: Upload the original Magpie portable experimental package
+        if: success() && !contains(github.event.head_commit.message, '[original-connect-stages-only-v1]')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: Magpie-Native-Codex-Experimental-${{ github.sha }}
@@ -193,6 +200,38 @@ jobs:
           path: ${{ runner.temp }}/native-magpie-evidence
           if-no-files-found: warn
           retention-days: 7
+
+  diagnostic-capture-fixtures:
+    if: github.event_name == 'push' && github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && contains(github.event.head_commit.message, '[original-connect-desktop-v1]') && contains(github.event.head_commit.message, '[original-connect-stages-only-v1]')
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run independent capture fixtures
+        id: capture_fixtures
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & powershell -NoProfile -NonInteractive -File build/original-desktop-window-capture.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Independent capture fixtures failed.' }
+      - name: Run independent capture mutations
+        id: capture_mutations
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & powershell -NoProfile -NonInteractive -File build/original-desktop-window-capture.mutations.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Independent capture mutations failed.' }
+      - name: Require honest independent capture results
+        if: always()
+        shell: pwsh
+        env:
+          CAPTURE_FIXTURES: ${{ steps.capture_fixtures.outcome }}
+          CAPTURE_MUTATIONS: ${{ steps.capture_mutations.outcome }}
+        run: |
+          if ($env:CAPTURE_FIXTURES -cne 'success' -or $env:CAPTURE_MUTATIONS -cne 'success') { throw 'Independent capture checks failed; transaction remains diagnostic-only.' }
 
   official-native-text:
     if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && (contains(github.event.head_commit.message, '[native-preview-text-v1]') || contains(github.event.head_commit.message, '[native-supplier-catalog-v1]'))

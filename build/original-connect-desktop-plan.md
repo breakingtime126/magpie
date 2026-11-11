@@ -170,3 +170,17 @@ fresh original app's `data/logs/app.log`, after the sequence's recovery checks a
 saved report. It emits fixed structured diagnostics only. Missing, partial or
 malformed traces are unknown, never proof that a stage failed or did not run.
 The collector adds no action, retry, cleanup authority or acceptance claim.
+
+### Stage-only investigation
+
+A fresh hosted push can additionally opt in with the exact commit marker
+`[original-connect-stages-only-v1]` and matching `stage-diagnostics-v1` environment
+value. The existing `[original-connect-desktop-v1]`, exact source, repository,
+branch, isolated fixture, original UI and transaction/recovery guards still apply.
+This mode runs the same Connect/activation/Restore sequence and fixed stage
+collector, but imports or invokes no screenshot helper and takes no successful
+window captures. It always reports `diagnostic-only`, never full acceptance,
+and cannot publish the portable package. Structured evidence is uploaded even
+when the transaction is uncertain. Capture fixtures run honestly in their own
+independent job; their failure neither blocks this diagnostic transaction nor
+permits acceptance. Full mode retains its capture prerequisite and behavior.
