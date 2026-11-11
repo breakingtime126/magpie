@@ -88,7 +88,7 @@ function Invoke-TestStartupObservation([string]$Code,[switch]$Raw) {
     try {
         $child.CloseInput();$waited=$child.Wait(8000)
         $watch=[Diagnostics.Stopwatch]::StartNew()
-        while (-not $child.Drained -and $watch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
+        while (-not $child.Drained -and $watch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }
         $label=if ($child.Output -cin @('stdin-empty','stdin-nonempty','progress-ready')) { $child.Output } else { 'unverified' }
         return [pscustomobject][ordered]@{label=$label;waitCompleted=[bool]$waited;deadline=[bool]$child.TimedOut;
             overflowOrReadError=[bool]$child.Overflow;stderrPresent=[bool]$child.ErrorOutput;
@@ -210,16 +210,16 @@ try {
             $probeChild.CloseInput()
             Assert ($probeChild.Wait(8000) -and $probeChild.Exited) 'fixed error probe exits within budget'
             $probeWatch=[Diagnostics.Stopwatch]::StartNew()
-            while (-not $probeChild.Drained -and $probeWatch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
+            while (-not $probeChild.Drained -and $probeWatch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }
             $probeFacts=Get-TestCompileFacts $probeChild
             Assert ($probeFacts.phase -ceq $probeCase[1] -and $probeFacts.category -eq 'exit-not-zero' -and
                 -not $probeFacts.stderrPresent -and $probeFacts.streamsComplete) 'caught probe failure emits fixed category and nonzero exit'
             Assert ($probeChild.Output -notmatch 'private fixture path') 'caught compile error text never leaves child'
         } finally { $probeChild.Dispose() }
     }
-    $associated=[OriginalCaptureSupervisor.BoundedProcess]::TestFailureDuringStart((New-TestStart 'Start-Sleep -Seconds 60'),$true)
+    $associated=[OriginalCaptureSupervisor.BoundedProcess]::TestFailureDuringStart((New-TestStart '[Threading.Thread]::Sleep(60000)'),$true)
     Assert ($associated[0] -and $associated[1]) 'throwing start with retained association is stopped and exit confirmed'
-    $unassociated=[OriginalCaptureSupervisor.BoundedProcess]::TestFailureDuringStart((New-TestStart 'Start-Sleep -Seconds 60'),$false)
+    $unassociated=[OriginalCaptureSupervisor.BoundedProcess]::TestFailureDuringStart((New-TestStart '[Threading.Thread]::Sleep(60000)'),$false)
     Assert (-not $unassociated[0] -and -not $unassociated[1]) 'throwing start without association remains cleanup unknown'
     $protocol=Get-OriginalCaptureProtocol
     $successText=$protocol+'{"schema":1,"status":"captured"}'
@@ -260,8 +260,15 @@ function Initialize-OriginalCaptureNative {
         $bad=Invoke-OriginalCaptureChild (New-TestStart $code)
         Assert (-not $bad.Success -and $bad.ExitConfirmed) 'invalid/missing/overflow/stderr output never accepted'
     }
-    $timeout=Invoke-OriginalCaptureChild (New-TestStart 'Start-Sleep -Seconds 60') 200
-    Assert (-not $timeout.Success -and $timeout.ExitConfirmed -and $timeout.Reason -eq 'deadline') 'deadline kills and reaps only capture child'
+    # Inert waits must not auto-load cmdlets or render progress. The 200ms
+    # wrapper bound may stop startup; the ready-phase fixture below also proves
+    # termination of a child already holding inside its 60s managed sleep.
+    $timeout=Invoke-OriginalCaptureChild (New-TestStart '[Threading.Thread]::Sleep(60000)') 200
+    $timeoutReason=if ($timeout.Reason -cin @('deadline','output-invalid','child-failed','none')) { $timeout.Reason } else { 'unverified' }
+    $timeoutPhase=if ($timeout.Phase -cin @('not-observed','unverified')) { $timeout.Phase } else { 'unexpected-phase' }
+    'DEADLINE_PROBE '+([ordered]@{success=[bool]$timeout.Success;childExitConfirmed=[bool]$timeout.ExitConfirmed;
+        reason=$timeoutReason;phase=$timeoutPhase;deadlineMs=200} | ConvertTo-Json -Compress)
+    Assert (-not $timeout.Success -and $timeout.ExitConfirmed -and $timeout.Reason -eq 'deadline' -and $timeout.Phase -ceq 'not-observed') 'deadline kills and reaps only capture child'
     Assert ((Get-OriginalCapturePhase '') -eq 'not-observed') 'empty output remains unknown'
     Assert ((Get-OriginalCapturePhase "worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n") -eq 'native-compile') 'complete ordered phase prefix accepted'
     $checkedPrefix="worker-entered`n"
@@ -277,14 +284,23 @@ function Initialize-OriginalCaptureNative {
     foreach ($badPhase in @("worker-entered`nnative-comp", "native-compile`n", "worker-entered`nprivate path")) {
         Assert ((Get-OriginalCapturePhase $badPhase) -eq 'unverified') 'partial arbitrary and reordered phase data rejected'
     }
-    $phaseStart=New-TestStart '[Console]::Out.Write("worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n");[Console]::Out.Flush();Start-Sleep -Seconds 60'
+    $phaseStart=New-TestStart '[Console]::Out.Write("worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n");[Console]::Out.Flush();[Threading.Thread]::Sleep(60000)'
     $phaseChild=New-TestNoInputChild $phaseStart
     try {
         $phaseChild.CloseInput();$phaseWatch=[Diagnostics.Stopwatch]::StartNew()
-        while ($phaseChild.Output -cne "worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n" -and $phaseWatch.ElapsedMilliseconds -lt 6000) { Start-Sleep -Milliseconds 10 }
+        while ($phaseChild.Output -cne "worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n" -and $phaseWatch.ElapsedMilliseconds -lt 6000) { [Threading.Thread]::Sleep(10) }
         Assert ($phaseChild.Output -ceq "worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n") 'phase fixture reached compile before timeout injection'
+        Assert (-not $phaseChild.Exited) 'ready-phase child is still holding before deadline injection'
         $phaseChild.Deadline(100)
-        Assert ($phaseChild.Wait(3000) -and $phaseChild.Exited -and $phaseChild.TimedOut) 'phase fixture exits on unchanged supervisor deadline mechanism'
+        $phaseWaited=$phaseChild.Wait(3000)
+        $phaseDrainWatch=[Diagnostics.Stopwatch]::StartNew()
+        while (-not $phaseChild.Drained -and $phaseDrainWatch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }
+        $phaseExitZero=$phaseChild.Exited -and $phaseChild.ExitCode -eq 0
+        'PHASE_DEADLINE_PROBE '+([ordered]@{waitCompleted=[bool]$phaseWaited;exitConfirmed=[bool]$phaseChild.Exited;
+            deadline=[bool]$phaseChild.TimedOut;streamsComplete=[bool]$phaseChild.Drained;stderrPresent=[bool]$phaseChild.ErrorOutput;
+            overflowOrReadError=[bool]$phaseChild.Overflow;exitZero=[bool]$phaseExitZero} | ConvertTo-Json -Compress)
+        Assert ($phaseWaited -and $phaseChild.Exited -and $phaseChild.TimedOut -and $phaseChild.Drained -and
+            -not $phaseChild.ErrorOutput -and -not $phaseChild.Overflow -and -not $phaseExitZero) 'phase fixture is killed and drained by unchanged supervisor deadline mechanism'
         Assert ((Get-OriginalCapturePhase $phaseChild.Output) -eq 'native-compile') 'last flushed phase survives killed child'
     } finally { $phaseChild.Dispose() }
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
@@ -305,7 +321,7 @@ function Initialize-OriginalCaptureNative {
                 Assert $false 'native startup/compile child exits within existing budget'
             }
             $drainWatch=[Diagnostics.Stopwatch]::StartNew()
-            while (-not $compileChild.Drained -and $drainWatch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
+            while (-not $compileChild.Drained -and $drainWatch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }
             $compileFacts=Get-TestCompileFacts $compileChild
             'COMPILE_PROBE '+($compileFacts | ConvertTo-Json -Compress)
             Assert ($compileFacts.category -ceq 'none') 'native startup/compile succeeds without window access'

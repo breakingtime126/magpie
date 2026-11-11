@@ -61,7 +61,7 @@ try {
         try {
             $child.CloseInput();$waited=$child.Wait(8000)
             $watch=[Diagnostics.Stopwatch]::StartNew()
-            while (-not $child.Drained -and $watch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
+            while (-not $child.Drained -and $watch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }
             $exact=$child.Output -ceq $expected
             $phase=if ($exact) { 'prefix-ready' } else { 'unverified' }
             # Test-only boundary separates fixed path composition from dot-source.

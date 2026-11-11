@@ -2,13 +2,15 @@ $ErrorActionPreference='Stop'
 $root=Join-Path ([IO.Path]::GetTempPath()) ('capture-mutations-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
 try {
-    foreach ($mutation in @('identity','output','exit','report','start-return','input-preamble','worker-progress','compile-progress','worker-prefix','phase-prefix','worker-load-path','helper-load-path','fixture-path-cmdlet')) {
+    foreach ($mutation in @('identity','output','exit','report','start-return','input-preamble','worker-progress','compile-progress','worker-prefix','phase-prefix','worker-load-path','helper-load-path','fixture-path-cmdlet','sleep-exit','phase-deadline')) {
         $work=Join-Path $root $mutation;[void][IO.Directory]::CreateDirectory($work)
         Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'original-desktop-window-capture*.ps1' | Copy-Item -Destination $work
-        $filename=if ($mutation -eq 'start-return') { 'original-desktop-window-capture-supervisor.ps1' } elseif ($mutation -in @('worker-progress','worker-prefix','worker-load-path')) { 'original-desktop-window-capture-worker.ps1' } elseif ($mutation -in @('input-preamble','compile-progress')) { 'original-desktop-window-capture.tests.ps1' } else { 'original-desktop-window-capture.ps1' }
+        $filename=if ($mutation -eq 'start-return') { 'original-desktop-window-capture-supervisor.ps1' } elseif ($mutation -in @('worker-progress','worker-prefix','worker-load-path')) { 'original-desktop-window-capture-worker.ps1' } elseif ($mutation -in @('input-preamble','compile-progress','sleep-exit','phase-deadline')) { 'original-desktop-window-capture.tests.ps1' } else { 'original-desktop-window-capture.ps1' }
         $path=Join-Path $work $filename
         $text=[IO.File]::ReadAllText($path)
         switch ($mutation) {
+            'sleep-exit' { $text=$text.Replace('[Threading.Thread]::Sleep(60000)','[Threading.Thread]::Sleep(1)') }
+            'phase-deadline' { $text=$text.Replace('$phaseChild.Deadline(100)','$phaseChild.Deadline(60000)') }
             'worker-load-path' { $text=$text.Replace("[IO.Path]::Combine(`$PSScriptRoot,'original-desktop-window-capture.ps1')","Join-Path `$PSScriptRoot 'original-desktop-window-capture.ps1'") }
             'helper-load-path' { $text=$text.Replace("[IO.Path]::Combine(`$PSScriptRoot,'original-desktop-window-capture-native.ps1')","Join-Path `$PSScriptRoot 'original-desktop-window-capture-native.ps1'") }
             'fixture-path-cmdlet' { $text=$text.Replace("[IO.Path]::Combine(`$PrivateDirectory,'app','Magpie-Native-Codex-Experimental.exe')","(Join-Path `$PrivateDirectory 'app\Magpie-Native-Codex-Experimental.exe')") }
