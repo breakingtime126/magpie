@@ -7,10 +7,10 @@ Codex Desktop same-window release.
 The original Agents → Codex Connect/Disconnect path has a native-only launch
 selection transaction. The desktop host owns a serialized lifecycle manager, constructed after the
 local gateway starts and closed during application shutdown. Its production
-supplier factory wires runtime preparation and the owned native launch host, but
-the supplier metadata source is not implemented. Connect reports that a current,
-independently validated AIHub catalog is required before
-creating transaction files or changing launch selection. The former **Native
+supplier factory wires runtime preparation and the owned native launch host.
+The supplier source reads the existing direct AIHub provider and its selected
+or saved models. Missing configuration reports the existing Providers-page
+setup step before creating transaction files or changing launch selection. The former **Native
 backend test** action and separate account/test sheet are no longer offered in
 the product UI. There is no replacement backend-ID or JSON setup form.
 
@@ -26,14 +26,15 @@ settings. Other original pages and explicit actions retain their normal meaning.
 The archive also contains magpie-codex-bridge.exe, an internal stdio adapter
 built from the same source commit. It is not another GUI or a bundled official
 Codex executable. BUILD.json and SHA256SUMS identify the packaged source and
-files. CONNECT-STATUS.md describes the unfinished preparation and recovery
-contract.
+files. CONNECT-STATUS.md describes preparation, recovery and remaining acceptance
+limits.
 
 Do not treat the available Connect control as a completed setup flow. Runtime
 discovery, provenance checks and ownership of Magpie's local gateway are now
-connected. Authorized full AIHub model metadata is still required before that flow can
-configure a future native launch. A model/list response alone is not a full
-native catalog. The reviewed shared-native adapter path is pinned to
+connected. The source produces an authored minimal native catalog from current ordinary
+Magpie configuration; unknown optional fields use documented client defaults.
+This can prepare future launch selection, but does not prove real chat or
+Desktop acceptance. The reviewed shared-native adapter path is pinned to
 0.167.0-alpha.3.2; this package does not install or update the official runtime.
 
 The EXE is unsigned and requires an existing approved WebView2 Runtime. It
@@ -76,11 +77,12 @@ does not grant permission to use an account or transmit data to a supplier.
 The original endpoint calls `nativeconnect.Manager`, not a separate preview.
 The manager serializes Connect/Disconnect and keeps prepared launch resources
 alive independently of the HTTP request. Its factory is in-process only and
-must validate supplier metadata, runtime provenance and the exact owned gateway.
+must validate current configured route identity, runtime provenance and the exact owned gateway.
 The production factory now composes the owned native endpoint, bootstrap and
-profile packages. Its missing supplier-source gate runs before side effects.
-Synthetic adapter tests prove preparation and transaction wiring only; production
-cannot yet reach launch selection through Connect.
+profile packages. Its configured-source gate runs before side effects. Synthetic
+adapter tests cover source extraction, generated catalog and launch selection;
+production can prepare selection when its configured source, runtime and owned
+gateway checks pass. That is not real Desktop or chat acceptance.
 
 `Controller.Inspect` reads journal/selection evidence without creating a lock or
 folder. An existing journal cannot be adopted as a live generation after a host
@@ -98,9 +100,9 @@ then explicitly closes owned resources with a bounded deadline. Cleanup errors
 are reported and ownership retained for retry; a timeout is not successful
 drain. Shutdown does not automatically restore registry selection. The manager
 is retained until process exit, which cannot guarantee another cleanup attempt.
-Supplier evidence has an expiry, a captured route-generation validity context
-and launch-time admission checks. Expiry or explicit source revocation cancels
-its host lifetime without another Connect. Catalog bytes are pinned in the
+Configured supplier metadata has a semantic revision and launch-time admission
+checks. A local watcher cancels its host lifetime after a route/model change,
+without another Connect. It does not poll suppliers or demand optional metadata. Catalog bytes are pinned in the
 prepared profile and checked again before use. These contracts are covered by
 synthetic generations, not authenticated native processes. Handshake and chat
 status remain false.
@@ -120,11 +122,10 @@ An earlier internal short-text harness exercised the pinned official native
 program against a local Responses fixture. That is not the removed product
 entry and does not establish real-account or same-window usability.
 
-The independently validated supplier catalog source remains unfinished.
-Historical tool-call success and declared context size do not fill in its missing
-native schema, complete capability fields, freshness or current route identity.
-Runtime and owned-listener components are wired and synthetically tested, not
-accepted on a real user device. Official Desktop handshake, real GPT/AIHub chat, and
-restored-start acceptance have not been established for this integration.
-Do not present a successful build or selection transaction as a completed
-same-window release.
+The current source no longer requires complete supplier-native metadata. It
+supports direct ordinary AIHub configuration and uses documented client defaults
+for optional unknown fields. No real provider request or credential test is part
+of that mapping. Official Desktop handshake, real GPT/AIHub chat, tool execution,
+original-thread backend switching and restored-start acceptance remain
+unverified. Do not present a successful build or selection transaction as a
+completed same-window release.

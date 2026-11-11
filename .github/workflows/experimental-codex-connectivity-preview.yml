@@ -12,6 +12,7 @@ on:
       - internal/nativeconnect/**
       - internal/nativeconfigguard/**
       - internal/nativesupplier/**
+      - internal/nativecatalog/**
       - internal/nativehost/**
       - internal/nativebootstrap/**
       - internal/nativechannel/**
@@ -57,8 +58,8 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/preview-format"
           mkdir -p "$out"
-          gofmt -d internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
-          bad="$(gofmt -l internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant)"
+          gofmt -d internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
+          bad="$(gofmt -l internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant)"
           while IFS= read -r file; do
             test -n "$file" || continue
             mkdir -p "$out/$(dirname "$file")"
@@ -71,13 +72,15 @@ jobs:
         run: |
           go vet -tags nogui ./internal/nativepreview ./internal/nativeconnect ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/codexsetup ./internal/gui ./internal/agent ./internal/library
           go vet -tags nogui,nativecodex ./internal/nativeconnect ./internal/provider ./internal/gateway ./internal/gui ./internal/agent ./internal/library
-          go vet -tags nogui,nativecodex ./internal/nativesupplier ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
+          go vet -tags nogui,nativecodex ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
       - name: Race and page-state regressions with synthetic inputs only
         run: |
           go test -race -tags nogui -count=1 -timeout=10m ./internal/nativepreview ./internal/codexsetup ./internal/agent ./internal/library ./internal/gui
           go test -race -tags nogui -count=1 -timeout=5m ./internal/nativeconnect ./internal/nativeconfigguard
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativeconnect
-          go test -race -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativesupplier ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
+          go test -race -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
+          go test -race -tags nogui -count=1 -timeout=5m -run '^TestConfiguredSupplier' ./internal/provider
+          go test -race -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestConfiguredSupplier' ./internal/provider
           go test -race -tags nogui -count=1 -timeout=5m -run "^TestNativeGPT" ./internal/provider ./internal/gateway
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m -run "^TestNative(Codex|GPT)" ./internal/provider ./internal/gateway ./internal/agent ./internal/library ./internal/gui
           node internal/codexsetup/app.test.cjs
@@ -143,7 +146,7 @@ jobs:
           retention-days: 7
 
   official-native-text:
-    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && contains(github.event.head_commit.message, '[native-preview-text-v1]')
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && (contains(github.event.head_commit.message, '[native-preview-text-v1]') || contains(github.event.head_commit.message, '[native-supplier-catalog-v1]'))
     runs-on: windows-2025
     timeout-minutes: 15
     env:
@@ -170,12 +173,16 @@ jobs:
         shell: pwsh
         run: |
           $testExecutable = Join-Path $env:RUNNER_TEMP 'native-preview-tests.exe'
-          ./build/test-native-preview-official.ps1 -TestExecutable $testExecutable
+          $message = (& git log -1 --format=%B) -join "`n"
+          $testName = if ($message.Contains('[native-supplier-catalog-v1]')) { 'TestOfficialNativeSupplierCatalogText' } else { 'TestOfficialNativePreviewText' }
+          ./build/test-native-preview-official.ps1 -TestExecutable $testExecutable -TestName $testName
       - name: Upload fixed-label acceptance report only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-preview-text-${{ github.sha }}
-          path: ${{ runner.temp }}/native-preview-text-report.json
+          path: |
+            ${{ runner.temp }}/native-preview-text-report.json
+            ${{ runner.temp }}/native-supplier-catalog-text-report.json
           if-no-files-found: warn
           retention-days: 7

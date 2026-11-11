@@ -102,7 +102,7 @@ func TestProductionFactoryMissingMetadataIsZeroWrite(t *testing.T) {
 	m := nativeconnect.NewManager(context.Background(), root, store, NewFactory(nil, root, nil))
 	defer m.Close(context.Background())
 	_, err := m.Connect(context.Background())
-	if !errors.Is(err, nativeconnect.ErrMissingCatalog) || !strings.Contains(err.Error(), "independently validated native catalog") {
+	if !errors.Is(err, nativeconnect.ErrMissingCatalog) || !strings.Contains(err.Error(), "direct AIHub provider") {
 		t.Fatal("missing requirement not explained", err)
 	}
 	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) || store.writes != 0 {

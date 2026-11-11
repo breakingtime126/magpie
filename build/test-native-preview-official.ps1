@@ -1,6 +1,10 @@
 # Opt-in disposable CI only. Import definitions, never the old acceptance body.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$TestExecutable)
+param(
+    [Parameter(Mandatory)][string]$TestExecutable,
+    [ValidateSet('TestOfficialNativePreviewText','TestOfficialNativeSupplierCatalogText')]
+    [string]$TestName = 'TestOfficialNativePreviewText'
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or
@@ -18,8 +22,9 @@ foreach ($name in $parentEnvironment.Keys) {
 }
 $head = (& git rev-parse HEAD).Trim()
 $message = (& git log -1 --format=%B) -join "`n"
+$requiredMarker = if ($TestName -ceq 'TestOfficialNativeSupplierCatalogText') { '[native-supplier-catalog-v1]' } else { '[native-preview-text-v1]' }
 if ($LASTEXITCODE -ne 0 -or $head -cne $env:GITHUB_SHA -or
-    -not $message.Contains('[native-preview-text-v1]')) { throw 'Exact opt-in commit required.' }
+    -not $message.Contains($requiredMarker)) { throw 'Exact opt-in commit required.' }
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'control-plane-native/ci-4239.ps1'), [ref]$tokens, [ref]$errors)
@@ -37,9 +42,11 @@ $definitions = foreach ($name in @('Get-StandaloneIdentityHelpers', 'Save-Standa
 Assert-PublicRegularPath $TestExecutable
 $root = Join-Path $env:RUNNER_TEMP ('native-preview-text-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
-$reportPath = Join-Path $env:RUNNER_TEMP 'native-preview-text-report.json'
+$reportName = if ($TestName -ceq 'TestOfficialNativeSupplierCatalogText') { 'native-supplier-catalog-text-report.json' } else { 'native-preview-text-report.json' }
+$scope = if ($TestName -ceq 'TestOfficialNativeSupplierCatalogText') { 'official-native-generated-supplier-catalog-text-only' } else { 'official-native-loopback-text-only' }
+$reportPath = Join-Path $env:RUNNER_TEMP $reportName
 if (Test-Path -LiteralPath $reportPath) { throw 'Report already exists; no retry.' }
-$report = [ordered]@{schema=1;scope='official-native-loopback-text-only';source_commit=$head;
+$report = [ordered]@{schema=1;scope=$scope;source_commit=$head;
     status='failed';stage='download';package_verified=$false;test_passed=$false;cleanup_complete=$false;
     desktop_verified=$false;real_account_used=$false;zero_egress_proven=$false;
     diagnostic_status='unavailable';native_stage=$null;native_class=$null;
@@ -87,7 +94,7 @@ try {
     }
     $psi.Environment['MAGPIE_PREVIEW_OFFICIAL_TEXT_TEST'] = '1'
     $psi.Environment['MAGPIE_PREVIEW_OFFICIAL_NATIVE'] = $codex
-    foreach ($argument in @('-test.run','^TestOfficialNativePreviewText$','-test.v','-test.timeout','120s')) {
+    foreach ($argument in @('-test.run',('^' + [regex]::Escape($TestName) + '$'),'-test.v','-test.timeout','120s')) {
         $psi.ArgumentList.Add($argument)
     }
     $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
@@ -182,8 +189,8 @@ try {
     $report.native_stage = $nativeStage; $report.native_class = $nativeClass
     $report.diagnostic_status = 'valid'
     if ($output.Length -gt 65536 -or  $texts[1].Length -gt 65536 -or $process.ExitCode -ne 0 -or
-        $output -cnotmatch '(?m)^--- PASS: TestOfficialNativePreviewText \(' -or
-        $output -cmatch '(?m)^--- SKIP: TestOfficialNativePreviewText' -or
+        $output -cnotmatch ('(?m)^--- PASS: ' + [regex]::Escape($TestName) + ' \(') -or
+        $output -cmatch ('(?m)^--- SKIP: ' + [regex]::Escape($TestName)) -or
         $output -cnotmatch '(?m)^PASS\r?$') { throw 'Required native test did not pass.' }
     $report.test_passed = $true; $report.status = 'passed'; $report.stage = 'complete'
 } catch {

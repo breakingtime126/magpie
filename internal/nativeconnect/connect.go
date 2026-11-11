@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	ErrMissingCatalog = errors.New("native Codex connection requires a verified AIHub catalog")
+	ErrMissingCatalog = errors.New("native Codex connection requires configured AIHub models")
 	ErrUnavailable    = errors.New("native Codex launch selection unavailable")
 	ErrConflict       = errors.New("native Codex launch selection changed externally; nothing restored")
 	ErrUncertain      = errors.New("native Codex launch selection partially changed; use Disconnect to recover")

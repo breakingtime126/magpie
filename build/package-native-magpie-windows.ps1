@@ -19,10 +19,12 @@ Assert-Exit 'Windows original GUI vet'
 Assert-Exit 'Synthetic native-mode write protection'
 & go test -tags nogui,nativecodex -count=1 -timeout=2m ./internal/nativeconnect
 Assert-Exit 'Synthetic launch selection transaction'
-& go vet -tags nogui,nativecodex ./internal/nativesupplier ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
+& go vet -tags nogui,nativecodex ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
 Assert-Exit 'Windows supplier and ownership stack vet'
-& go test -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativesupplier ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
+& go test -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
 Assert-Exit 'Synthetic supplier and ownership stack'
+& go test -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestConfiguredSupplier' ./internal/provider
+Assert-Exit 'Synthetic configured supplier source'
 & go run github.com/tc-hib/go-winres@v0.3.3 make --in build/windows/winres.json --arch amd64 --out rsrc --file-version '0.0.0' --product-version '0.0.0'
 Assert-Exit 'Original Windows resources'
 $adapter = Join-Path $package 'magpie-codex-bridge.exe'

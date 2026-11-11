@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yetone/magpie/internal/nativecatalog"
 )
 
 // Explicit CI opt-in only. This uses an existing, independently verified official
@@ -23,6 +25,23 @@ import (
 // sandbox or imports user authentication; its inference destination is loopback.
 // Native startup itself is not asserted to be zero-write or zero-network.
 func TestOfficialNativePreviewText(t *testing.T) {
+	testOfficialNativeText(t, "test-alpha", func() ([]byte, error) {
+		return previewOriginalCatalog("alpha")
+	})
+}
+
+// This separate opt-in checks the production renderer through native's actual
+// loader and one loopback text turn. sendText retains its no-environment and
+// text-only tool guards; this is not shell/tool execution acceptance.
+func TestOfficialNativeSupplierCatalogText(t *testing.T) {
+	const model = "supplier/test-alpha"
+	testOfficialNativeText(t, model, func() ([]byte, error) {
+		return nativecatalog.Render([]nativecatalog.Model{{ID: model, Name: "Synthetic Supplier Alpha"}})
+	})
+}
+
+func testOfficialNativeText(t *testing.T, model string, catalogBytes func() ([]byte, error)) {
+	t.Helper()
 	if os.Getenv("MAGPIE_PREVIEW_OFFICIAL_TEXT_TEST") != "1" {
 		t.Skip("official runtime loopback check is opt-in")
 	}
@@ -65,7 +84,7 @@ func TestOfficialNativePreviewText(t *testing.T) {
 	if c.SelectExecutable(command) != nil {
 		t.Fatal("official native selection unavailable")
 	}
-	catalog, err := previewOriginalCatalog("alpha")
+	catalog, err := catalogBytes()
 	if err != nil {
 		t.Fatal("original catalog unavailable")
 	}
@@ -74,12 +93,12 @@ func TestOfficialNativePreviewText(t *testing.T) {
 		t.Fatal("original catalog write failed")
 	}
 	// No permission, sandbox, credential-store or managed-policy override.
-	config := "model = \"test-alpha\"\nmodel_catalog_json = " + strconv.Quote(catalogPath) + "\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n"
+	config := "model = " + strconv.Quote(model) + "\nmodel_catalog_json = " + strconv.Quote(catalogPath) + "\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n"
 	home, codexHome := filepath.Join(c.root, "aihub", "home"), filepath.Join(c.root, "aihub", "codex")
 	if os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(config), 0600) != nil {
 		t.Fatal("own native config write failed")
 	}
-	fixture = &previewTextFixture{}
+	fixture = &previewTextFixture{model: model}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(fixture.serveHTTP))
 	server.Config.ReadHeaderTimeout = 5 * time.Second
 	server.Config.ReadTimeout = 10 * time.Second
@@ -94,7 +113,7 @@ func TestOfficialNativePreviewText(t *testing.T) {
 	defer cancel()
 	// This is the exact production single-text native protocol path. HTTP is
 	// only this loopback test spec; ConfigureAIHub remains HTTPS-only.
-	reply, err := sendText(ctx, spec, "test-alpha", previewPublicPrompt)
+	reply, err := sendText(ctx, spec, model, previewPublicPrompt)
 	fixture.mu.Lock()
 	requests, failures := fixture.requests, fixture.failures
 	fixture.mu.Unlock()
@@ -159,6 +178,7 @@ func syntheticInstructions(name string) string {
 type previewTextFixture struct {
 	mu                 sync.Mutex
 	requests, failures int
+	model              string
 }
 
 func (f *previewTextFixture) reject(w http.ResponseWriter) {
@@ -167,6 +187,38 @@ func (f *previewTextFixture) reject(w http.ResponseWriter) {
 	f.mu.Unlock()
 	http.Error(w, "synthetic fixture rejected request", http.StatusBadRequest)
 }
+
+func TestSupplierCatalogTextFixtureKeepsExactRouteAndTextOnly(t *testing.T) {
+	const model = "supplier/test-alpha"
+	for _, tc := range []struct {
+		name, model, input string
+		status             int
+	}{
+		{"qualified route", model, `[{"role":"user","content":[{"type":"input_text","text":"` + previewPublicPrompt + `"}]}]`, http.StatusOK},
+		{"other route", "test-alpha", `[{"role":"user","content":[{"type":"input_text","text":"` + previewPublicPrompt + `"}]}]`, http.StatusBadRequest},
+		{"tool output", model, `[{"type":"function_call_output","call_id":"synthetic","output":"text"}]`, http.StatusBadRequest},
+		{"image", model, `[{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image"}]}]`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := &previewTextFixture{model: model}
+			body := `{"model":` + strconv.Quote(tc.model) + `,"stream":true,"input":` + tc.input + `}`
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+			request.Header.Set("Authorization", "Bearer "+previewPublicKey)
+			response := httptest.NewRecorder()
+			fixture.serveHTTP(response, request)
+			if response.Code != tc.status {
+				t.Fatalf("fixture status = %d, want %d", response.Code, tc.status)
+			}
+			if tc.status == http.StatusOK && (fixture.requests != 1 || fixture.failures != 0 || !strings.Contains(response.Body.String(), "fixture-answer-alpha")) {
+				t.Fatal("fixed text fixture did not complete")
+			}
+			if tc.status != http.StatusOK && (fixture.requests != 0 || fixture.failures != 1) {
+				t.Fatal("fixture counted a rejected request")
+			}
+		})
+	}
+}
+
 func (f *previewTextFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" || r.URL.Path != "/v1/responses" || r.URL.RawQuery != "" || r.ContentLength > 1<<20 ||
 		len(r.Header.Values("Authorization")) != 1 || r.Header.Values("Authorization")[0] != "Bearer "+previewPublicKey || r.Header.Get("Upgrade") != "" || r.Header.Get("Content-Encoding") != "" {
@@ -189,7 +241,11 @@ func (f *previewTextFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		Stream bool              `json:"stream"`
 		Input  []json.RawMessage `json:"input"`
 	}
-	if json.Unmarshal(data, &request) != nil || request.Model != "test-alpha" || !request.Stream || len(request.Input) == 0 {
+	model := f.model
+	if model == "" {
+		model = "test-alpha"
+	}
+	if json.Unmarshal(data, &request) != nil || request.Model != model || !request.Stream || len(request.Input) == 0 {
 		f.reject(w)
 		return
 	}

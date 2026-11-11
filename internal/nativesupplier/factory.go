@@ -27,7 +27,7 @@ type dependencies struct {
 // NewFactory binds the actual desktop-owned server, not a URL found in saved
 // settings. Construction is side-effect free. Preparation reads the trusted
 // supplier source before runtime probing or creating transaction resources.
-// Real preparation remains unavailable until configuredCatalog is implemented.
+// Configuration selects ordinary provider metadata without account discovery.
 func NewFactory(server *gateway.Server, root string, environment []string) nativeconnect.PrepareGeneration {
 	environment = append([]string(nil), environment...)
 	return newFactory(root, environment, dependencies{
@@ -97,9 +97,16 @@ func newFactory(root string, environment []string, d dependencies) nativeconnect
 		if err != nil {
 			return nil, nativeconnect.ErrUnavailable
 		}
-		generationContext, cancel := context.WithTimeout(lifetime, catalog.expires.Sub(d.now()))
+		generationContext, cancel := context.WithCancel(lifetime)
+		if !catalog.expires.IsZero() {
+			cancel()
+			generationContext, cancel = context.WithTimeout(lifetime, catalog.expires.Sub(d.now()))
+		}
 		stop := context.AfterFunc(catalog.validity, cancel)
 		g := &generation{root: work, catalog: catalog, now: d.now, cancel: cancel, stop: stop}
+		if catalog.monitor {
+			g.watchDone = watchRevision(generationContext, cancel, catalog, d.now, time.Second)
+		}
 		control, cwd := filepath.Join(work, "control"), filepath.Join(work, "work")
 		if os.Mkdir(control, 0700) != nil || os.Mkdir(cwd, 0700) != nil {
 			return g, nativeconnect.ErrUnavailable
@@ -141,6 +148,7 @@ type generation struct {
 	now         func() time.Time
 	cancel      context.CancelFunc
 	stop        func() bool
+	watchDone   <-chan struct{}
 }
 
 func (g *generation) Plan() (nativeconnect.Plan, error) {
@@ -168,6 +176,13 @@ func (g *generation) Close(ctx context.Context) error {
 	if g.stop != nil {
 		g.stop()
 	}
+	if g.watchDone != nil {
+		select {
+		case <-g.watchDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if g.host != nil {
 		if err := g.host.Close(ctx); err != nil {
 			return err
@@ -185,6 +200,33 @@ func (g *generation) Close(ctx context.Context) error {
 		g.root = ""
 	}
 	return nil
+}
+
+// Watch only while the generation is owned. Admission still rechecks the source
+// synchronously; this loop also revokes an already-running generation after a
+// local route/model change. It does not poll or contact a remote supplier.
+func watchRevision(ctx context.Context, revoke context.CancelFunc, catalog snapshot, now func() time.Time, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				check, cancel := context.WithTimeout(ctx, 3*time.Second)
+				_, err := catalog.freeze(check, now())
+				cancel()
+				if err != nil {
+					revoke()
+					return
+				}
+			}
+		}
+	}()
+	return done
 }
 
 func writeCatalog(path string, data []byte) error {

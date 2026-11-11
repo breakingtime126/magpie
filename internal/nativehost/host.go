@@ -177,7 +177,11 @@ func startWithAdmission(parent context.Context, captured capability, cfg appserv
 		close(h.done)
 		return h, errors.Join(cause, cleanupErr)
 	}
-	h.session, err = nativechannel.Start(ctx, captured)
+	var handler http.Handler = captured
+	if admission != nil {
+		handler = admittedCapability{captured: captured, admission: admission}
+	}
+	h.session, err = nativechannel.Start(ctx, handler)
 	if err != nil {
 		return fail(err)
 	}

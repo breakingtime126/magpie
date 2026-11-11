@@ -8,7 +8,7 @@ import (
 )
 
 func TestMissingCatalogDoesNotExposeUpstreamDetails(t *testing.T) {
-	for _, reason := range []CatalogRequirement{CatalogMetadataUnavailable, CatalogEvidenceExpired, CatalogRouteChanged} {
+	for _, reason := range []CatalogRequirement{CatalogMetadataUnavailable, CatalogEvidenceExpired, CatalogRouteChanged, CatalogConfigurationMissing, CatalogIndirectRoute} {
 		want := MissingCatalog(reason)
 		got := safeMissingCatalog(fmt.Errorf("private supplier detail: %w", want))
 		if !errors.Is(got, ErrMissingCatalog) || got.Error() != want.Error() || strings.Contains(got.Error(), "private") {

@@ -38,7 +38,7 @@ func TestNativeCodexOriginalConnectMissingCatalog(t *testing.T) {
 	if handled != buildvariant.NativeCodex {
 		t.Fatal("ordinary build changed Connect dispatch")
 	}
-	if buildvariant.NativeCodex && !strings.Contains(recorder.Body.String(), "verified AIHub catalog") {
+	if buildvariant.NativeCodex && !strings.Contains(recorder.Body.String(), "select or fetch a model in Providers") {
 		t.Fatal("missing metadata was hidden as successful connection")
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {

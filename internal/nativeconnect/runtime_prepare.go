@@ -11,7 +11,7 @@ import (
 
 // PrepareRuntimeBackends is the runtime-only stage of trusted preparation.
 // The caller must first
-// establish a verified supplier catalog and a launch-lifetime owned connection;
+// establish a validated configured supplier profile and a launch-lifetime owned connection;
 // neither this stage nor the current listener observation supplies those.
 // scratchRoot must be an existing, separate Magpie-owned directory.
 func PrepareRuntimeBackends(ctx context.Context, environment []string, scratchRoot string) ([]appserverbridge.Backend, error) {
