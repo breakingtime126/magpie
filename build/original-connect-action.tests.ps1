@@ -1,6 +1,7 @@
 # Offline authored fixtures only. Never execute the UIA worker body or registry.
 [CmdletBinding()]
-param([string]$CorePath=(Join-Path $PSScriptRoot 'original-connect-action-core.ps1'))
+param([string]$CorePath='')
+if ($CorePath -eq '') { $CorePath=Join-Path $PSScriptRoot 'original-connect-action-core.ps1' }
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 foreach ($name in @($CorePath,(Join-Path $PSScriptRoot 'original-connect-action.ps1'),(Join-Path $PSScriptRoot 'original-connect-action-worker.ps1'))) {

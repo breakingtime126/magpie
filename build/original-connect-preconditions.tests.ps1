@@ -1,5 +1,6 @@
 [CmdletBinding()]
-param([string]$Implementation=(Join-Path $PSScriptRoot 'original-connect-preconditions.ps1'))
+param([string]$Implementation='')
+if ($Implementation -eq '') { $Implementation=Join-Path $PSScriptRoot 'original-connect-preconditions.ps1' }
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . $Implementation
@@ -49,6 +50,32 @@ Assert ($r.status -ceq 'sequence-evidence-required') 'missing sequence fields pr
 # create a process, invoke an app, query a service or read file contents.
 $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($Implementation,[ref]$tokens,[ref]$errors)
 Assert ($errors.Count -eq 0) 'PowerShell syntax'
+# Windows PowerShell can bind script parameters before PSScriptRoot is set.
+# Resolve script-relative paths in the body, never inside parameter defaults.
+function Test-SafeScriptParameterDefaults($Tree) {
+    foreach ($parameter in $Tree.FindAll({param($node) $node -is [Management.Automation.Language.ParameterAst]},$true)) {
+        if ($null -eq $parameter.DefaultValue) { continue }
+        $earlyPaths=@($parameter.DefaultValue.FindAll({param($node)
+            $node -is [Management.Automation.Language.VariableExpressionAst] -and
+            (($node.VariablePath.UserPath -split ':')[-1] -iin @('PSScriptRoot','PSCommandPath'))
+        },$true))
+        if ($earlyPaths.Count -ne 0) { return $false }
+    }
+    return $true
+}
+$defaultTokens=$null;$defaultErrors=$null
+$unsafeDefault=[Management.Automation.Language.Parser]::ParseInput('param([string]$Path=(Join-Path $pSsCrIpTrOoT "fixture"))',[ref]$defaultTokens,[ref]$defaultErrors)
+Assert (-not (Test-SafeScriptParameterDefaults $unsafeDefault)) 'default-expression guard detects old Desktop binding bug'
+$safeDefault=[Management.Automation.Language.Parser]::ParseInput('param([string]$Path=""); if ($Path -eq "") {$Path=Join-Path $PSScriptRoot "fixture"}',[ref]$defaultTokens,[ref]$defaultErrors)
+Assert (Test-SafeScriptParameterDefaults $safeDefault) 'body-time script-relative resolution is allowed'
+Assert (Test-SafeScriptParameterDefaults $ast) 'implementation has no script-relative parameter defaults'
+$defaultFiles=@(Get-ChildItem -LiteralPath $PSScriptRoot -File | Where-Object { $_.Name -like 'original-connect-preconditions*.ps1' -or $_.Name -like 'original-connect-action*.ps1' -or $_.Name -like 'original-desktop-window-capture*.ps1' })
+foreach ($defaultFile in $defaultFiles) {
+    $defaultAst=[Management.Automation.Language.Parser]::ParseFile($defaultFile.FullName,[ref]$defaultTokens,[ref]$defaultErrors)
+    Assert ($defaultErrors.Count -eq 0) 'sibling diagnostic syntax'
+    Assert (Test-SafeScriptParameterDefaults $defaultAst) ('script-relative parameter default forbidden: '+$defaultFile.Name)
+}
+
 # Inspect all helper and fixture bodies even when a Windows branch is not run.
 # $null is the intentional output-discard target; preferences are not automatic.
 $automaticNames=@('HOME','HOST','PID','PROFILE','PSHOME','PSVersionTable','PSEdition','PSCommandPath','PSScriptRoot','args','input','Error','Matches','MyInvocation','PSBoundParameters','PSCmdlet','StackTrace','LASTEXITCODE','ExecutionContext','ShellId','NestedPromptLevel','foreach','switch','true','false','_','PSItem','IsWindows','IsLinux','IsMacOS','PSStyle','PSSenderInfo','EnabledExperimentalFeatures','PSCulture','PSUICulture','ConsoleFileName','Event','EventArgs','EventSubscriber','Sender','PSDebugContext')
