@@ -193,6 +193,88 @@ function Get-OriginalDesktopFailureEvidence([Management.Automation.ErrorRecord]$
     }
     return $safe
 }
+function Assert-OriginalDesktopDownloadDestination([string]$Kind,[string]$Destination) {
+    if ($Kind -cnotin @('package','license') -or -not [IO.Path]::IsPathRooted($Destination) -or
+        [IO.Path]::GetFullPath($Destination) -cne $Destination -or $Destination.Contains('"') -or
+        -not $Destination.StartsWith(([IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')+'\'),[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Invalid private official download destination.'
+    }
+    $name='ChatGPT-x64.msix';if ($Kind -ceq 'license') { $name='ChatGPT-License.xml' }
+    if ([IO.Path]::GetFileName($Destination) -cne $name -or (Test-Path -LiteralPath $Destination)) {
+        throw 'Fresh official download destination required.'
+    }
+    $directory=[IO.Path]::GetDirectoryName($Destination)
+    $root=[IO.Path]::GetPathRoot($directory);$current=$root
+    foreach ($part in $directory.Substring($root.Length).Split([IO.Path]::DirectorySeparatorChar)) {
+        if ($part.Length -eq 0) { continue };$current=Join-Path $current $part
+        $parent=Get-Item -LiteralPath $current -Force -ErrorAction Stop
+        if (-not $parent.PSIsContainer -or ($parent.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Private download directory is unavailable.'
+        }
+    }
+}
+function ConvertFrom-OriginalDesktopDownloadResult([string]$Text) {
+    if ($Text.Length -gt 4096) { throw 'Official download result exceeds its bound.' }
+    $value=$Text | ConvertFrom-Json -ErrorAction Stop
+    if ($null -eq $value -or @($value.PSObject.Properties).Count -ne 4 -or
+        @($value.PSObject.Properties.Name | Where-Object {$_ -cnotin @('schema','status','bytes','failure')}).Count -ne 0 -or
+        ($value.schema -isnot [int] -and $value.schema -isnot [long]) -or $value.schema -ne 1 -or $value.status -cnotin @('completed','blocked') -or
+        ($value.bytes -isnot [int] -and $value.bytes -isnot [long]) -or $value.bytes -lt 0 -or $value.bytes -gt 4294967296) {
+        throw 'Official download result is invalid.'
+    }
+    if ($value.status -ceq 'completed') {
+        if ($value.bytes -lt 1 -or $null -ne $value.failure) { throw 'Official download completion is invalid.' }
+    } else {
+        $f=$value.failure
+        if ($value.bytes -ne 0 -or $null -eq $f -or @($f.PSObject.Properties).Count -ne 5 -or
+            @($f.PSObject.Properties.Name | Where-Object {$_ -cnotin @('category','hresult','httpStatus','webStatus','line')}).Count -ne 0 -or
+            $f.category -cnotin @('other','web','http','authentication','socket','timeout','cancelled','access','io','file-missing',
+                'directory-missing','operation','argument','command-missing','powershell') -or
+            ($f.hresult -isnot [int] -and $f.hresult -isnot [long]) -or $f.hresult -lt [int]::MinValue -or $f.hresult -gt [int]::MaxValue -or
+            ($f.httpStatus -isnot [int] -and $f.httpStatus -isnot [long]) -or
+            ($f.httpStatus -ne 0 -and ($f.httpStatus -lt 100 -or $f.httpStatus -gt 599)) -or
+            ($f.webStatus -isnot [int] -and $f.webStatus -isnot [long]) -or $f.webStatus -lt -1 -or $f.webStatus -gt [int]::MaxValue -or
+            ($f.webStatus -ne -1 -and -not [Enum]::IsDefined([Net.WebExceptionStatus],[int]$f.webStatus)) -or
+            ($f.line -isnot [int] -and $f.line -isnot [long]) -or $f.line -lt 0 -or $f.line -gt 100000) { throw 'Official download failure facts are invalid.' }
+    }
+    $failure=$null
+    if ($null -ne $value.failure) {
+        $failure=[ordered]@{category=[string]$value.failure.category;hresult=[int]$value.failure.hresult;
+            httpStatus=[int]$value.failure.httpStatus;webStatus=[int]$value.failure.webStatus;line=[int]$value.failure.line}
+    }
+    return [pscustomobject]@{schema=1;status=[string]$value.status;bytes=[long]$value.bytes;failure=$failure}
+}
+function Invoke-OriginalDesktopDownload([string]$Kind,[string]$Destination,[Collections.IDictionary]$PreparationEvidence) {
+    Assert-OriginalDesktopPackageRunner
+    Assert-OriginalDesktopDownloadDestination $Kind $Destination
+    $worker=Join-Path $PSScriptRoot 'original-desktop-package-download.ps1'
+    if ($worker.Contains('"')) { throw 'Invalid download helper path.' }
+    $start=[Diagnostics.ProcessStartInfo]::new()
+    $start.FileName=Join-Path $PSHOME 'powershell.exe'
+    $start.Arguments='-NoLogo -NoProfile -NonInteractive -File "'+$worker+'" -Kind '+$Kind+' -Destination "'+$Destination+'"'
+    $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    # Inherit the caller's environment unchanged, including transport/proxy/trust
+    # choices. Never clear it, add credentials, or change TLS/security settings.
+    $diagnostic=[ordered]@{status='blocked';deadlineMilliseconds=180000;timedOut=$false;exitConfirmed=$false}
+    $PreparationEvidence.download=$diagnostic
+    $script:entryLastHelperEvidence=$null
+    try { $text=Invoke-EntryBoundedHelper $start 180000 4096 }
+    catch {
+        if ($null -ne $script:entryLastHelperEvidence) {
+            $diagnostic.timedOut=[bool]($script:entryLastHelperEvidence.waitExpired -or $script:entryLastHelperEvidence.timerExpired)
+            $diagnostic.exitConfirmed=$script:entryLastHelperEvidence.cleanup -ceq 'exit-confirmed'
+        }
+        throw
+    }
+    $diagnostic.exitConfirmed=$true
+    $result=ConvertFrom-OriginalDesktopDownloadResult $text
+    if ($result.status -cne 'completed') {
+        $PreparationEvidence.failure=$result.failure
+        throw 'Official download worker reported a failure.'
+    }
+    $diagnostic.status='completed'
+}
 function Complete-OriginalDesktopPreparationFailure([Collections.IDictionary]$Evidence,$Context) {
     $Evidence.status='blocked'
     # Keep the failed operation's stage even if resource closure itself fails.
@@ -204,7 +286,7 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable,[Col
     $ErrorActionPreference='Stop'
     if ($null -eq $PreparationEvidence) { $PreparationEvidence=[ordered]@{} }
     $PreparationEvidence.Clear()
-    $PreparationEvidence.schema=1;$PreparationEvidence.status='incomplete';$PreparationEvidence.stage='preflight';$PreparationEvidence.cleanup='not-needed';$PreparationEvidence.failure=$null
+    $PreparationEvidence.schema=1;$PreparationEvidence.status='incomplete';$PreparationEvidence.stage='preflight';$PreparationEvidence.cleanup='not-needed';$PreparationEvidence.failure=$null;$PreparationEvidence.download=$null
     $context=$null
     try {
     Assert-OriginalDesktopPackageRunner
@@ -235,11 +317,9 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable,[Col
         New-Item -ItemType Directory -Path $Work -ErrorAction Stop | Out-Null
         $package=Join-Path $Work 'ChatGPT-x64.msix'; $license=Join-Path $Work 'ChatGPT-License.xml'
         Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-download'
-        # Same pinned bytes as Microsoft's winget OpenAI.ChatGPT 26.1103.4239.0 manifest.
-        # The rolling URL is not a version selector; every existing trust/identity gate still applies.
-        Invoke-WebRequest -UseBasicParsing -Uri 'https://persistent.oaistatic.com/codex-app-prod/releases/26.1103.4239.0/ChatGPT-x64.msix' -OutFile $package
+        Invoke-OriginalDesktopDownload 'package' $package $PreparationEvidence
         Set-OriginalDesktopPreparationStage $PreparationEvidence 'license-download'
-        Invoke-WebRequest -UseBasicParsing -Uri 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml' -OutFile $license
+        Invoke-OriginalDesktopDownload 'license' $license $PreparationEvidence
         Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-path'
         Assert-PublicRegularPath $package
         Set-OriginalDesktopPreparationStage $PreparationEvidence 'license-path'
@@ -314,7 +394,7 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable,[Col
         $PreparationEvidence.status='prepared'
         return $context
     } catch {
-        $PreparationEvidence.failure=Get-OriginalDesktopFailureEvidence $_
+        if ($null -eq $PreparationEvidence.failure) { $PreparationEvidence.failure=Get-OriginalDesktopFailureEvidence $_ }
         Complete-OriginalDesktopPreparationFailure $PreparationEvidence $context
         throw
     }

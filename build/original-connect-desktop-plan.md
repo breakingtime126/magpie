@@ -89,15 +89,23 @@ lifetime; there is no alternate rollback writer or deletion.
 ## Reports, tests and limits
 
 Published evidence contains fixed stage/boolean/count fields and owned-window
-screenshots only. Preparation retains schema/status/stage/cleanup and a nullable
-fixed failure record even when failure occurs before a package context is returned; cleanup
-does not overwrite the failed operation stage. Separate path, open, digest and
+screenshots only. Preparation retains schema/status/stage/cleanup and nullable
+fixed failure and download records even when failure occurs before a package
+context is returned. Cleanup does not overwrite the failed operation stage. Separate path, open, digest and
 hash-match stages distinguish unavailable input from a mismatched pin. The
 versioned official package URL changes acquisition only; all admission pins and
 trust checks remain mandatory. Failure evidence contains only a fixed category,
 integer HResult and WebException status, bounded HTTP status, and source line.
 Unknown values remain unknown; they do not authorize retries or a different
-client. Baseline registry data, journal/profile bytes, attempt files,
+client. Each official download uses the same Windows PowerShell
+Invoke-WebRequest in a retained owned child with a 180-second worker deadline,
+plus bounded supervision and cleanup. Progress display is suppressed; transport
+settings, proxy and trust environment are inherited unchanged. Only the two
+fixed official URLs and fresh owned destinations are admitted. Timeout, overflow,
+nonzero exit, invalid result or unknown cleanup blocks the next preparation
+operation. Partial files are retained, never retried or reused. Download evidence
+reports only fixed status/deadline/timeout/exit fields; timeout byte progress is
+unavailable. Baseline registry data, journal/profile bytes, attempt files,
 arbitrary UI text, process command lines and private paths stay out of artifacts.
 The report always leaves backend handshake, chat, restored Desktop startup and
 zero-egress claims false. The bounded sequence is not same-window GPT/AIHub

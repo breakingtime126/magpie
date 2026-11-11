@@ -17,12 +17,13 @@ function Parse([string]$Path) {
 $source=Parse (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1')
 $copy=Parse (Join-Path $PSScriptRoot 'original-desktop-package-verification.ps1')
 $runtime=Parse (Join-Path $PSScriptRoot 'original-desktop-package.ps1')
+$downloadWorker=Parse (Join-Path $PSScriptRoot 'original-desktop-package-download.ps1')
 foreach ($fn in $copy.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$false)) {
     $original=@($source.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $fn.Name},$false))
     Pass ($original.Count -eq 1 -and $original[0].Extent.Text -ceq $fn.Extent.Text) ('unchanged reviewed verifier '+$fn.Name)
 }
 # The downloaded source is the exact reviewed release, not a moving latest alias.
-$downloadCommands=@($runtime.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+$downloadCommands=@($downloadWorker.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
     $n.GetCommandName() -ceq 'Invoke-WebRequest'},$true))
 $downloadUrls=@($downloadCommands | ForEach-Object {
     $_.CommandElements | Where-Object {$_ -is [Management.Automation.Language.StringConstantExpressionAst] -and
@@ -39,6 +40,85 @@ $start.UseShellExecute=$false;$start.CreateNoWindow=$true
 $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
 $bounded=Invoke-EntryBoundedHelper $start 5000
 Pass ($bounded -ceq 'entry-host-ready') 'unchanged bounded helper initializes its own shared supervisor'
+# The same supervisor terminates only its retained child when an operation stalls.
+$deadlineStart=[Diagnostics.ProcessStartInfo]::new()
+$deadlineStart.FileName=(Get-Process -Id $PID).Path
+$deadlineStart.Arguments='-NoLogo -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 60"'
+$deadlineStart.UseShellExecute=$false;$deadlineStart.CreateNoWindow=$true
+$deadlineStart.RedirectStandardOutput=$true;$deadlineStart.RedirectStandardError=$true
+Reject { Invoke-EntryBoundedHelper $deadlineStart 100 4096 } 'stalled owned download-style child is bounded'
+Pass (($script:entryLastHelperEvidence.waitExpired -or $script:entryLastHelperEvidence.timerExpired) -and
+    $script:entryLastHelperEvidence.cleanup -ceq 'exit-confirmed') 'deadline confirms retained child exit'
+$complete='{"schema":1,"status":"completed","bytes":1061531069,"failure":null}'
+Pass ((ConvertFrom-OriginalDesktopDownloadResult $complete).bytes -eq 1061531069) 'bounded completed download result accepted'
+$failed='{"schema":1,"status":"blocked","bytes":0,"failure":{"category":"web","hresult":-2146233079,"httpStatus":403,"webStatus":7,"line":23}}'
+Pass ((ConvertFrom-OriginalDesktopDownloadResult $failed).failure.httpStatus -eq 403) 'sanitized HTTP denial survives worker boundary'
+foreach ($bad in @($complete.Replace('1061531069','0'),$complete.Replace('1061531069','4294967297'),
+    $complete.Replace('"schema":1','"schema":"1"'),$complete.Replace('"completed"','"private-canary"'),
+    $failed.Replace('"web"','"private-canary"'),$failed.Replace('403','999'),$failed.Replace('"webStatus":7','"webStatus":999'),
+    $failed.Replace('"line":23','"line":100001'),$failed.Replace('"line":23','"line":23,"message":"private-canary"'))) {
+    Reject { ConvertFrom-OriginalDesktopDownloadResult $bad } 'malformed or private worker result rejected'
+}
+foreach ($mode in @('completed','blocked','timeout','overflow','nonzero','drain','unknown-exit')) {
+    & {
+        param($Mode,$Complete,$Failed)
+        function Assert-OriginalDesktopPackageRunner { }
+        function Assert-OriginalDesktopDownloadDestination { }
+        function Invoke-EntryBoundedHelper($Start,$Milliseconds,$MaxBytes) {
+            Pass ($Milliseconds -eq 180000 -and $MaxBytes -eq 4096) 'download has hard total deadline and bounded output'
+            Pass ($Start.FileName -ceq (Join-Path $PSHOME 'powershell.exe') -and
+                $Start.Arguments.Contains('original-desktop-package-download.ps1') -and
+                -not $Start.Arguments.Contains('ExecutionPolicy') -and
+                $Start.EnvironmentVariables['HTTP_PROXY'] -ceq 'http://private-proxy-canary') 'same Desktop host retains proxy environment without policy override'
+            if ($Mode -cin @('timeout','overflow','nonzero','drain','unknown-exit')) {
+                $cleanup='exit-confirmed';if ($Mode -ceq 'unknown-exit') {$cleanup='unconfirmed'}
+                $script:entryLastHelperEvidence=@{waitExpired=($Mode -ceq 'timeout');timerExpired=($Mode -ceq 'timeout');cleanup=$cleanup}
+                throw 'private-supervisor-canary'
+            }
+            if ($Mode -ceq 'blocked') {return $Failed};return $Complete
+        }
+        $saved=$env:HTTP_PROXY;$env:HTTP_PROXY='http://private-proxy-canary'
+        $evidence=[ordered]@{failure=$null}
+        try {
+            if ($Mode -ceq 'completed') {
+                Invoke-OriginalDesktopDownload 'package' 'unused' $evidence
+                Pass ($evidence.download.status -ceq 'completed' -and $evidence.download.exitConfirmed) 'completed child download returns to package verification'
+            } else {
+                Reject { Invoke-OriginalDesktopDownload 'package' 'unused' $evidence } 'failed download stops without a retry'
+                if ($Mode -ceq 'blocked') { Pass ($evidence.failure.httpStatus -eq 403) 'worker failure metadata retained before parent throw' }
+                elseif ($Mode -ceq 'timeout') { Pass ($evidence.download.timedOut -and $evidence.download.exitConfirmed) 'timeout evidence retained before parent throw' }
+                else { Pass ($evidence.download.status -ceq 'blocked' -and
+                    $evidence.download.exitConfirmed -eq ($Mode -cne 'unknown-exit')) ('supervision failure stays blocked '+$Mode) }
+            }
+            Pass (($evidence|ConvertTo-Json -Depth 5 -Compress) -cnotmatch 'private|unused') 'download report omits inherited environment and paths'
+        } finally {$env:HTTP_PROXY=$saved}
+    } $mode $complete $failed
+}
+# Execute the worker's actual body with only its network/CI entry seams mocked.
+# The real CreateNew reservation and final local file validation still execute.
+& {
+    function Assert-OriginalDesktopPackageRunner { }
+    function Assert-OriginalDesktopDownloadDestination { }
+    $script:downloadFixtureCalls=0
+    function Invoke-WebRequest([switch]$UseBasicParsing,[string]$Uri,[string]$OutFile) {
+        $script:downloadFixtureCalls++
+        Pass ($UseBasicParsing -and $ProgressPreference -ceq 'SilentlyContinue' -and
+            $Uri -ceq 'https://persistent.oaistatic.com/codex-app-prod/releases/26.1103.4239.0/ChatGPT-x64.msix') 'worker uses unchanged basic IWR with progress suppressed'
+        [IO.File]::WriteAllBytes($OutFile,[byte[]]@(1,2,3))
+    }
+    $fixture=Join-Path ([IO.Path]::GetTempPath()) ('original-download-offline-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($fixture)
+    try {
+        $destination=Join-Path $fixture 'ChatGPT-x64.msix'
+        $body=$downloadWorker.Extent.Text.Replace(". (Join-Path `$PSScriptRoot 'original-desktop-package.ps1')",'')
+        $worker=[scriptblock]::Create($body)
+        $first=ConvertFrom-OriginalDesktopDownloadResult (& $worker 'package' $destination)
+        Pass ($first.status -ceq 'completed' -and $first.bytes -eq 3 -and $script:downloadFixtureCalls -eq 1) 'fresh worker output completes exactly one request'
+        $second=ConvertFrom-OriginalDesktopDownloadResult (& $worker 'package' $destination)
+        Pass ($second.status -ceq 'blocked' -and $script:downloadFixtureCalls -eq 1 -and
+            [IO.File]::ReadAllBytes($destination).Length -eq 3) 'existing output prevents a second request and remains untouched'
+    } finally { [IO.Directory]::Delete($fixture,$true) }
+}
 # Failure diagnostics survive before a context is returned, without raw errors.
 foreach ($gate in @('runner','input-path')) {
     & {
@@ -48,7 +128,7 @@ foreach ($gate in @('runner','input-path')) {
         $diagnostic=[ordered]@{untrusted='private-seed-canary'}
         Reject { New-OriginalDesktopPackage -Work 'unused' -BridgeExecutable 'unused' -PreparationEvidence $diagnostic } ('preparation fault '+$Gate)
         Pass ($diagnostic.stage -ceq 'preflight' -and $diagnostic.status -ceq 'blocked' -and
-            $diagnostic.cleanup -ceq 'not-needed' -and $diagnostic.Count -eq 5 -and
+            $diagnostic.cleanup -ceq 'not-needed' -and $diagnostic.Count -eq 6 -and
             $null -ne $diagnostic.failure -and $diagnostic.failure.category -ceq 'powershell') ('pre-context diagnostic retained '+$Gate)
         Pass (($diagnostic|ConvertTo-Json -Compress) -cnotmatch 'private|unused') ('pre-context diagnostic has no raw data '+$Gate)
     } $gate
