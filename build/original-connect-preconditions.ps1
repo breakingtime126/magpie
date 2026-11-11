@@ -102,10 +102,10 @@ function Get-OriginalConnectPreconditions {
     try {
         $facts=Get-OriginalPreparedRegistrationFacts $PackageContext
         $envs=$OriginalStartInfo.EnvironmentVariables
-        $system=[string]$envs['SystemRoot'];$home=[string]$envs['HOME'];$profile=[string]$envs['USERPROFILE'];$codex=[string]$envs['CODEX_HOME']
+        $system=[string]$envs['SystemRoot'];$launchHome=[string]$envs['HOME'];$userProfilePath=[string]$envs['USERPROFILE'];$codex=[string]$envs['CODEX_HOME']
         $facts.systemRootAbsolute=($system -match '^[A-Za-z]:\\' -and [IO.Path]::GetFullPath($system) -ieq $system)
-        $facts.homeUserProfileAgree=($home -ine '' -and $home -ieq $profile)
-        $facts.homeMatchesFixture=($home -ieq $OwnedHome -and $profile -ieq $OwnedHome)
+        $facts.homeUserProfileAgree=($launchHome -ine '' -and $launchHome -ieq $userProfilePath)
+        $facts.homeMatchesFixture=($launchHome -ieq $OwnedHome -and $userProfilePath -ieq $OwnedHome)
         $facts.codexHomeMatchesFixture=($codex -ieq [IO.Path]::Combine($OwnedHome,'.codex'))
         $facts.unsupportedOverridesAbsent=$true
         foreach ($name in @('CODEX_WINDOWS_REGISTERED_CORE','CODEX_SQLITE_HOME','CODEX_CLI_PATH','MAGPIE_APP_SERVER_BRIDGE_CONFIG')) {

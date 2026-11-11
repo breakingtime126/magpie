@@ -49,6 +49,33 @@ Assert ($r.status -ceq 'sequence-evidence-required') 'missing sequence fields pr
 # create a process, invoke an app, query a service or read file contents.
 $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($Implementation,[ref]$tokens,[ref]$errors)
 Assert ($errors.Count -eq 0) 'PowerShell syntax'
+# Inspect all helper and fixture bodies even when a Windows branch is not run.
+# $null is the intentional output-discard target; preferences are not automatic.
+$automaticNames=@('HOME','HOST','PID','PROFILE','PSHOME','PSVersionTable','PSEdition','PSCommandPath','PSScriptRoot','args','input','Error','Matches','MyInvocation','PSBoundParameters','PSCmdlet','StackTrace','LASTEXITCODE','ExecutionContext','ShellId','NestedPromptLevel','foreach','switch','true','false','_','PSItem','IsWindows','IsLinux','IsMacOS','PSStyle','PSSenderInfo','EnabledExperimentalFeatures','PSCulture','PSUICulture','ConsoleFileName','Event','EventArgs','EventSubscriber','Sender','PSDebugContext')
+foreach ($checkedFile in @($Implementation,$PSCommandPath,(Join-Path $PSScriptRoot 'original-connect-preconditions.mutations.ps1'))) {
+    $parseTokens=$null;$parseErrors=$null
+    $checkedAst=[Management.Automation.Language.Parser]::ParseFile($checkedFile,[ref]$parseTokens,[ref]$parseErrors)
+    Assert ($parseErrors.Count -eq 0) 'checked helper syntax'
+    $writes=$checkedAst.FindAll({param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -or
+        $node -is [Management.Automation.Language.ForEachStatementAst] -or
+        $node -is [Management.Automation.Language.ParameterAst] -or
+        ($node -is [Management.Automation.Language.UnaryExpressionAst] -and $node.TokenKind -in @('PlusPlus','MinusMinus','PostfixPlusPlus','PostfixMinusMinus'))
+    },$true)
+    foreach ($write in $writes) {
+        $target=$null
+        if ($write -is [Management.Automation.Language.AssignmentStatementAst]) {$target=$write.Left}
+        elseif ($write -is [Management.Automation.Language.ForEachStatementAst]) {$target=$write.Variable}
+        elseif ($write -is [Management.Automation.Language.ParameterAst]) {$target=$write.Name}
+        else {$target=$write.Child}
+        while ($target -is [Management.Automation.Language.ConvertExpressionAst]) {$target=$target.Child}
+        if ($target -is [Management.Automation.Language.VariableExpressionAst]) {
+            $variableName=($target.VariablePath.UserPath -split ':')[-1]
+            Assert ($automaticNames -inotcontains $variableName) ('automatic variable assignment forbidden: '+$variableName)
+        }
+    }
+}
+
 $commands=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst]},$true)|ForEach-Object {$_.GetCommandName()})
 $allowed=@('ConvertTo-OriginalPredicate','New-OriginalPreconditionReport','Get-OriginalPreparedRegistrationFacts','Test-OriginalDiagnosticPath','Get-OriginalDiagnosticPresence','Get-OriginalDiagnosticEntries')
 foreach ($command in $commands) { Assert ($command -cin $allowed) ('unexpected command surface '+$command) }
@@ -59,7 +86,7 @@ Write-Output 'PASS exact metadata, invalid context, redaction, provenance, saved
 if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     $fixture=Join-Path ([IO.Path]::GetTempPath()) ('precondition-fixture-'+[guid]::NewGuid().ToString('N'))
     try {
-        $run=Join-Path $fixture 'app';$home=Join-Path $fixture 'home';$system=Join-Path $fixture 'system'
+        $run=Join-Path $fixture 'app';$fixtureHome=Join-Path $fixture 'home';$system=Join-Path $fixture 'system'
         foreach ($relative in @('app\data\native-codex-connection\generation-123','app\data\native-codex-connection\profile-456','home\.codex','system\System32\WindowsPowerShell\v1.0')) {
             $null=[IO.Directory]::CreateDirectory((Join-Path $fixture $relative))
         }
@@ -68,13 +95,13 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         }
         $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=Join-Path $run 'Magpie-Native-Codex-Experimental.exe'
         $start.EnvironmentVariables.Clear();$start.EnvironmentVariables['SystemRoot']=$system
-        $start.EnvironmentVariables['HOME']=$home;$start.EnvironmentVariables['USERPROFILE']=$home;$start.EnvironmentVariables['CODEX_HOME']=Join-Path $home '.codex'
-        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $home -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
+        $start.EnvironmentVariables['HOME']=$fixtureHome;$start.EnvironmentVariables['USERPROFILE']=$fixtureHome;$start.EnvironmentVariables['CODEX_HOME']=Join-Path $fixtureHome '.codex'
+        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $fixtureHome -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
         Assert ($r.status -ceq 'snapshot' -and $r.inspected.homeMatchesFixture -ceq 'passed' -and $r.inspected.nativeHomeSafe -ceq 'passed') 'Windows owned environment metadata'
         Assert ($r.artifacts.selectionJournal -ceq 'absent' -and $r.artifacts.generationDirectory -ceq 'present' -and $r.artifacts.supplierCatalog -ceq 'present' -and $r.artifacts.channelDescriptor -ceq 'present' -and $r.artifacts.bridgeProfile -ceq 'present') 'Windows fixed artifacts without content reads'
         Assert (($r|ConvertTo-Json -Depth 6 -Compress) -notmatch 'INERT_CONTENT_CANARY|precondition-fixture') 'Windows report leaks no content or fixture path'
         for ($i=0;$i -lt 129;$i++) { [IO.File]::WriteAllText((Join-Path $run ('data\unused-'+$i)), '') }
-        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $home -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
+        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $fixtureHome -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
         Assert ($r.status -ceq 'unavailable' -and $r.artifacts.generationDirectory -ceq 'unknown') 'bounded enumeration fails unknown, not absent'
         Assert (($sequence|ConvertTo-Json -Compress) -ceq $before) 'Windows observation preserves uncertain recovery'
         Write-Output 'PASS Windows inert filesystem collector fixtures'

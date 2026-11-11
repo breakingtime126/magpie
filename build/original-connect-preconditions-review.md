@@ -69,7 +69,10 @@ Run `original-connect-preconditions.tests.ps1`, then
 exercise independently authored prepared metadata, exact family/signature
 refusal, missing/closed context, fixed-schema redaction, honest unproven fields,
 sequence gating and unchanged recovery input. AST/source checks constrain the
-read-only command surface and metadata bounds. Five mutations must fail a real
-assertion (signature, family, unknown mapping, recovery authority and bound).
+read-only command surface and metadata bounds. Nine mutations must fail a real
+assertion (signature, family, unknown mapping, recovery authority, bound, and
+automatic-variable direct, parameter, loop and scoped/typed writes). The AST
+guard scans implementation, tests and mutation helpers on every platform,
+including dormant Windows branches. HOME and PROFILE are never used as locals.
 These portable tests do not exercise Windows filesystem IO or demonstrate a
 real acceptance-run diagnosis; Windows execution remains a separate check.

@@ -11,7 +11,11 @@ try {
         @('$facts.exactPackageFamily=([string]$app.PackageFamilyName -ceq ''OpenAI.Codex_2p2nqsd0c76g0'')','$facts.exactPackageFamily=$true'),
         @("return 'unknown'","return 'passed'"),
         @('changesRecoveryDecision=$false','changesRecoveryDecision=$true'),
-        @('$entries.Count -ge 128','$entries.Count -ge 999999')
+        @('$entries.Count -ge 128','$entries.Count -ge 999999'),
+        @('$launchHome=', '$hOmE='),
+        @('# No package query, native process, file-content read, write or recovery operation.', 'function Test-DormantAutomaticParameter { param($hOsT) }'),
+        @('# No package query, native process, file-content read, write or recovery operation.', 'function Test-DormantAutomaticLoop { foreach ($PiD in @()) {} }'),
+        @('# No package query, native process, file-content read, write or recovery operation.', 'function Test-DormantAutomaticScopedWrite { [string]$script:PrOfIlE="unused" }')
     )
     $i=0
     foreach ($m in $mutations) {
