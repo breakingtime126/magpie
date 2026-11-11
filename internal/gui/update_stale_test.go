@@ -24,6 +24,9 @@ func TestStaleLatestIsNotUpToDate(t *testing.T) {
 	var asks atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asks.Add(1)
+		if lang := r.URL.Query().Get("lang"); lang != "zh" {
+			t.Errorf("freshness fixture asked for notes in %q, want zh", lang)
+		}
 		json.NewEncoder(w).Encode(update.Release{Version: newest.Load().(string)})
 	}))
 	defer srv.Close()
@@ -53,6 +56,9 @@ func TestStaleLatestIsNotUpToDate(t *testing.T) {
 		u.mu.Unlock()
 	}
 
+	// Keep freshness checks in the page's language; changing it asks the
+	// feed asynchronously for translated notes, independently of freshness.
+	u.inLang("zh")
 	u.check()
 	if j := get("/api/update?fresh=1&lang=zh"); j.State != "latest" {
 		t.Fatalf("just checked: %+v", j)
