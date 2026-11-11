@@ -89,7 +89,9 @@ lifetime; there is no alternate rollback writer or deletion.
 ## Reports, tests and limits
 
 Published evidence contains fixed stage/boolean/count fields and owned-window
-screenshots only. Baseline registry data, journal/profile bytes, attempt files,
+screenshots only. Preparation retains a four-field schema/status/stage/cleanup
+record even when failure occurs before a package context is returned; cleanup
+does not overwrite the failed operation stage. Baseline registry data, journal/profile bytes, attempt files,
 arbitrary UI text, process command lines and private paths stay out of artifacts.
 The report always leaves backend handshake, chat, restored Desktop startup and
 zero-egress claims false. The bounded sequence is not same-window GPT/AIHub

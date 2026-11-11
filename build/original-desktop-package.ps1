@@ -83,7 +83,8 @@ function Assert-OriginalDesktopPackageCurrent($Context) {
     if (Test-EntryMachineOverride) { throw 'Machine has an override.' }
     if ($null -ne $Context.Service) { Assert-EntryVerifiedServiceCurrent $Context.Service }
 }
-function Assert-OriginalDesktopPackageFresh($Context) {
+function Assert-OriginalDesktopPackageFresh($Context,[Collections.IDictionary]$PreparationEvidence=$null) {
+    Set-OriginalDesktopPreparationStage $PreparationEvidence 'freshness-scan'
     Initialize-EntryHeldObservation
     $processes=@(Get-CimInstance Win32_Process -ErrorAction Stop)
     $candidates=@($processes | Where-Object { $_.Name -ieq 'codex-windows-sandbox-service.exe' })
@@ -114,6 +115,7 @@ function Assert-OriginalDesktopPackageFresh($Context) {
         if ($facts.matches -eq 0 -and $candidates.Count -eq 0 -and $null -eq $Context.Service) { return }
         if (-not (Test-EntrySingleServiceCandidate $facts) -or $ids.Count -ne 1 -or
             $null -eq $state.Held -or $ids[0] -ne $state.ProcessId) { throw 'Prior Desktop or bridge process blocks activation.' }
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'service-binding'
         $service=Open-EntryVerifiedService $state $Context.Identity.sandboxService $Context.App.PackageFullName `
             $Context.App.InstallLocation $Context.StartedTicks
         if ($null -ne $Context.Service) {
@@ -130,8 +132,28 @@ function Assert-OriginalDesktopPackageFresh($Context) {
         if ($null -ne $state.Held) { $state.Held.Dispose() }
     }
 }
-function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable) {
+# Fixed diagnostic labels only. This never records exceptions, paths, or downloaded data.
+function Set-OriginalDesktopPreparationStage([Collections.IDictionary]$Evidence,[string]$Stage) {
+    if ($Stage -cnotin @('preflight','adapter-lock','package-download','license-download','package-pin',
+        'signature-verification','signed-package-identity','interactive-session','licensed-provisioning',
+        'registration-readiness','installed-image-verification','activation-host-build','activation-host-self-test',
+        'current-context-verification','freshness-scan','service-binding','prepared')) { throw 'Invalid preparation stage.' }
+    if ($null -ne $Evidence) { $Evidence.stage=$Stage }
+}
+function Complete-OriginalDesktopPreparationFailure([Collections.IDictionary]$Evidence,$Context) {
+    $Evidence.status='blocked'
+    # Keep the failed operation's stage even if resource closure itself fails.
+    if ($null -eq $Context) { return }
+    try { Close-OriginalDesktopPackage $Context; $Evidence.cleanup='completed' }
+    catch { $Evidence.cleanup='unconfirmed'; throw }
+}
+function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable,[Collections.IDictionary]$PreparationEvidence=$null) {
     $ErrorActionPreference='Stop'
+    if ($null -eq $PreparationEvidence) { $PreparationEvidence=[ordered]@{} }
+    $PreparationEvidence.Clear()
+    $PreparationEvidence.schema=1;$PreparationEvidence.status='incomplete';$PreparationEvidence.stage='preflight';$PreparationEvidence.cleanup='not-needed'
+    $context=$null
+    try {
     Assert-OriginalDesktopPackageRunner
     Assert-PublicRegularPath $BridgeExecutable
     $BridgeName=[IO.Path]::GetFileName($BridgeExecutable)
@@ -152,15 +174,18 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable) {
         ActivationProcess=$null;ActivationHeld=$null;ActivationCreatedTicks=[long]0;
         Streams=[Collections.Generic.List[IO.Stream]]::new();Files=[Collections.Generic.List[object]]::new();
         Evidence=[ordered]@{schema=1;scope='official-package-preparation-only';prepared=$false;activated=$false;desktopAccepted=$false;backendHandshakeVerified=$false}}
-    try {
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'adapter-lock'
         $bridgeStream=[IO.File]::Open($BridgeExecutable,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
         $context.Streams.Add($bridgeStream)
         $context.BridgeHash=Get-BoundedStreamDigest $bridgeStream $bridgeStream.Length 536870912 ([Diagnostics.Stopwatch]::StartNew())
         $context.Files.Add([pscustomobject]@{Stream=$bridgeStream;Hash=$context.BridgeHash;Bytes=$bridgeStream.Length})
         New-Item -ItemType Directory -Path $Work -ErrorAction Stop | Out-Null
         $package=Join-Path $Work 'ChatGPT-x64.msix'; $license=Join-Path $Work 'ChatGPT-License.xml'
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-download'
         Invoke-WebRequest -UseBasicParsing -Uri 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix' -OutFile $package
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'license-download'
         Invoke-WebRequest -UseBasicParsing -Uri 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml' -OutFile $license
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-pin'
         Assert-PublicRegularPath $package; Assert-PublicRegularPath $license
         $packageStream=[IO.File]::Open($package,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
         $context.Streams.Add($packageStream)
@@ -171,19 +196,24 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable) {
         $context.Files.Add([pscustomobject]@{Stream=$packageStream;Hash=$hash;Bytes=$packageStream.Length})
         $licenseStream=[IO.File]::Open($license,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
         $context.Streams.Add($licenseStream)
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'signature-verification'
         $sdk=Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) 'Windows Kits\10\bin'
         $signtool=Get-ChildItem -LiteralPath $sdk -Filter signtool.exe -Recurse |
             Where-Object { $_.FullName -match '\\x64\\signtool.exe$' } | Sort-Object FullName -Descending | Select-Object -First 1
         if ($null -eq $signtool) { throw 'Official signature verifier unavailable.' }
         $null=& $signtool.FullName verify /pa /v $package 2>&1; $signatureExit=$LASTEXITCODE
         $signature=Get-AuthenticodeSignature -LiteralPath $package
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'signed-package-identity'
         $context.Identity=Get-DesktopPackageIdentityEvidence $package $hash $signatureExit ([string]$signature.Status) `
             $signature.SignerCertificate.Subject -RequireEntryService
         Assert-Desktop4239Identity $context.Identity
         if ($context.Identity.sandboxService.status -cne 'observed') { throw 'Signed service identity unavailable.' }
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'interactive-session'
         Assert-OriginalDesktopInteractive
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'licensed-provisioning'
         $provisioned=Add-AppxProvisionedPackage -Online -PackagePath $package -LicensePath $license -Regions all
         if ($provisioned.RestartNeeded) { throw 'Official provisioning requires restart.' }
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'registration-readiness'
         $watch=[Diagnostics.Stopwatch]::StartNew()
         $ready=Wait-DesktopRegistration 'OpenAI.Codex' $context.Identity.manifest.version $context.Identity.manifest.publisher `
             { Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop } { $watch.ElapsedMilliseconds } `
@@ -191,6 +221,7 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable) {
         if ($ready.status -cne 'ready') { throw ('Official registration blocked: '+$ready.reason) }
         $context.App=$ready.package
         Assert-OriginalDesktopRegistration $context.App $context.Identity
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'installed-image-verification'
         Add-Type -AssemblyName System.IO.Compression
         $packageStream.Position=0
         $zip=[IO.Compression.ZipArchive]::new($packageStream,[IO.Compression.ZipArchiveMode]::Read,$true)
@@ -208,15 +239,23 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable) {
             if ($apps.Count -ne 1 -or $apps[0].GetAttribute('Id') -cnotmatch '^[A-Za-z0-9._-]{1,64}\z') { throw 'Official Desktop application is ambiguous.' }
             $context.Aumid=$context.App.PackageFamilyName+'!'+$apps[0].GetAttribute('Id')
         } finally { $zip.Dispose() }
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'activation-host-build'
         $context.ActivationHost=New-EntryActivationHost (Join-Path $Work 'entry-activation-control.exe')
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'activation-host-self-test'
         $selfTest=Invoke-EntryBoundedHelper (New-EntryControlStart $context.ActivationHost.Path 'self-test') 5000
         if ($selfTest -cne 'entry-host-ready') { throw 'Activation host self-test failed before Connect.' }
         $context.Prepared=$true
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'current-context-verification'
         Assert-OriginalDesktopPackageCurrent $context
-        Assert-OriginalDesktopPackageFresh $context
+        Assert-OriginalDesktopPackageFresh $context $PreparationEvidence
         $context.Evidence.prepared=$true
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'prepared'
+        $PreparationEvidence.status='prepared'
         return $context
-    } catch { Close-OriginalDesktopPackage $context; throw }
+    } catch {
+        Complete-OriginalDesktopPreparationFailure $PreparationEvidence $context
+        throw
+    }
 }
 function Invoke-OriginalDesktopPackageActivation($Context) {
     if ($Context.ActivationAttempted) { throw 'Desktop activation is single-attempt only.' }

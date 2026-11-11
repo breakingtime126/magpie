@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: experimental-bridge-windows-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve long-running exact-head evidence while another original-UI fix queues.
+  cancel-in-progress: false
 
 jobs:
   bridge-race:

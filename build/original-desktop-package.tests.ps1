@@ -29,6 +29,41 @@ $start.UseShellExecute=$false;$start.CreateNoWindow=$true
 $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
 $bounded=Invoke-EntryBoundedHelper $start 5000
 Pass ($bounded -ceq 'entry-host-ready') 'unchanged bounded helper initializes its own shared supervisor'
+# Failure diagnostics survive before a context is returned, without raw errors.
+foreach ($gate in @('runner','input-path')) {
+    & {
+        param($Gate)
+        function Assert-OriginalDesktopPackageRunner { if ($Gate -ceq 'runner') { throw 'private-exception-canary' } }
+        function Assert-PublicRegularPath { throw 'private-path-canary' }
+        $diagnostic=[ordered]@{untrusted='private-seed-canary'}
+        Reject { New-OriginalDesktopPackage -Work 'unused' -BridgeExecutable 'unused' -PreparationEvidence $diagnostic } ('preparation fault '+$Gate)
+        Pass ($diagnostic.stage -ceq 'preflight' -and $diagnostic.status -ceq 'blocked' -and
+            $diagnostic.cleanup -ceq 'not-needed' -and $diagnostic.Count -eq 4) ('pre-context diagnostic retained '+$Gate)
+        Pass (($diagnostic|ConvertTo-Json -Compress) -cnotmatch 'private|unused') ('pre-context diagnostic has no raw data '+$Gate)
+    } $gate
+}
+$stageFunction=@($runtime.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $n.Name -ceq 'Set-OriginalDesktopPreparationStage'},$false))[0]
+$stages=@($stageFunction.FindAll({param($n) $n -is [Management.Automation.Language.StringConstantExpressionAst]},$true) |
+    ForEach-Object {$_.Value} | Where-Object {$_ -cnotin @('Invalid preparation stage.','stage')})
+foreach ($stage in $stages) {
+    foreach ($cleanupFails in @($false,$true)) {
+        & {
+            param($Stage,$CleanupFails)
+            function Close-OriginalDesktopPackage { if ($CleanupFails) { throw 'private-cleanup-canary' } }
+            $diagnostic=[ordered]@{schema=1;status='incomplete';stage='preflight';cleanup='not-needed'}
+            try { Set-OriginalDesktopPreparationStage $diagnostic $Stage;throw 'private-operation-canary' }
+            catch { try { Complete-OriginalDesktopPreparationFailure $diagnostic @{} } catch { } }
+            $expected='completed';if ($CleanupFails) {$expected='unconfirmed'}
+            Pass ($diagnostic.stage -ceq $Stage -and $diagnostic.status -ceq 'blocked' -and $diagnostic.cleanup -ceq $expected) ('failed stage preserved '+$Stage+' cleanup '+$expected)
+            Pass (($diagnostic|ConvertTo-Json -Compress) -cnotmatch 'private') ('fixed-only diagnostic '+$Stage)
+        } $stage $cleanupFails
+    }
+}
+Reject { Set-OriginalDesktopPreparationStage ([ordered]@{}) 'private-unknown-stage' } 'unknown diagnostic stage cannot leak'
+# The retained report remains optional; neither stage reporting nor failure cleanup admits an operation.
+Set-OriginalDesktopPreparationStage $null 'freshness-scan'
+Pass $true 'optional diagnostics preserve existing freshness callers'
 # Pure admission rejects every independently changed pin.
 $identity=@{status='observed';packageSha256='9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c';
     manifest=@{name='OpenAI.Codex';publisher='CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B';version='26.1103.4239.0'};

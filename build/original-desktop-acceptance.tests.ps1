@@ -1,13 +1,24 @@
 # Offline caller contracts. Does not run the coordinator, Windows APIs or UIA.
+[CmdletBinding()]
+param([string]$CallerPath='')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-connect-action-core.ps1')
 function Assert([bool]$Condition,[string]$Message) { if (-not $Condition) { throw ('FAIL: '+$Message) } }
 function Parse([string]$Name) {
-    $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $Name),[ref]$tokens,[ref]$errors)
+    $path=$Name;if (-not [IO.Path]::IsPathRooted($path)) { $path=Join-Path $PSScriptRoot $Name }
+    $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
     Assert ($errors.Count -eq 0) ('parse '+$Name);return $ast
 }
-$caller=Parse 'original-desktop-acceptance.ps1'
+if (-not $CallerPath) { $CallerPath=Join-Path $PSScriptRoot 'original-desktop-acceptance.ps1' }
+$caller=Parse $CallerPath
+# Automatic PowerShell variables are case-insensitive and cannot be reused for fixture paths.
+$assignments=@($caller.FindAll({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst]},$true))
+foreach ($assignment in $assignments) {
+    if ($assignment.Left -is [Management.Automation.Language.VariableExpressionAst]) {
+        Assert ($assignment.Left.VariablePath.UserPath -inotmatch '^(HOME|PID|PSHOME|Host|Error|ExecutionContext|PSVersionTable|PSScriptRoot|PSCommandPath)$') 'fixture variables must not overwrite PowerShell automatic variables'
+    }
+}
 $package=Parse 'package-native-magpie-windows.ps1'
 $sequence=Parse 'original-desktop-sequence.ps1'
 foreach ($name in @('Get-AcceptanceSupplierFixture','Test-AcceptanceJournal')) {
@@ -37,6 +48,8 @@ foreach ($name in @('Set-EntryOverrides','Restore-EntryOverrides','Write-EntryUs
 }
 $text=$caller.Extent.Text
 Assert ($text.Contains("[original-connect-desktop-v1]") -and $text.Contains("'original-ui-v1'")) 'exact caller opt-in'
+Assert ($text.Contains('if (-not $sequenceEntered -and $null -eq $report.sequence') -and
+    $text.IndexOf('$sequenceEntered=$true') -lt $text.IndexOf('$report.sequence=Invoke-OriginalDesktopSequence')) 'unexpected post-dispatch orchestration failure cannot use pre-sequence cleanup'
 Assert ($text.Contains('Invoke-OriginalDesktopSequence -Connect') -and $text.Contains('Invoke-OriginalConnectAction -Mode Restore')) 'caller routes original Connect and Restore through bounded actions'
 Assert ($text.IndexOf('$report.stage=''owned-window-evidence''') -gt $text.IndexOf('$safeCleanup=$report.sequence.cleanupAllowed')) 'captures only after recovery'
 Assert ($text.Contains('if ($safeCleanup)') -and $text.Contains('if ($null -ne $context -and $context.Evidence.activated)')) 'cleanup requires recovery and held activation authority'

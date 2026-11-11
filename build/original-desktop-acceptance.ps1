@@ -88,7 +88,7 @@ namespace OriginalAcceptanceCapture {
     } finally { $bitmap.Dispose() }
 }
 $report=[ordered]@{schema=1;scope='original-magpie-connect-desktop-restore';sourceCommit=$SourceCommit;
-    status='blocked';stage='context';package=$null;sequence=$null;images=$null;
+    status='blocked';stage='context';preparation=$null;package=$null;sequence=$null;images=$null;
     originalWindowCaptured=$false;desktopWindowCaptured=$false;adapterImageObserved=$false;
     selectionRestored=$false;journalRemoved=$false;ownedRootExitsConfirmed=$false;descendantExitVerified=$false;cleanupScope='retained-process-roots-only';preserveRecovery=$true;
     nativeHomeInitiallyEmpty=$false;realAccountsUsed=$false;providerTurnAttempted=$false;
@@ -100,7 +100,7 @@ function Save-AcceptanceReport {
         [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'original-desktop-acceptance.json'),($report | ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
     }
 }
-$context=$null;$process=$null;$started=$false;$safeCleanup=$false;$baseline=$null;$journal='';$ticks=[long]0;$exe=''
+$context=$null;$process=$null;$started=$false;$sequenceEntered=$false;$safeCleanup=$false;$baseline=$null;$journal='';$ticks=[long]0;$exe=''
 try {
     Assert-AcceptanceContext
     $evidenceReady=$true;Save-AcceptanceReport
@@ -114,24 +114,28 @@ try {
             throw 'Original package bytes mismatch.'
         }
     }
+    $report.stage='fixture-directories'
     $root=Join-Path $env:RUNNER_TEMP ('original-desktop-acceptance-'+[guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
     $run=Join-Path $root 'app';Copy-Item -LiteralPath $PackageDirectory -Destination $run -Recurse
-    $home=Join-Path $root 'home';New-Item -ItemType Directory -Path $home | Out-Null
-    $nativeHome=Join-Path $home '.codex';New-Item -ItemType Directory -Path $nativeHome | Out-Null
+    $homeRoot=Join-Path $root 'home';New-Item -ItemType Directory -Path $homeRoot | Out-Null
+    $nativeHome=Join-Path $homeRoot '.codex';New-Item -ItemType Directory -Path $nativeHome | Out-Null
     $attempts=Join-Path $root 'attempts';New-Item -ItemType Directory -Path $attempts | Out-Null
     $snapshot=Join-Path $root 'before-selection.json'
+    $report.stage='selection-snapshot'
     New-OriginalConnectSnapshot $snapshot
     $baseline=Read-OriginalSelection
     if ($baseline.cli.present -or $baseline.profile.present) { throw 'Existing user launch selection blocks acceptance.' }
     $journal=Join-Path $run 'data\native-codex-connection\selection.json'
     $launcher=Join-Path $run 'magpie-codex-bridge.exe';$exe=Join-Path $run 'Magpie-Native-Codex-Experimental.exe'
+    $report.stage='fixture-configuration'
     [IO.File]::WriteAllText((Join-Path $run 'data\settings.json'),'{"noAccountDiscovery":true,"lang":"en","theme":"light","guideHidden":true}',[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $run 'data\providers.json'),((Get-AcceptanceSupplierFixture) | ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false))
     if (@(Get-ChildItem -LiteralPath $nativeHome -Force).Count -ne 0 -or (Test-AcceptanceJournal $journal)) { throw 'Fresh isolated native state required.' }
     $report.nativeHomeInitiallyEmpty=$true
     $report.stage='official-package-preparation'
-    $context=New-OriginalDesktopPackage -Work (Join-Path $root 'official') -BridgeExecutable $launcher
+    $report.preparation=[ordered]@{}
+    $context=New-OriginalDesktopPackage -Work (Join-Path $root 'official') -BridgeExecutable $launcher -PreparationEvidence $report.preparation
     $report.package=$context.Evidence
     $report.stage='original-window'
     $parent=[Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process)
@@ -144,7 +148,7 @@ try {
         if ($parent.Contains($name)) { $start.EnvironmentVariables[$name]=[string]$parent[$name] }
     }
     $start.EnvironmentVariables['PATH']=Join-Path $env:SystemRoot 'System32'
-    foreach ($name in @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP','XDG_CONFIG_HOME','XDG_CACHE_HOME')) { $start.EnvironmentVariables[$name]=$home }
+    foreach ($name in @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP','XDG_CONFIG_HOME','XDG_CACHE_HOME')) { $start.EnvironmentVariables[$name]=$homeRoot }
     $start.EnvironmentVariables['CODEX_HOME']=$nativeHome
     foreach ($name in @('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','http_proxy','https_proxy','all_proxy','no_proxy','CODEX_CA_CERTIFICATE','SSL_CERT_FILE','SSL_CERT_DIR','CURL_CA_BUNDLE','REQUESTS_CA_BUNDLE','NODE_EXTRA_CA_CERTS')) {
         if ($parent.Contains($name)) { $start.EnvironmentVariables[$name]=[string]$parent[$name] }
@@ -160,6 +164,7 @@ try {
         Start-Sleep -Milliseconds 100
     } while ($true)
     $report.stage='original-ui-sequence';Save-AcceptanceReport
+    $sequenceEntered=$true
     $report.sequence=Invoke-OriginalDesktopSequence -Connect {
         $action=Invoke-OriginalConnectAction -Mode Connect -OwnedProcess $process -ExpectedExecutable $exe -ExpectedLauncher $launcher -JournalPath $journal -SnapshotPath $snapshot -AttemptDirectory $attempts
         [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'original-connect-action.json'),($action | ConvertTo-Json -Depth 4),[Text.UTF8Encoding]::new($false))
@@ -202,7 +207,7 @@ try {
     # Report fixed stages only, never arbitrary UI text, paths, child stderr,
     # profile data, credentials or full process command lines.
 } finally {
-    if ($null -eq $report.sequence -and $null -ne $baseline -and $journal) {
+    if (-not $sequenceEntered -and $null -eq $report.sequence -and $null -ne $baseline -and $journal) {
         try {
             $report.journalRemoved=-not (Test-AcceptanceJournal $journal)
             $report.selectionRestored=Test-OriginalSelectionEqual (Read-OriginalSelection) $baseline
