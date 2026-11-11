@@ -1,4 +1,6 @@
 param([int]$TargetId,[long]$StartTicks,[long]$Window,[string]$Executable,[string]$PrivateDirectory,[string]$EvidenceDirectory)
+# Progress is nonessential UI; errors remain terminating and privately classified.
+$ProgressPreference='SilentlyContinue'
 $ErrorActionPreference='Stop'
 try {
     [Console]::Out.Write("worker-entered`n");[Console]::Out.Flush()

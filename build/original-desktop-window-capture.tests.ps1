@@ -27,6 +27,7 @@ function Get-TestCompileFacts($Child) {
 }
 function New-TestCompileCode([string]$NativeScript) {
     $code=@'
+$ProgressPreference='SilentlyContinue'
 $ErrorActionPreference='Stop'
 $stage='source'
 try {
@@ -175,7 +176,7 @@ try {
     # Exercise caught compiler/source failures with a real bounded child and no
     # compiler/native window invocation. Raw fixture error text must not escape.
     $fakeNative=Join-Path $root 'compile-failure.ps1'
-    [IO.File]::WriteAllText($fakeNative,"function Initialize-OriginalCaptureNative { throw [Management.Automation.ErrorRecord]::new([Exception]::new('CS0246 private fixture path'),'SOURCE_CODE_ERROR',[Management.Automation.ErrorCategory]::InvalidData,`$null) }")
+    [IO.File]::WriteAllText($fakeNative,"function Initialize-OriginalCaptureNative { if (`$ProgressPreference -cne 'SilentlyContinue') { throw 'progress preference invalid' }; Write-Progress -Activity 'fixture' -Status 'fixture' -PercentComplete 50; throw [Management.Automation.ErrorRecord]::new([Exception]::new('CS0246 private fixture path'),'SOURCE_CODE_ERROR',[Management.Automation.ErrorCategory]::InvalidData,`$null) }")
     foreach ($probeCase in @(@($fakeNative,'compiler-error-cs0246'),@((Join-Path $root 'missing-native.ps1'),'source-error'))) {
         $probeChild=New-TestNoInputChild (New-TestStart (New-TestCompileCode $probeCase[0]))
         try {
@@ -198,6 +199,29 @@ try {
     $successCode="[Console]::Out.Write('$successText')"
     $ok=Invoke-OriginalCaptureChild (New-TestStart $successCode)
     Assert ($ok.Success -and $ok.ExitConfirmed -and $ok.Phase -eq 'capture-complete') 'exact schema and exit accepted'
+    $realStderr=Invoke-OriginalCaptureChild (New-TestStart ($successCode+";[Console]::Error.Write('fixture-error')"))
+    Assert (-not $realStderr.Success -and $realStderr.ExitConfirmed -and $realStderr.Phase -eq 'unverified') 'real stderr rejects even an exact success transcript'
+    # Run the actual worker body with inert fixture dependencies. Initialization
+    # emits progress then a real terminating error; no native type/window is used.
+    $workerFixture=Join-Path $root 'worker-progress';[void][IO.Directory]::CreateDirectory($workerFixture)
+    $workerPath=Join-Path $workerFixture 'original-desktop-window-capture-worker.ps1'
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'original-desktop-window-capture-worker.ps1') -Destination $workerPath
+    $workerStub=@'
+function Assert-OriginalCaptureContext {}
+function Assert-OriginalCapturePaths {}
+function Assert-OriginalCaptureRegularPath {}
+function Initialize-OriginalCaptureNative {
+    if ($ProgressPreference -cne 'SilentlyContinue') { [Console]::Out.Write('progress-setting-invalid') }
+    Write-Progress -Activity 'fixture' -Status 'fixture' -PercentComplete 50
+    Write-Error 'fixture initialization error'
+    [Console]::Out.Write('error-swallowed')
+}
+'@
+    [IO.File]::WriteAllText((Join-Path $workerFixture 'original-desktop-window-capture.ps1'),$workerStub)
+    $workerCode="& '"+$workerPath.Replace("'","''")+"' -PrivateDirectory '"+$workerFixture.Replace("'","''")+"'"
+    $workerFailure=Invoke-OriginalCaptureChild (New-TestStart $workerCode)
+    Assert (-not $workerFailure.Success -and $workerFailure.ExitConfirmed -and $workerFailure.Reason -eq 'child-failed' -and
+        $workerFailure.Phase -eq 'native-compile') 'worker suppresses only progress and preserves real initialization failure'
     Assert ([Text.Encoding]::UTF8.GetByteCount($successText) -le 256) 'complete phase protocol stays within original output cap'
     $prefixFailure=Invoke-OriginalCaptureChild (New-TestStart '[Console]::Out.Write("worker-entered`nnative-compile`n");exit 1')
     Assert (-not $prefixFailure.Success -and $prefixFailure.ExitConfirmed -and $prefixFailure.Phase -eq 'native-compile') 'failed helper reports only validated last phase'
