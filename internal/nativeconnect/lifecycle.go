@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/yetone/magpie/internal/nativeprepdiag"
 )
 
 const cleanupTimeout = 3 * time.Second
@@ -76,9 +78,17 @@ func (m *Manager) prepare(ctx context.Context) (Plan, error) {
 	if h == nil || m.ctx.Err() != nil || ctx.Err() != nil {
 		return Plan{}, ErrUnavailable
 	}
-	return h.Plan()
+	trace := nativeprepdiag.Track(ctx, nativeprepdiag.PreparedPlan)
+	defer trace.End()
+	plan, planErr := h.Plan()
+	if planErr == nil {
+		trace.Complete()
+	}
+	return plan, planErr
 }
 func (m *Manager) Connect(ctx context.Context) (Status, error) {
+	trace := nativeprepdiag.Track(ctx, nativeprepdiag.ManagerAdmission)
+	defer trace.End()
 	if err := m.acquire(ctx); err != nil {
 		return Status{}, err
 	}
@@ -89,6 +99,7 @@ func (m *Manager) Connect(ctx context.Context) (Status, error) {
 	if m.factory == nil {
 		return Status{}, ErrMissingCatalog
 	}
+	trace.Next(nativeprepdiag.SelectionInspection)
 	current, err := m.controller.Inspect()
 	if err != nil {
 		return current, err
@@ -105,8 +116,10 @@ func (m *Manager) Connect(ctx context.Context) (Status, error) {
 		if _, err := m.selected.Plan(); err != nil {
 			return current, err
 		}
+		trace.Complete()
 		return current, nil
 	}
+	trace.Complete()
 	m.selected = nil
 	first := len(m.owners)
 	operation, cancel := context.WithCancel(ctx)
@@ -126,7 +139,12 @@ func (m *Manager) Connect(ctx context.Context) (Status, error) {
 	// Cleanup belongs to the host; request cancellation cannot prevent it.
 	cleanup, done := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer done()
-	return status, errors.Join(err, m.drain(cleanup, first))
+	trace.Next(nativeprepdiag.PreparationCleanup)
+	cleanupErr := m.drain(cleanup, first)
+	if cleanupErr == nil {
+		trace.Complete()
+	}
+	return status, errors.Join(err, cleanupErr)
 }
 func (m *Manager) Disconnect(ctx context.Context) (Status, error) {
 	if err := m.acquire(ctx); err != nil {

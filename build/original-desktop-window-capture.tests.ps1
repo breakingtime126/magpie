@@ -109,6 +109,13 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('capture-tests-'+[guid]::NewGuid().T
 [void][IO.Directory]::CreateDirectory($root)
 $link=Join-Path $root 'linked'
 try {
+    $prefixTokens=$null;$prefixErrors=$null
+    $prefixAST=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'original-desktop-window-capture-prefix.tests.ps1'),[ref]$prefixTokens,[ref]$prefixErrors)
+    Assert ($prefixErrors.Count -eq 0) 'Windows prefix fixture parses on portable host'
+    $prefixLiteral=$prefixAST.Find({param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and $node.StringConstantType -eq 'SingleQuotedHereString'},$true)
+    Assert ($null -ne $prefixLiteral) 'prefix fixture has explicit inert encoded code'
+    [void][Management.Automation.Language.Parser]::ParseInput($prefixLiteral.Value,[ref]$prefixTokens,[ref]$prefixErrors)
+    Assert ($prefixErrors.Count -eq 0 -and $prefixLiteral.Value -notmatch '::(Capture|Matches)|Get-Process|PrintWindow') 'prefix encoded code parses and contains no target/window invocation'
     # Deterministic stream model: even an empty autoflushed writer sends its BOM.
     foreach ($bom in @($true,$false)) {
         $stream=[IO.MemoryStream]::new();$writer=[IO.StreamWriter]::new($stream,[Text.UTF8Encoding]::new($bom),128,$true)
@@ -223,7 +230,7 @@ function Initialize-OriginalCaptureNative {
     Assert (-not $workerFailure.Success -and $workerFailure.ExitConfirmed -and $workerFailure.Reason -eq 'child-failed' -and
         $workerFailure.Phase -eq 'native-compile') 'worker suppresses only progress and preserves real initialization failure'
     Assert ([Text.Encoding]::UTF8.GetByteCount($successText) -le 256) 'complete phase protocol stays within original output cap'
-    $prefixFailure=Invoke-OriginalCaptureChild (New-TestStart '[Console]::Out.Write("worker-entered`nnative-compile`n");exit 1')
+    $prefixFailure=Invoke-OriginalCaptureChild (New-TestStart '[Console]::Out.Write("worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n");exit 1')
     Assert (-not $prefixFailure.Success -and $prefixFailure.ExitConfirmed -and $prefixFailure.Phase -eq 'native-compile') 'failed helper reports only validated last phase'
     $missingReport=Invoke-OriginalCaptureChild (New-TestStart "[Console]::Out.Write('$protocol')")
     Assert (-not $missingReport.Success -and $missingReport.Phase -eq 'capture-complete') 'phase completion alone never authorizes capture success'
@@ -236,16 +243,26 @@ function Initialize-OriginalCaptureNative {
     $timeout=Invoke-OriginalCaptureChild (New-TestStart 'Start-Sleep -Seconds 60') 200
     Assert (-not $timeout.Success -and $timeout.ExitConfirmed -and $timeout.Reason -eq 'deadline') 'deadline kills and reaps only capture child'
     Assert ((Get-OriginalCapturePhase '') -eq 'not-observed') 'empty output remains unknown'
-    Assert ((Get-OriginalCapturePhase "worker-entered`nnative-compile`n") -eq 'native-compile') 'complete ordered phase prefix accepted'
+    Assert ((Get-OriginalCapturePhase "worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n") -eq 'native-compile') 'complete ordered phase prefix accepted'
+    $checkedPrefix="worker-entered`n"
+    foreach ($newPhase in @('helper-loaded','context-checked','fixture-checked')) {
+        $checkedPrefix+=$newPhase+"`n"
+        Assert ((Get-OriginalCapturePhase $checkedPrefix) -ceq $newPhase) 'each complete preparation phase is distinguished'
+        Assert ((Get-OriginalCapturePhase $checkedPrefix.TrimEnd([char]10)) -ceq 'unverified') 'partial preparation record stays unverified'
+    }
+    foreach ($invalidPrefix in @("worker-entered`ncontext-checked`n", "worker-entered`nhelper-loaded`nfixture-checked`n",
+        "worker-entered`nfixture-checked`nhelper-loaded`n", "worker-entered`nhelper-loaded`nhelper-loaded`n")) {
+        Assert ((Get-OriginalCapturePhase $invalidPrefix) -ceq 'unverified') 'missing reordered and duplicate preparation phases rejected'
+    }
     foreach ($badPhase in @("worker-entered`nnative-comp", "native-compile`n", "worker-entered`nprivate path")) {
         Assert ((Get-OriginalCapturePhase $badPhase) -eq 'unverified') 'partial arbitrary and reordered phase data rejected'
     }
-    $phaseStart=New-TestStart '[Console]::Out.Write("worker-entered`nnative-compile`n");[Console]::Out.Flush();Start-Sleep -Seconds 60'
+    $phaseStart=New-TestStart '[Console]::Out.Write("worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n");[Console]::Out.Flush();Start-Sleep -Seconds 60'
     $phaseChild=New-TestNoInputChild $phaseStart
     try {
         $phaseChild.CloseInput();$phaseWatch=[Diagnostics.Stopwatch]::StartNew()
-        while ($phaseChild.Output -cne "worker-entered`nnative-compile`n" -and $phaseWatch.ElapsedMilliseconds -lt 6000) { Start-Sleep -Milliseconds 10 }
-        Assert ($phaseChild.Output -ceq "worker-entered`nnative-compile`n") 'phase fixture reached compile before timeout injection'
+        while ($phaseChild.Output -cne "worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n" -and $phaseWatch.ElapsedMilliseconds -lt 6000) { Start-Sleep -Milliseconds 10 }
+        Assert ($phaseChild.Output -ceq "worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`n") 'phase fixture reached compile before timeout injection'
         $phaseChild.Deadline(100)
         Assert ($phaseChild.Wait(3000) -and $phaseChild.Exited -and $phaseChild.TimedOut) 'phase fixture exits on unchanged supervisor deadline mechanism'
         Assert ((Get-OriginalCapturePhase $phaseChild.Output) -eq 'native-compile') 'last flushed phase survives killed child'
@@ -255,6 +272,7 @@ function Initialize-OriginalCaptureNative {
         # process/window and no Capture call. This isolates startup plus Add-Type.
         # It inherits fixture environment, not the live child environment allowlist.
         Assert ($PSVersionTable.PSEdition -eq 'Desktop') 'Windows fixture uses production Desktop host'
+        & (Join-Path $PSScriptRoot 'original-desktop-window-capture-prefix.tests.ps1')
         $nativeScript=Join-Path $PSScriptRoot 'original-desktop-window-capture-native.ps1'
         $compileCode=New-TestCompileCode $nativeScript
         $compileWatch=[Diagnostics.Stopwatch]::StartNew()

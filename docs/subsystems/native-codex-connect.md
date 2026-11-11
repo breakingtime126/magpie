@@ -324,3 +324,57 @@ The harness's limited direct-child image observation is not authentication,
 bootstrap/JSONL completion, chat, or a later restored Desktop launch. Its
 [contract and tests](../../build/original-connect-desktop-plan.md) state those
 boundaries; no live account is needed or used for this stage.
+
+## Bounded preparation diagnostics
+
+The original owning desktop Connect handler binds one `nativeprepdiag` observer
+only to the actual `Connect` invocation. Manager admission, supplier preparation,
+runtime discovery/hash/version, host preparation and pre-journal selection
+validation record fixed stages from those existing operations. No operation is
+repeated for diagnostics. Public errors, cancellation, ownership, recovery and
+selection order are unchanged. This does not add an endpoint, native command,
+credential check, model lookup or existing-thread provider switch.
+
+The observer buffers at most 128 enum-only records in memory. It flushes them
+through the existing standard app logger **after Connect returns**, outside the
+Manager/Controller locks. There is no diagnostic worker or new output file.
+Sink panics are contained; dropped output and write errors remain unavailable
+evidence. A blocked app logger can delay HTTP response delivery; this design
+does not claim logging can never block. Preparation itself does not call the
+sink. A hung/crashed invocation may produce no records. Late lifetime work
+cannot append to a closed attempt.
+
+In a portable isolated fixture the existing destination is
+`<original app>/data/logs/app.log` (`applog.Path`, `appdir.Logs`). Each line uses
+the standard Go date/time prefix, then exactly:
+
+`native-connect-preparation-v1 attempt=N sequence=N stage=STAGE outcome=OUTCOME`
+
+Attempt is a positive process-local counter, not a provider, user, generation or
+native identifier. Sequence starts at 1 and is contiguous, bounded by 128.
+The first record is `connect entered`; the terminal record is `connect completed`
+or `connect failed`. Outcomes are only `entered`, `completed`, `failed`.
+`completed` means execution passed that phase, not that Desktop, authentication,
+chat or a future launch works. `failed` identifies the phase that did not
+complete, not its underlying cause. Parent phases also fail when a child fails.
+Probe cleanup is reported separately, after the original failed phase, and must
+not replace it in a summary. Stage scopes are nested; repeated same-name nested
+stages are valid. The allowlist is the `Stage` constants and names in
+[`nativeprepdiag`](../../internal/nativeprepdiag/observe.go).
+
+Acceptance collection must run only after saving independent sequence/recovery
+evidence. Read only the new fixture's known regular, non-linked owned log path
+with byte/line bounds. Publish only parsed allowlisted facts, never raw logs,
+paths, timestamps, native output or error text. Require one attempt (number 1 in
+a fresh process), intact framing, contiguous sequence, valid nesting and a
+terminal boundary. Missing, truncated, rotated, reordered, duplicate,
+multiple-attempt or incomplete records mean unknown. Do not use diagnostic
+records to change uncertainty, cleanup eligibility, recovery or authorize any
+retry. These records cannot reconstruct an older invocation that discarded its
+errors before instrumentation existed.
+
+Inert tests cover the original endpoint, fixed redaction, original operation
+counts/order, cancellation/lifetime separation, runtime and host failures,
+cleanup, sink panic, bounded output and one-shot finish. Live Windows execution
+is a separate acceptance gate; portable tests do not prove the actual package
+probe or installed Desktop integration.

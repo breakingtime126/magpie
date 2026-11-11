@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/yetone/magpie/internal/nativeprepdiag"
 )
 
 // PreparedRuntime contains non-secret launch inputs only. It is an in-process
@@ -50,6 +52,8 @@ func PrepareInstalledRuntime(ctx context.Context, environment []string, scratchR
 }
 
 func prepareInstalledRuntime(ctx context.Context, environment []string, scratchRoot, goos string, ops runtimePreparationOps) (result PreparedRuntime, resultErr error) {
+	trace := nativeprepdiag.Track(ctx, nativeprepdiag.RuntimeHomes)
+	defer trace.End()
 	if ctx.Err() != nil || ops.locate == nil || ops.digest == nil || ops.version == nil {
 		return result, ErrUnavailable
 	}
@@ -69,12 +73,14 @@ func prepareInstalledRuntime(ctx context.Context, environment []string, scratchR
 	if err != nil {
 		return result, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.RuntimeDiscovery)
 	command, digest, err := inspectInstalledRuntime(ctx, ops)
 	if err != nil {
 		return result, err
 	}
 	// No directory is created for unsupported/ambiguous homes or discovery.
 	// Everything removed below was exclusively created by this call.
+	trace.Next(nativeprepdiag.ProbeDirectory)
 	mktemp := ops.mktemp
 	if mktemp == nil {
 		mktemp = os.MkdirTemp
@@ -88,24 +94,33 @@ func prepareInstalledRuntime(ctx context.Context, environment []string, scratchR
 		cleanup = os.RemoveAll
 	}
 	defer func() {
+		// Record the original failed phase before separately observing cleanup.
+		trace.End()
+		cleanupTrace := nativeprepdiag.Track(ctx, nativeprepdiag.ProbeCleanup)
+		defer cleanupTrace.End()
 		if err := cleanup(probe); err != nil {
 			result, resultErr = PreparedRuntime{}, ErrUnavailable
+		} else {
+			cleanupTrace.Complete()
 		}
 	}()
 	probeHome, probeCodex := filepath.Join(probe, "home"), filepath.Join(probe, "codex")
 	if os.Mkdir(probeHome, 0700) != nil || os.Mkdir(probeCodex, 0700) != nil || ctx.Err() != nil {
 		return result, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.RuntimeVersion)
 	version, ok := ops.version(ctx, peerSpec{command: command, digest: digest, home: probeHome, codexHome: probeCodex, provider: "openai", only167: true})
 	if !ok || version != SharedRuntimeVersion || ctx.Err() != nil {
 		return result, ErrUnavailable
 	}
 	// A package update, executable replacement or discovery change during the
 	// version probe invalidates the whole result; do not retry another runtime.
+	trace.Next(nativeprepdiag.RuntimeRediscovery)
 	after, afterDigest, err := inspectInstalledRuntime(ctx, ops)
 	if err != nil || after != command || afterDigest != digest || ctx.Err() != nil {
 		return result, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.RuntimeRevalidation)
 	afterHome, afterCodex, err := runtimeHomes(environment, goos)
 	if err != nil || afterHome != home || afterCodex != codexHome {
 		return result, ErrUnavailable
@@ -118,15 +133,19 @@ func prepareInstalledRuntime(ctx context.Context, environment []string, scratchR
 	if err != nil || !os.SameFile(codexInfo, afterCodexInfo) || ctx.Err() != nil {
 		return result, ErrUnavailable
 	}
+	trace.Complete()
 	return PreparedRuntime{Command: command, SHA256: hex.EncodeToString(digest[:]), Version: version, Home: home, CodexHome: codexHome}, nil
 }
 
 func inspectInstalledRuntime(ctx context.Context, ops runtimePreparationOps) (string, [32]byte, error) {
+	trace := nativeprepdiag.Track(ctx, nativeprepdiag.RuntimeDiscovery)
+	defer trace.End()
 	var empty [32]byte
 	path, err := ops.locate(ctx)
 	if err != nil || !filepath.IsAbs(path) || ctx.Err() != nil {
 		return "", empty, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.RuntimeExecutable)
 	resolved, err := filepath.EvalSymlinks(path)
 	// Do not turn a package-location result into authority for a linked
 	// executable outside that location. Windows comparison is case-insensitive.
@@ -141,6 +160,7 @@ func inspectInstalledRuntime(ctx context.Context, ops runtimePreparationOps) (st
 	if err != nil || ctx.Err() != nil {
 		return "", empty, ErrUnavailable
 	}
+	trace.Complete()
 	return resolved, digest, nil
 }
 

@@ -1,0 +1,16 @@
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=1 stage=connect outcome=entered
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=2 stage=runtime-homes outcome=entered
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=3 stage=runtime-homes outcome=completed
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=4 stage=runtime-discovery outcome=entered
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=5 stage=runtime-discovery outcome=entered
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=6 stage=runtime-discovery outcome=completed
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=7 stage=runtime-executable outcome=entered
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=8 stage=runtime-executable outcome=completed
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=9 stage=runtime-discovery outcome=completed
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=10 stage=probe-directory outcome=entered
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=11 stage=probe-directory outcome=completed
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=12 stage=runtime-version outcome=entered
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=13 stage=runtime-version outcome=failed
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=14 stage=probe-cleanup outcome=entered
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=15 stage=probe-cleanup outcome=failed
+2000/01/01 00:00:00 native-connect-preparation-v1 attempt=1 sequence=16 stage=connect outcome=failed

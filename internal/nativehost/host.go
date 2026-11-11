@@ -19,6 +19,7 @@ import (
 	"github.com/yetone/magpie/internal/nativebootstrap"
 	"github.com/yetone/magpie/internal/nativechannel"
 	"github.com/yetone/magpie/internal/nativeconnect"
+	"github.com/yetone/magpie/internal/nativeprepdiag"
 	"github.com/yetone/magpie/internal/nativeprofile"
 )
 
@@ -148,21 +149,26 @@ func startWithAdmission(parent context.Context, captured capability, cfg appserv
 }
 
 func startWithProbeListener(parent context.Context, captured capability, cfg appserverbridge.Config, root string, deps dependencies, admission func(context.Context) error, probeListen func(nativebootstrap.Record, nativebootstrap.Peer) (pipeOwner, error)) (*Host, error) {
+	trace := nativeprepdiag.Track(parent, nativeprepdiag.HostInputs)
+	defer trace.End()
 	if parent == nil || parent.Err() != nil || captured == nil || !captured.Valid() {
 		return nil, ErrUnavailable
 	}
 	if cfg.SharedNativeRoute == nil || cfg.SharedNativeRoute.GatewayAuth != appserverbridge.SharedNativeLocalGateway167 || cfg.Validate() != nil || separateRoot(root, cfg) != nil {
 		return nil, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.LauncherResolution)
 	launcher, err := deps.resolve()
 	if err != nil {
 		return nil, err
 	}
+	trace.Next(nativeprepdiag.LauncherVerification)
 	identity := nativeconnect.TrustedLauncherIdentity{Filename: filepath.Base(launcher.Path), SHA256: launcher.SHA256, SourceRevision: launcher.SourceRevision}
 	verified, err := nativeconnect.VerifyPackagedLauncher(filepath.Dir(launcher.Path), identity)
 	if err != nil || verified != launcher {
 		return nil, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.ProfilePreparation)
 	var random [16]byte
 	if _, err = rand.Read(random[:]); err != nil {
 		return nil, err
@@ -179,6 +185,7 @@ func startWithProbeListener(parent context.Context, captured capability, cfg app
 	if parent.Err() != nil || !captured.Valid() {
 		return nil, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.HostAdmission)
 	if err := checkAdmission(parent, admission); err != nil {
 		return nil, err
 	}
@@ -197,10 +204,12 @@ func startWithProbeListener(parent context.Context, captured capability, cfg app
 	if admission != nil {
 		handler = admittedCapability{captured: captured, admission: admission}
 	}
+	trace.Next(nativeprepdiag.ChannelStart)
 	h.session, err = nativechannel.Start(ctx, handler)
 	if err != nil {
 		return fail(err)
 	}
+	trace.Next(nativeprepdiag.ChannelPublication)
 	publication := filepath.Join(root, "channel-"+prepared.Generation()+".json")
 	reference, err := nativechannel.Publish(publication, h.session.Descriptor())
 	if err != nil {
@@ -231,6 +240,7 @@ func startWithProbeListener(parent context.Context, captured capability, cfg app
 		}
 		return nil
 	}}
+	trace.Next(nativeprepdiag.BootstrapListeners)
 	if frozen.StartupProbe == appserverbridge.StartupProbeCompareUnrestricted167 {
 		baseCheck := peer.Check
 		h.probeCheck = func(ctx context.Context) error {
@@ -286,6 +296,7 @@ func startWithProbeListener(parent context.Context, captured capability, cfg app
 		return fail(ErrUnavailable)
 	}
 	go h.serve(captured)
+	trace.Complete()
 	return h, nil
 }
 func (h *Host) serve(captured capability) {

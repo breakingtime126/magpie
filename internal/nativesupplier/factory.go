@@ -14,6 +14,7 @@ import (
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/nativeconnect"
 	"github.com/yetone/magpie/internal/nativehost"
+	"github.com/yetone/magpie/internal/nativeprepdiag"
 )
 
 type dependencies struct {
@@ -53,6 +54,8 @@ func NewFactory(server *gateway.Server, root string, environment []string) nativ
 func newFactory(root string, environment []string, d dependencies) nativeconnect.PrepareGeneration {
 	environment = append([]string(nil), environment...)
 	return func(request, lifetime context.Context) (nativeconnect.Generation, error) {
+		trace := nativeprepdiag.Track(request, nativeprepdiag.SupplierMetadata)
+		defer trace.End()
 		if request == nil || lifetime == nil || request.Err() != nil || lifetime.Err() != nil || d.catalog == nil {
 			return nil, nativeconnect.ErrUnavailable
 		}
@@ -63,15 +66,18 @@ func newFactory(root string, environment []string, d dependencies) nativeconnect
 		if d.now == nil || d.ready == nil || d.runtime == nil || d.start == nil {
 			return nil, nativeconnect.ErrUnavailable
 		}
+		trace.Next(nativeprepdiag.SupplierFreshness)
 		catalog, err = catalog.freeze(request, d.now())
 		if err != nil {
 			return nil, err
 		}
+		trace.Next(nativeprepdiag.GatewayOwnership)
 		if !d.ready() || !safePath(root) {
 			return nil, nativeconnect.ErrUnavailable
 		}
 		// Runtime preparation validates the existing parent against native homes
 		// before creating its own disposable --version probe directory.
+		trace.Next(nativeprepdiag.RuntimePreparation)
 		backends, err := d.runtime(request, environment, filepath.Dir(root))
 		if err != nil || request.Err() != nil || lifetime.Err() != nil || len(backends) != 2 {
 			return nil, nativeconnect.ErrUnavailable
@@ -79,6 +85,7 @@ func newFactory(root string, environment []string, d dependencies) nativeconnect
 		if !separate(root, backends) {
 			return nil, nativeconnect.ErrUnavailable
 		}
+		trace.Next(nativeprepdiag.SupplierRevalidation)
 		// Recheck supplier identity/freshness and ownership after runtime work.
 		catalog, err = catalog.freeze(request, d.now())
 		if err != nil {
@@ -87,6 +94,7 @@ func newFactory(root string, environment []string, d dependencies) nativeconnect
 		if !d.ready() {
 			return nil, nativeconnect.ErrUnavailable
 		}
+		trace.Next(nativeprepdiag.GenerationDirectory)
 		if err := os.Mkdir(root, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, nativeconnect.ErrUnavailable
 		}
@@ -111,10 +119,12 @@ func newFactory(root string, environment []string, d dependencies) nativeconnect
 		if os.Mkdir(control, 0700) != nil || os.Mkdir(cwd, 0700) != nil {
 			return g, nativeconnect.ErrUnavailable
 		}
+		trace.Next(nativeprepdiag.SupplierCatalog)
 		g.catalogPath = filepath.Join(work, "supplier-catalog.json")
 		if writeCatalog(g.catalogPath, catalog.catalog) != nil {
 			return g, nativeconnect.ErrUnavailable
 		}
+		trace.Next(nativeprepdiag.BridgeConfiguration)
 		cfg := appserverbridge.Config{
 			Backends: backends, ControlPlane: appserverbridge.ControlPlaneRouting167,
 			ControlHome: control, WorkingDirectory: cwd,
@@ -142,10 +152,14 @@ func newFactory(root string, environment []string, d dependencies) nativeconnect
 		}
 		// Return partial host ownership too. Manager owns cleanup independently
 		// of the request and cannot mistake failed preparation for no resources.
-		g.host, err = d.start(generationContext, cfg, work, func(ctx context.Context) error {
+		trace.Next(nativeprepdiag.HostPreparation)
+		g.host, err = d.start(nativeprepdiag.Inherit(generationContext, request), cfg, work, func(ctx context.Context) error {
 			_, err := catalog.freeze(ctx, d.now())
 			return err
 		})
+		if err == nil {
+			trace.Complete()
+		}
 		return g, err
 	}
 }

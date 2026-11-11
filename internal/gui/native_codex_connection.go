@@ -2,12 +2,14 @@ package gui
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/buildvariant"
 	"github.com/yetone/magpie/internal/nativeconnect"
+	"github.com/yetone/magpie/internal/nativeprepdiag"
 )
 
 // nativeCodexConnection keeps the original endpoint independent of preparation.
@@ -73,7 +75,13 @@ func handleNativeCodexConnection(w Windows, a *agent.Agent, rw http.ResponseWrit
 	var result nativeconnect.Status
 	var err error
 	if action == "connect" {
-		result, err = connection.Connect(r.Context())
+		ctx, finish := nativeprepdiag.Begin(r.Context(), func(line string) { log.Print(line) })
+		func() {
+			success := false
+			defer func() { finish(success) }()
+			result, err = connection.Connect(ctx)
+			success = err == nil
+		}()
 	} else {
 		result, err = connection.Disconnect(r.Context())
 	}

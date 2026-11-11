@@ -16,6 +16,7 @@ import (
 
 	"github.com/yetone/magpie/internal/appserverbridge"
 	"github.com/yetone/magpie/internal/filelock"
+	"github.com/yetone/magpie/internal/nativeprepdiag"
 	"github.com/yetone/magpie/internal/nativeprofile"
 )
 
@@ -120,6 +121,8 @@ func (c *Controller) lock() (func(), error) {
 func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	trace := nativeprepdiag.Track(ctx, nativeprepdiag.SelectionInspection)
+	defer trace.End()
 	// Recover an existing transaction even when preparation is now unavailable.
 	// This read is side-effect free, preserving missing-input zero-write behavior.
 	if current, err := c.inspectLocked(); err != nil || current.JournalPresent {
@@ -132,6 +135,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	if c.prepare == nil {
 		return Status{}, ErrMissingCatalog
 	}
+	trace.Complete()
 	plan, err := c.prepare(ctx)
 	if err != nil {
 		if errors.Is(err, ErrMissingCatalog) {
@@ -139,6 +143,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 		}
 		return Status{}, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.ControllerValidation)
 	if ctx.Err() != nil || plan.Config.SharedNativeRoute == nil || plan.Config.Validate() != nil || !filepath.IsAbs(plan.Launcher) {
 		return Status{}, ErrUnavailable
 	}
@@ -162,6 +167,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	if err != nil || len(data) == 0 || len(data) > 1<<20 {
 		return Status{}, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.SelectionLock)
 	unlock, err := c.lock()
 	if err != nil {
 		return Status{}, err
@@ -170,10 +176,12 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	if _, err := os.Lstat(filepath.Join(c.root, "selection.json")); !errors.Is(err, os.ErrNotExist) {
 		return Status{JournalPresent: true, RecoveryRequired: true}, ErrConflict
 	}
+	trace.Next(nativeprepdiag.SelectionRead)
 	before, err := c.store.Read()
 	if err != nil || !validSelection(before) {
 		return Status{}, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.SelectionProfile)
 	dir, err := os.MkdirTemp(c.root, "profile-")
 	if err != nil {
 		return Status{}, ErrUnavailable
@@ -182,6 +190,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	if err := writeNew(profile, data); err != nil {
 		return Status{}, ErrUnavailable
 	}
+	trace.Next(nativeprepdiag.SelectionPublication)
 	installed := Selection{CLI: Value{true, 1, plan.Launcher}, Profile: Value{true, 1, profile}}
 	sum := sha256.Sum256(data)
 	j := journal{1, before, installed, hex.EncodeToString(sum[:])}
@@ -211,6 +220,7 @@ func (c *Controller) Connect(ctx context.Context) (Status, error) {
 	if err != nil || actual != installed {
 		return Status{JournalPresent: true, RecoveryRequired: true}, ErrUncertain
 	}
+	trace.Complete()
 	return Status{JournalPresent: true, RestoreAvailable: true, SelectionConfigured: true}, nil
 }
 

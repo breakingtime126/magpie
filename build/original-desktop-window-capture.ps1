@@ -59,7 +59,7 @@ function New-OriginalCaptureStart($Identity,[string]$PrivateDirectory,[string]$E
 # Only a complete ordered fixed prefix is evidence of a phase. Never return raw
 # child output; partial/unknown/out-of-order records invalidate phase evidence.
 function Get-OriginalCaptureProtocol {
-    return "worker-entered`nnative-compile`ntarget-identity`nprint-window`nrender-returned`npng-encode`nprivate-write`ncapture-complete`n"
+    return "worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`ntarget-identity`nprint-window`nrender-returned`npng-encode`nprivate-write`ncapture-complete`n"
 }
 function Get-OriginalCapturePhase([string]$Output) {
     if ($Output.Length -eq 0) { return 'not-observed' }

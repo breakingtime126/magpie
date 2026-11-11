@@ -161,3 +161,12 @@ package query, native execution or file-content read. Its fixed predicates do
 not prove the original discovery, CLI-version probe, embedded pins or host
 preparation succeeded. Unknown observations stay unknown and cannot change
 recovery decisions. See [its contract](original-connect-preconditions-review.md).
+
+
+## Fixed-stage Connect log observer
+
+The bounded [fixed-stage collector](original-connect-stages.md) reads only the
+fresh original app's `data/logs/app.log`, after the sequence's recovery checks and
+saved report. It emits fixed structured diagnostics only. Missing, partial or
+malformed traces are unknown, never proof that a stage failed or did not run.
+The collector adds no action, retry, cleanup authority or acceptance claim.

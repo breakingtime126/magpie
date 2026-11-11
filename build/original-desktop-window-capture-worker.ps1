@@ -5,8 +5,11 @@ $ErrorActionPreference='Stop'
 try {
     [Console]::Out.Write("worker-entered`n");[Console]::Out.Flush()
     . (Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1')
+    [Console]::Out.Write("helper-loaded`n");[Console]::Out.Flush()
     Assert-OriginalCaptureContext
+    [Console]::Out.Write("context-checked`n");[Console]::Out.Flush()
     Assert-OriginalCapturePaths $Executable $PrivateDirectory $EvidenceDirectory
+    [Console]::Out.Write("fixture-checked`n");[Console]::Out.Flush()
     $output=Join-Path $PrivateDirectory 'window-capture\original-magpie-uncertain.png'
     Assert-OriginalCaptureRegularPath $output
     [Console]::Out.Write("native-compile`n");[Console]::Out.Flush()

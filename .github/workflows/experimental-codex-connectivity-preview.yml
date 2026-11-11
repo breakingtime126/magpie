@@ -10,6 +10,7 @@ on:
       - internal/codexsetup/**
       - internal/nativepreview/**
       - internal/nativeconnect/**
+      - internal/nativeprepdiag/**
       - internal/nativeconfigguard/**
       - internal/nativesupplier/**
       - internal/nativecatalog/**
@@ -28,6 +29,9 @@ on:
       - build/original-connect-discovery*.ps1
       - build/original-connect-action*.ps1
       - build/original-connect-preconditions*.ps1
+      - build/original-connect-stages*.ps1
+      - build/original-connect-stages.md
+      - build/testdata/original-connect-stages/**
       - build/original-desktop-*.ps1
       - build/mutate-bridge-shutdown-order.py
       - build/test-native-preview-official.ps1
@@ -62,8 +66,8 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/preview-format"
           mkdir -p "$out"
-          gofmt -d internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
-          bad="$(gofmt -l internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant)"
+          gofmt -d internal/nativeprepdiag internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
+          bad="$(gofmt -l internal/nativeprepdiag internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant)"
           while IFS= read -r file; do
             test -n "$file" || continue
             mkdir -p "$out/$(dirname "$file")"
@@ -74,13 +78,13 @@ jobs:
         id: vet
         continue-on-error: true
         run: |
-          go vet -tags nogui ./internal/nativepreview ./internal/nativeconnect ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/codexsetup ./internal/gui ./internal/agent ./internal/library
+          go vet -tags nogui ./internal/nativeprepdiag ./internal/nativepreview ./internal/nativeconnect ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/codexsetup ./internal/gui ./internal/agent ./internal/library
           go vet -tags nogui,nativecodex ./internal/nativeconnect ./internal/provider ./internal/gateway ./internal/gui ./internal/agent ./internal/library
           go vet -tags nogui,nativecodex ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
       - name: Race and page-state regressions with synthetic inputs only
         run: |
           go test -race -tags nogui -count=1 -timeout=10m ./internal/nativepreview ./internal/codexsetup ./internal/agent ./internal/library ./internal/gui
-          go test -race -tags nogui -count=1 -timeout=5m ./internal/nativeconnect ./internal/nativeconfigguard
+          go test -race -tags nogui -count=1 -timeout=5m ./internal/nativeprepdiag ./internal/nativeconnect ./internal/nativeconfigguard
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativeconnect
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
           go test -race -tags nogui -count=1 -timeout=5m -run '^TestConfiguredSupplier' ./internal/provider
@@ -141,6 +145,10 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Original recovery sequencing fixtures failed.' }
             & $hostName -NoProfile -NonInteractive -File build/original-connect-preconditions.tests.ps1
             if ($LASTEXITCODE -ne 0) { throw 'Read-only Connect precondition fixtures failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-connect-stages.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Read-only Connect stage fixtures failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-connect-stages.mutations.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Read-only Connect stage mutations failed.' }
           }
           & pwsh -NoProfile -NonInteractive -File build/original-connect-preconditions.mutations.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Read-only Connect precondition mutations failed.' }

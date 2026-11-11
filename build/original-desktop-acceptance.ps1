@@ -9,6 +9,7 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-desktop-quit-discovery.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1')
 . (Join-Path $PSScriptRoot 'original-connect-preconditions.ps1')
+. (Join-Path $PSScriptRoot 'original-connect-stages.ps1')
 function Assert-AcceptanceContext {
     Assert-OriginalDesktopPackageRunner
     if ($env:GITHUB_EVENT_NAME -cne 'push' -or $SourceCommit -cnotmatch '^[0-9a-f]{40}$' -or
@@ -101,7 +102,7 @@ namespace OriginalAcceptanceCapture {
     } finally { $bitmap.Dispose() }
 }
 $report=[ordered]@{schema=1;scope='original-magpie-connect-desktop-restore';sourceCommit=$SourceCommit;
-    status='blocked';stage='context';preparation=$null;package=$null;sequence=$null;images=$null;diagnosticCapture=$null;trayDiscovery=$null;connectPreconditions=$null;
+    status='blocked';stage='context';preparation=$null;package=$null;sequence=$null;images=$null;diagnosticCapture=$null;trayDiscovery=$null;connectPreconditions=$null;connectStages=$null;
     originalWindowCaptured=$false;desktopWindowCaptured=$false;adapterImageObserved=$false;
     selectionRestored=$false;journalRemoved=$false;ownedRootExitsConfirmed=$false;descendantExitVerified=$false;cleanupScope='retained-process-roots-only';preserveRecovery=$true;
     nativeHomeInitiallyEmpty=$false;realAccountsUsed=$false;providerTurnAttempted=$false;
@@ -203,6 +204,13 @@ try {
     $report.selectionRestored=$report.sequence.selectionRestored;$report.journalRemoved=$report.sequence.journalRemoved
     $report.preserveRecovery=-not $safeCleanup
     if ($null -ne $report.images -and $report.images.status -ceq 'snapshot') { $report.adapterImageObserved=$report.images.adapterDirectChildren -gt 0 }
+    Save-AcceptanceReport
+    # Fixed-stage log content is observed only after recovery decisions and their
+    # report are saved. Never use this result to authorize an action or cleanup.
+    $report.connectStages=New-OriginalConnectStageReport
+    try {
+        $report.connectStages=Get-OriginalConnectStages -OwnedRun $run -OriginalStartInfo $start -ProcessStartTicks $ticks -Sequence $report.sequence -RecoveryChecksCompleted -SequenceReportSaved
+    } catch { $report.connectStages.reason='read-error' }
     Save-AcceptanceReport
     # Diagnostics follow the completed recovery checks and saved report. Neither
     # result changes uncertainty, cleanup authority, or the original failure.
