@@ -40,6 +40,7 @@ It is emitted as features.code_mode_host.enabled=true to preserve existing struc
 --analytics-default-enabled is accepted only after app-server.
 Normal JSONL launch also accepts exactly:
 plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=true
+The same exact leaf with enabled=false is also preserved (reviewed Desktop 4239).
 It requires desktop_plugin_override=codex-app-tools-v0.167.0-alpha.3.2 and both SHA-256 pins.
 This default-off mode forwards the exact leaf to both children only when supplied.
 Native plugin policy may activate an installed plugin and declared MCP subprocess/network effects.
@@ -160,11 +161,12 @@ func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, appserv
 					return serve, options, clientInfo, errUnsupportedArguments
 				}
 				options.CodeModeHost = true
-			case appserverbridge.CodexAppToolsMCPOverride:
-				if options.CodexAppToolsMCPEnabled {
+			case appserverbridge.CodexAppToolsMCPOverride, appserverbridge.CodexAppToolsMCPDisabledOverride:
+				if options.CodexAppToolsMCPEnabled || options.CodexAppToolsMCPDisabled {
 					return serve, options, clientInfo, errUnsupportedArguments
 				}
-				options.CodexAppToolsMCPEnabled = true
+				options.CodexAppToolsMCPEnabled = args[i+1] == appserverbridge.CodexAppToolsMCPOverride
+				options.CodexAppToolsMCPDisabled = args[i+1] == appserverbridge.CodexAppToolsMCPDisabledOverride
 			default:
 				return serve, options, clientInfo, errUnsupportedArguments
 			}
@@ -205,7 +207,7 @@ func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, appserv
 			return serve, options, clientInfo, errUnsupportedArguments
 		}
 	}
-	if !serverSeen || probeSeen != clientInfoSeen || probeSeen && (transportSeen || options.CodexAppToolsMCPEnabled) {
+	if !serverSeen || probeSeen != clientInfoSeen || probeSeen && (transportSeen || options.CodexAppToolsMCPEnabled || options.CodexAppToolsMCPDisabled) {
 		return serve, options, clientInfo, errUnsupportedArguments
 	}
 	if probeSeen {

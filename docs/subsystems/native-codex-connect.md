@@ -167,9 +167,12 @@ Its host API and journal state are synthetic, not real Windows or chat evidence.
 
 The trusted envelope now has a separate, opt-in startup-inspection operation.
 It is enabled only when the owner configuration selects the exact
-`compare-unrestricted-v0.167.0-alpha.3.2` probe contract. The supplier factory
-still does not select this contract automatically. This addition alone does not
-make normal Desktop startup or same-window use complete.
+`compare-unrestricted-v0.167.0-alpha.3.2` probe contract. The native supplier
+factory now explicitly selects it for original Codex Connect, together with the
+exact-version null-only requirements comparison, genuine matching feature-list
+comparison, primary trusted-stdio auth status and reviewed bundled-plugin leaf
+permission. These modes remain default-off for other configurations. This wiring
+alone does not establish normal Desktop startup or same-window use acceptance.
 
 The [`nativehost`](../../internal/nativehost/probe.go) reserves an independent
 one-use bootstrap pipe for inspection, with the same immutable profile digest,
@@ -215,3 +218,44 @@ Portable fixture results and Windows cross-compilation are not Windows runtime
 acceptance. Windows synthetic tests and a later authorized actual Desktop run
 must be reported separately. No real native model record, cache, credential or
 provider turn is required for these source-level checks.
+
+
+## Factory-generated Desktop contracts and test boundaries
+
+[`nativesupplier.newFactory`](../../internal/nativesupplier/factory.go) chooses
+all five reviewed 0.167.0-alpha.3.2 contracts in the immutable generation profile.
+It retains both executable pins and the shared-native primary route; it does not
+select unavailable-attestation or no-auth diagnostic modes. Requirements with
+non-null policy still fail, and feature pages must genuinely match. Primary
+trusted-stdio status preserves requested token/refresh flags and validates the
+native result. This is intentional credential relay to the trusted Desktop
+frontend when later used with real accounts, not an authentication bypass or
+proof of credential isolation. Source tests use only explicitly synthetic values.
+
+Plugin permission does not inject an override. Absent, exact `enabled=true`,
+and exact `enabled=false` remain distinct; only a requested reviewed leaf is
+forwarded unchanged to both native children. Mixed/duplicate literals, arbitrary
+plugin paths and plugin leaves in one-shot startup inspection remain rejected.
+Native requirements, installed-plugin behavior and required-human-approval
+refusal are not rewritten to obtain a successful startup.
+
+[`desktop_contract_test.go`](../../internal/nativesupplier/desktop_contract_test.go)
+uses the actual factory and configured supplier catalog builder to create its
+immutable PreparedProfile, then decodes those exact bytes into the real process
+handlers. It exercises authored subprocess startup and initialized request
+sequences, policy/feature/auth refusal, explicit plugin values, native/catalog
+pin changes and primary-only synthetic token/proof routing. The secondary helper
+reads the actual generated catalog path and derives its model identifiers from
+that authored file; its remaining protocol fields are synthetic, not evidence
+that the official native loader accepted the catalog. Runtime discovery
+and host transport ownership are explicit fixture boundaries in these portable
+tests. Decoding this profile and calling the handlers is **not** execution of
+the Windows authenticated bootstrap chain.
+
+The separate bootstrap/host/endpoint tests exercise operation authentication,
+probe completion acknowledgement and the subsequent JSONL lease. Their Windows
+synthetic subprocess tests must execute in CI, not merely cross-compile. A whole
+factory → packaged host → authenticated probe → JSONL → actual Desktop run is a
+further integration boundary; source tests do not claim that it passed. No real
+account, credential refresh, provider request or native model cache is needed to
+run the authored fixtures.

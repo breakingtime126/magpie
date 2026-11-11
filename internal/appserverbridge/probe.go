@@ -180,7 +180,7 @@ func ProbeStartup(parent context.Context, cfg Config, options LaunchOptions, inf
 func probeStartup(parent context.Context, cfg Config, options LaunchOptions, info StartupClientInfo, timeout time.Duration, run startupProbeRunner) ([]byte, error) {
 	// Desktop does not send this normal-start override to its one-shot probe.
 	// Reject it here too: callers can bypass the adapter argument parser.
-	if options.CodexAppToolsMCPEnabled {
+	if options.CodexAppToolsMCPEnabled || options.CodexAppToolsMCPDisabled {
 		return nil, errStartupProbe
 	}
 	if !StartupProbeSupported(cfg.StartupProbe) {

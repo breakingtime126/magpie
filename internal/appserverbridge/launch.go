@@ -9,14 +9,18 @@ const DesktopPluginCodexAppTools167 = "codex-app-tools-v0.167.0-alpha.3.2"
 // CodexAppToolsMCPOverride is a single literal, not a generic plugin/TOML path.
 const CodexAppToolsMCPOverride = "plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=true"
 
+// CodexAppToolsMCPDisabledOverride preserves the reviewed Desktop 4239 false leaf.
+const CodexAppToolsMCPDisabledOverride = "plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=false"
+
 // LaunchOptions contains only reviewed, process-scoped Desktop controls. A
-// false field means absent, not an explicit false configuration override.
+// false field means absent; the separate Disabled field represents explicit false.
 // Arbitrary config, credential storage, other plugin controls, sandbox selection
 // and remote hosts are intentionally not representable here.
 type LaunchOptions struct {
-	CodeModeHost            bool
-	AnalyticsDefaultEnabled bool
-	CodexAppToolsMCPEnabled bool
+	CodeModeHost             bool
+	AnalyticsDefaultEnabled  bool
+	CodexAppToolsMCPEnabled  bool
+	CodexAppToolsMCPDisabled bool
 }
 
 func (options LaunchOptions) backendArgs(provider string) []string {
@@ -37,6 +41,9 @@ func (options LaunchOptions) backendArgs(provider string) []string {
 		// Preserve the exact observed leaf. Official plugin policy remains
 		// authoritative; this can enable an installed plugin and its MCP server.
 		args = append(args, "-c", CodexAppToolsMCPOverride)
+	}
+	if options.CodexAppToolsMCPDisabled {
+		args = append(args, "-c", CodexAppToolsMCPDisabledOverride)
 	}
 	// The provider is selected by validated bridge configuration, never by
 	// untrusted Desktop argv. Keep it last and never invoke a shell.

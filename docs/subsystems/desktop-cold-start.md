@@ -2334,8 +2334,10 @@ not evidence that any unsupported capability was safely negotiated.
 
 The helper-availability branch can emit either boolean for
 `plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled`.
-The bridge continues accepting only the previously reviewed exact `true`
-leaf, not `false` or arbitrary config overrides. Refreshing credentials,
+At the time of this profile, the bridge accepted only the previously reviewed
+exact `true` leaf, not `false` or arbitrary config overrides. The subsequent
+[typed Boolean launch integration](app-server-bridge.md#exact-0167-bundled-plugin-launch-override)
+preserves either reviewed literal, with the same explicit mode and digest gates. Refreshing credentials,
 non-null requirements, non-null config cwd, unreviewed initialize fields,
 and unsupported thread scopes still fail closed. No production bridge parser,
 auth behavior, attestation behavior, policy projection or allowlist changes

@@ -522,8 +522,13 @@ This evidence identifies the launch input, not successful Desktop integration.
 
 Acceptance is independently **disabled by default**. The explicit top-level
 setting `desktop_plugin_override: "codex-app-tools-v0.167.0-alpha.3.2"`
-authorizes only that exact leaf, represented by
-`LaunchOptions.CodexAppToolsMCPEnabled`. Both backend
+authorizes only that exact leaf. The reviewed Desktop 4239 normal launch also
+accepts the exact `plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=false`
+literal (see the [reviewed 4239 source contract](desktop-cold-start.md#reviewed-4239-bridge-observation-profile)).
+`LaunchOptions.CodexAppToolsMCPEnabled` represents explicit true and
+`LaunchOptions.CodexAppToolsMCPDisabled` explicit false; both unset means absent.
+Both set together are rejected by the direct launch API before configuration
+validation or child startup. Both backend
 `startup_probe_sha256` pins must be present and verified before either
 JSONL child starts, including when only this mode is configured. Missing or
 wrong pins, unknown/partial mode names and combinations with any legacy
@@ -534,7 +539,7 @@ signature or prevent same-user executable replacement.
 
 `-c` and `--config` accept the literal before or after
 `app-server`. Duplicate controls, case/spacing/value changes, quoted
-or structured alternatives, false, any other plugin/server name and every other
+or structured alternatives, any value except literal true/false, any other plugin/server name and every other
 nested setting remain rejected before environment/configuration access.
 Sign-out still takes precedence and starts nothing. This is not arbitrary
 TOML parsing or plugin-config passthrough.

@@ -241,3 +241,41 @@ func TestDesktopPluginModePreservesAbsentAndFalseHumanApproval(t *testing.T) {
 		}
 	}
 }
+
+func TestDesktopPluginFalseAndConflictFailBeforeChildren(t *testing.T) {
+	for _, options := range []LaunchOptions{
+		{CodexAppToolsMCPDisabled: true},
+		{CodexAppToolsMCPEnabled: true, CodexAppToolsMCPDisabled: true},
+	} {
+		for _, mode := range []string{"", DesktopPluginCodexAppTools167} {
+			for _, pin := range []string{"", strings.Repeat("0", 64)} {
+				cfg := desktopPluginFixtureConfig(t)
+				cfg.DesktopPluginOverride = mode
+				cfg.Backends[1].StartupProbeSHA256 = pin
+				var output discardRequirementsOutput
+				if err := RunWithOptions(context.Background(), cfg, options, io.NopCloser(strings.NewReader("")), &output); err == nil || len(output.data) != 0 {
+					t.Fatal("false/conflicting override bypassed authorization or pins")
+				}
+				assertDesktopPluginHomesEmpty(t, cfg)
+			}
+		}
+		cfg := desktopPluginFixtureConfig(t)
+		cfg.StartupProbe = StartupProbeCompareUnrestricted167
+		if got, err := ProbeStartup(context.Background(), cfg, options, StartupClientInfo{Name: "fixture", Version: "1"}); err != errStartupProbe || got != nil {
+			t.Fatal("one-shot probe accepted false/conflicting plugin override")
+		}
+		assertDesktopPluginHomesEmpty(t, cfg)
+	}
+	cfg := desktopPluginFixtureConfig(t)
+	var output discardRequirementsOutput
+	disabledCfg := cfg
+	disabledCfg.DesktopPluginOverride = ""
+	if err := RunWithOptions(context.Background(), disabledCfg, LaunchOptions{CodexAppToolsMCPDisabled: true}, io.NopCloser(strings.NewReader("")), &output); err == nil {
+		t.Fatal("valid pins substituted for explicit false authorization")
+	}
+	assertDesktopPluginHomesEmpty(t, disabledCfg)
+	if err := RunWithOptions(context.Background(), cfg, LaunchOptions{CodexAppToolsMCPEnabled: true, CodexAppToolsMCPDisabled: true}, io.NopCloser(strings.NewReader("")), &output); err == nil {
+		t.Fatal("valid pins authorized conflicting overrides")
+	}
+	assertDesktopPluginHomesEmpty(t, cfg)
+}

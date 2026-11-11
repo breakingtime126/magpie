@@ -118,6 +118,15 @@ func newFactory(root string, environment []string, d dependencies) nativeconnect
 		cfg := appserverbridge.Config{
 			Backends: backends, ControlPlane: appserverbridge.ControlPlaneRouting167,
 			ControlHome: control, WorkingDirectory: cwd,
+			// Normal Desktop startup selects these exact reviewed contracts.
+			// They validate real native results; none fabricates shared policy,
+			// authentication or feature success. Plugin argv remains absent
+			// unless Desktop explicitly supplies the reviewed leaf.
+			StartupProbe:            appserverbridge.StartupProbeCompareUnrestricted167,
+			RequirementsRead:        appserverbridge.ConfigRequirementsCompareNull167,
+			ExperimentalFeatureList: appserverbridge.ExperimentalFeatureListCompare167,
+			AuthStatus:              appserverbridge.AuthStatusPrimaryTrustedStdio167,
+			DesktopPluginOverride:   appserverbridge.DesktopPluginCodexAppTools167,
 			SharedNativeRoute: &appserverbridge.SharedNativeRoute167{
 				Mode: appserverbridge.SharedNativeHome167,
 				// Replaced only by the retained native endpoint, never dialed by

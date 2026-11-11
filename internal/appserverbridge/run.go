@@ -51,7 +51,10 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 	if input == nil || output == nil {
 		return errors.New("bridge requires input and output")
 	}
-	if options.CodexAppToolsMCPEnabled && cfg.DesktopPluginOverride != DesktopPluginCodexAppTools167 {
+	if options.CodexAppToolsMCPEnabled && options.CodexAppToolsMCPDisabled {
+		return errors.New("conflicting Desktop plugin overrides")
+	}
+	if (options.CodexAppToolsMCPEnabled || options.CodexAppToolsMCPDisabled) && cfg.DesktopPluginOverride != DesktopPluginCodexAppTools167 {
 		return errors.New("Desktop plugin override is disabled")
 	}
 	if err := cfg.Validate(); err != nil {

@@ -18,7 +18,7 @@ import (
 func TestDesktopPluginMalformedArgumentsArePrivateAndPreConfig(t *testing.T) {
 	var cases [][]string
 	for _, value := range []string{
-		strings.Replace(desktopPluginLiteral, "=true", "=false", 1),
+		strings.Replace(desktopPluginLiteral, "=true", "=FALSE", 1),
 		strings.Replace(desktopPluginLiteral, "=true", "=TRUE", 1),
 		strings.Replace(desktopPluginLiteral, "=true", "=\"true\"", 1),
 		strings.Replace(desktopPluginLiteral, "=true", " = true", 1),
@@ -109,13 +109,13 @@ const desktopPluginFixtureError = `{"code":-32000,"message":"synthetic plugin un
 
 func testDesktopPluginLifecycle(t *testing.T, adapter string) {
 	t.Helper()
-	for _, requested := range []bool{false, true} {
-		t.Run(fmt.Sprintf("requested-%t", requested), func(t *testing.T) {
+	for _, requested := range []string{"", desktopPluginLiteral, appserverbridge.CodexAppToolsMCPDisabledOverride} {
+		t.Run("requested-"+requested, func(t *testing.T) {
 			args := []string{"-c", "features.code_mode_host=true", "app-server", "--analytics-default-enabled"}
 			want := []string{"-c", "features.code_mode_host.enabled=true", "app-server", "--analytics-default-enabled"}
-			if requested {
-				args = append(args, "-c", desktopPluginLiteral)
-				want = append(want, "-c", desktopPluginLiteral)
+			if requested != "" {
+				args = append(args, "-c", requested)
+				want = append(want, "-c", requested)
 			}
 			var config appserverbridge.Config
 			testAdapterLifecycleConfig(t, adapter, args, want, func(cfg *appserverbridge.Config) {
@@ -178,5 +178,38 @@ func TestDesktopPluginHelpExplainsOptInAndEffects(t *testing.T) {
 	op, options, _, err := parseArgs(desktopStartupArgs())
 	if err != nil || op != startupProbe || !reflect.DeepEqual(options, appserverbridge.LaunchOptions{CodeModeHost: true, AnalyticsDefaultEnabled: true}) {
 		t.Fatal("ordinary startup probe inherited the normal-launch plugin control")
+	}
+}
+
+func TestDesktopPluginFalseLiteralAndDuplicates(t *testing.T) {
+	const disabled = "plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=false"
+	for _, flag := range []string{"-c", "--config"} {
+		for _, args := range [][]string{{flag, disabled, "app-server"}, {"app-server", flag, disabled}} {
+			op, options, _, err := parseArgs(args)
+			if err != nil || op != serve || options != (appserverbridge.LaunchOptions{CodexAppToolsMCPDisabled: true}) {
+				t.Fatal("explicit false was lost or coerced")
+			}
+		}
+	}
+	var cases [][]string
+	for _, first := range []string{desktopPluginLiteral, disabled} {
+		for _, second := range []string{desktopPluginLiteral, disabled} {
+			for _, a := range []string{"-c", "--config"} {
+				for _, b := range []string{"-c", "--config"} {
+					cases = append(cases, []string{a, first, "app-server", b, second})
+				}
+			}
+		}
+	}
+	cases = append(cases, append(desktopStartupArgs(), "-c", disabled), append([]string{"--config", disabled}, desktopStartupArgs()...))
+	for _, malformed := range []string{disabled + " ", disabled + "\nprivate-canary", strings.Replace(disabled, "false", "\"false\"", 1), strings.Replace(disabled, "false", "False", 1)} {
+		cases = append(cases, []string{"app-server", "-c", malformed})
+	}
+	for _, args := range cases {
+		var out bufferCloser
+		var diagnostics bytes.Buffer
+		if code := execute(context.Background(), args, nil, &out, &diagnostics, dependencies{}); code != 2 || out.Len() != 0 || diagnostics.String() != "magpie-codex-bridge: "+errUnsupportedArguments.Error()+"\n" {
+			t.Fatal("duplicate, malformed false or one-shot override reached config or leaked input")
+		}
 	}
 }
