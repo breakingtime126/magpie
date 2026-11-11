@@ -155,9 +155,11 @@ not retried; clean snapshots alone cannot settle an asynchronous Connect.
 Unknown recovery retains the journal and running owner. Screenshots occur only
 after restoration. Reported root-process exits do not establish descendant drain.
 
-The official helper keeps signed package pins, licensed installation,
-registration, service identity and freshness checks separate from the original
-UI transaction. No test registry writer can substitute for Connect or Restore.
+The official helper acquires the exact reviewed 26.1103.4239.0 release from
+the versioned official URL, not the rolling download alias. Its source and
+unchanged package hash match the [Microsoft winget manifest](https://github.com/microsoft/winget-pkgs/blob/0bdf2be4abb5704747b89410a59fa40ecd9fe35a/manifests/o/OpenAI/ChatGPT/26.1103.4239.0/OpenAI.ChatGPT.installer.yaml).
+Signed package pins, licensed installation, registration, service identity and
+freshness checks remain separate from the original UI transaction. No test registry writer can substitute for Connect or Restore.
 The pre-existing 4239 treatment-only entry guard is unchanged. See
 [the acceptance contract](../../build/original-connect-desktop-plan.md) for the
 exact evidence, host boundary, source exclusions and offline mutation tests.

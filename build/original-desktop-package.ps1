@@ -135,6 +135,7 @@ function Assert-OriginalDesktopPackageFresh($Context,[Collections.IDictionary]$P
 # Fixed diagnostic labels only. This never records exceptions, paths, or downloaded data.
 function Set-OriginalDesktopPreparationStage([Collections.IDictionary]$Evidence,[string]$Stage) {
     if ($Stage -cnotin @('preflight','adapter-lock','package-download','license-download','package-pin',
+        'package-path','license-path','package-open','package-digest','package-hash-match','license-open',
         'signature-verification','signed-package-identity','interactive-session','licensed-provisioning',
         'registration-readiness','installed-image-verification','activation-host-build','activation-host-self-test',
         'current-context-verification','freshness-scan','service-binding','prepared')) { throw 'Invalid preparation stage.' }
@@ -182,18 +183,26 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable,[Col
         New-Item -ItemType Directory -Path $Work -ErrorAction Stop | Out-Null
         $package=Join-Path $Work 'ChatGPT-x64.msix'; $license=Join-Path $Work 'ChatGPT-License.xml'
         Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-download'
-        Invoke-WebRequest -UseBasicParsing -Uri 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix' -OutFile $package
+        # Same pinned bytes as Microsoft's winget OpenAI.ChatGPT 26.1103.4239.0 manifest.
+        # The rolling URL is not a version selector; every existing trust/identity gate still applies.
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://persistent.oaistatic.com/codex-app-prod/releases/26.1103.4239.0/ChatGPT-x64.msix' -OutFile $package
         Set-OriginalDesktopPreparationStage $PreparationEvidence 'license-download'
         Invoke-WebRequest -UseBasicParsing -Uri 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml' -OutFile $license
-        Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-pin'
-        Assert-PublicRegularPath $package; Assert-PublicRegularPath $license
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-path'
+        Assert-PublicRegularPath $package
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'license-path'
+        Assert-PublicRegularPath $license
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-open'
         $packageStream=[IO.File]::Open($package,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
         $context.Streams.Add($packageStream)
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-digest'
         $hash=Get-BoundedStreamDigest $packageStream $packageStream.Length 4294967296 ([Diagnostics.Stopwatch]::StartNew())
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'package-hash-match'
         if ($hash -cne '9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c') {
-            throw 'Official floating package changed; review required before installation.'
+            throw 'Official pinned package digest mismatch; review required before installation.'
         }
         $context.Files.Add([pscustomobject]@{Stream=$packageStream;Hash=$hash;Bytes=$packageStream.Length})
+        Set-OriginalDesktopPreparationStage $PreparationEvidence 'license-open'
         $licenseStream=[IO.File]::Open($license,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
         $context.Streams.Add($licenseStream)
         Set-OriginalDesktopPreparationStage $PreparationEvidence 'signature-verification'

@@ -21,6 +21,16 @@ foreach ($fn in $copy.FindAll({param($n) $n -is [Management.Automation.Language.
     $original=@($source.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $fn.Name},$false))
     Pass ($original.Count -eq 1 -and $original[0].Extent.Text -ceq $fn.Extent.Text) ('unchanged reviewed verifier '+$fn.Name)
 }
+# The downloaded source is the exact reviewed release, not a moving latest alias.
+$downloadCommands=@($runtime.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and
+    $n.GetCommandName() -ceq 'Invoke-WebRequest'},$true))
+$downloadUrls=@($downloadCommands | ForEach-Object {
+    $_.CommandElements | Where-Object {$_ -is [Management.Automation.Language.StringConstantExpressionAst] -and
+        $_.Value.StartsWith('https://')} | ForEach-Object {$_.Value}
+})
+Pass ($downloadUrls.Count -eq 2 -and
+    $downloadUrls[0] -ceq 'https://persistent.oaistatic.com/codex-app-prod/releases/26.1103.4239.0/ChatGPT-x64.msix' -and
+    $downloadUrls[1] -ceq 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml') 'official download selects reviewed immutable package and unchanged official license'
 # Exercise the exact shared bounded supervisor dependency without a Windows API.
 $start=[Diagnostics.ProcessStartInfo]::new()
 $start.FileName=(Get-Process -Id $PID).Path
@@ -46,6 +56,12 @@ $stageFunction=@($runtime.FindAll({param($n) $n -is [Management.Automation.Langu
     $n.Name -ceq 'Set-OriginalDesktopPreparationStage'},$false))[0]
 $stages=@($stageFunction.FindAll({param($n) $n -is [Management.Automation.Language.StringConstantExpressionAst]},$true) |
     ForEach-Object {$_.Value} | Where-Object {$_ -cnotin @('Invalid preparation stage.','stage')})
+$expectedStages=@('preflight','adapter-lock','package-download','license-download','package-pin',
+    'package-path','license-path','package-open','package-digest','package-hash-match','license-open',
+    'signature-verification','signed-package-identity','interactive-session','licensed-provisioning',
+    'registration-readiness','installed-image-verification','activation-host-build','activation-host-self-test',
+    'current-context-verification','freshness-scan','service-binding','prepared')
+Pass (($stages -join ',') -ceq ($expectedStages -join ',')) 'diagnostic stages match exact reviewed allowlist'
 foreach ($stage in $stages) {
     foreach ($cleanupFails in @($false,$true)) {
         & {
