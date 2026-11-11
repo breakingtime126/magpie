@@ -179,6 +179,51 @@ func (e *Endpoint) Addr() net.Addr {
 	return &a
 }
 
+// WaitForExit observes the existing owned wait; it never waits on the process
+// itself or requests termination. Success requires normal child-tree exit and
+// listener drainage. Shutdown remains the cancellation/cleanup operation.
+func (e *Endpoint) WaitForExit(ctx context.Context) error {
+	if e == nil || ctx == nil {
+		return ErrState
+	}
+	e.mu.Lock()
+	waited := e.firstWaitDone
+	e.mu.Unlock()
+	if waited == nil {
+		return ErrState
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-waited:
+	}
+	e.mu.Lock()
+	err := e.childDrainErr
+	p := e.process
+	e.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// Drainage deliberately tolerates a nonzero root exit. A probe also needs
+	// the independently retained exit status after the owned wait synchronized
+	// root reaping. Never infer successful execution from released handles.
+	status, ok := p.(interface{ exitError() error })
+	if !ok {
+		return ErrState
+	}
+	if err := status.exitError(); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.done:
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.cleanupErr
+	}
+}
+
 func (e *Endpoint) requestStop() {
 	e.stopOnce.Do(func() { e.mu.Lock(); e.stopping = true; e.mu.Unlock(); close(e.stop) })
 }

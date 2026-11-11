@@ -162,3 +162,56 @@ reads from before a selection change cannot replace its result.
 engines and all five locales, including reload, Cancel, a lost response after a
 partial write, disappearance of the runtime, conflict, and explicit recovery.
 Its host API and journal state are synthetic, not real Windows or chat evidence.
+
+## Authenticated one-shot startup inspection
+
+The trusted envelope now has a separate, opt-in startup-inspection operation.
+It is enabled only when the owner configuration selects the exact
+`compare-unrestricted-v0.167.0-alpha.3.2` probe contract. The supplier factory
+still does not select this contract automatically. This addition alone does not
+make normal Desktop startup or same-window use complete.
+
+The [`nativehost`](../../internal/nativehost/probe.go) reserves an independent
+one-use bootstrap pipe for inspection, with the same immutable profile digest,
+packaged-peer verification and source-admission callback as JSONL launch.
+Inspection does not consume the normal launch lease. Direct JSONL without an
+inspection remains possible. At most one inspection is accepted per generation;
+repeated, concurrent and post-launch inspection is unsupported and fails closed.
+A failed or uncertain inspection is not cached as successful configuration.
+
+[`nativelaunch.ProbeStartup`](../../internal/nativelaunch/probe.go) authenticates
+the exact profile bytes before filesystem-aware configuration validation.
+It obtains a distinct retained endpoint and the generation's independently
+trusted channel reference. [`ProbeStartupWithNativeEndpoint`](../../internal/appserverbridge/native_probe.go)
+passes the reviewed route overrides to both genuine one-shot commands. It
+checks both native executable pins before either command, compares the complete
+strict native responses, and checks configuration, catalog pins and executable
+pins again afterward. The public response remains the existing pinned native
+version and unrestricted/null-requirements subset; no company policy, auth,
+capability, native success or synthetic null requirements are fabricated.
+
+On Windows both probes use owned processes with retained Job drainage. The
+primary's [`production runner`](../../internal/appserverbridge/native_probe_process_windows.go)
+keeps the same Job under cleanup ownership if drainage is uncertain; the failed
+operation returns no successful output. The secondary inherits its own original
+listener through `nativeendpoint.Start`. Successful drainage alone is not a
+successful probe: root exit status must also be present and successful.
+`WaitForExit` observes the existing owned wait rather than calling `Cmd.Wait`
+again. Closing stdout is not completion. Unknown exit, nonzero exit, cancellation,
+unproven descendants or failed cleanup suppress successful output.
+
+Before releasing the validated result, the adapter uses the probe-only
+[`FinishProbe`/`ValidateProbe` acknowledgement](../../internal/nativebootstrap/probe_windows.go).
+The live owner rechecks source admission, packaged launcher and gateway lifetime;
+reciprocal retained-peer checks cover completion. The probe lease remains alive
+through the client's final check, independently of a subsequent JSONL launch.
+Normal bootstrap's unexpected-byte rejection is unchanged. The plain experimental
+configuration path and its portable comparison probe are unchanged.
+
+Authored fixtures cover envelope authentication, operation separation, completion
+failure, source/launcher revocation, direct JSONL, acknowledgement/launch races,
+real synthetic child nonzero exits, closed stdout, and descendant drainage.
+Portable fixture results and Windows cross-compilation are not Windows runtime
+acceptance. Windows synthetic tests and a later authorized actual Desktop run
+must be reported separately. No real native model record, cache, credential or
+provider turn is required for these source-level checks.

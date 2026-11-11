@@ -38,6 +38,11 @@ type pipeOwner interface {
 	Await(context.Context) (ownerLease, error)
 	Close() error
 }
+type probeLease interface {
+	ownerLease
+	ValidateProbe(context.Context, func(context.Context) error) error
+}
+
 type dependencies struct {
 	resolve func() (nativeconnect.PackagedLauncher, error)
 	listen  func(nativebootstrap.Record, nativebootstrap.Peer) (pipeOwner, error)
@@ -79,19 +84,26 @@ func startServer(parent context.Context, server *gateway.Server, cfg appserverbr
 }
 
 type Host struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{} // first bounded cleanup attempt finished; not a drain claim
-	session   *nativechannel.Session
-	owner     pipeOwner
-	lease     ownerLease
-	baseErr   error
-	ownerOnce sync.Once
-	ownerErr  error
-	captured  capability
-	plan      nativeconnect.Plan
-	consumed  atomic.Bool
-	admission func(context.Context) error
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{} // first bounded cleanup attempt finished; not a drain claim
+	session       *nativechannel.Session
+	owner         pipeOwner
+	lease         ownerLease
+	baseErr       error
+	ownerOnce     sync.Once
+	ownerErr      error
+	captured      capability
+	plan          nativeconnect.Plan
+	consumed      atomic.Bool
+	admission     func(context.Context) error
+	probeOwner    pipeOwner
+	probeLease    ownerLease
+	probeOnce     sync.Once
+	probeErr      error
+	probeCheck    func(context.Context) error
+	probeAdmitted atomic.Bool
+	phase         atomic.Int32 // 0 unused, 1 probe active, 2 probe complete, 3 JSONL admitted
 }
 
 func (h *Host) Context() context.Context { return h.ctx }
@@ -132,6 +144,10 @@ func start(parent context.Context, captured capability, cfg appserverbridge.Conf
 }
 
 func startWithAdmission(parent context.Context, captured capability, cfg appserverbridge.Config, root string, deps dependencies, admission func(context.Context) error) (*Host, error) {
+	return startWithProbeListener(parent, captured, cfg, root, deps, admission, listenProbeOwner)
+}
+
+func startWithProbeListener(parent context.Context, captured capability, cfg appserverbridge.Config, root string, deps dependencies, admission func(context.Context) error, probeListen func(nativebootstrap.Record, nativebootstrap.Peer) (pipeOwner, error)) (*Host, error) {
 	if parent == nil || parent.Err() != nil || captured == nil || !captured.Valid() {
 		return nil, ErrUnavailable
 	}
@@ -198,18 +214,70 @@ func startWithAdmission(parent context.Context, captured capability, cfg appserv
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if h.ctx.Err() != nil {
+		if h.ctx.Err() != nil || !captured.Valid() {
 			return ErrUnavailable
 		}
 		if err := checkAdmission(ctx, h.admission); err != nil {
 			return err
 		}
 		current, err := nativeconnect.VerifyPackagedLauncher(filepath.Dir(launcher.Path), identity)
-		if err != nil || current != launcher || ctx.Err() != nil || h.ctx.Err() != nil {
+		if err != nil || current != launcher || ctx.Err() != nil || h.ctx.Err() != nil || !captured.Valid() {
 			return ErrUnavailable
+		}
+		select {
+		case <-h.session.Revoked():
+			return ErrUnavailable
+		default:
 		}
 		return nil
 	}}
+	if frozen.StartupProbe == appserverbridge.StartupProbeCompareUnrestricted167 {
+		baseCheck := peer.Check
+		h.probeCheck = func(ctx context.Context) error {
+			if err := baseCheck(ctx, nativebootstrap.Process{}); err != nil {
+				return err
+			}
+			if !h.phase.CompareAndSwap(1, 2) {
+				return ErrUnavailable
+			}
+			return nil
+		}
+		probePeer := peer
+		probePeer.Check = func(ctx context.Context, process nativebootstrap.Process) error {
+			if err := baseCheck(ctx, process); err != nil {
+				return err
+			}
+			if !h.phase.CompareAndSwap(0, 1) && h.phase.Load() != 1 {
+				return ErrUnavailable
+			}
+			h.probeAdmitted.Store(true)
+			return nil
+		}
+		peer.Check = func(ctx context.Context, process nativebootstrap.Process) error {
+			if err := baseCheck(ctx, process); err != nil {
+				return err
+			}
+			for {
+				phase := h.phase.Load()
+				if phase == 1 {
+					return ErrUnavailable
+				}
+				if phase == 3 || h.phase.CompareAndSwap(phase, 3) {
+					return nil
+				}
+			}
+		}
+		if probeListen == nil {
+			return fail(ErrUnavailable)
+		}
+		h.probeOwner, err = probeListen(record, probePeer)
+		if err != nil {
+			return fail(err)
+		}
+		if h.probeOwner == nil {
+			return fail(ErrUnavailable)
+		}
+	}
 	h.owner, err = deps.listen(record, peer)
 	if err != nil {
 		return fail(err)
@@ -241,20 +309,12 @@ func (h *Host) serve(captured capability) {
 			}
 		}
 	}()
-	lease, err := h.owner.Await(h.ctx)
-	h.lease = lease
-	if err != nil && h.ctx.Err() == nil {
-		h.baseErr = err
-	}
-	if err == nil && lease == nil {
-		h.baseErr = ErrUnavailable
-	}
-	if err == nil && lease != nil {
-		h.consumed.Store(true)
-		select {
-		case <-lease.Context().Done():
-		case <-h.ctx.Done():
-		}
+	if h.probeOwner == nil {
+		lease, err := h.owner.Await(h.ctx)
+		h.lease = lease
+		h.acceptLaunch(lease, err)
+	} else {
+		h.serveWithProbe()
 	}
 	h.cancel()
 	<-watchDone
@@ -265,6 +325,13 @@ func (h *Host) serve(captured capability) {
 }
 func (h *Host) cleanup(ctx context.Context) error {
 	var errs []error
+	if h.probeOwner != nil {
+		h.probeOnce.Do(func() { h.probeErr = h.probeOwner.Close() })
+		errs = append(errs, h.probeErr)
+	}
+	if h.probeLease != nil {
+		errs = append(errs, h.probeLease.Close(ctx))
+	}
 	if h.owner != nil {
 		h.ownerOnce.Do(func() { h.ownerErr = h.owner.Close() })
 		errs = append(errs, h.ownerErr)

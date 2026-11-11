@@ -27,10 +27,14 @@ func rejectReparse(path string) error {
 	return nil
 }
 func pipeName(generation string) (*uint16, error) {
-	if !validGeneration(generation) {
-		return nil, ErrUnavailable
+	return operationPipeName(generation, false)
+}
+func operationPipeName(generation string, startupProbe bool) (*uint16, error) {
+	name, err := bootstrapPipeName(generation, startupProbe)
+	if err != nil {
+		return nil, err
 	}
-	return windows.UTF16PtrFromString(`\\.\pipe\magpie-native-bootstrap-` + generation)
+	return windows.UTF16PtrFromString(name)
 }
 
 // Owner reserves one name for one connection. Creation collision fails closed.
@@ -44,18 +48,29 @@ type Owner struct {
 	handle windows.Handle
 	record Record
 	peer   Peer
+	probe  bool
 	used   bool
 	cancel context.CancelFunc
 }
 
 func Listen(record Record, peer Peer) (*Owner, error) {
+	return listen(record, peer, false)
+}
+
+// ListenStartupProbe reserves a separate one-use startup inspection channel.
+// It uses the launch record and peer policy without consuming the launch pipe.
+func ListenStartupProbe(record Record, peer Peer) (*Owner, error) {
+	return listen(record, peer, true)
+}
+
+func listen(record Record, peer Peer, startupProbe bool) (*Owner, error) {
 	if _, err := encode(record); err != nil {
 		return nil, err
 	}
 	if regularPackagePath(peer.Path) != nil {
 		return nil, ErrUnavailable
 	}
-	name, err := pipeName(record.Generation)
+	name, err := operationPipeName(record.Generation, startupProbe)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +79,7 @@ func Listen(record Record, peer Peer) (*Owner, error) {
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	return &Owner{handle: h, record: record, peer: peer}, nil
+	return &Owner{handle: h, record: record, peer: peer, probe: startupProbe}, nil
 }
 func (o *Owner) Close() error {
 	o.mu.Lock()
@@ -159,14 +174,24 @@ func (o *Owner) accept(parent context.Context, await bool) (lease *Lease, err er
 	if err = p.check(ctx, h, false, policy); err != nil {
 		return nil, err
 	}
-	return newLease(lifetime, h, p, record, stop), nil
+	return newLease(lifetime, h, p, record, stop, o.probe, true, policy), nil
 }
 
 // Connect attempts this exact generation once. Expected owner comes from an
 // independently selected package path, not the locator. Missing/busy names,
 // failed identity, expired generations and dead owners have no fallback.
-func Connect(parent context.Context, generation string, policy Peer) (lease *Lease, err error) {
-	name, err := pipeName(generation)
+func Connect(parent context.Context, generation string, policy Peer) (*Lease, error) {
+	return connect(parent, generation, policy, false)
+}
+
+// ConnectStartupProbe attempts the startup inspection channel exactly once,
+// with the same reciprocal peer checks and lease lifetime as Connect.
+func ConnectStartupProbe(parent context.Context, generation string, policy Peer) (*Lease, error) {
+	return connect(parent, generation, policy, true)
+}
+
+func connect(parent context.Context, generation string, policy Peer, startupProbe bool) (lease *Lease, err error) {
+	name, err := operationPipeName(generation, startupProbe)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +255,7 @@ func Connect(parent context.Context, generation string, policy Peer) (lease *Lea
 	if err = p.check(ctx, h, true, policy); err != nil {
 		return nil, err
 	}
-	return newLease(parent, h, p, record, nil), nil
+	return newLease(parent, h, p, record, nil, startupProbe, false, policy), nil
 }
 
 type peerProcess struct {
@@ -354,6 +379,7 @@ type Lease struct {
 	cancel     context.CancelFunc
 	done       chan struct{}
 	record     Record
+	probe      *probeCompletion
 	cleanupErr error // written before done closes; readers synchronize through done
 }
 
@@ -368,9 +394,12 @@ func (l *Lease) Close(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-func newLease(parent context.Context, h windows.Handle, p *peerProcess, r Record, detach context.CancelFunc) *Lease {
+func newLease(parent context.Context, h windows.Handle, p *peerProcess, r Record, detach context.CancelFunc, probe, owner bool, policy Peer) *Lease {
 	ctx, cancel := context.WithCancel(parent)
 	l := &Lease{ctx: ctx, cancel: cancel, done: make(chan struct{}), record: r}
+	if probe {
+		l.probe = &probeCompletion{owner: owner, request: make(chan probeRequest)}
+	}
 	processDone := make(chan struct{})
 	go func() {
 		defer close(processDone)
@@ -383,8 +412,10 @@ func newLease(parent context.Context, h windows.Handle, p *peerProcess, r Record
 		}
 	}()
 	go func() {
-		var unexpected [1]byte
-		_ = readExact(ctx, h, unexpected[:])
+		if !probe || l.completeProbe(h, p, policy) == nil {
+			var unexpected [1]byte
+			_ = readExact(ctx, h, unexpected[:])
+		}
 		cancel()
 		<-processDone
 		l.finish(func() error { return windows.CloseHandle(h) }, func() error { return windows.CloseHandle(p.handle) }, detach)

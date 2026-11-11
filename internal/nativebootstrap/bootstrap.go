@@ -162,3 +162,16 @@ func regularPackagePath(path string) error {
 		}
 	}
 }
+
+// bootstrapPipeName keeps startup inspection separate from the single-use
+// launch channel, while retaining the existing launch name byte for byte.
+func bootstrapPipeName(generation string, startupProbe bool) (string, error) {
+	if !validGeneration(generation) {
+		return "", ErrUnavailable
+	}
+	name := `\\.\pipe\magpie-native-bootstrap-` + generation
+	if startupProbe {
+		name += "-startup-probe"
+	}
+	return name, nil
+}

@@ -96,3 +96,22 @@ func TestProfileRawBytesBoundToOwner(t *testing.T) {
 		t.Fatal("wire accepted missing profile digest")
 	}
 }
+
+func TestStartupProbeNamespace(t *testing.T) {
+	generation := "0123456789abcdef0123456789abcdef"
+	launch, err := bootstrapPipeName(generation, false)
+	if err != nil || launch != `\\.\pipe\magpie-native-bootstrap-`+generation {
+		t.Fatal("launch namespace changed", launch, err)
+	}
+	probe, err := bootstrapPipeName(generation, true)
+	if err != nil || probe != launch+"-startup-probe" || probe == launch {
+		t.Fatal("startup inspection must not consume launch namespace", probe, err)
+	}
+	for _, invalid := range []string{"", generation + "-startup-probe", strings.ToUpper(generation), "../" + generation, strings.Repeat("g", 32)} {
+		for _, startup := range []bool{false, true} {
+			if _, err := bootstrapPipeName(invalid, startup); err == nil {
+				t.Fatal("invalid generation accepted", invalid, startup)
+			}
+		}
+	}
+}

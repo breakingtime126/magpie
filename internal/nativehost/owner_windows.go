@@ -22,3 +22,11 @@ func listenOwner(r nativebootstrap.Record, p nativebootstrap.Peer) (pipeOwner, e
 	}
 	return &windowsOwner{o}, nil
 }
+
+func listenProbeOwner(r nativebootstrap.Record, p nativebootstrap.Peer) (pipeOwner, error) {
+	o, err := nativebootstrap.ListenStartupProbe(r, p)
+	if o == nil {
+		return nil, err
+	}
+	return &windowsOwner{o}, err
+}

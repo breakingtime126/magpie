@@ -406,3 +406,90 @@ func TestWindowsLeaseCleanupErrorsAndDeadline(t *testing.T) {
 		t.Fatal("incomplete cleanup ignored caller deadline")
 	}
 }
+
+func TestWindowsStartupProbeDoesNotConsumeLaunch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	r := uniqueRecord(t)
+	launch, err := Listen(r, ownPeer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer launch.Close()
+	// A launch reservation cannot be used as an inspection channel.
+	if l, err := ConnectStartupProbe(ctx, r.Generation, ownPeer(t)); err == nil {
+		closeLease(t, l)
+		t.Fatal("startup probe connected to launch reservation")
+	}
+	probe, err := ListenStartupProbe(r, ownPeer(t))
+	if err != nil {
+		t.Fatal("startup reservation collided with launch", err)
+	}
+	defer probe.Close()
+	if duplicate, err := ListenStartupProbe(r, ownPeer(t)); err == nil {
+		duplicate.Close()
+		t.Fatal("duplicate startup reservation accepted")
+	}
+	for _, phase := range []struct {
+		name    string
+		owner   *Owner
+		connect func(context.Context, string, Peer) (*Lease, error)
+	}{{"startup", probe, ConnectStartupProbe}, {"launch", launch, Connect}} {
+		t.Run(phase.name, func(t *testing.T) {
+			ac := acceptAsync(ctx, phase.owner)
+			client, err := phase.connect(ctx, r.Generation, ownPeer(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeLease(t, client)
+			a := getAccepted(t, ac)
+			if a.err != nil {
+				t.Fatal(a.err)
+			}
+			defer closeLease(t, a.lease)
+			if client.Record() != r {
+				t.Fatal("operation changed the launch record")
+			}
+			if _, err := phase.owner.Accept(ctx); err == nil {
+				t.Fatal("operation accepted a second connection")
+			}
+			closeLease(t, a.lease)
+			if again, err := phase.connect(ctx, r.Generation, ownPeer(t)); err == nil {
+				closeLease(t, again)
+				t.Fatal("operation reconnected after consumption")
+			}
+		})
+	}
+}
+
+func TestWindowsStartupProbeRejectsPeerPolicy(t *testing.T) {
+	for _, side := range []string{"owner", "client"} {
+		t.Run(side, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			r := uniqueRecord(t)
+			ownerPeer, clientPeer := ownPeer(t), ownPeer(t)
+			deny := func(context.Context, Process) error { return ErrUnavailable }
+			if side == "owner" {
+				clientPeer.Check = deny
+			} else {
+				ownerPeer.Check = deny
+			}
+			o, err := ListenStartupProbe(r, ownerPeer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer o.Close()
+			ac := acceptAsync(ctx, o)
+			if l, err := ConnectStartupProbe(ctx, r.Generation, clientPeer); err == nil {
+				closeLease(t, l)
+				t.Fatal("probe disclosed record despite rejected peer")
+			}
+			a := getAccepted(t, ac)
+			if a.err == nil {
+				closeLease(t, a.lease)
+				t.Fatal("probe owner accepted rejected peer")
+			}
+		})
+	}
+}

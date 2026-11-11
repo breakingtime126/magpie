@@ -83,7 +83,7 @@ func (s *windowsSocket) start(cmd *exec.Cmd) (p child, result error) {
 			if tree == nil {
 				return nil, startErr
 			}
-			return drainedChild{tree}, startErr
+			return drainedChild{tree: tree, command: cmd}, startErr
 		}, func() (uint32, error) {
 			var flags uint32
 			ok, _, callErr := getHandleInformation.Call(uintptr(handle), uintptr(unsafe.Pointer(&flags)))
@@ -99,9 +99,21 @@ func (s *windowsSocket) start(cmd *exec.Cmd) (p child, result error) {
 }
 
 // Wait returns only on a verified whole-Job drain; an error retains ownership.
-type drainedChild struct{ tree *proc.DrainedTree }
+type drainedChild struct {
+	tree    *proc.DrainedTree
+	command *exec.Cmd
+}
 
 func (c drainedChild) Wait() error { return c.tree.Wait(context.Background()) }
 func (c drainedChild) Kill()       { _ = c.tree.Stop() }
+
+// Called only after Wait has synchronized the owned root wait. Drain success
+// and exit success are distinct: termination can drain a failed process too.
+func (c drainedChild) exitError() error {
+	if c.command == nil || c.command.ProcessState == nil || !c.command.ProcessState.Exited() || !c.command.ProcessState.Success() {
+		return errors.New("native child did not exit successfully")
+	}
+	return nil
+}
 
 func (s *windowsSocket) stopAccept() error { return s.SetDeadline(time.Now()) }

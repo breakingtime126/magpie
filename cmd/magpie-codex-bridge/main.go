@@ -217,8 +217,9 @@ func parseArgs(args []string) (operation, appserverbridge.LaunchOptions, appserv
 type dependencies struct {
 	// read is installed by production. A nil reader retains the original private
 	// legacy-config test seam; it is never selected from argv or environment.
-	read       func(string) ([]byte, error)
-	trustedRun func(context.Context, io.Reader, appserverbridge.LaunchOptions, io.ReadCloser, io.WriteCloser) error
+	read         func(string) ([]byte, error)
+	trustedRun   func(context.Context, io.Reader, appserverbridge.LaunchOptions, io.ReadCloser, io.WriteCloser) error
+	trustedProbe func(context.Context, io.Reader, appserverbridge.LaunchOptions, appserverbridge.StartupClientInfo) ([]byte, error)
 
 	getenv   func(string) string
 	load     func(string) (appserverbridge.Config, error)
@@ -331,10 +332,21 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 			var trusted bool
 			trusted, err = classifyProfile(data)
 			if err == nil && trusted {
-				// These independent invocations cannot consume a one-use JSONL lease.
-				// No successful startup/config/identity result is synthesized.
+				// Inspection uses a distinct authenticated operation; it cannot
+				// consume the normal JSONL lease or fall back to plain configuration.
 				if op == startupProbe {
-					return failStartupProbe(output, diagnostics)
+					if deps.trustedProbe == nil || ctx.Err() != nil {
+						return failStartupProbe(output, diagnostics)
+					}
+					result, err := deps.trustedProbe(ctx, bytes.NewReader(data), options, clientInfo)
+					if err != nil || ctx.Err() != nil {
+						return failStartupProbe(output, diagnostics)
+					}
+					line := append(result, '\n')
+					if n, err := output.Write(line); err != nil || n != len(line) {
+						return 1
+					}
+					return 0
 				}
 				if op == primaryIdentity {
 					return failPrimaryIdentity(output, diagnostics, nil)
@@ -441,6 +453,11 @@ func main() {
 	code := execute(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr, dependencies{
 		getenv: os.Getenv,
 		read:   readProfile,
+		trustedProbe: func(parent context.Context, profile io.Reader, options appserverbridge.LaunchOptions, info appserverbridge.StartupClientInfo) ([]byte, error) {
+			ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return nativelaunch.ProbeStartup(ctx, profile, options, info)
+		},
 		trustedRun: func(parent context.Context, profile io.Reader, options appserverbridge.LaunchOptions, input io.ReadCloser, output io.WriteCloser) error {
 			ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 			defer stop()
