@@ -16,7 +16,13 @@ import (
 func TestRuntimePreparationDiagnosticsObserveOriginalCalls(t *testing.T) {
 	for _, failure := range []string{"", "homes", "discovery", "hash", "directory", "version", "rediscovery", "cleanup", "version-cleanup"} {
 		t.Run(failure, func(t *testing.T) {
-			base := t.TempDir()
+			// Windows temp ancestors may use short names. Discovery must return
+			// the canonical owned fixture path, just like an installed path.
+			// Keep production canonical-path admission unchanged.
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			home := filepath.Join(base, "home")
 			codex := filepath.Join(home, "codex")
 			scratch := filepath.Join(base, "scratch")
@@ -28,6 +34,14 @@ func TestRuntimePreparationDiagnosticsObserveOriginalCalls(t *testing.T) {
 			}
 			if err := os.WriteFile(exe, []byte("inert, never executed"), 0600); err != nil {
 				t.Fatal(err)
+			}
+			resolved, err := filepath.EvalSymlinks(exe)
+			if err != nil || !sameRuntimePath(exe, resolved) {
+				t.Fatal("inert fixture executable is not canonical", err)
+			}
+			info, err := os.Lstat(resolved)
+			if err != nil || !info.Mode().IsRegular() {
+				t.Fatal("inert fixture executable is not a regular file", err)
 			}
 			environment := []string{"HOME=" + home, "USERPROFILE=" + home, "CODEX_HOME=" + codex}
 			if failure == "homes" {
@@ -75,7 +89,7 @@ func TestRuntimePreparationDiagnosticsObserveOriginalCalls(t *testing.T) {
 			var replay bytes.Buffer
 			logger := log.New(&replay, "", log.LstdFlags)
 			ctx, finish := nativeprepdiag.Begin(context.Background(), func(s string) { lines = append(lines, s); logger.Print(s) })
-			_, err := prepareInstalledRuntime(ctx, environment, scratch, "windows", ops)
+			_, err = prepareInstalledRuntime(ctx, environment, scratch, "windows", ops)
 			finish(err == nil)
 			if failure == "version-cleanup" {
 				// Fixed-field records from the real observer can be replayed by
