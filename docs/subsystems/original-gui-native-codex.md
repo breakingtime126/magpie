@@ -149,7 +149,9 @@ portable copy, empty native home and public inert provider fixture. No live
 account, inference, Desktop setup or permission adjustment is part of this run.
 
 The action supervisor holds the original process identity and gives a bounded
-Core worker one attempt per action. Exact registry/journal readback establishes
+Core worker one attempt per action. The initial Configure wait is read-only,
+bounded to 15 seconds, and waits only on a missing, hidden or disabled exact
+control. Unknown reads, duplicates or changed control identity stop. Exact registry/journal readback establishes
 selection and restoration separately from UI appearance. Uncertain actions are
 not retried; clean snapshots alone cannot settle an asynchronous Connect.
 Unknown recovery retains the journal and running owner. Screenshots occur only

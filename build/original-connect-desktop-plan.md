@@ -54,7 +54,12 @@ expected executable/adapter, exact journal path, a private baseline snapshot
 and a fresh attempt directory. The Desktop-compatible supervisor runs its fixed
 Core worker with a minimal environment, 60-second deadline and bounded streams.
 The worker uses a 45-second inner budget, held PID generation/executable/HWND
-identity checks and bounded RawView traversal. Unknown text is not exported.
+identity checks and bounded RawView traversal. Before the first action, a
+15-second read-only readiness phase waits only for a missing, hidden or disabled
+exact Configure control. Duplicate controls, wrong role/pattern/state, failed
+reads and owner changes stop. Fixed readiness counts and reason labels preserve
+the last complete read; unknown text is not exported. The final fresh uniqueness
+and runtime-element check still precedes the one-shot action.
 
 Connect requires a unique exact visible/enabled Button with TogglePattern Off.
 It makes one UIA Toggle call, then checks the actual journal's previous values,

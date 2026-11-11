@@ -156,3 +156,81 @@ function Test-OriginalTargetReady($Candidates,[string]$Label,[string]$Pattern,[s
     return $c.name -ceq $Label -and $c.enabled -and -not $c.offscreen -and
         $c.role -ceq 'ControlType.Button' -and $c.pattern -ceq $Pattern -and $c.state -ceq $State
 }
+
+# Only fixed, complete-read metadata leaves the worker. Unknown UI strings,
+# runtime IDs, class names, and paths never appear in this observation.
+function Get-OriginalConfigureObservation($Candidates) {
+    $all=@($Candidates)
+    $o=[ordered]@{total=$all.Count;enabledVisible=0;button=0;toggle=0;invoke=0;off=0;on=0;otherState=0;reason='missing'}
+    foreach ($c in $all) {
+        if ($c.enabled -and -not $c.offscreen) { $o.enabledVisible++ }
+        if ($c.role -ceq 'ControlType.Button') { $o.button++ }
+        if ($c.pattern -ceq 'Toggle') { $o.toggle++ }
+        if ($c.pattern -ceq 'Invoke') { $o.invoke++ }
+        if ($c.state -ceq 'Off') { $o.off++ }
+        elseif ($c.state -ceq 'On') { $o.on++ }
+        else { $o.otherState++ }
+    }
+    if ($all.Count -gt 1) { $o.reason='duplicate' }
+    elseif ($all.Count -eq 1) {
+        $c=$all[0]
+        if ($c.name -cne 'Configure Codex launch selection' -or $c.role -cne 'ControlType.Button') { $o.reason='role' }
+        elseif ($c.pattern -cne 'Toggle') { $o.reason='pattern' }
+        elseif ($c.state -cne 'Off') { $o.reason='state' }
+        elseif ($c.offscreen) { $o.reason='hidden' }
+        elseif (-not $c.enabled) { $o.reason='disabled' }
+        else { $o.reason='ready' }
+    }
+    return $o
+}
+function New-OriginalConfigureReadiness {
+    return @{status='not-started';readAttempts=0;completedReads=0;lastCompleteObservation=$null}
+}
+# HWND creation does not establish that the original page has finished loading.
+# Poll reads only, never an action. A wrong role/pattern/state or duplicate is not
+# a loading assumption. Identity/read errors propagate without a retry.
+function Wait-OriginalConfigureTarget($Readiness,[scriptblock]$ReadTargets,[scriptblock]$CheckOwner,
+    [scriptblock]$ReadElapsed,[scriptblock]$Delay) {
+    while ($true) {
+        $Readiness.status='owner-check'; & $CheckOwner
+        $Readiness.status='deadline';Assert-OriginalDeadline (& $ReadElapsed) 15000
+        $Readiness.status='reading';$Readiness.readAttempts++
+        $targets=@(& $ReadTargets)
+        $Readiness.completedReads++
+        $Readiness.lastCompleteObservation=Get-OriginalConfigureObservation $targets
+        $Readiness.status='owner-check'; & $CheckOwner
+        $Readiness.status='deadline';Assert-OriginalDeadline (& $ReadElapsed) 15000
+        switch -CaseSensitive ($Readiness.lastCompleteObservation.reason) {
+            'ready' {
+                # Return the actual retained element, not a reconstructed selector.
+                $target=Assert-OriginalTarget $targets 'Configure Codex launch selection' 'Toggle' 'Off'
+                $Readiness.status='ready';return $target
+            }
+            { $_ -cin @('missing','disabled','hidden') } {
+                $Readiness.status='waiting'; & $Delay 100
+            }
+            default { $Readiness.status='rejected';throw 'Configure target rejected.' }
+        }
+    }
+}
+function Assert-OriginalConfigureReadiness($Readiness) {
+    Assert-OriginalFields $Readiness @('status','readAttempts','completedReads','lastCompleteObservation')
+    if ($Readiness.status -cnotin @('unavailable','not-started','owner-check','deadline','reading','waiting','ready','rejected')) { throw 'Unknown readiness status.' }
+    foreach ($field in @('readAttempts','completedReads')) {
+        $n=$Readiness[$field]
+        if (($n -isnot [int] -and $n -isnot [long]) -or $n -lt 0 -or $n -gt 151) { throw 'Invalid read count.' }
+    }
+    if ($Readiness.completedReads -gt $Readiness.readAttempts) { throw 'Invalid completed reads.' }
+    $o=$Readiness.lastCompleteObservation
+    if ($null -eq $o) {
+        if ($Readiness.completedReads -ne 0) { throw 'Missing complete observation.' }
+        return
+    }
+    Assert-OriginalFields $o @('total','enabledVisible','button','toggle','invoke','off','on','otherState','reason')
+    if ($Readiness.completedReads -eq 0 -or $o.reason -cnotin @('missing','duplicate','role','pattern','state','hidden','disabled','ready')) { throw 'Invalid complete observation.' }
+    foreach ($field in @('total','enabledVisible','button','toggle','invoke','off','on','otherState')) {
+        $n=$o[$field]
+        if (($n -isnot [int] -and $n -isnot [long]) -or $n -lt 0 -or $n -gt 2048 -or
+            ($field -cne 'total' -and $n -gt $o.total)) { throw 'Invalid observation count.' }
+    }
+}

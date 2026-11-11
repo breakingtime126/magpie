@@ -45,7 +45,8 @@ function Invoke-OriginalConnectAction {
     $start.Arguments=$quoted -join ' '
     $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$started=$false;$startAttempted=$false
     $result=[ordered]@{schema=1;scope='original-magpie-ui-action';mode=$Mode;status='blocked';stage='supervisor';
-        actionsAttempted=0;selectionVerified=$false;restorationVerified=$false;desktopVerified=$false;preserveRecovery=$true}
+        actionsAttempted=0;selectionVerified=$false;restorationVerified=$false;desktopVerified=$false;preserveRecovery=$true;configureReadiness=(New-OriginalConfigureReadiness)}
+    $result.configureReadiness.status='unavailable'
     try {
         # After process start, loss of output is uncertain regardless of whether
         # a marker has become visible. Never infer zero actions from a timeout.
@@ -82,6 +83,19 @@ function Invoke-OriginalConnectAction {
         if ($r.status -ceq 'verified' -and ($r.stage -cne 'complete' -or
             ($Mode -ceq 'Connect' -and ($r.selectionVerified -ne $true -or $r.restorationVerified -ne $false -or $r.actionsAttempted -ne 1)) -or
             ($Mode -ceq 'Restore' -and ($r.restorationVerified -ne $true -or $r.selectionVerified -ne $false -or $r.actionsAttempted -ne 2)))) { throw 'Worker success invalid.' }
+        # Normalize only the fixed diagnostics object for strict shared validation.
+        $readiness=@{}
+        foreach ($property in $r.configureReadiness.PSObject.Properties) {
+            $readiness[$property.Name]=$property.Value
+        }
+        if ($null -ne $r.configureReadiness.lastCompleteObservation) {
+            $readiness.lastCompleteObservation=@{}
+            foreach ($property in $r.configureReadiness.lastCompleteObservation.PSObject.Properties) {
+                $readiness.lastCompleteObservation[$property.Name]=$property.Value
+            }
+        }
+        Assert-OriginalConfigureReadiness $readiness
+        if ($Mode -ceq 'Connect' -and $r.status -ceq 'verified' -and $readiness.status -cne 'ready') { throw 'Missing configure readiness.' }
         $result=$r
     } catch { } finally {
         if ($started -or ($startAttempted -and $result.status -ceq 'uncertain')) {

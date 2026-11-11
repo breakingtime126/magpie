@@ -10,7 +10,11 @@ $cases=@(
     @{name='retry-uncertain';old="if (`$Ledger.ContainsKey(`$Action)) { throw 'Action was already attempted.' }";new='# mutation: permit retry'},
     @{name='identity-drift';old='if ($Expected[$field] -cne $Actual[$field])';new='if ($false)'},
     @{name='journal-removal';old='$JournalPresent -or -not (Test-OriginalSelectionEqual $Current $Before)';new='-not (Test-OriginalSelectionEqual $Current $Before)'},
-    @{name='external-recovery';old="{ throw 'External selection change.' }";new='{ }'}
+    @{name='external-recovery';old="{ throw 'External selection change.' }";new='{ }'},
+    @{name='readiness-duplicate';old="if (`$all.Count -gt 1) { `$o.reason='duplicate' }";new="if (`$all.Count -gt 2) { `$o.reason='duplicate' }"},
+    @{name='readiness-owner';old="`$Readiness.lastCompleteObservation=Get-OriginalConfigureObservation `$targets`n        `$Readiness.status='owner-check'; & `$CheckOwner";new='$Readiness.lastCompleteObservation=Get-OriginalConfigureObservation $targets'},
+    @{name='readiness-deadline';old="`$Readiness.status='deadline';Assert-OriginalDeadline (& `$ReadElapsed) 15000`n        `$Readiness.status='reading'";new="`$Readiness.status='deadline';Assert-OriginalDeadline (& `$ReadElapsed) 16000`n        `$Readiness.status='reading'"},
+    @{name='readiness-report-fields';old="Assert-OriginalFields `$o @('total','enabledVisible','button','toggle','invoke','off','on','otherState','reason')";new='# mutation: accept unknown report fields'}
 )
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('original-action-mutants-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($temp)

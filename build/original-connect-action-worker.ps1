@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-connect-action-core.ps1')
 $result=[ordered]@{schema=1;scope='original-magpie-ui-action';mode=$Mode;status='blocked';stage='context';
-    actionsAttempted=0;selectionVerified=$false;restorationVerified=$false;desktopVerified=$false;preserveRecovery=$true}
+    actionsAttempted=0;selectionVerified=$false;restorationVerified=$false;desktopVerified=$false;preserveRecovery=$true;configureReadiness=(New-OriginalConfigureReadiness)}
 $process=$null;$ledger=@{}
 try {
     if ($Mode -cnotin @('Connect','Restore')) { throw 'Exact action mode required.' }
@@ -82,8 +82,9 @@ try {
         Assert-Owner
         return $found.ToArray()
     }
-    function Invoke-Target([string]$Action,[string]$Label,[string]$Pattern,[string]$State) {
-        $target=Assert-OriginalTarget @(Find-Targets $Label) $Label $Pattern $State
+    function Invoke-Target([string]$Action,[string]$Label,[string]$Pattern,[string]$State,$ReadyTarget=$null) {
+        $target=if ($null -eq $ReadyTarget) { Assert-OriginalTarget @(Find-Targets $Label) $Label $Pattern $State }
+            else { Assert-OriginalTarget @($ReadyTarget) $Label $Pattern $State }
         $check={ Assert-Owner }
         $mark={ param($name)
             Write-OriginalExclusive (Join-Path $AttemptDirectory ($name+'.attempt')) 'outcome-uncertain-until-readback'
@@ -105,7 +106,11 @@ try {
     }
     if ($Mode -ceq 'Connect') {
         $result.stage='configure'
-        Invoke-Target 'configure' 'Configure Codex launch selection' 'Toggle' 'Off'
+        $readinessWatch=[Diagnostics.Stopwatch]::StartNew()
+        $ready=Wait-OriginalConfigureTarget $result.configureReadiness `
+            { Find-Targets 'Configure Codex launch selection' } { Assert-Owner } `
+            { $readinessWatch.ElapsedMilliseconds } { param($milliseconds) Start-Sleep -Milliseconds $milliseconds }
+        Invoke-Target 'configure' 'Configure Codex launch selection' 'Toggle' 'Off' $ready
         $result.stage='selection-readback'
         while ($true) {
             Assert-Owner

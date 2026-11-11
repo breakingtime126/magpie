@@ -112,4 +112,65 @@ foreach ($required in @('$watch.ElapsedMilliseconds -ge 60000','$texts[$i].Lengt
     if (-not $supervisor.Contains($required)) { throw ('FAIL: supervisor contract '+$required) }
 }
 if ($supervisor.IndexOf("`$result.status='uncertain';`$result.actionsAttempted=-1") -gt $supervisor.IndexOf('$started=$process.Start()')) { throw 'FAIL: start must be marked uncertain before dispatch' }
+# Initial UIA readiness is a read-only sequence, not a repeated Configure.
+$readyTarget=Copy-Object $target;$readyTarget.runtime='synthetic-retained-id'
+$busyTarget=Copy-Object $readyTarget;$busyTarget.enabled=$false
+$hiddenTarget=Copy-Object $readyTarget;$hiddenTarget.offscreen=$true
+$fixture=@{clock=0;reads=0;ownerChecks=0;delays=0}
+$readiness=New-OriginalConfigureReadiness
+$retained=Wait-OriginalConfigureTarget $readiness {
+    $fixture.reads++
+    switch ($fixture.reads) { 1 { return @() };2 { return $busyTarget };3 { return $hiddenTarget };default { return $readyTarget } }
+} { $fixture.ownerChecks++ } { $fixture.clock } { param($ms) $fixture.clock+=$ms;$fixture.delays++ }
+if (-not [object]::ReferenceEquals($retained,$readyTarget) -or $fixture.reads -ne 4 -or $fixture.ownerChecks -ne 8 -or
+    $fixture.delays -ne 3 -or $readiness.status -cne 'ready' -or $readiness.completedReads -ne 4 -or
+    $readiness.lastCompleteObservation.reason -cne 'ready') { throw 'FAIL: readiness must wait using reads and retain actual target' }
+Assert-OriginalConfigureReadiness $readiness
+foreach ($case in @('duplicate','role','pattern','state')) {
+    $bad=Copy-Object $readyTarget
+    switch ($case) { role { $bad.role='ControlType.Pane' };pattern { $bad.pattern='Invoke' };state { $bad.state='On' } }
+    $fixture=@{reads=0;delays=0};$readiness=New-OriginalConfigureReadiness
+    Reject { Wait-OriginalConfigureTarget $readiness {
+        $fixture.reads++;if ($fixture.reads -gt 1) { throw 'test stops an erroneous repeated read' }
+        if ($case -ceq 'duplicate') { return @($bad,$bad) };return $bad
+    } {} { 0 } { param($ms) $fixture.delays++ } } ('readiness '+$case)
+    if ($fixture.reads -ne 1 -or $fixture.delays -ne 0 -or $readiness.status -cne 'rejected' -or
+        $readiness.lastCompleteObservation.reason -cne $case) { throw ('FAIL: readiness must immediately reject '+$case) }
+    Assert-OriginalConfigureReadiness $readiness
+}
+$fixture=@{reads=0;checks=0};$readiness=New-OriginalConfigureReadiness
+Reject { Wait-OriginalConfigureTarget $readiness { $fixture.reads++;return $readyTarget } {
+    $fixture.checks++;if ($fixture.checks -eq 2) { throw 'owner changed during read' }
+} { 0 } { throw 'must not delay after drift' } } 'readiness owner drift'
+if ($readiness.status -cne 'owner-check' -or $fixture.reads -ne 1 -or $readiness.completedReads -ne 1) { throw 'FAIL: readiness drift must stop' }
+$fixture=@{reads=0};$readiness=New-OriginalConfigureReadiness
+Reject { Wait-OriginalConfigureTarget $readiness { $fixture.reads++;throw 'UIA failure' } {} { 0 } { throw 'must not retry failed read' } } 'UIA readiness failure'
+if ($fixture.reads -ne 1 -or $readiness.status -cne 'reading' -or $readiness.completedReads -ne 0 -or
+    $null -ne $readiness.lastCompleteObservation) { throw 'FAIL: failed read is unknown, not missing' }
+$fixture=@{clock=14900;reads=0;delays=0};$readiness=New-OriginalConfigureReadiness
+Reject { Wait-OriginalConfigureTarget $readiness { $fixture.reads++;return @() } {} { $fixture.clock } {
+    param($ms) $fixture.delays++;$fixture.clock+=$ms
+    if ($fixture.delays -gt 1) { throw 'test bounds mutated deadline' }
+} } 'bounded initial wait'
+if ($fixture.reads -ne 1 -or $fixture.delays -ne 1 -or $readiness.status -cne 'deadline' -or
+    $readiness.lastCompleteObservation.reason -cne 'missing') { throw 'FAIL: readiness deadline must stop before another read' }
+$fixture=@{clock=0};$readiness=New-OriginalConfigureReadiness
+Reject { Wait-OriginalConfigureTarget $readiness { $fixture.clock=15000;return $readyTarget } {} { $fixture.clock } {} } 'late ready control'
+if ($readiness.status -cne 'deadline') { throw 'FAIL: late ready control must not escape deadline' }
+Assert-OriginalConfigureReadiness $readiness
+$observation=Get-OriginalConfigureObservation @($readyTarget,$busyTarget,$hiddenTarget)
+if ($observation.total -ne 3 -or $observation.enabledVisible -ne 1 -or $observation.button -ne 3 -or
+    $observation.toggle -ne 3 -or $observation.off -ne 3 -or $observation.reason -cne 'duplicate') { throw 'FAIL: fixed readiness counts' }
+$badReport=New-OriginalConfigureReadiness;$badReport.status='arbitrary private UI text'
+Reject { Assert-OriginalConfigureReadiness $badReport } 'fixed readiness vocabulary'
+$badReport=New-OriginalConfigureReadiness;$badReport.completedReads=1
+Reject { Assert-OriginalConfigureReadiness $badReport } 'missing complete observation'
+$badReport=New-OriginalConfigureReadiness;$badReport.readAttempts=1;$badReport.completedReads=1
+$badReport.lastCompleteObservation=Copy-Object $observation;$badReport.lastCompleteObservation.secret='private'
+Reject { Assert-OriginalConfigureReadiness $badReport } 'no unknown diagnostic fields'
+
+foreach ($required in @('Wait-OriginalConfigureTarget $result.configureReadiness',
+    "Invoke-Target 'configure' 'Configure Codex launch selection' 'Toggle' 'Off' `$ready")) {
+    if (-not $worker.Contains($required)) { throw 'FAIL: readiness must feed retained target into original one-shot action' }
+}
 Write-Output 'ORIGINAL_CONNECT_ACTION_OFFLINE_TESTS_PASSED'
