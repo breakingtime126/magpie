@@ -56,6 +56,23 @@ function New-OriginalCaptureStart($Identity,[string]$PrivateDirectory,[string]$E
     }
     return $start
 }
+# Only a complete ordered fixed prefix is evidence of a phase. Never return raw
+# child output; partial/unknown/out-of-order records invalidate phase evidence.
+function Get-OriginalCaptureProtocol {
+    return "worker-entered`nnative-compile`ntarget-identity`nprint-window`nrender-returned`npng-encode`nprivate-write`ncapture-complete`n"
+}
+function Get-OriginalCapturePhase([string]$Output) {
+    if ($Output.Length -eq 0) { return 'not-observed' }
+    $prefix=Get-OriginalCaptureProtocol
+    if ($Output -ceq ($prefix+'{"schema":1,"status":"captured"}')) { return 'capture-complete' }
+    $length=0
+    foreach ($phase in $prefix.Split([char]10)) {
+        if ($phase.Length -eq 0) { continue }
+        $length+=$phase.Length+1
+        if ($Output -ceq $prefix.Substring(0,$length)) { return $phase }
+    }
+    return 'unverified'
+}
 # The 8s deadline bounds the started capture child, NOT this entire call or target
 # rendering. Normal explicit waits can add 2s exit + 1s drain + 2s finally, and
 # Dispose adds up to 5s exit + 2s drain. Constructor-error cleanup adds up to
@@ -64,7 +81,7 @@ function New-OriginalCaptureStart($Identity,[string]$PrivateDirectory,[string]$E
 function Invoke-OriginalCaptureChild($Start,[int]$Deadline=8000) {
     . (Join-Path $PSScriptRoot 'original-desktop-window-capture-supervisor.ps1')
     Initialize-OriginalCaptureSupervisor
-    $child=$null;$confirmed=$false;$success=$false;$reason='child-failed'
+    $child=$null;$confirmed=$false;$success=$false;$reason='child-failed';$phase='not-observed'
     try {
         $savedEncoding=[Console]::InputEncoding
         $changeEncoding=$savedEncoding.GetPreamble().Length -ne 0
@@ -83,17 +100,22 @@ function Invoke-OriginalCaptureChild($Start,[int]$Deadline=8000) {
         while (-not $child.Drained -and $watch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
         if ($child.TimedOut) { $reason='deadline' }
         elseif ($child.Overflow -or $child.ErrorOutput -or -not $child.Drained) { $reason='output-invalid' }
-        elseif ($child.ExitCode -eq 0 -and $child.Output -ceq '{"schema":1,"status":"captured"}') {
+        elseif ($child.ExitCode -eq 0 -and $child.Output -ceq ((Get-OriginalCaptureProtocol)+'{"schema":1,"status":"captured"}')) {
             $success=$true;$reason='none'
         }
     } catch { $success=$false }
     finally {
         if ($null -ne $child) {
             try { $child.Stop();$confirmed=$child.Wait(2000) -and $child.Exited } catch { $confirmed=$false }
+            # A killed child may leave complete prefix records. Read only after
+            # exit/drain confirmation; overflow or incomplete streams are unknown.
+            if ($confirmed -and $child.Drained -and -not $child.Overflow -and -not $child.ErrorOutput) {
+                $phase=Get-OriginalCapturePhase $child.Output
+            } else { $phase='unverified' }
             $child.Dispose()
         }
     }
-    return @{Success=($success -and $confirmed);ExitConfirmed=$confirmed;Reason=$reason}
+    return @{Success=($success -and $confirmed);ExitConfirmed=$confirmed;Reason=$reason;Phase=$phase}
 }
 function Read-OriginalCaptureImage([string]$Path) {
     Assert-OriginalCaptureRegularPath $Path
@@ -112,7 +134,7 @@ function Read-OriginalCaptureImage([string]$Path) {
 function Invoke-OriginalDesktopWindowCapture {
     param([Diagnostics.Process]$OwnedProcess,[string]$ExpectedExecutable,[string]$PrivateDirectory,
         [string]$EvidenceDirectory,[switch]$SequenceReportSaved)
-    $result=[ordered]@{schema=1;scope='original-magpie-diagnostic';status='blocked';reason='context';childExitConfirmed=$false;published=$false}
+    $result=[ordered]@{schema=1;scope='original-magpie-diagnostic';status='blocked';reason='context';phase='not-observed';childExitConfirmed=$false;published=$false}
     try {
         Assert-OriginalCaptureContext
         if (-not $SequenceReportSaved) { return [pscustomobject]$result }
@@ -137,7 +159,7 @@ function Invoke-OriginalDesktopWindowCapture {
         if ([IO.File]::Exists($target)) { throw 'Capture evidence already exists.' }
         $result.reason='child-failed';$result.status='failed'
         $child=Invoke-OriginalCaptureChild (New-OriginalCaptureStart $identity $PrivateDirectory $EvidenceDirectory)
-        $result.childExitConfirmed=[bool]$child.ExitConfirmed;$result.reason=$child.Reason
+        $result.childExitConfirmed=[bool]$child.ExitConfirmed;$result.reason=$child.Reason;$result.phase=$child.Phase
         if (-not $child.Success -or -not $child.ExitConfirmed) { return [pscustomobject]$result }
         $result.reason='identity'
         if (-not (Test-OriginalCaptureIdentity $OwnedProcess $identity)) { throw 'Capture identity changed.' }

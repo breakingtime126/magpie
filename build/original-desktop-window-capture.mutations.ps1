@@ -11,7 +11,7 @@ try {
         switch ($mutation) {
             'start-return' { $text=$text.Replace('attempted=true;','').Replace('var held=process.Handle;','attempted=true; var held=process.Handle;') }
             'identity' { $text=$text.Replace('if (-not (Test-OriginalCaptureIdentity $OwnedProcess $identity))','if ($false)') }
-            'output' { $text=$text.Replace(' -and $child.Output -ceq ''{"schema":1,"status":"captured"}''','') }
+            'output' { $text=$text.Replace(' -and $child.Output -ceq ((Get-OriginalCaptureProtocol)+''{"schema":1,"status":"captured"}'')','') }
             'exit' { $text=$text.Replace('if (-not $child.Success -or -not $child.ExitConfirmed)','if (-not $child.Success)') }
             'report' { $text=$text.Replace('if (-not $SequenceReportSaved)','if ($false)') }
         }

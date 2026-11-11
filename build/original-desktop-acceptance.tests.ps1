@@ -29,16 +29,20 @@ foreach ($name in @('Get-AcceptanceSupplierFixture','Test-AcceptanceJournal','Ge
 foreach ($captureFailure in @($false,$true)) {
     foreach ($captureThrows in @($false,$true)) {
         foreach ($trayThrows in @($false,$true)) {
-            $script:calls=@()
-            $result=Get-AcceptanceDiagnostics $captureFailure {
-                $script:calls+='capture';if ($captureThrows) {throw 'private-capture-error'};return @{status='captured'}
-            } {
-                $script:calls+='tray';if ($trayThrows) {throw 'private-tray-error'};return @{status='observed'}
+            foreach ($preconditionThrows in @($false,$true)) {
+                $script:calls=@()
+                $result=Get-AcceptanceDiagnostics $captureFailure {
+                    $script:calls+='capture';if ($captureThrows) {throw 'private-capture-error'};return @{status='captured';phase='capture-complete'}
+                } {
+                    $script:calls+='tray';if ($trayThrows) {throw 'private-tray-error'};return @{status='observed'}
+                } {
+                    $script:calls+='preconditions';if ($preconditionThrows) {throw 'private-precondition-error'};return @{status='snapshot'}
+                }
+                $expected='preconditions,tray';if ($captureFailure) {$expected='preconditions,capture,tray'}
+                Assert (($script:calls -join ',') -ceq $expected) 'diagnostic failure cannot skip other read-only evidence'
+                Assert ($result.Count -eq 3 -and ($result|ConvertTo-Json -Compress) -cnotmatch 'private|cleanup|Recovery') 'diagnostics do not expose errors or carry recovery decisions'
+                if (-not $captureFailure) {Assert ($null -eq $result.capture) 'no failure capture on verified sequence'}
             }
-            $expected='tray';if ($captureFailure) {$expected='capture,tray'}
-            Assert (($script:calls -join ',') -ceq $expected) 'diagnostic failure cannot skip other read-only evidence'
-            Assert ($result.Count -eq 2 -and ($result|ConvertTo-Json -Compress) -cnotmatch 'private|cleanup|Recovery') 'diagnostics do not expose errors or carry recovery decisions'
-            if (-not $captureFailure) {Assert ($null -eq $result.capture) 'no failure capture on verified sequence'}
         }
     }
 }
@@ -70,6 +74,7 @@ Assert ($text.Contains('Invoke-OriginalDesktopSequence -Connect') -and $text.Con
 Assert ($text.IndexOf('$report.stage=''owned-window-evidence''') -gt $text.IndexOf('$safeCleanup=$report.sequence.cleanupAllowed')) 'captures only after recovery'
 Assert ($text.Contains('if ($safeCleanup)') -and $text.Contains('if ($null -ne $context -and $context.Evidence.activated)')) 'cleanup requires recovery and held activation authority'
 Assert ($text.Contains("Save-AcceptanceReport`n    # Diagnostics follow") -and $text.IndexOf('$diagnostics=Get-AcceptanceDiagnostics') -gt $text.IndexOf('$safeCleanup=$report.sequence.cleanupAllowed')) 'diagnostics follow saved final sequence without changing recovery'
+Assert ($text.Contains('-OriginalStartInfo $start') -and $text.Contains('-RecoveryChecksCompleted -SequenceReportSaved') -and $text.Contains('$report.connectPreconditions=$diagnostics.preconditions')) 'precondition observer receives retained original environment after saved sequence evidence'
 Assert ($text.Contains('restoredDesktopStartVerified=$false') -and $text.Contains('backendHandshakeVerified=$false') -and $text.Contains('zeroEgressProven=$false')) 'bounded claims retained'
 Assert (-not $text.Contains("RemoveAll") -and -not $text.Contains(".Delete(")) 'coordinator preserves recovery files'
 Assert ($package.Extent.Text.Contains('$DiscoverOriginalConnect -or $env:MAGPIE_ORIGINAL_CONNECT_DISCOVERY')) 'discovery and action gates exclusive'

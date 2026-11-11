@@ -223,4 +223,47 @@ $journalAt=$worker.IndexOf('if (Test-JournalPresent)', $worker.IndexOf("`$result
 if ($observationAt -lt 0 -or $observationAt -gt $journalAt) { throw 'FAIL: missing journal must not suppress UI observations' }
 
 if ([regex]::Matches($worker,'\$result\.postActionReadback').Count -ne 1) { throw 'FAIL: diagnostic fields must not drive worker action or recovery decisions' }
+# A transient known error must survive later clean reads and later categories.
+$errorNode.offscreen=$false
+$post=New-OriginalPostActionReadback
+Update-OriginalPostActionReadback $post { return @($restore) }
+if ($null -ne $post.firstKnownError -or $post.sawKnownError) { throw 'FAIL: no invented first error' }
+Update-OriginalPostActionReadback $post { return @($configure,$errorNode) }
+$firstError=$post.firstKnownError
+if ($null -eq $firstError -or $firstError.unavailableErrors -ne 1) { throw 'FAIL: first error snapshot missing' }
+$laterError=Copy-Object $errorNode;$laterError.name=$labels[3]
+Update-OriginalPostActionReadback $post { return @($configure,$laterError) }
+Update-OriginalPostActionReadback $post { return @($configure) }
+if (-not [object]::ReferenceEquals($firstError,$post.firstKnownError) -or $post.firstKnownError.unavailableErrors -ne 1 -or
+    $post.firstKnownError.conflictErrors -ne 0 -or $post.lastComplete.unavailableErrors -ne 0 -or
+    $post.lastComplete.conflictErrors -ne 0 -or -not $post.sawKnownError) { throw 'FAIL: transient first error overwritten or lost' }
+Assert-OriginalPostActionReadback $post
+Reject { Update-OriginalPostActionReadback $post { $laterError;throw 'partial read after first error' } } 'partial error snapshot'
+if (-not [object]::ReferenceEquals($firstError,$post.firstKnownError)) { throw 'FAIL: partial read replaced first error' }
+Assert-OriginalPostActionReadback $post
+foreach ($case in @('missing','false-flag','zero-error','unknown-field','negative-count')) {
+    $bad=Copy-Object $post
+    switch ($case) {
+        missing { $bad.firstKnownError=$null }
+        false-flag { $bad.sawKnownError=$false }
+        zero-error { $bad.firstKnownError.unavailableErrors=0 }
+        unknown-field { $bad.firstKnownError.raw='private' }
+        negative-count { $bad.firstKnownError.unavailableErrors=-1 }
+    }
+    Reject { Assert-OriginalPostActionReadback $bad } ('first error invariant '+$case)
+}
+# No complete read means neither a known-error flag nor a retained error.
+$bad=New-OriginalPostActionReadback;$bad.sawKnownError=$true
+Reject { Assert-OriginalPostActionReadback $bad } 'flag without observed error'
+$bad=New-OriginalPostActionReadback;$bad.firstKnownError=Copy-Object $firstError;$bad.sawKnownError=$true
+Reject { Assert-OriginalPostActionReadback $bad } 'error without complete read'
+# All four existing fixed categories are retained, with no new labels/selectors.
+foreach ($i in @(2,3,4,5)) {
+    $node=Copy-Object $errorNode;$node.name=$labels[$i]
+    $p=New-OriginalPostActionReadback;Update-OriginalPostActionReadback $p { return @($node) }
+    $field=@{2='unavailableErrors';3='conflictErrors';4='uncertainErrors';5='catalogErrors'}[$i]
+    if ($p.firstKnownError[$field] -ne 1) { throw 'FAIL: known category not retained' }
+    Assert-OriginalPostActionReadback $p
+}
+
 Write-Output 'ORIGINAL_CONNECT_ACTION_OFFLINE_TESTS_PASSED'

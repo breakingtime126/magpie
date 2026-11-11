@@ -98,7 +98,7 @@ function Invoke-OriginalConnectAction {
         if ($Mode -ceq 'Connect' -and $r.status -ceq 'verified' -and $readiness.status -cne 'ready') { throw 'Missing configure readiness.' }
         $post=@{}
         foreach ($property in $r.postActionReadback.PSObject.Properties) { $post[$property.Name]=$property.Value }
-        foreach ($field in @('firstComplete','lastComplete')) {
+        foreach ($field in @('firstComplete','lastComplete','firstKnownError')) {
             if ($null -ne $post[$field]) {
                 $o=@{};foreach ($property in $post[$field].PSObject.Properties) { $o[$property.Name]=$property.Value }
                 $post[$field]=$o

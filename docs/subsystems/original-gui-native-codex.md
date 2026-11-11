@@ -157,7 +157,12 @@ not retried; clean snapshots alone cannot settle an asynchronous Connect.
 Unknown recovery retains the journal and running owner. Acceptance screenshots
 follow restoration. Separate bounded, diagnostic-only original-window capture
 and tray reads run only after the recovery checks return and the report is saved;
-their results cannot authorize cleanup or change uncertainty. Tray discovery is
+their results cannot authorize cleanup or change uncertainty. The first complete
+allowlisted error snapshot is retained even if the UI clears it. Capture reports
+validated fixed phases without extending its deadline. A separate read-only
+observer reuses retained package metadata and the original environment to report
+bounded path preconditions; it performs no package query or native execution and
+does not prove the original version probe or host preparation. Tray discovery is
 not a Quit action, and window close only hides this tray app. Reported root-process
 exits do not establish descendant drain.
 

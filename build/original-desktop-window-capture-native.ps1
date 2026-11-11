@@ -27,7 +27,9 @@ namespace OriginalCapture {
      GetWindowText(h,title,16)==6 && title.ToString()=="magpie";
    } catch { return false; }
   }
+  static void Phase(string phase) { Console.Out.Write(phase+"\n"); Console.Out.Flush(); }
   public static void Capture(int id,long ticks,string exe,long window,string output) {
+   Phase("target-identity");
    using(var p=Process.GetProcessById(id)) {
     if(!Matches(p,id,ticks,exe,window)) throw new InvalidOperationException();
     RECT r; var h=new IntPtr(window);
@@ -40,13 +42,19 @@ namespace OriginalCapture {
       try {
        // Synchronous target rendering request, NOT passive observation. Killing this
        // helper bounds our wait, not the target's completion of rendering.
-       if(!Matches(p,id,ticks,exe,window) || !PrintWindow(h,dc,2)) throw new InvalidOperationException();
+       if(!Matches(p,id,ticks,exe,window)) throw new InvalidOperationException();
+       Phase("print-window");
+       bool rendered=PrintWindow(h,dc,2);
+       Phase("render-returned");
+       if(!rendered) throw new InvalidOperationException();
       } finally { g.ReleaseHdc(dc); }
      }
      if(!Matches(p,id,ticks,exe,window)) throw new InvalidOperationException();
      using(var bytes=new MemoryStream()) {
+      Phase("png-encode");
       bitmap.Save(bytes,ImageFormat.Png);
       if(bytes.Length<67 || bytes.Length>10485760) throw new InvalidOperationException();
+      Phase("private-write");
       using(var file=new FileStream(output,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
        bytes.Position=0; bytes.CopyTo(file);
       }

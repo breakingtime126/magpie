@@ -27,6 +27,7 @@ on:
       - build/package-native-magpie-windows.ps1
       - build/original-connect-discovery*.ps1
       - build/original-connect-action*.ps1
+      - build/original-connect-preconditions*.ps1
       - build/original-desktop-*.ps1
       - build/mutate-bridge-shutdown-order.py
       - build/test-native-preview-official.ps1
@@ -138,7 +139,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Official package safety fixtures failed.' }
             & $hostName -NoProfile -NonInteractive -File build/original-desktop-sequence.tests.ps1
             if ($LASTEXITCODE -ne 0) { throw 'Original recovery sequencing fixtures failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-connect-preconditions.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Read-only Connect precondition fixtures failed.' }
           }
+          & pwsh -NoProfile -NonInteractive -File build/original-connect-preconditions.mutations.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only Connect precondition mutations failed.' }
           & pwsh -NoProfile -NonInteractive -File build/original-connect-action.tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Original action fixtures failed.' }
           & pwsh -NoProfile -NonInteractive -File build/original-connect-action.mutations.ps1

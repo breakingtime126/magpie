@@ -149,3 +149,15 @@ activation freshness/pins and recovery-read failure. The tray discovery and
 window-capture fixture/mutation suites run before live acceptance; Windows
 capture fixtures use Desktop PowerShell for native PNG checks. Offline fixtures do not
 substitute for the real opted-in Windows run.
+
+The post-action report retains the first complete known-error observation as
+well as first/last control snapshots, so a transient allowlisted error is not
+lost. Capture reports only validated fixed phase names under its existing
+stream and deadline bounds; a phase never proves rendering or action success.
+The optional read-only Connect precondition observer runs after saved recovery
+evidence. It reuses retained official registration metadata and the original
+launch environment, inspects bounded owned path metadata, and performs no new
+package query, native execution or file-content read. Its fixed predicates do
+not prove the original discovery, CLI-version probe, embedded pins or host
+preparation succeeded. Unknown observations stay unknown and cannot change
+recovery decisions. See [its contract](original-connect-preconditions-review.md).

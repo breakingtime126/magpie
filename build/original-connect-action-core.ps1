@@ -279,7 +279,7 @@ function Get-OriginalPostActionObservation($Candidates) {
     return $o
 }
 function New-OriginalPostActionReadback {
-    return @{status='not-started';readAttempts=0;completedReads=0;firstComplete=$null;lastComplete=$null;
+    return @{status='not-started';readAttempts=0;completedReads=0;firstComplete=$null;lastComplete=$null;firstKnownError=$null;
         sawDisabledRestore=$false;sawKnownError=$false}
 }
 function Update-OriginalPostActionReadback($Report,[scriptblock]$ReadTargets) {
@@ -290,11 +290,14 @@ function Update-OriginalPostActionReadback($Report,[scriptblock]$ReadTargets) {
     if ($null -eq $Report.firstComplete) { $Report.firstComplete=$o }
     $Report.lastComplete=$o
     if ($o.restoreDisabledVisible -gt 0) { $Report.sawDisabledRestore=$true }
-    if ($o.unavailableErrors+$o.conflictErrors+$o.uncertainErrors+$o.catalogErrors -gt 0) { $Report.sawKnownError=$true }
+    if ($o.unavailableErrors+$o.conflictErrors+$o.uncertainErrors+$o.catalogErrors -gt 0) {
+        $Report.sawKnownError=$true
+        if ($null -eq $Report.firstKnownError) { $Report.firstKnownError=$o }
+    }
     $Report.status='observed'
 }
 function Assert-OriginalPostActionReadback($Report) {
-    Assert-OriginalFields $Report @('status','readAttempts','completedReads','firstComplete','lastComplete','sawDisabledRestore','sawKnownError')
+    Assert-OriginalFields $Report @('status','readAttempts','completedReads','firstComplete','lastComplete','firstKnownError','sawDisabledRestore','sawKnownError')
     if ($Report.status -cnotin @('unavailable','not-started','reading','read-failed','observed') -or
         $Report.sawDisabledRestore -isnot [bool] -or $Report.sawKnownError -isnot [bool]) { throw 'Invalid post-action metadata.' }
     foreach ($field in @('readAttempts','completedReads')) {
@@ -302,10 +305,10 @@ function Assert-OriginalPostActionReadback($Report) {
         if (($n -isnot [int] -and $n -isnot [long]) -or $n -lt 0 -or $n -gt 46) { throw 'Invalid post-action read count.' }
     }
     if ($Report.completedReads -gt $Report.readAttempts) { throw 'Invalid post-action completed count.' }
-    foreach ($field in @('firstComplete','lastComplete')) {
+    foreach ($field in @('firstComplete','lastComplete','firstKnownError')) {
         $o=$Report[$field]
         if ($null -eq $o) {
-            if ($Report.completedReads -ne 0) { throw 'Missing post-action observation.' }
+            if ($field -cne 'firstKnownError' -and $Report.completedReads -ne 0) { throw 'Missing post-action observation.' }
             continue
         }
         if ($Report.completedReads -eq 0) { throw 'Unexpected post-action observation.' }
@@ -315,5 +318,9 @@ function Assert-OriginalPostActionReadback($Report) {
         foreach ($n in $o.Values) {
             if (($n -isnot [int] -and $n -isnot [long]) -or $n -lt 0 -or $n -gt 2048) { throw 'Invalid post-action observation count.' }
         }
+        $hasError=($o.unavailableErrors+$o.conflictErrors+$o.uncertainErrors+$o.catalogErrors -gt 0)
+        if ($field -ceq 'firstKnownError' -and -not $hasError) { throw 'First known error has no error count.' }
+        if ($hasError -and -not $Report.sawKnownError) { throw 'Observed error contradicts history flag.' }
     }
+    if ($Report.sawKnownError -ne ($null -ne $Report.firstKnownError)) { throw 'Known error retention mismatch.' }
 }

@@ -18,7 +18,10 @@ $cases=@(
     @{name='post-action-unknown';old='if ($c.name -cnotin $labels)';new='if ($false)'},
     @{name='post-action-first';old='if ($null -eq $Report.firstComplete)';new='if ($true)'},
     @{name='post-action-read-failure';old="catch { `$Report.status='read-failed';throw }";new="catch { `$Report.status='observed';throw }"},
-    @{name='post-action-hidden-error';old='} elseif (-not $c.offscreen) {';new='} elseif ($true) {'}
+    @{name='post-action-hidden-error';old='} elseif (-not $c.offscreen) {';new='} elseif ($true) {'},
+    @{name='first-error-overwrite';old='if ($null -eq $Report.firstKnownError)';new='if ($true)'},
+    @{name='first-error-presence';old="if (`$Report.sawKnownError -ne (`$null -ne `$Report.firstKnownError)) { throw 'Known error retention mismatch.' }";new='# mutation: missing retained error accepted'},
+    @{name='first-error-positive';old="if (`$field -ceq 'firstKnownError' -and -not `$hasError) { throw 'First known error has no error count.' }";new='# mutation: empty error accepted'}
 )
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('original-action-mutants-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($temp)
