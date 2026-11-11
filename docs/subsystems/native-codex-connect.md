@@ -303,3 +303,24 @@ an otherwise unspecified native turn or rewrite native per-thread defaults.
 The factory-profile subprocess tests and interleaved router tests cover these
 paths with authored metadata only. They are not actual Codex Desktop, account,
 Windows bootstrap, or live AIHub acceptance.
+
+## Original UI acceptance boundary
+
+The opt-in disposable Windows caller in
+[`original-desktop-acceptance.ps1`](../../build/original-desktop-acceptance.ps1)
+exercises this transaction through the original UIA Configure/Restore controls.
+It snapshots both registry values without modifying them, requires the actual
+journal's previous/installed values and profile digest after Connect, and
+requires exact previous-value readback plus journal removal after Restore.
+A one-shot action ledger and bounded worker prevent uncertain action retries.
+An uncertain asynchronous Connect with no current journal remains unresolved,
+even if a registry snapshot is still at baseline. No alternate rollback writer
+or deleted journal is accepted as recovery. The controller/manager production
+behavior is unchanged by this test harness.
+
+Signed official package preparation and normal AUMID activation are separate
+from this UI transaction and preserve the existing freshness/service guards.
+The harness's limited direct-child image observation is not authentication,
+bootstrap/JSONL completion, chat, or a later restored Desktop launch. Its
+[contract and tests](../../build/original-connect-desktop-plan.md) state those
+boundaries; no live account is needed or used for this stage.

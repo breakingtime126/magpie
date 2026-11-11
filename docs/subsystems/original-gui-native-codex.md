@@ -137,3 +137,29 @@ using genuine complete native model lists and matched null native requirements.
 This adds no original GUI controls and does not establish same-window acceptance.
 See [Native picker defaults](native-codex-connect.md#native-picker-defaults) for
 restart scope, refusal behavior and the unchanged fixed-per-thread provider rule.
+
+## Disposable original-UI acceptance harness
+
+The default Windows packaging job still captures the original GUI without
+operating controls. An exclusive `[original-connect-desktop-v1]` experiment
+marker now admits `build/original-desktop-acceptance.ps1`: pinned official package
+preparation, the actual original Configure Toggle, one normal AUMID activation,
+and the original restore dialog/confirmation in finally. It uses only a fresh
+portable copy, empty native home and public inert provider fixture. No live
+account, inference, Desktop setup or permission adjustment is part of this run.
+
+The action supervisor holds the original process identity and gives a bounded
+Core worker one attempt per action. Exact registry/journal readback establishes
+selection and restoration separately from UI appearance. Uncertain actions are
+not retried; clean snapshots alone cannot settle an asynchronous Connect.
+Unknown recovery retains the journal and running owner. Screenshots occur only
+after restoration. Reported root-process exits do not establish descendant drain.
+
+The official helper keeps signed package pins, licensed installation,
+registration, service identity and freshness checks separate from the original
+UI transaction. No test registry writer can substitute for Connect or Restore.
+The pre-existing 4239 treatment-only entry guard is unchanged. See
+[the acceptance contract](../../build/original-connect-desktop-plan.md) for the
+exact evidence, host boundary, source exclusions and offline mutation tests.
+Until the real Windows report passes its stages, this remains an unverified
+acceptance implementation, not a usable package or working chat claim.

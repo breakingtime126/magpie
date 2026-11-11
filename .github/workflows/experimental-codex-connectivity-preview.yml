@@ -26,6 +26,8 @@ on:
       - internal/gateway/**
       - build/package-native-magpie-windows.ps1
       - build/original-connect-discovery*.ps1
+      - build/original-connect-action*.ps1
+      - build/original-desktop-*.ps1
       - build/mutate-bridge-shutdown-order.py
       - build/test-native-preview-official.ps1
       - .github/workflows/experimental-codex-connectivity-preview.yml
@@ -109,7 +111,7 @@ jobs:
   preview:
     if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035'
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CGO_ENABLED: '0'
       GOOS: windows
@@ -126,12 +128,32 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify original acceptance safety fixtures in both PowerShell hosts
+        if: contains(github.event.head_commit.message, '[original-connect-desktop-v1]')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($hostName in @('pwsh', 'powershell')) {
+            & $hostName -NoProfile -NonInteractive -File build/original-desktop-package.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Official package safety fixtures failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-desktop-sequence.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Original recovery sequencing fixtures failed.' }
+          }
+          & pwsh -NoProfile -NonInteractive -File build/original-connect-action.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Original action fixtures failed.' }
+          & pwsh -NoProfile -NonInteractive -File build/original-connect-action.mutations.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Original action red mutations failed.' }
+          & pwsh -NoProfile -NonInteractive -File build/original-desktop-acceptance.tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Original acceptance caller fixtures failed.' }
       - name: Build original portable GUI with native Codex protection and capture its window
         shell: pwsh
         env:
           ORIGINAL_CONNECT_DISCOVERY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-discovery-v1]') }}
+          ORIGINAL_CONNECT_ACCEPTANCE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-desktop-v1]') }}
+          MAGPIE_ORIGINAL_CONNECT_ACTION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-desktop-v1]') && 'original-ui-v1' || '' }}
+          MAGPIE_ORIGINAL_DESKTOP_ACCEPTANCE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-desktop-v1]') && 'original-ui-v1' || '' }}
           MAGPIE_ORIGINAL_CONNECT_DISCOVERY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[original-connect-discovery-v1]') && 'read-only-v1' || '' }}
-        run: ./build/package-native-magpie-windows.ps1 -DiscoverOriginalConnect:($env:ORIGINAL_CONNECT_DISCOVERY -ceq 'true')
+        run: ./build/package-native-magpie-windows.ps1 -DiscoverOriginalConnect:($env:ORIGINAL_CONNECT_DISCOVERY -ceq 'true') -AcceptOriginalConnect:($env:ORIGINAL_CONNECT_ACCEPTANCE -ceq 'true')
       - name: Upload the original Magpie portable experimental package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

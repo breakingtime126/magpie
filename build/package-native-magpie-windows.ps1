@@ -1,6 +1,6 @@
 # Build the upstream main/GUI, using its existing portable-data contract.
 [CmdletBinding()]
-param([switch]$DiscoverOriginalConnect)
+param([switch]$DiscoverOriginalConnect,[switch]$AcceptOriginalConnect)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 function Assert-Exit([string]$Name) { if ($LASTEXITCODE -ne 0) { throw "$Name failed." } }
@@ -9,6 +9,14 @@ if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or
     $env:GITHUB_REF -cne 'refs/heads/experiment/app-server-bridge-v0.1.3035') { throw 'Scoped temporary CI required.' }
 $head = (& git rev-parse HEAD).Trim(); Assert-Exit 'Read source'
 if ($head -cne $env:GITHUB_SHA) { throw 'Source mismatch.' }
+if ($AcceptOriginalConnect) {
+ if ($DiscoverOriginalConnect -or $env:MAGPIE_ORIGINAL_CONNECT_DISCOVERY -or
+     $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:GITHUB_EVENT_NAME -cne 'push' -or
+     $env:MAGPIE_ORIGINAL_CONNECT_ACTION -cne 'original-ui-v1' -or
+     $env:MAGPIE_ORIGINAL_DESKTOP_ACCEPTANCE -cne 'original-ui-v1') { throw 'Exclusive hosted original acceptance required.' }
+ $message = (& git log -1 --format=%B) -join "`n"; Assert-Exit 'Read acceptance opt-in'
+ if (-not $message.Contains('[original-connect-desktop-v1]')) { throw 'Original acceptance commit marker required.' }
+} elseif ($env:MAGPIE_ORIGINAL_CONNECT_ACTION -or $env:MAGPIE_ORIGINAL_DESKTOP_ACCEPTANCE) { throw 'Acceptance marker without explicit option.' }
 if ($DiscoverOriginalConnect) {
  if ($env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:GITHUB_EVENT_NAME -cne 'push' -or
      $env:MAGPIE_ORIGINAL_CONNECT_DISCOVERY -cne 'read-only-v1') { throw 'Explicit hosted discovery context required.' }
@@ -70,6 +78,17 @@ Copy-Item -LiteralPath 'docs/subsystems/original-gui-native-codex.md' -Destinati
 [IO.File]::WriteAllText((Join-Path $package 'data/settings.json'), '{"noAccountDiscovery":true,"lang":"zh","theme":"light","guideHidden":true}', [Text.UTF8Encoding]::new($false))
 @{sourceCommit=$head;adapterSHA256=(Get-FileHash $adapter -Algorithm SHA256).Hash.ToLowerInvariant();guiSHA256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant();unsigned=$true;originalGUI=$true;buildTags='production,nativecodex';portable=$true} |
  ConvertTo-Json | Set-Content (Join-Path $package 'BUILD.json') -Encoding UTF8
+if ($AcceptOriginalConnect) {
+ # Desktop host owns the retained official package/service/activation handles.
+ # No policy override or environment shortcut; a policy refusal remains blocked.
+ $desktop = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+ & $desktop -NoLogo -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'original-desktop-acceptance.ps1') -PackageDirectory $package -EvidenceDirectory $evidence -SourceCommit $head
+ Assert-Exit 'Original UI Connect, official activation and original recovery'
+ Get-ChildItem -LiteralPath $package -File -Recurse -Force | Sort-Object FullName | ForEach-Object {
+  ((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $_.FullName.Substring($package.Length + 1).Replace('\','/'))
+ } | Set-Content (Join-Path $package 'SHA256SUMS') -Encoding ascii
+ return
+}
 # Launch a copy, never the deliverable data directory. Only synthetic home files.
 $root = Join-Path $env:RUNNER_TEMP ('native-magpie-window-' + [guid]::NewGuid().ToString('N'))
 [void](New-Item -ItemType Directory -Path $root)

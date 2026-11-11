@@ -1,140 +1,106 @@
-# Original Connect Desktop acceptance: staged candidate
+# Original Connect Desktop acceptance
 
-No runtime execution or GUI acceptance is established by these files. The
-read-only discovery helper has a default-off package-job caller. Publish and run
-only after its current source has been reviewed and authorized.
+The default package job remains a zero-action original-window capture. The
+separate `[original-connect-desktop-v1]` commit marker opts its disposable
+GitHub-hosted Windows runner into the implemented action sequence. It is
+exclusive with `[original-connect-discovery-v1]`; neither marker grants live
+account access or makes the package a user-ready release.
 
-## Implemented first slice
+## Runtime evidence before this action implementation
 
-The existing package script opts in with `-DiscoverOriginalConnect` only on an
-explicit `[original-connect-discovery-v1]` push marker and hosted-runner context.
-It runs offline helper fixtures, changes only the disposable copy to English,
-and calls discovery after its screenshot but before owned-process cleanup.
-A blocked read writes fixed evidence then fails the job; a completed tree read
-may contain zero matching controls and does not claim action acceptance. The
-deliverable retains Chinese settings and the existing nativeActions=0 report.
+At `f96e5ee9642ffbc5d2eb595de12fc5615f564fb5`, the original Magpie screenshot
+showed the Codex row and its off switch. The bounded RawView read observed one
+exact **Configure Codex launch selection** element, visible and enabled,
+ControlType.Button with TogglePattern and no InvokePattern. ControlView found
+none. Restore and confirmation controls were absent in that disconnected state.
+Discovery performed zero actions. The same original-window and browser suites
+also passed at `f26b2c6469a13677c654cf3099e7e8f40558498b`.
 
-The caller dot-sources `original-connect-discovery.ps1` in PowerShell Core. It
-launches the original packaged Magpie GUI in a fresh copied portable directory
-with a fresh synthetic native home (the existing inert config fixture) and
-`lang=en`, `noAccountDiscovery=true`.
-Then call `Invoke-OriginalConnectDiscovery` with that retained Process object
-and its verified executable path. The caller owns the Magpie lifetime, screenshot,
-package hashes, source provenance, fixture creation and cleanup. Do not substitute
-a process found by its basename or inspect a user's existing window.
+The action implementation below has offline behavior and deliberate mutation
+tests. Actual original UI Connect, official AUMID activation and original Restore
+remain unverified until the opted-in Windows report establishes each stage.
 
-Both processes require a hosted Windows GitHub runner on the one experimental
-branch and `MAGPIE_ORIGINAL_CONNECT_DISCOVERY=read-only-v1`. The supervisor starts
-only its fixed sibling worker, supplies a small environment allowlist, imposes a
-15-second deadline and 8192-character limit per stream, and kills only that worker
-if necessary. UIA calls may hang despite inner checks; hence the separate process.
-The worker holds the target process handle and checks PID generation, executable,
-window handle and exact title around a 2048-node/depth-20 traversal. This is not
-an atomic proof against concurrent same-user window changes.
+## Owned execution and official preparation
 
-Only three English labels are counted: Configure Codex launch selection,
-Disconnect and restore Codex launch selection, and Disconnect and restore.
-Counts include visibility/enabled state, control role and Invoke/Toggle pattern
-availability. Names are source-defined by the recovery UI patch, not yet observed
-on Windows. Unknown strings, UI trees, errors, runtime selectors and paths are not
-exported. Incomplete traversal returns blocked with no partial counts. A successful
-read remains zero-action discovery, not a verified selector or recovery transaction.
+`package-native-magpie-windows.ps1 -AcceptOriginalConnect` builds the unchanged
+original GUI entry and same-source adapter with the existing compiled pins. It
+then invokes `original-desktop-acceptance.ps1` in Windows PowerShell Desktop.
+That one coordinator owns all retained package/service/activation handles and
+its fresh copied Magpie process. It does not use the monolithic cold-start
+harness's direct registry writer.
 
-The PowerShell offline fixtures cover exact labels versus case/prefix/suffix and
-protected-screen controls, syntax and no-action/limit source contracts. They have
-not been executed locally because PowerShell is unavailable. They are not a mock
-of the Windows UIA implementation or proof that a native pattern invokes the
-correct browser event. Real discovery remains necessary.
+`original-desktop-package.ps1` separates exact signed official 26.1103.4239.0
+package verification, official licensed provisioning, registration readiness,
+held installed-image/service verification and freshness from activation. Its
+bounded verifier functions are copied verbatim from the reviewed cold-start
+script and parity-tested. A changed floating download stops before installation.
+No package patch, signature workaround, execution-policy change, service stop,
+reinstall, session workaround or account action is supplied. The pre-existing
+4239 native-entry workflow remains treatment-only and unchanged.
 
-## Next action slice, not implemented or enabled
+The disposable Magpie copy uses English, no account discovery, a newly empty
+native home and one ordinary explicitly selected AIHub fixture model. Its key
+is the public inert string `PUBLIC-INERT-NOT-A-CREDENTIAL`; its ordinary HTTPS
+endpoint is unchanged. There is no account, Decide endpoint, plugin, automatic
+model refresh, model Fetch or provider turn. Source checks in provider/models.go,
+decide.go and autolist.go establish those narrow startup exclusions, not a
+network audit. Catalog refresh, telemetry and official Desktop background
+traffic are not proven absent. Existing inherited proxy/trust settings remain.
 
-1. Verify signed official 26.1103.4239.0 package and existing complete pins through
-   the established installer path in a disposable VM. Do not expand accepted
-   builds, alter package contents or suppress service/freshness checks.
-2. Make synthetic provider configuration through its existing file format:
-   ordinary AIHub HTTPS endpoint, public inert key, explicitly saved model choice.
-   No model Fetch, account discovery, real account or provider turn. Keep the
-   production endpoint unchanged; no DNS, proxy or transport rewrite.
-3. Start the verified original patched Magpie GUI from its copied package. Its
-   native home must be newly empty and its two launch-selection registry values
-   read before the test, without writing them. Capture the owned window and run
-   discovery. Reject duplicate/disabled/hidden controls or unsupported patterns.
-4. Before connecting, establish a supported recovery action using discovery and
-   current GUI source; a source-derived name alone is not runtime evidence.
-   One explicit UIA action may then target the exact unique Configure control.
-   No external HTTP request may forge ownWindow, no console shortcut may call
-   Connect, and no replacement registry writer may simulate success.
-5. Observe the new restore control, exact journal and installed registry values.
-   Do not infer backend success from appearance or SelectionConfigured alone.
-   Launch normal official AUMID only after existing fresh-process/package checks.
-   Stop inference/navigation at login, onboarding, setup or policy barriers.
-6. Use the actual original restore control, inspect its confirmation, and invoke
-   the exact confirm control once. Verify original registry presence/types/values
-   and journal removal. Never treat repeat Connect as Disconnect. If outcome is
-   uncertain, stop, retain the journal and report the exact observed stage.
-7. Cleanup only owned handles/processes. Never erase a journal needed for recovery.
-   Neither this sequence nor registry readback verifies a later restored Desktop
-   start; the existing treatment-only 4239 guard remains unchanged.
+## Original UI transaction and recovery
 
-Actual original GUI action, official activation, journal assertions and fixture
-caller are intentionally not implemented until discovery supplies runtime control
-identities/patterns. No inference, tool call, auth, setup, permission adjustment,
-real-provider request or same-window conversation is part of this first slice.
-Absence of a chat action is not proof of zero background network traffic. Review
-Magpie background tasks before claiming even zero provider requests; if startup
-can contact the configured supplier, the no-request slice needs a supported
-existing configuration that prevents it, not transport interception.
+`original-connect-action.ps1` accepts only the retained owned Magpie process,
+expected executable/adapter, exact journal path, a private baseline snapshot
+and a fresh attempt directory. The Desktop-compatible supervisor runs its fixed
+Core worker with a minimal environment, 60-second deadline and bounded streams.
+The worker uses a 45-second inner budget, held PID generation/executable/HWND
+identity checks and bounded RawView traversal. Unknown text is not exported.
 
-## Background-source check before running
+Connect requires a unique exact visible/enabled Button with TogglePattern Off.
+It makes one UIA Toggle call, then checks the actual journal's previous values,
+installed adapter/profile paths, exact profile hash and registry readback.
+Restore discovers the current original restore control and its supported
+Toggle On or recovery Invoke pattern, opens the original confirmation, verifies
+its exact explanatory text and unique confirmation button, then invokes once.
+Success additionally requires original Configure Off, removed journal and exact
+baseline registry presence, type and unexpanded values.
 
-`internal/gui/backend.go:startBackend` runs `provider.FetchNew` automatically.
-`internal/provider/models.go:newDue` skips an ordinary provider when Account is
-nil and no decision endpoint is due. `internal/provider/decide.go:Decides` requires
-an explicit Decide endpoint. `internal/provider/autolist.go:refreshDueLists`
-skips RefreshInterval zero (empty/off). Thus the proposed fixture must have no
-Account, Decide, plugin, subscription, auto-refresh or account discovery. These
-source checks are narrower than an executed network audit. Catalog refresh and
-application telemetry may still perform unrelated background network activity.
+Each mode is exclusively claimed on disk. Every attempted action is durably
+marked before entering UIA. A lost output, timeout, identity change or uncertain
+result is never retried. A distinct first Restore may recover a valid journal
+after uncertain Connect. A clean registry snapshot with no journal does not
+prove an asynchronous uncertain Connect has settled; that case retains the
+original process and recovery state. External registry drift is never overwritten.
 
-The existing Desktop installer/launcher is monolithic; this candidate does not
-silently invoke its launch side effects as package preparation. The future caller
-must preserve its pinned install/registration checks and separately prove the
-original Magpie action. Current discovery by itself installs no Desktop package,
-creates no provider or registry state, and cannot establish original AUMID launch.
+`original-desktop-sequence.ps1` runs Connect, a single normal AUMID activation,
+and original Restore in finally. Activation retains existing pins/freshness and
+uses persistent selection, never process-injected launch overrides. A bounded
+read-only image observation records exact direct-child adapter/native starts;
+it does not establish bootstrap completion or backend handshake. No Desktop
+UI action, login, setup or policy navigation occurs.
 
-## Future same-run action admission
+Only after verified original recovery does the coordinator capture the owned
+windows and close retained process roots. Forced root termination blocks clean
+shutdown acceptance. Root exits do not prove descendant cleanup; the report
+explicitly marks descendant exit unverified. On uncertain recovery the GUI,
+journal and generation are left intact for the disposable runner's remaining
+lifetime; there is no alternate rollback writer or deletion.
 
-A separate manually inspected discovery run is not a continuing permission
-requirement. Once implemented and reviewed, the bounded action stage can read the
-current owned window, require a unique exact visible/enabled target, verify its
-actual pattern and expected state, and invoke that retained element in the same
-run. Recheck identity immediately before and state/journal/readback immediately
-after. Unexpected screens or uncertain outcomes stop without an action retry.
-The initial read-only run establishes which Wails UIA roles/patterns actually
-exist; it is an engineering prerequisite, not an imposed manual handoff. No
-Invoke/Toggle action has been added by this candidate.
+## Reports, tests and limits
 
-## Follow-up to the 65555800 read-only observation
+Published evidence contains fixed stage/boolean/count fields and owned-window
+screenshots only. Baseline registry data, journal/profile bytes, attempt files,
+arbitrary UI text, process command lines and private paths stay out of artifacts.
+The report always leaves backend handshake, chat, restored Desktop startup and
+zero-egress claims false. The bounded sequence is not same-window GPT/AIHub
+conversation acceptance or proof of future authenticated operation.
 
-The retained report completed one ControlView walk of 20 nodes with zero exact
-action-label matches. The captured original Magpie screenshot visibly contains
-the Codex row and not-configured selection UI. Therefore the report does not
-establish absence of the switch, its role or its supported UIA patterns.
-
-The next probe reads ControlView and RawView sequentially under the same retained
-HWND/identity and the unchanged aggregate 2048-node, depth-20 and 10-second inner
-budget (15-second outer worker deadline). Original nodes/counts remain the control
-snapshot. Additional fixed control/content flags, six role buckets and exact
-Codex/Agents/not-configured landmarks describe accessibility exposure. rawView
-contains the second bounded snapshot. No arbitrary names or framework/class
-strings are exported. Partial traversal remains blocked, with no partial view
-counts promoted as complete. There are no new waits, repeat attempts, accessibility
-flags, settings changes or control actions.
-
-RawView may reveal elements excluded by the control filter. Different sequential
-results may also reflect lazy WebView accessibility initialization or timing;
-this experiment cannot distinguish those causes by itself. If neither view
-exposes the known landmarks, report that limitation rather than using coordinate
-or keyboard fallback. Fixed classifiers and synthetic filtered/raw trees test
-view differences, shared budget enforcement and identity-check calls offline.
-PowerShell/Windows execution of this follow-up has not yet run.
+Run the offline `original-connect-action.tests.ps1`, its `.mutations.ps1`,
+`original-desktop-package.tests.ps1`, `original-desktop-sequence.tests.ps1` and
+`original-desktop-acceptance.tests.ps1`. The Windows gate runs compatible
+fixtures in both Core and Desktop hosts before any live action. The sequence's
+`-BreakRestoration` test must fail on missing registry/journal cleanup. Tests
+cover exact selectors, duplicate/disabled/hidden controls, deadlines, identity
+drift, one-shot attempts, external-value refusal, installed-source parity,
+activation freshness/pins and recovery-read failure. Offline fixtures do not
+substitute for the real opted-in Windows run.
