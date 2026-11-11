@@ -145,6 +145,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Original recovery sequencing fixtures failed.' }
             & $hostName -NoProfile -NonInteractive -File build/original-connect-preconditions.tests.ps1
             if ($LASTEXITCODE -ne 0) { throw 'Read-only Connect precondition fixtures failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-installed-query.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Bound original query fixtures failed.' }
             & $hostName -NoProfile -NonInteractive -File build/original-connect-stages.tests.ps1
             if ($LASTEXITCODE -ne 0) { throw 'Read-only Connect stage fixtures failed.' }
             & $hostName -NoProfile -NonInteractive -File build/original-connect-stages.mutations.ps1

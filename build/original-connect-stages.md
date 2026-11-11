@@ -84,7 +84,7 @@ actual Connect acceptance.
 ## Original package-query branches
 
 The same original installed-package query now records nested `query-*` stages.
-It is not rerun by the collector. The command, query bytes, inherited environment,
+It is not rerun by the collector. The launcher, inherited environment,
 10-second budget, strict process owner, and Stop(one second)-then-Wait drain are
 unchanged. Query failure records still contain no output, path, error text,
 credentials or arbitrary numeric exit values.
@@ -113,3 +113,5 @@ and returns an authored error. The replay has eight records and first failure
 `query-wait-failure`. Separate exit fixtures run only the current authored Go
 test binary to obtain typed exit errors; they never run PowerShell, a native
 runtime, a provider, or the package query.
+
+The current query body uses [fixed official-module bindings](original-installed-query.md); classification does not relax its checks or process ownership.

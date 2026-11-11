@@ -236,8 +236,8 @@ func TestInstalledQuerySourceContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if fmt.Sprintf("%x", sha256.Sum256([]byte(query))) != "481e415b2d3e6c13acfd8f93b430299701a51be262f55ee10cbccb027e8c607e" {
-				t.Fatal("original query bytes changed")
+			if fmt.Sprintf("%x", sha256.Sum256([]byte(query))) != "cf3b791cac853e51df3dc5ab9df341c81a68439c93c2445d1e9e6577f1f5b110" {
+				t.Fatal("reviewed query bytes changed")
 			}
 			queryFound = true
 		}

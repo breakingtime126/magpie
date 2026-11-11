@@ -383,3 +383,5 @@ counts/order, cancellation/lifetime separation, runtime and host failures,
 cleanup, sink panic, bounded output and one-shot finish. Live Windows execution
 is a separate acceptance gate; portable tests do not prove the actual package
 probe or installed Desktop integration.
+
+The installed-package query [binds official exported cmdlets](../../build/original-installed-query.md) from fixed PSHOME manifests. Package checks and strict timeout/drain semantics remain unchanged; this is a targeted lookup correction, not a proven explanation of the observed timeout.
