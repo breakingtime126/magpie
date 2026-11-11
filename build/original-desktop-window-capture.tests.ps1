@@ -53,6 +53,47 @@ try {
 '@
     return $code.Replace('__NATIVE_SCRIPT__',$NativeScript.Replace("'","''"))
 }
+# Match production Invoke-OriginalCaptureChild's no-input startup. Keep its
+# console code page and restore its managed encoding, including on exceptions.
+function Get-TestNoInputEncoding([Text.Encoding]$Encoding) {
+    if ($Encoding.GetPreamble().Length -eq 0) { return $Encoding }
+    if ($Encoding.CodePage -ne 65001 -or [BitConverter]::ToString($Encoding.GetPreamble()) -cne 'EF-BB-BF') {
+        throw 'Unsupported input preamble.'
+    }
+    return [Text.UTF8Encoding]::new($false)
+}
+function New-TestNoInputChild($Start) {
+    $saved=[Console]::InputEncoding;$selected=Get-TestNoInputEncoding $saved
+    $change=-not [object]::ReferenceEquals($saved,$selected);$child=$null
+    try {
+        try {
+            if ($change) { [Console]::InputEncoding=$selected }
+            Assert ([Console]::InputEncoding.CodePage -eq $saved.CodePage -and [Console]::InputEncoding.GetPreamble().Length -eq 0) 'fixture startup preserves code page and sends no preamble'
+            $child=[OriginalCaptureSupervisor.BoundedProcess]::new($Start,256,8000)
+        } finally {
+            if ($change) { [Console]::InputEncoding=$saved }
+            Assert ([Console]::InputEncoding.CodePage -eq $saved.CodePage -and
+                [Convert]::ToBase64String([Console]::InputEncoding.GetPreamble()) -ceq [Convert]::ToBase64String($saved.GetPreamble())) 'fixture startup restores original input encoding'
+        }
+        return $child
+    } catch {
+        if ($null -ne $child) { $child.Dispose() }
+        throw
+    }
+}
+function Invoke-TestStartupObservation([string]$Code,[switch]$Raw) {
+    $start=New-TestStart $Code
+    $child=if ($Raw) { [OriginalCaptureSupervisor.BoundedProcess]::new($start,256,8000) } else { New-TestNoInputChild $start }
+    try {
+        $child.CloseInput();$waited=$child.Wait(8000)
+        $watch=[Diagnostics.Stopwatch]::StartNew()
+        while (-not $child.Drained -and $watch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
+        $label=if ($child.Output -cin @('stdin-empty','stdin-nonempty','progress-ready')) { $child.Output } else { 'unverified' }
+        return [pscustomobject][ordered]@{label=$label;waitCompleted=[bool]$waited;deadline=[bool]$child.TimedOut;
+            overflowOrReadError=[bool]$child.Overflow;stderrPresent=[bool]$child.ErrorOutput;
+            streamsComplete=[bool]$child.Drained;exitConfirmed=[bool]$child.Exited;exitZero=($child.Exited -and $child.ExitCode -eq 0)}
+    } finally { $child.Dispose() }
+}
 # Desktop PowerShell Remove-Item can prompt for a directory symlink even when
 # only the link is intended. Never recurse through this fixture's link target.
 function Remove-TestDirectoryLink([string]$Path) {
@@ -67,6 +108,15 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('capture-tests-'+[guid]::NewGuid().T
 [void][IO.Directory]::CreateDirectory($root)
 $link=Join-Path $root 'linked'
 try {
+    # Deterministic stream model: even an empty autoflushed writer sends its BOM.
+    foreach ($bom in @($true,$false)) {
+        $stream=[IO.MemoryStream]::new();$writer=[IO.StreamWriter]::new($stream,[Text.UTF8Encoding]::new($bom),128,$true)
+        try { $writer.AutoFlush=$true;Assert ($stream.Length -eq $(if ($bom) { 3 } else { 0 })) 'empty writer preamble is a real input byte difference' }
+        finally { $writer.Dispose();$stream.Dispose() }
+    }
+    $bomEncoding=[Text.UTF8Encoding]::new($true);$normalized=Get-TestNoInputEncoding $bomEncoding
+    Assert ($normalized.CodePage -eq $bomEncoding.CodePage -and $normalized.GetPreamble().Length -eq 0 -and $bomEncoding.GetPreamble().Length -eq 3) 'normalization preserves code page and original encoding'
+    Reject { Get-TestNoInputEncoding ([Text.UnicodeEncoding]::new($false,$true)) } 'unreviewed preambles fail before child startup'
     $compileFactsInput=@{Output="probe-entered`nsource-loaded`nnative-ready";TimedOut=$false;
         Overflow=$false;ErrorOutput=$false;Drained=$true;Exited=$true;ExitCode=0}
     Assert ((Get-TestCompileFacts $compileFactsInput).category -eq 'none') 'compile facts accept only exact healthy completion'
@@ -105,12 +155,29 @@ try {
     }
     . (Join-Path $PSScriptRoot 'original-desktop-window-capture-supervisor.ps1')
     Initialize-OriginalCaptureSupervisor
+    $stdinCode="if ([Console]::OpenStandardInput().ReadByte() -eq -1) { [Console]::Out.Write('stdin-empty') } else { [Console]::Out.Write('stdin-nonempty') }"
+    $rawInput=Invoke-TestStartupObservation $stdinCode -Raw
+    'INPUT_PROBE_RAW '+($rawInput | ConvertTo-Json -Compress)
+    $normalizedInput=Invoke-TestStartupObservation $stdinCode
+    'INPUT_PROBE_NORMALIZED '+($normalizedInput | ConvertTo-Json -Compress)
+    Assert ($normalizedInput.label -ceq 'stdin-empty' -and $normalizedInput.waitCompleted -and
+        -not $normalizedInput.deadline -and -not $normalizedInput.overflowOrReadError -and -not $normalizedInput.stderrPresent -and
+        $normalizedInput.streamsComplete -and $normalizedInput.exitConfirmed -and $normalizedInput.exitZero) 'production-parity fixture child receives byte-level EOF without stderr'
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        # Controlled progress observations only, never a capture-success exemption.
+        # Both use normalized input. No production preference is changed.
+        foreach ($preference in @('Continue','SilentlyContinue')) {
+            $progressCode="`$ProgressPreference='$preference'; Write-Progress -Activity 'fixture' -Status 'fixture' -PercentComplete 50; [Console]::Out.Write('progress-ready')"
+            $progressFacts=Invoke-TestStartupObservation $progressCode
+            'PROGRESS_PROBE_'+$preference.ToUpperInvariant()+' '+($progressFacts | ConvertTo-Json -Compress)
+        }
+    }
     # Exercise caught compiler/source failures with a real bounded child and no
     # compiler/native window invocation. Raw fixture error text must not escape.
     $fakeNative=Join-Path $root 'compile-failure.ps1'
     [IO.File]::WriteAllText($fakeNative,"function Initialize-OriginalCaptureNative { throw [Management.Automation.ErrorRecord]::new([Exception]::new('CS0246 private fixture path'),'SOURCE_CODE_ERROR',[Management.Automation.ErrorCategory]::InvalidData,`$null) }")
     foreach ($probeCase in @(@($fakeNative,'compiler-error-cs0246'),@((Join-Path $root 'missing-native.ps1'),'source-error'))) {
-        $probeChild=[OriginalCaptureSupervisor.BoundedProcess]::new((New-TestStart (New-TestCompileCode $probeCase[0])),256,8000)
+        $probeChild=New-TestNoInputChild (New-TestStart (New-TestCompileCode $probeCase[0]))
         try {
             $probeChild.CloseInput()
             Assert ($probeChild.Wait(8000) -and $probeChild.Exited) 'fixed error probe exits within budget'
@@ -150,7 +217,7 @@ try {
         Assert ((Get-OriginalCapturePhase $badPhase) -eq 'unverified') 'partial arbitrary and reordered phase data rejected'
     }
     $phaseStart=New-TestStart '[Console]::Out.Write("worker-entered`nnative-compile`n");[Console]::Out.Flush();Start-Sleep -Seconds 60'
-    $phaseChild=[OriginalCaptureSupervisor.BoundedProcess]::new($phaseStart,256,8000)
+    $phaseChild=New-TestNoInputChild $phaseStart
     try {
         $phaseChild.CloseInput();$phaseWatch=[Diagnostics.Stopwatch]::StartNew()
         while ($phaseChild.Output -cne "worker-entered`nnative-compile`n" -and $phaseWatch.ElapsedMilliseconds -lt 6000) { Start-Sleep -Milliseconds 10 }
@@ -167,7 +234,7 @@ try {
         $nativeScript=Join-Path $PSScriptRoot 'original-desktop-window-capture-native.ps1'
         $compileCode=New-TestCompileCode $nativeScript
         $compileWatch=[Diagnostics.Stopwatch]::StartNew()
-        $compileChild=[OriginalCaptureSupervisor.BoundedProcess]::new((New-TestStart $compileCode),256,8000)
+        $compileChild=New-TestNoInputChild (New-TestStart $compileCode)
         try {
             $compileChild.CloseInput()
             $compileWaited=$compileChild.Wait(8000)
