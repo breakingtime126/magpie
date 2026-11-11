@@ -141,6 +141,58 @@ function Set-OriginalDesktopPreparationStage([Collections.IDictionary]$Evidence,
         'current-context-verification','freshness-scan','service-binding','prepared')) { throw 'Invalid preparation stage.' }
     if ($null -ne $Evidence) { $Evidence.stage=$Stage }
 }
+function Get-OriginalDesktopFailureEvidence([Management.Automation.ErrorRecord]$Record) {
+    $safe=[ordered]@{category='other';hresult=0;httpStatus=0;webStatus=-1;line=0}
+    if ($null -eq $Record -or $null -eq $Record.Exception) { return $safe }
+    $base=$Record.Exception.GetBaseException()
+    $safe.hresult=[int]$base.HResult
+    $safe.category=switch ($base.GetType().FullName) {
+        'System.Net.WebException' {'web';break}
+        'System.Net.Http.HttpRequestException' {'http';break}
+        'System.Security.Authentication.AuthenticationException' {'authentication';break}
+        'System.Net.Sockets.SocketException' {'socket';break}
+        'System.TimeoutException' {'timeout';break}
+        'System.Threading.Tasks.TaskCanceledException' {'cancelled';break}
+        'System.OperationCanceledException' {'cancelled';break}
+        'System.UnauthorizedAccessException' {'access';break}
+        'System.IO.IOException' {'io';break}
+        'System.IO.FileNotFoundException' {'file-missing';break}
+        'System.IO.DirectoryNotFoundException' {'directory-missing';break}
+        'System.InvalidOperationException' {'operation';break}
+        'System.ArgumentException' {'argument';break}
+        'System.Management.Automation.CommandNotFoundException' {'command-missing';break}
+        'System.Management.Automation.RuntimeException' {'powershell';break}
+        default {'other'}
+    }
+    if ($null -ne $Record.InvocationInfo) {
+        $line=$Record.InvocationInfo.ScriptLineNumber
+        if ($line -gt 0 -and $line -le 100000) { $safe.line=[int]$line }
+    }
+    # A wrapper may contain an HTTP response while its base is a socket/TLS error.
+    # Inspect at most eight exceptions, never messages, response bodies or URLs.
+    $exception=$Record.Exception;$webSeen=$false
+    for ($depth=0;$depth -lt 8 -and $null -ne $exception;$depth++) {
+        $status=$null
+        try {
+            if ($exception -is [Net.WebException] -and -not $webSeen) {
+                $webSeen=$true
+                if ([Enum]::IsDefined([Net.WebExceptionStatus],$exception.Status)) { $safe.webStatus=[int]$exception.Status }
+            }
+            if ($exception -is [Net.WebException] -and $null -ne $exception.Response) {
+                $property=$exception.Response.PSObject.Properties['StatusCode']
+                if ($null -ne $property) { $status=$property.Value }
+            } elseif ($exception.GetType().FullName -ceq 'System.Net.Http.HttpRequestException') {
+                $property=$exception.PSObject.Properties['StatusCode']
+                if ($null -ne $property) { $status=$property.Value }
+            }
+            if ($safe.httpStatus -eq 0 -and ($status -is [Net.HttpStatusCode] -or $status -is [int]) -and [int]$status -ge 100 -and [int]$status -le 599) {
+                $safe.httpStatus=[int]$status
+            }
+        } catch { } # Missing status is unknown, not permission to retry.
+        $exception=$exception.InnerException
+    }
+    return $safe
+}
 function Complete-OriginalDesktopPreparationFailure([Collections.IDictionary]$Evidence,$Context) {
     $Evidence.status='blocked'
     # Keep the failed operation's stage even if resource closure itself fails.
@@ -152,7 +204,7 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable,[Col
     $ErrorActionPreference='Stop'
     if ($null -eq $PreparationEvidence) { $PreparationEvidence=[ordered]@{} }
     $PreparationEvidence.Clear()
-    $PreparationEvidence.schema=1;$PreparationEvidence.status='incomplete';$PreparationEvidence.stage='preflight';$PreparationEvidence.cleanup='not-needed'
+    $PreparationEvidence.schema=1;$PreparationEvidence.status='incomplete';$PreparationEvidence.stage='preflight';$PreparationEvidence.cleanup='not-needed';$PreparationEvidence.failure=$null
     $context=$null
     try {
     Assert-OriginalDesktopPackageRunner
@@ -262,6 +314,7 @@ function New-OriginalDesktopPackage([string]$Work,[string]$BridgeExecutable,[Col
         $PreparationEvidence.status='prepared'
         return $context
     } catch {
+        $PreparationEvidence.failure=Get-OriginalDesktopFailureEvidence $_
         Complete-OriginalDesktopPreparationFailure $PreparationEvidence $context
         throw
     }

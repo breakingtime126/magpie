@@ -48,7 +48,8 @@ foreach ($gate in @('runner','input-path')) {
         $diagnostic=[ordered]@{untrusted='private-seed-canary'}
         Reject { New-OriginalDesktopPackage -Work 'unused' -BridgeExecutable 'unused' -PreparationEvidence $diagnostic } ('preparation fault '+$Gate)
         Pass ($diagnostic.stage -ceq 'preflight' -and $diagnostic.status -ceq 'blocked' -and
-            $diagnostic.cleanup -ceq 'not-needed' -and $diagnostic.Count -eq 4) ('pre-context diagnostic retained '+$Gate)
+            $diagnostic.cleanup -ceq 'not-needed' -and $diagnostic.Count -eq 5 -and
+            $null -ne $diagnostic.failure -and $diagnostic.failure.category -ceq 'powershell') ('pre-context diagnostic retained '+$Gate)
         Pass (($diagnostic|ConvertTo-Json -Compress) -cnotmatch 'private|unused') ('pre-context diagnostic has no raw data '+$Gate)
     } $gate
 }
@@ -80,6 +81,50 @@ Reject { Set-OriginalDesktopPreparationStage ([ordered]@{}) 'private-unknown-sta
 # The retained report remains optional; neither stage reporting nor failure cleanup admits an operation.
 Set-OriginalDesktopPreparationStage $null 'freshness-scan'
 Pass $true 'optional diagnostics preserve existing freshness callers'
+# Exception diagnostics expose only fixed classes and bounded numbers.
+foreach ($exception in @([InvalidOperationException]::new('private-operation-canary'),
+    [UnauthorizedAccessException]::new('private-path-canary'),[TimeoutException]::new('private-url-canary'),
+    [Exception]::new('private-unknown-canary'))) {
+    try { throw $exception } catch { $failure=Get-OriginalDesktopFailureEvidence $_ }
+    Pass ($failure.Count -eq 5 -and $failure.webStatus -eq -1 -and $failure.hresult -is [int] -and $failure.httpStatus -eq 0 -and
+        $failure.line -gt 0 -and ($failure|ConvertTo-Json -Compress) -cnotmatch 'private|Exception') 'exception report omits raw names and text'
+}
+Add-Type -TypeDefinition @'
+using System.Net;
+public sealed class OriginalDesktopFixtureResponse : WebResponse {
+ public int StatusCode {get;set;}
+}
+'@
+foreach ($http in @(200,403,429,500,999)) {
+    $response=[OriginalDesktopFixtureResponse]::new();$response.StatusCode=$http
+    $exception=[Net.WebException]::new('private-http-canary',$null,[Net.WebExceptionStatus]::ProtocolError,$response)
+    try { throw [InvalidOperationException]::new('private-wrapper-canary',$exception) }
+    catch { $failure=Get-OriginalDesktopFailureEvidence $_ }
+    $expected=$http;if ($http -gt 599) {$expected=0}
+    Pass ($failure.category -ceq 'web' -and $failure.webStatus -eq [int][Net.WebExceptionStatus]::ProtocolError -and $failure.httpStatus -eq $expected -and
+        $failure.hresult -eq $exception.HResult -and ($failure|ConvertTo-Json -Compress) -cnotmatch 'private') ('bounded HTTP diagnostics '+$http)
+}
+foreach ($webStatus in @([Net.WebExceptionStatus]::TrustFailure,[Net.WebExceptionStatus]::Timeout,[Net.WebExceptionStatus]::ProtocolError)) {
+    $exception=[Net.WebException]::new('private-transport-canary',$null,$webStatus,$null)
+    try { throw $exception } catch { $failure=Get-OriginalDesktopFailureEvidence $_ }
+    Pass ($failure.webStatus -eq [int]$webStatus -and $failure.httpStatus -eq 0 -and
+        ($failure|ConvertTo-Json -Compress) -cnotmatch 'private|TrustFailure|Timeout|ProtocolError') 'defined WebException status is numeric only'
+}
+$undefined=[Enum]::ToObject([Net.WebExceptionStatus],999)
+try { throw [Net.WebException]::new('private-invalid-canary',$null,$undefined,$null) }
+catch { $failure=Get-OriginalDesktopFailureEvidence $_ }
+Pass ($failure.webStatus -eq -1) 'undefined WebException status remains unknown'
+$inner=[Net.WebException]::new('private-inner-canary',$null,[Net.WebExceptionStatus]::Timeout,$null)
+try { throw [Net.WebException]::new('private-outer-canary',$inner,[Net.WebExceptionStatus]::TrustFailure,$null) }
+catch { $failure=Get-OriginalDesktopFailureEvidence $_ }
+Pass ($failure.webStatus -eq [int][Net.WebExceptionStatus]::TrustFailure) 'first bounded-chain WebException status wins'
+# GetBaseException performs its standard traversal for category/HResult. Only
+# optional HTTP/Web status extraction has the explicit eight-link bound.
+$deep=[Net.WebException]::new('private-deep-canary',$null,[Net.WebExceptionStatus]::Timeout,$null)
+for ($i=0;$i -lt 8;$i++) { $deep=[InvalidOperationException]::new('private-wrapper-canary',$deep) }
+$record=[Management.Automation.ErrorRecord]::new($deep,'private-id-canary',[Management.Automation.ErrorCategory]::NotSpecified,$null)
+$failure=Get-OriginalDesktopFailureEvidence $record
+Pass ($failure.webStatus -eq -1 -and $failure.httpStatus -eq 0 -and $failure.category -ceq 'web') 'status extraction stops after eight exception links'
 # Pure admission rejects every independently changed pin.
 $identity=@{status='observed';packageSha256='9a5fdf536327ce471f9594b0ac6e369244ec3ebfd5e09ec5a66524575dbaa60c';
     manifest=@{name='OpenAI.Codex';publisher='CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B';version='26.1103.4239.0'};
