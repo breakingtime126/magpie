@@ -62,12 +62,12 @@ namespace OriginalTrayDiscovery {
             $id.Size=[Runtime.InteropServices.Marshal]::SizeOf($id);$id.Window=[IntPtr]$window;$id.UID=1;$id.Guid=[guid]::Empty
             $rect=[OriginalTrayDiscovery.Rect]::new()
             $hr=[OriginalTrayDiscovery.Native]::Shell_NotifyIconGetRect([ref]$id,[ref]$rect)
-            $data=@{hitTest='unavailable';success=($hr -eq 0);left=$rect.Left;top=$rect.Top;right=$rect.Right;bottom=$rect.Bottom;
+            $data=@{hitFacts=(New-OriginalTrayHitFacts);hitTest='unavailable';success=($hr -eq 0);left=$rect.Left;top=$rect.Top;right=$rect.Right;bottom=$rect.Bottom;
                 screenX=[OriginalTrayDiscovery.Native]::GetSystemMetrics(76);screenY=[OriginalTrayDiscovery.Native]::GetSystemMetrics(77);
                 screenWidth=[OriginalTrayDiscovery.Native]::GetSystemMetrics(78);screenHeight=[OriginalTrayDiscovery.Native]::GetSystemMetrics(79)}
             if ($uiaAvailable -and $hr -eq 0 -and $rect.Right -gt $rect.Left -and $rect.Bottom -gt $rect.Top) {
                 $point=[Windows.Point]::new(([double]$rect.Left+$rect.Right)/2,([double]$rect.Top+$rect.Bottom)/2)
-                $data.hitTest=Get-OriginalTrayHit -Rectangle $data -Verify { Assert-TrayOwner } -ReadHit {
+                $data.hitTest=Get-OriginalTrayHit -Facts $data.hitFacts -Rectangle $data -Verify { Assert-TrayOwner } -ReadHit {
                     $element=[Windows.Automation.AutomationElement]::FromPoint($point)
                     if ($null -eq $element) { return $null }
                     $current=$element.Current;$box=$current.BoundingRectangle;$pattern=$null

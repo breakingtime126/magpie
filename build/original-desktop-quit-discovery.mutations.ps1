@@ -18,7 +18,9 @@ try {
         @('$rect.right -le ([long]$rect.screenX+$rect.screenWidth)', '$true'),
         @('actions=0','actions=1'),
         @('$first.runtime -cne $second.runtime','$false'),
-        @('$hit.name -cne ''magpie''','$false')
+        @('$hit.name -cne ''magpie''','$false'),
+        @('$Facts.hitNameMatches++','$Facts.hitNameMatches+=0'),
+        @('$sample.right -ge $Rectangle.right','$sample.right -gt $Rectangle.right')
     )
     $caught=0
     foreach ($mutation in $mutations) {

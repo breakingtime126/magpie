@@ -145,3 +145,29 @@ unknown labels, wrong role, disabled/offscreen/non-invokable hits, unequal
 rectangles, changing runtime identity, ambiguous native windows, and strict
 report vocabulary/redaction. Two additional mutation cases remove name and
 runtime-identity comparisons. Windows UIA execution remains untested.
+
+
+## Per-predicate diagnostic delta
+
+After a real read-only probe reported one native rectangle but a mismatching
+hit, the report now also carries fixed comparison facts across the same two
+samples. `hitSamples` is 0 (unavailable/incomplete) or 2. The counts
+`hitNameMatches`, `hitButtonMatches`, `hitEnabledMatches`, `hitOnscreenMatches`,
+`hitInvokeMatches`, `hitExactBoundsMatches` and `hitContainsIconMatches` are
+0 through hitSamples. A count of 1 means only one sample met that predicate.
+`hitStableIdentity` is unavailable, same or different. Bounds containment is
+inclusive, so exact bounds imply containment, but containment does not satisfy
+the unchanged exact matcher. A larger containing button still yields mismatch.
+
+Facts are emitted only for the one valid owned native rectangle. Ambiguous
+native windows, read errors or owner drift clear them. A matched hit still
+requires every original condition, two exact bounds and stable identity.
+No raw names, rectangles, runtime IDs or error details are emitted. These
+counts are observations, not new action authority; no focus, activation,
+menu opening, click or quit is added. The same ten/fifteen-second worker and
+supervisor deadlines apply; this delta adds no UIA calls.
+
+Offline tests cover each failing predicate, mixed samples, containing versus
+noncontaining rectangles, unavailable/error resets, strict numeric/enum fields
+and redaction. The unchanged matcher mutations plus diagnostic name/count and
+containment mutations are checked. No new Windows probe was run locally.

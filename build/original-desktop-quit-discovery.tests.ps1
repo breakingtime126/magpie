@@ -18,7 +18,7 @@ $next={ param($last)
 $owner={param($window) if ($script:mode -ceq 'foreign') {return 8};return 7}
 $rect={param($window)
     if ($script:mode -ceq 'read-error') {throw 'Shell failed.'}
-    @{hitTest=$(if($script:mode -cin @('hitmatch','duplicate')){'matched'}else{'unavailable'});success=($script:mode -cne 'hr-failure');left=10;top=10;right=$(if($script:mode -ceq 'empty'){10}else{30});bottom=30;
+    @{hitFacts=$(if($script:mode -cin @('hitmatch','duplicate')){ $facts=New-OriginalTrayHitFacts;foreach($key in @($facts.Keys)){if($key -ceq 'hitStableIdentity'){$facts[$key]='same'}else{$facts[$key]=2}};$facts }else{New-OriginalTrayHitFacts});hitTest=$(if($script:mode -cin @('hitmatch','duplicate')){'matched'}else{'unavailable'});success=($script:mode -cne 'hr-failure');left=10;top=10;right=$(if($script:mode -ceq 'empty'){10}else{30});bottom=30;
         screenX=0;screenY=0;screenWidth=$(if($script:mode -ceq 'offscreen'){20}else{1920});screenHeight=1080}
 }
 $verify={ $script:reads++;if ($script:mode -ceq 'identity' -and $script:reads -gt 2) {throw 'Changed.'} }
@@ -90,10 +90,44 @@ foreach ($mode in @('match','null','error','private','case','role','disabled','h
     Need ($answer -ceq $expected)
     Need ($answer -cin @('matched','mismatch','unavailable'))
 }
-$r=Run-Fixture 'ok';$r.hitTest='matched';Assert-OriginalTrayReport $r
+$r=Run-Fixture 'hitmatch';Assert-OriginalTrayReport $r
 $r.hitTest='private account title';Reject { Assert-OriginalTrayReport $r }
 $r=Run-Fixture 'none';$r.hitTest='matched';Reject { Assert-OriginalTrayReport $r }
 'Optional tray hit tests passed.'
 
 $r=Run-Fixture 'hitmatch';Need ($r.hitTest -ceq 'matched' -and -not $r.visibilityVerified)
 $r=Run-Fixture 'duplicate';Need ($r.hitTest -ceq 'unavailable')
+
+# Predicate evidence diagnoses a containing button without changing admission.
+foreach ($mode in @('match','geometry','private','role','disabled','hidden','noInvoke','ambiguous','null','error')) {
+    $script:hitMode=$mode;$script:hits=0;$facts=New-OriginalTrayHitFacts
+    $answer=Get-OriginalTrayHit $reader $geometry {} $facts
+    if($mode -cin @('null','error')) {Need ($facts.hitSamples -eq 0);continue}
+    Need ($facts.hitSamples -eq 2)
+    Need ($facts.hitNameMatches -eq $(if($mode -ceq 'private'){0}else{2}))
+    Need ($facts.hitButtonMatches -eq $(if($mode -ceq 'role'){0}else{2}))
+    Need ($facts.hitEnabledMatches -eq $(if($mode -ceq 'disabled'){0}else{2}))
+    Need ($facts.hitOnscreenMatches -eq $(if($mode -ceq 'hidden'){0}else{2}))
+    Need ($facts.hitInvokeMatches -eq $(if($mode -ceq 'noInvoke'){0}else{2}))
+    Need ($facts.hitExactBoundsMatches -eq $(if($mode -ceq 'geometry'){0}else{2}))
+    Need ($facts.hitContainsIconMatches -eq 2)
+    Need ($facts.hitStableIdentity -ceq $(if($mode -ceq 'ambiguous'){'different'}else{'same'}))
+    if($mode -ceq 'geometry'){Need ($answer -ceq 'mismatch')}
+    $serialized=$facts|ConvertTo-Json -Compress
+    Need (-not $serialized.Contains('private account') -and -not $serialized.Contains('1,2'))
+}
+foreach($pair in @(@('hitNameMatches',3),@('hitSamples',1),@('hitStableIdentity','private'),@('hitEnabledMatches','2'))) {
+    $r=Run-Fixture 'hitmatch';$r[$pair[0]]=$pair[1];Reject {Assert-OriginalTrayReport $r}
+}
+$r=Run-Fixture 'hitmatch';$r.hitExactBoundsMatches=0;Reject {Assert-OriginalTrayReport $r}
+'Per-predicate tray comparison tests passed.'
+
+$script:hits=0;$script:hitMode='match';$facts=New-OriginalTrayHitFacts
+$mixed={ $h=& $reader;if($script:hits -eq 2){$h.name='unknown'};return $h }
+Need ((Get-OriginalTrayHit $mixed $geometry {} $facts) -ceq 'mismatch')
+Need ($facts.hitNameMatches -eq 1 -and $facts.hitExactBoundsMatches -eq 2)
+$script:hitMode='null';Need ((Get-OriginalTrayHit $reader $geometry {} $facts) -ceq 'unavailable')
+Need ($facts.hitSamples -eq 0 -and $facts.hitNameMatches -eq 0)
+$outside={ $h=& $reader;$h.left=11;return $h };$script:hitMode='match'
+Need ((Get-OriginalTrayHit $outside $geometry {} $facts) -ceq 'mismatch')
+Need ($facts.hitExactBoundsMatches -eq 0 -and $facts.hitContainsIconMatches -eq 0)
