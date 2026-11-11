@@ -37,6 +37,44 @@ foreach ($required in @('$watch.ElapsedMilliseconds -gt 15000','$texts[$i].Lengt
     '$process.Kill()','$process.WaitForExit(3000)','$start.Environment.Clear()')) {
     if (-not $supervisor.Contains($required)) { throw 'Supervisor bound missing.' }
 }
+# Fixed diagnostic vocabulary and synthetic filtered/raw traversal fixtures.
+foreach ($name in @('Get-DiscoveryLandmark','Get-DiscoveryRole','Read-DiscoveryView')) {
+    $definitions=@($worker.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true))
+    if ($definitions.Count -ne 1) { throw 'Diagnostic helper missing.' }
+    . ([scriptblock]::Create($definitions[0].Extent.Text))
+}
+if ((Get-DiscoveryLandmark 'Codex') -cne 'codex' -or
+    (Get-DiscoveryLandmark 'Agents') -cne 'agents' -or
+    (Get-DiscoveryLandmark 'Codex launch selection is not configured. Connect prepares future starts; it does not verify chat.') -cne 'notConfigured') { throw 'Fixed landmark missing.' }
+foreach ($name in @('CODEX',' Codex','Codex other','arbitrary private text')) {
+    if ((Get-DiscoveryLandmark $name) -cne '') { throw 'Unknown landmark escaped.' }
+}
+foreach ($role in @('Document','Pane','Button','CheckBox','Text')) {
+    if ((Get-DiscoveryRole ('ControlType.'+$role)) -cne $role.ToLowerInvariant()) { throw 'Fixed role missing.' }
+}
+if ((Get-DiscoveryRole 'ControlType.Custom') -cne 'other') { throw 'Unknown role escaped.' }
+$script:discoveryIdentityReads=0
+function Assert-DiscoveryOwner { $script:discoveryIdentityReads++ }
+$root=[pscustomobject]@{Current=[pscustomobject]@{Name='';IsControlElement=$true;IsContentElement=$false;ControlType=[pscustomobject]@{ProgrammaticName='ControlType.Pane'}}}
+$script:rawFixtureNode=[pscustomobject]@{Current=[pscustomobject]@{Name='Codex';IsControlElement=$false;IsContentElement=$true;ControlType=[pscustomobject]@{ProgrammaticName='ControlType.Text'}}}
+$controlWalker=[pscustomobject]@{}
+$controlWalker | Add-Member ScriptMethod GetFirstChild {param($element) return $null}
+$controlWalker | Add-Member ScriptMethod GetNextSibling {param($element) return $null}
+$rawWalker=[pscustomobject]@{}
+$rawWalker | Add-Member ScriptMethod GetFirstChild {param($element) if ($element.Current.Name -ceq '') { return $script:rawFixtureNode };return $null}
+$rawWalker | Add-Member ScriptMethod GetNextSibling {param($element) return $null}
+$result=@{reason='none'};$watch=[Diagnostics.Stopwatch]::StartNew();$budget=@{nodes=0}
+$filtered=Read-DiscoveryView $controlWalker
+$raw=Read-DiscoveryView $rawWalker
+if ($filtered.nodes -ne 1 -or $filtered.surface.codex -ne 0 -or $raw.nodes -ne 2 -or
+    $raw.surface.codex -ne 1 -or $raw.surface.content -ne 1 -or $raw.surface.control -ne 1 -or
+    $budget.nodes -ne 3 -or $script:discoveryIdentityReads -ne 3) { throw 'Filtered/raw snapshot or shared budget mismatch.' }
+$budget.nodes=2048;$rejected=$false
+try { Read-DiscoveryView $rawWalker | Out-Null } catch { $rejected=$true }
+if (-not $rejected -or $result.reason -cne 'limit') { throw 'Combined node budget not enforced.' }
+if (-not $source.Contains('::RawViewWalker') -or -not $source.Contains('::ControlViewWalker') -or
+    -not $source.Contains('$result.controlSurface=$control.surface;$result.rawView=$raw')) { throw 'Both complete views required.' }
+
 # Caller placement and provenance contracts. Parse only, never launch GUI.
 $tokens=$null;$errors=$null
 $caller=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'package-native-magpie-windows.ps1'),[ref]$tokens,[ref]$errors)

@@ -21,8 +21,27 @@ function Get-DiscoveryLabel([string]$Name) {
         default { return '' }
     }
 }
+# Fixed metadata only: unknown UI text/types are counted, never returned.
+function Get-DiscoveryLandmark([string]$Name) {
+    switch -CaseSensitive ($Name) {
+        'Codex' { return 'codex' }
+        'Agents' { return 'agents' }
+        'Codex launch selection is not configured. Connect prepares future starts; it does not verify chat.' { return 'notConfigured' }
+        default { return '' }
+    }
+}
+function Get-DiscoveryRole([string]$Type) {
+    switch -CaseSensitive ($Type) {
+        'ControlType.Document' { return 'document' }
+        'ControlType.Pane' { return 'pane' }
+        'ControlType.Button' { return 'button' }
+        'ControlType.CheckBox' { return 'checkbox' }
+        'ControlType.Text' { return 'text' }
+        default { return 'other' }
+    }
+}
 $result=[ordered]@{schema=1;scope='original-magpie-controls-read-only';status='blocked';
-    reason='context';nodes=0;counts=$null;actions=0;connectVerified=$false;desktopVerified=$false}
+    reason='context';nodes=0;counts=$null;controlSurface=$null;rawView=$null;actions=0;connectVerified=$false;desktopVerified=$false}
 $process=$null
 try {
     Assert-DiscoveryContext
@@ -44,42 +63,56 @@ try {
     Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
     $root=[Windows.Automation.AutomationElement]::FromHandle([IntPtr]$TargetWindow)
     if ($null -eq $root -or $root.Current.ProcessId -ne $TargetProcessId) { throw 'Owned root unavailable.' }
-    $walker=[Windows.Automation.TreeWalker]::ControlViewWalker
-    $queue=[Collections.Generic.Queue[object]]::new()
-    $queue.Enqueue([pscustomobject]@{element=$root;depth=0})
-    $watch=[Diagnostics.Stopwatch]::StartNew();$nodes=0
-    $counts=[ordered]@{}
-    foreach ($label in @('configure','restore','confirm')) {
-        $counts[$label]=[ordered]@{total=0;enabledVisible=0;invoke=0;toggle=0;button=0;checkbox=0;other=0}
-    }
-    while ($queue.Count -gt 0) {
-        $result.reason='limit'
-        if ($watch.ElapsedMilliseconds -gt 10000 -or $nodes -ge 2048) { throw 'Traversal limit.' }
-        $result.reason='identity';Assert-DiscoveryOwner;$result.reason='uia'
-        $item=$queue.Dequeue();$element=$item.element;$nodes++
-        $current=$element.Current;$label=Get-DiscoveryLabel $current.Name
-        if ($label) {
-            $count=$counts[$label];$count.total++
-            if ($current.IsEnabled -and -not $current.IsOffscreen) { $count.enabledVisible++ }
-            if ($current.ControlType -eq [Windows.Automation.ControlType]::Button) { $count.button++ }
-            elseif ($current.ControlType -eq [Windows.Automation.ControlType]::CheckBox) { $count.checkbox++ }
-            else { $count.other++ }
-            $pattern=$null
-            if ($element.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)) { $count.invoke++ }
-            $pattern=$null
-            if ($element.TryGetCurrentPattern([Windows.Automation.TogglePattern]::Pattern,[ref]$pattern)) { $count.toggle++ }
+    function Read-DiscoveryView($walker) {
+        $queue=[Collections.Generic.Queue[object]]::new()
+        $queue.Enqueue([pscustomobject]@{element=$root;depth=0})
+        $nodes=0
+        $surface=[ordered]@{control=0;content=0;document=0;pane=0;button=0;checkbox=0;text=0;other=0;codex=0;agents=0;notConfigured=0}
+        $counts=[ordered]@{}
+        foreach ($label in @('configure','restore','confirm')) {
+            $counts[$label]=[ordered]@{total=0;enabledVisible=0;invoke=0;toggle=0;button=0;checkbox=0;other=0}
         }
-        $child=$walker.GetFirstChild($element)
-        $result.reason='limit'
-        if ($null -ne $child -and $item.depth -ge 20) { throw 'Depth limit.' }
-        while ($null -ne $child) {
-            if ($queue.Count+$nodes -ge 2048 -or $watch.ElapsedMilliseconds -gt 10000) { throw 'Traversal limit.' }
-            $queue.Enqueue([pscustomobject]@{element=$child;depth=$item.depth+1})
-            $result.reason='uia';$child=$walker.GetNextSibling($child);$result.reason='limit'
+        while ($queue.Count -gt 0) {
+            $result.reason='limit'
+            if ($watch.ElapsedMilliseconds -gt 10000 -or $nodes -ge 2048 -or $budget.nodes -ge 2048) { throw 'Traversal limit.' }
+            $result.reason='identity';Assert-DiscoveryOwner;$result.reason='uia'
+            $item=$queue.Dequeue();$element=$item.element;$nodes++;$budget.nodes++
+            $current=$element.Current;$label=Get-DiscoveryLabel $current.Name
+            if ($current.IsControlElement) { $surface.control++ }
+            if ($current.IsContentElement) { $surface.content++ }
+            $role=Get-DiscoveryRole $current.ControlType.ProgrammaticName;$surface[$role]++
+            $landmark=Get-DiscoveryLandmark $current.Name
+            if ($landmark) { $surface[$landmark]++ }
+            if ($label) {
+                $count=$counts[$label];$count.total++
+                if ($current.IsEnabled -and -not $current.IsOffscreen) { $count.enabledVisible++ }
+                if ($current.ControlType -eq [Windows.Automation.ControlType]::Button) { $count.button++ }
+                elseif ($current.ControlType -eq [Windows.Automation.ControlType]::CheckBox) { $count.checkbox++ }
+                else { $count.other++ }
+                $pattern=$null
+                if ($element.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)) { $count.invoke++ }
+                $pattern=$null
+                if ($element.TryGetCurrentPattern([Windows.Automation.TogglePattern]::Pattern,[ref]$pattern)) { $count.toggle++ }
+            }
+            $child=$walker.GetFirstChild($element)
+            $result.reason='limit'
+            if ($null -ne $child -and $item.depth -ge 20) { throw 'Depth limit.' }
+            while ($null -ne $child) {
+                if ($queue.Count+$budget.nodes -ge 2048 -or $watch.ElapsedMilliseconds -gt 10000) { throw 'Traversal limit.' }
+                $queue.Enqueue([pscustomobject]@{element=$child;depth=$item.depth+1})
+                $result.reason='uia';$child=$walker.GetNextSibling($child);$result.reason='limit'
+            }
         }
+        return [ordered]@{nodes=$nodes;counts=$counts;surface=$surface}
     }
+    # Two distinct views, not action retries. Share the original node/time budget.
+    # Order can affect lazy accessibility initialization; do not infer causation.
+    $watch=[Diagnostics.Stopwatch]::StartNew();$budget=@{nodes=0}
+    $control=Read-DiscoveryView ([Windows.Automation.TreeWalker]::ControlViewWalker)
+    $raw=Read-DiscoveryView ([Windows.Automation.TreeWalker]::RawViewWalker)
     $result.reason='identity';Assert-DiscoveryOwner
-    $result.status='observed';$result.reason='none';$result.nodes=$nodes;$result.counts=$counts
+    $result.status='observed';$result.reason='none';$result.nodes=$control.nodes;$result.counts=$control.counts
+    $result.controlSurface=$control.surface;$result.rawView=$raw
 } catch {
     # Never return exception text, arbitrary UI strings, process paths or logs.
 } finally { if ($null -ne $process) { $process.Dispose() } }

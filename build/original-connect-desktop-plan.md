@@ -113,3 +113,28 @@ after. Unexpected screens or uncertain outcomes stop without an action retry.
 The initial read-only run establishes which Wails UIA roles/patterns actually
 exist; it is an engineering prerequisite, not an imposed manual handoff. No
 Invoke/Toggle action has been added by this candidate.
+
+## Follow-up to the 65555800 read-only observation
+
+The retained report completed one ControlView walk of 20 nodes with zero exact
+action-label matches. The captured original Magpie screenshot visibly contains
+the Codex row and not-configured selection UI. Therefore the report does not
+establish absence of the switch, its role or its supported UIA patterns.
+
+The next probe reads ControlView and RawView sequentially under the same retained
+HWND/identity and the unchanged aggregate 2048-node, depth-20 and 10-second inner
+budget (15-second outer worker deadline). Original nodes/counts remain the control
+snapshot. Additional fixed control/content flags, six role buckets and exact
+Codex/Agents/not-configured landmarks describe accessibility exposure. rawView
+contains the second bounded snapshot. No arbitrary names or framework/class
+strings are exported. Partial traversal remains blocked, with no partial view
+counts promoted as complete. There are no new waits, repeat attempts, accessibility
+flags, settings changes or control actions.
+
+RawView may reveal elements excluded by the control filter. Different sequential
+results may also reflect lazy WebView accessibility initialization or timing;
+this experiment cannot distinguish those causes by itself. If neither view
+exposes the known landmarks, report that limitation rather than using coordinate
+or keyboard fallback. Fixed classifiers and synthetic filtered/raw trees test
+view differences, shared budget enforcement and identity-check calls offline.
+PowerShell/Windows execution of this follow-up has not yet run.
