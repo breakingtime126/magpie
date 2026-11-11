@@ -292,11 +292,12 @@ type profileLibraryJSON struct {
 }
 
 type stateJSON struct {
-	Agents   []agentJSON   `json:"agents"`
-	Clients  []clientJSON  `json:"clients"` // who a request may come from, by id
-	Profiles []profileJSON `json:"profiles"`
-	Catalog  string        `json:"catalog"`
-	Notice   string        `json:"notice,omitempty"` // advice after a change, e.g. "restart Codex"
+	Agents               []agentJSON               `json:"agents"`
+	NativeCodexSelection *nativeCodexSelectionJSON `json:"nativeCodexSelection,omitempty"`
+	Clients              []clientJSON              `json:"clients"` // who a request may come from, by id
+	Profiles             []profileJSON             `json:"profiles"`
+	Catalog              string                    `json:"catalog"`
+	Notice               string                    `json:"notice,omitempty"` // advice after a change, e.g. "restart Codex"
 	// Connected is how the 「接入」 switch chose the model the agent starts
 	// on, in the answer to agents/connect (agent.Connection)
 	Connected *agent.Connection `json:"connected,omitempty"`
@@ -1029,6 +1030,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// own restart to update (backAsNew)
 		boot["version"] = Version
 		addNativeCodexBoot(boot, nativeAPI, r)
+		boot["nativeCodexConnection"] = ownedNativeCodexConnection(w, r) != nil
 		if s.Colorblind {
 			boot["colorblind"] = true
 		}
@@ -1116,6 +1118,10 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// null when none is kept
 		if r.URL.Query().Get("last") == "1" {
 			if s, ok := lastKnown(); ok {
+				s.NativeCodexSelection = readNativeCodexSelection(w, r)
+				if s.NativeCodexSelection != nil {
+					rw.Header().Set("Cache-Control", "no-store")
+				}
 				writeJSON(rw, s)
 			} else {
 				writeJSON(rw, nil)
@@ -1123,6 +1129,10 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			return
 		}
 		s := state()
+		s.NativeCodexSelection = readNativeCodexSelection(w, r)
+		if s.NativeCodexSelection != nil {
+			rw.Header().Set("Cache-Control", "no-store")
+		}
 		if sum, ok := writeStateJSON(rw, s); ok {
 			keepStateSummed(s, sum)
 		}
@@ -1308,12 +1318,13 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		writeJSON(rw, state())
 	})
 	mux.HandleFunc("POST /api/agents/{action}/{id}", func(rw http.ResponseWriter, r *http.Request) {
+		// Journal restoration must survive removal of the detected runtime.
+		if r.PathValue("id") == "codex" && handleNativeCodexConnection(w, &agent.Agent{ID: "codex"}, rw, r) {
+			return
+		}
 		a, err := agent.Find(r.PathValue("id"))
 		if err != nil {
 			fail(rw, err)
-			return
-		}
-		if handleNativeCodexConnection(w, a, rw, r) {
 			return
 		}
 		var how *agent.Connection

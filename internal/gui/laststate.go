@@ -80,6 +80,8 @@ func keepState(s stateJSON) {
 
 // keptFile is what keepState keeps of s.
 func keptFile(s stateJSON) stateFile {
+	// Selection evidence belongs to the requesting desktop host, never disk/SSE state.
+	s.NativeCodexSelection = nil
 	s.Settings = settings.Settings{}
 	// and what is told once: a notice, a file recovered after a crash
 	s.Notice, s.Connected, s.Recovered = "", nil, nil

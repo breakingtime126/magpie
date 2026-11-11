@@ -60,8 +60,12 @@ func TestNativeCodexOriginalConnectMissingCatalog(t *testing.T) {
 type syntheticNativeConnection struct {
 	connects, disconnects, closes int
 	closeErr                      error
+	statusErr                     error
 }
 
+func (s *syntheticNativeConnection) Status(context.Context) (nativeconnect.Status, error) {
+	return nativeconnect.Status{SelectionConfigured: s.connects > s.disconnects, JournalPresent: s.connects > s.disconnects}, s.statusErr
+}
 func (s *syntheticNativeConnection) Connect(context.Context) (nativeconnect.Status, error) {
 	s.connects++
 	return nativeconnect.Status{SelectionConfigured: true, JournalPresent: true}, nil
@@ -106,5 +110,115 @@ func TestNativeCodexOriginalEndpointUsesHostLifecycle(t *testing.T) {
 	c.closeErr = nil
 	if err := closeNativeCodexConnection(c); err != nil || c.closes != 2 {
 		t.Fatal("host cannot retry cleanup", err)
+	}
+}
+
+func TestNativeCodexSelectionStatusOwnerAndUnknown(t *testing.T) {
+	c := &syntheticNativeConnection{connects: 1}
+	owner := nativeConnectionOwner{controller: c}
+	r := httptest.NewRequest("GET", "/api/state", nil)
+	if got := readNativeCodexSelection(owner, r); got != nil {
+		t.Fatal("foreign request read desktop selection", got)
+	}
+	ownWindow(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := readNativeCodexSelection(owner, r)
+		if !buildvariant.NativeCodex {
+			if got != nil {
+				t.Fatal("ordinary build exposed selection")
+			}
+			return
+		}
+		if got == nil || !got.SelectionConfigured || got.Unknown || got.ChatVerified || got.BackendHandshakeVerified {
+			t.Fatal("selection status dishonest", got)
+		}
+		c.statusErr = nativeconnect.ErrConflict
+		got = readNativeCodexSelection(owner, r)
+		if got == nil || !got.Unknown {
+			t.Fatal("failed inspection looked disconnected", got)
+		}
+	})).ServeHTTP(httptest.NewRecorder(), r)
+}
+
+type nativeConnectionWebOwner struct{ nativeConnectionOwner }
+
+func (nativeConnectionWebOwner) browserTab() {}
+
+func TestNativeCodexSelectionRoutesAndCache(t *testing.T) {
+	if !buildvariant.NativeCodex {
+		t.Skip("native-only original host routes")
+	}
+	c := &syntheticNativeConnection{connects: 1}
+	owner := nativeConnectionOwner{controller: c}
+	handler := Handler(owner, nil)
+	request := func(h http.Handler, method, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, httptest.NewRequest(method, path, nil))
+		return response
+	}
+	owned := ownWindow(handler)
+	for _, path := range []string{"/api/state", "/api/state?last=1"} {
+		response := request(owned, "GET", path)
+		if response.Code != 200 || !strings.Contains(response.Body.String(), `"selectionConfigured":true`) {
+			t.Fatal("owning host lost selection on reload", path, response.Code, response.Body.String())
+		}
+		cached, ok := lastKnown()
+		if !ok || cached.NativeCodexSelection != nil {
+			t.Fatal("host selection entered shared cache")
+		}
+		foreign := request(handler, "GET", path)
+		if strings.Contains(foreign.Body.String(), `nativeCodexSelection`) {
+			t.Fatal("foreign request got host selection")
+		}
+	}
+	boot := request(owned, "GET", "/boot.js")
+	if !strings.Contains(boot.Body.String(), `"nativeCodexConnection":true`) {
+		t.Fatal("owning boot omitted original native control")
+	}
+	foreignBoot := request(handler, "GET", "/boot.js")
+	if strings.Contains(foreignBoot.Body.String(), `"nativeCodexConnection":true`) {
+		t.Fatal("foreign boot enabled native control")
+	}
+	web := ownWindow(Handler(nativeConnectionWebOwner{owner}, nil))
+	webState := request(web, "GET", "/api/state")
+	if strings.Contains(webState.Body.String(), `nativeCodexSelection`) {
+		t.Fatal("web window got owner selection")
+	}
+	webRestore := request(web, "POST", "/api/agents/disconnect/codex")
+	if webRestore.Code != 404 || c.disconnects != 0 {
+		t.Fatal("web window reached restore")
+	}
+	c.statusErr = nativeconnect.ErrConflict
+	uncertain := request(owned, "GET", "/api/state?last=1")
+	if !strings.Contains(uncertain.Body.String(), `"unknown":true`) {
+		t.Fatal("failed read was reported as known", uncertain.Body.String())
+	}
+	c.statusErr = nil
+	foreign := request(handler, "POST", "/api/agents/disconnect/codex")
+	if foreign.Code != 404 || c.disconnects != 0 {
+		t.Fatal("foreign transport reached restore", foreign.Code)
+	}
+	// Empty test home has no installed Codex. Native restoration is dispatched
+	// before ordinary discovery and does not need a runtime or supplier.
+	response := request(owned, "POST", "/api/agents/disconnect/codex")
+	if response.Code != 200 || c.disconnects != 1 || strings.Contains(response.Body.String(), `"connected":`) {
+		t.Fatal("original restore required discovery or claimed legacy connection", response.Code, response.Body.String())
+	}
+}
+
+func TestNativeCodexSelectionNotInKeptDigest(t *testing.T) {
+	s := stateJSON{Agents: []agentJSON{}, NativeCodexSelection: &nativeCodexSelectionJSON{Status: nativeconnect.Status{JournalPresent: true, SelectionConfigured: true}}}
+	response := httptest.NewRecorder()
+	got, ok := writeStateJSON(response, s)
+	if !ok || !strings.Contains(response.Body.String(), `"selectionConfigured":true`) {
+		t.Fatal("response omitted selection")
+	}
+	if keptFile(s).State.NativeCodexSelection != nil {
+		t.Fatal("selection entered shared file")
+	}
+	s.NativeCodexSelection = nil
+	want, err := encodedSum(keptFile(s))
+	if err != nil || got != want {
+		t.Fatal("shared digest contains host-specific selection", err)
 	}
 }

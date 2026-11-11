@@ -77,6 +77,10 @@ const winRuntime = !web ? import("/wails/runtime.js").catch(() => null) : Promis
 // theme.js already applied the theme and text size before the first paint.
 if (window.bootPrefs) setLocale(window.bootPrefs.lang);
 
+let nativeSelection = { unknown: true }, nativeSelectionBusy = false, nativeSelectionRevision = 0;
+const nativeCodexConnection = !!window.bootPrefs?.nativeCodexConnection && !web;
+const nativeSelectionAgent = (a) => nativeCodexConnection && a.id === "codex";
+const nativeNeedsRestore = () => nativeSelection.unknown || nativeSelection.journalPresent || nativeSelection.recoveryRequired || nativeSelection.selectionConfigured;
 let state = { agents: [], profiles: [], catalog: "", settings: {} };
 let prefs = null; // the settings page: theme, lang, version, dir, gateway
 let providers = null; // { providers, presets, gateway }
@@ -124,6 +128,7 @@ const readTags = new WeakMap();
 // heads, when given, is shown the answer's headers (loadQuotas' X-Magpie-Reading);
 // signal, when given, cancels the request (a read the reader moved on from)
 async function api(path, body, heads, signal) {
+  const selectionRevision = nativeSelectionRevision;
   if (web && path === "open") { window.open(body.url, "_blank", "noopener"); return null; }
   // a segment may be an agent id, and omp's named profiles are omp#<name>:
   // left raw, the browser reads #work as the fragment and the request
@@ -149,6 +154,7 @@ async function api(path, body, heads, signal) {
   try { data = text ? JSON.parse(text) : null; } catch {
     throw new Error(notJSON(res, text));
   }
+  if (nativeCodexConnection && selectionRevision === nativeSelectionRevision && data?.nativeCodexSelection && (!nativeSelectionBusy || path === "agents/connect/codex" || path === "agents/disconnect/codex")) nativeSelection = data.nativeCodexSelection;
   if (!res.ok) {
     const err = new Error(data?.error || `${res.status} ${res.statusText}`);
     if (data?.code === "runtime_unavailable") {
@@ -500,6 +506,12 @@ function renderAgents() {
     list.append(e);
   }
   const { shown: used, folded } = arrangeAgents();
+  // Recovery must not disappear with provider/runtime discovery or a hidden row.
+  if (nativeCodexConnection) {
+    const index = folded.findIndex(nativeSelectionAgent);
+    if (index >= 0) used.push(...folded.splice(index, 1));
+    if (nativeNeedsRestore() && !used.some(nativeSelectionAgent)) used.push({ id: "codex", name: "Codex", icon: "generic", path: "", fields: [] });
+  }
   if (mode === "panel") $("#ptabN").textContent = state.agents.length || "";
   const agentRow = (a, inFold) => {
     const row = el("div", "row agent");
@@ -508,6 +520,14 @@ function renderAgents() {
     row.oncontextmenu = (ev) => { ev.preventDefault(); openAgentMenu(row.querySelector(".ag-handle"), a, inFold); };
     const who = el("div", "who");
     who.append(el("div", "name", a.name));
+    if (nativeSelectionAgent(a)) {
+      row.oncontextmenu = null;
+      row.classList.add("conn");
+      who.classList.add("with-models");
+      who.append(el("div", "ag-st why", nativeSelectionSaid()));
+      row.append(who, el("span", "grow"), connectSwitch(a));
+      return row;
+    }
     window.codexNativeAction?.(a, who); // explicit native test; never the Connect switch
     // the model picker takes the wide column, everything else the narrow one,
     // so the controls line up down the list
@@ -1184,6 +1204,7 @@ const CONNECTED_HOW = {
   first: "{agent} is connected to magpie · on {model} through magpie: magpie doesn't serve the model it was on",
 };
 function connectedSaid(a, c) {
+  if (nativeSelectionAgent(a)) return nativeSelectionSaid();
   const plain = t("{agent} is connected to magpie", { agent: a.name });
   if (a.native && c?.how === "joined") return t("{agent} is connected to magpie", { agent: a.name });
   if (c?.how === "joined") return t("{agent} is connected to magpie · it stays on its own last pick; magpie's models join its {cmd}", { agent: a.name, cmd: PICKS_IN[kindOf(a)] || "/model" });
@@ -1193,7 +1214,82 @@ function connectedSaid(a, c) {
   return CONNECTED_HOW[c?.how] && model ? t(CONNECTED_HOW[c.how], { agent: a.name, model }) : plain;
 }
 
+// This is launch selection, never legacy wiring or evidence of a working chat.
+function nativeSelectionSaid() {
+  if (nativeSelection.unknown) return t("Codex launch selection is unknown. Disconnect can attempt journal recovery; external changes will not be overwritten.");
+  if (nativeSelection.recoveryRequired || (nativeSelection.journalPresent && !nativeSelection.selectionConfigured)) return t("Codex launch selection needs recovery. Disconnect restores only journal-matching values.");
+  if (nativeSelection.selectionConfigured) return t("Codex launch selection configured. Backend startup and chat have not been verified.");
+  return t("Codex launch selection is not configured. Connect prepares future starts; it does not verify chat.");
+}
+async function changeNativeSelection(action, dialog) {
+  if (nativeSelectionBusy) return;
+  nativeSelectionBusy = true;
+  nativeSelectionRevision++;
+  nativeSelection = { ...nativeSelection, unknown: true };
+  renderAgents();
+  try {
+    state = await api("agents/" + action + "/codex", {});
+    if (action === "disconnect" && confirmAsk === dialog) closeConfirmAsk();
+    saidOk(action === "disconnect" ? t("Previous Codex launch selection restored. Already running windows have not been changed.") : nativeSelectionSaid(), 7000);
+  } catch (err) {
+    // A lost reply is not proof of rollback. Refresh from the owning host;
+    // if that too fails, unknown still offers explicit journal recovery.
+    try {
+      const fresh = await api("state");
+      state = fresh;
+      nativeSelection = fresh?.nativeCodexSelection || { ...nativeSelection, unknown: true };
+    } catch { nativeSelection = { ...nativeSelection, unknown: true }; }
+    status(t(err.message), "err");
+  } finally {
+    nativeSelectionRevision++;
+    nativeSelectionBusy = false;
+    renderAgents();
+  }
+}
+function nativeSelectionSwitch(a) {
+  const restore = nativeNeedsRestore();
+  const s = el("button", "lib-switch ag-conn" + (nativeSelection.selectionConfigured ? " on" : ""));
+  s.type = "button";
+  const uncertain = nativeSelection.unknown || nativeSelection.recoveryRequired;
+  // ARIA switches have no mixed state. Recovery is an explicit action button.
+  if (!uncertain) {
+    s.setAttribute("role", "switch");
+    s.setAttribute("aria-checked", String(!!nativeSelection.selectionConfigured));
+  }
+  s.dataset.selectionState = uncertain ? "recovery" : nativeSelection.selectionConfigured ? "configured" : "off";
+  s.setAttribute("aria-label", t(restore ? "Disconnect and restore Codex launch selection" : "Configure Codex launch selection"));
+  s.title = nativeSelectionSaid();
+  s.disabled = nativeSelectionBusy;
+  s.append(el("i"));
+  s.onclick = (e) => { e.stopPropagation(); if (restore) askDisconnect(a); else changeNativeSelection("connect"); };
+  return s;
+}
+function askNativeSelectionRestore(a) {
+  const ed = el("div", "editor disconnect-ask");
+  const head = el("div", "ehead");
+  head.append(icon(a.icon), el("b", "", t("Disconnect and restore Codex launch selection")));
+  ed.append(head, el("p", "lib-confirm", t("Restore the previous CODEX_CLI_PATH and MAGPIE_APP_SERVER_BRIDGE_CONFIG values recorded in Magpie's journal. External changes are refused. Native authentication, history and already running windows are not changed.")));
+  const bar = el("div", "bar");
+  const cancel = el("button", "text", t("Cancel"));
+  cancel.onclick = cancelAsk;
+  const go = el("button", "text primary danger-fill", t("Disconnect and restore"));
+  go.onclick = async (e) => {
+    e.stopPropagation();
+    if (nativeSelectionBusy) return;
+    go.disabled = true;
+    await changeNativeSelection("disconnect", ed);
+    go.disabled = false;
+  };
+  bar.append(el("span", "grow"), cancel, go);
+  ed.append(bar);
+  confirmAsk = ed;
+  openModal(ed);
+  $("#modal").classList.add("lib");
+  cancel.focus(NO_SCROLL);
+}
+
 function connectSwitch(a) {
+  if (nativeSelectionAgent(a)) return nativeSelectionSwitch(a);
   const s = el("button", "lib-switch ag-conn" + (a.wired ? " on" : ""));
   s.type = "button";
   s.setAttribute("role", "switch");
@@ -1765,6 +1861,11 @@ function guideStep(n, done, title, say) {
   return { li, body };
 }
 
+// Native launch selection has its own truthful control in the original row.
+function guideConnectCandidates() {
+  return state.agents.filter((a) => !nativeSelectionAgent(a) && (connectKind(a) === "ok" || connectKind(a) === "empty"));
+}
+
 function guideCard(g) {
   const card = el("section", "guide");
   card.setAttribute("aria-label", t("Get started"));
@@ -1799,7 +1900,7 @@ function guideCard(g) {
   list.append(one.li);
 
   // 2: an agent, those found here named, each connected in a click
-  const found = state.agents.filter((a) => connectKind(a) === "ok" || connectKind(a) === "empty");
+  const found = guideConnectCandidates();
   const two = guideStep(2, g.agent, t("Connect an agent"),
     g.agent ? "" : found.length ? t("magpie found these on this computer. Click one to connect it:") : t("Install Claude Code, Codex, Gemini CLI, OpenCode… and magpie will list them here."));
   two.li.dataset.step = "agent";
@@ -1879,6 +1980,7 @@ function guideRedraw() {
 }
 
 async function guideConnect(a, ev) {
+  if (nativeSelectionAgent(a)) { if (nativeNeedsRestore()) askNativeSelectionRestore(a); else await changeNativeSelection("connect"); return; }
   if (guideBusy) return;
   guideBusy = a.id;
   guideRedraw();
@@ -2397,6 +2499,7 @@ function changesList(changes, back) {
 // had before magpie (agent.Disconnect). Picking Default isn't that: it is
 // the agent as installed.
 function askDisconnect(a) {
+  if (nativeSelectionAgent(a)) return askNativeSelectionRestore(a);
   const ed = el("div", "editor disconnect-ask");
   const head = el("div", "ehead");
   head.append(icon(a.icon), el("b", "", t("Disconnect {agent} from magpie?", { agent: a.name })));

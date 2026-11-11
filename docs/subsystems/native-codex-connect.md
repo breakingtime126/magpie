@@ -135,3 +135,30 @@ is parser/text acceptance, not real-service, native tool-execution or Desktop
 acceptance. Windows CI also checks packaging
 pins and captures the original GUI in a synthetic home. A successful build is
 not a successful real Connect or chat.
+
+## Original Agents control and recovery status
+
+The original owning desktop's boot data enables the native Codex control;
+ordinary builds, web windows and foreign transport requests do not get it.
+The existing `/api/state` (including `?last=1`) reads `Manager.Status` afresh
+with a bounded timeout. This host-specific status is not persisted in the
+shared last-state cache. Inspection failure is explicitly unknown, never an
+empty/disconnected selection. Connect/Disconnect errors also return current
+selection evidence without claiming backend or chat success.
+
+The original Agents Codex row uses this evidence rather than legacy `wired`.
+Its switch configures launch selection or opens the journal-restoration
+confirmation. It does not use the legacy config preview, model picker or
+connected toast. Journal, recovery and unknown states keep restoration
+reachable even when the row was hidden or runtime discovery no longer returns
+Codex. Disconnect dispatch does not require rediscovering an installed runtime
+or preparing a supplier. A missing/damaged journal or external value conflict
+still fails closed in the transaction; exposing recovery does not bypass it.
+An HTTP failure refreshes status; if that read fails, recovery stays available
+as unknown. Unrelated state responses do not erase the host status. In-flight
+reads from before a selection change cannot replace its result.
+
+`codex-connect-recovery.test.cjs` exercises the original page in both browser
+engines and all five locales, including reload, Cancel, a lost response after a
+partial write, disappearance of the runtime, conflict, and explicit recovery.
+Its host API and journal state are synthetic, not real Windows or chat evidence.

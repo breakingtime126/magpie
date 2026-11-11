@@ -90,7 +90,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/magpie-ui" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.61.1
           "$RUNNER_TEMP/magpie-ui/node_modules/.bin/playwright" install --with-deps chromium webkit
-          node --test internal/gui/tests/agent-connect.test.cjs internal/gui/tests/agent-connect-no-models.test.cjs internal/gui/tests/agent-connected-unfolded.test.cjs internal/gui/tests/codex-native.test.cjs
+          node --test internal/gui/tests/codex-connect-switch-state.test.cjs internal/gui/tests/codex-connect-recovery.test.cjs internal/gui/tests/agent-connect.test.cjs internal/gui/tests/agent-connect-no-models.test.cjs internal/gui/tests/agent-connected-unfolded.test.cjs internal/gui/tests/codex-native.test.cjs
       - name: Upload formatting evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
