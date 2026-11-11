@@ -68,7 +68,12 @@ Restore discovers the current original restore control and its supported
 Toggle On or recovery Invoke pattern, opens the original confirmation, verifies
 its exact explanatory text and unique confirmation button, then invokes once.
 Success additionally requires original Configure Off, removed journal and exact
-baseline registry presence, type and unexpanded values.
+baseline registry presence, type and unexpanded values. During Connect readback,
+a bounded read-only sample once per second records the first and last complete
+counts of the two exact controls and allowlisted native errors, including while
+the journal is absent. Failed reads retain earlier complete observations and
+stop fail-closed. Busy/error observations never establish completion, authorize
+recovery, or change the single-action and deadline rules.
 
 Each mode is exclusively claimed on disk. Every attempted action is durably
 marked before entering UIA. A lost output, timeout, identity change or uncertain
@@ -84,8 +89,25 @@ read-only image observation records exact direct-child adapter/native starts;
 it does not establish bootstrap completion or backend handshake. No Desktop
 UI action, login, setup or policy navigation occurs.
 
-Only after verified original recovery does the coordinator capture the owned
-windows and close retained process roots. Forced root termination blocks clean
+Acceptance screenshots and root cleanup follow verified original recovery.
+After the sequence finally returns and its report is saved, separate diagnostic
+helpers may capture the original Magpie window on an unverified sequence and
+inspect its owned tray geometry. Capture uses one separately bounded child and
+publishes a validated PNG under `original-magpie-uncertain.png`; private partial
+files are retained. PrintWindow requests target rendering; the child deadline
+does not prove that target rendering finished. No focus, activation, input,
+desktop-wide capture or fallback occurs. Capture success never changes the
+original failure, uncertainty, cleanup authority or preserved recovery state.
+Its eight-second worker deadline has additional bounded startup-error, stream
+drain and disposal waits, so it is not an eight-second whole-call guarantee.
+
+Tray discovery is read-only, externally bounded and fixed-field only. Its
+geometry and optional coincident UIA hit are not visibility, input ownership or
+authority to click. See [the source review](original-desktop-quit-review.md).
+Normal window close hides this tray app and cannot prove graceful Quit. The
+existing root-cleanup failure gate remains until an original Quit route is
+independently observed and reviewed. No second app launch or Quit action is
+added by these diagnostics. Forced root termination blocks clean
 shutdown acceptance. Root exits do not prove descendant cleanup; the report
 explicitly marks descendant exit unverified. On uncertain recovery the GUI,
 journal and generation are left intact for the disposable runner's remaining
@@ -123,5 +145,7 @@ fixtures in both Core and Desktop hosts before any live action. The sequence's
 `-BreakRestoration` test must fail on missing registry/journal cleanup. Tests
 cover exact selectors, duplicate/disabled/hidden controls, deadlines, identity
 drift, one-shot attempts, external-value refusal, installed-source parity,
-activation freshness/pins and recovery-read failure. Offline fixtures do not
+activation freshness/pins and recovery-read failure. The tray discovery and
+window-capture fixture/mutation suites run before live acceptance; Windows
+capture fixtures use Desktop PowerShell for native PNG checks. Offline fixtures do not
 substitute for the real opted-in Windows run.

@@ -21,10 +21,26 @@ foreach ($assignment in $assignments) {
 }
 $package=Parse 'package-native-magpie-windows.ps1'
 $sequence=Parse 'original-desktop-sequence.ps1'
-foreach ($name in @('Get-AcceptanceSupplierFixture','Test-AcceptanceJournal')) {
+foreach ($name in @('Get-AcceptanceSupplierFixture','Test-AcceptanceJournal','Get-AcceptanceDiagnostics')) {
     $function=@($caller.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$false))
     Assert ($function.Count -eq 1) ('unique function '+$name)
     Invoke-Expression $function[0].Extent.Text
+}
+foreach ($captureFailure in @($false,$true)) {
+    foreach ($captureThrows in @($false,$true)) {
+        foreach ($trayThrows in @($false,$true)) {
+            $script:calls=@()
+            $result=Get-AcceptanceDiagnostics $captureFailure {
+                $script:calls+='capture';if ($captureThrows) {throw 'private-capture-error'};return @{status='captured'}
+            } {
+                $script:calls+='tray';if ($trayThrows) {throw 'private-tray-error'};return @{status='observed'}
+            }
+            $expected='tray';if ($captureFailure) {$expected='capture,tray'}
+            Assert (($script:calls -join ',') -ceq $expected) 'diagnostic failure cannot skip other read-only evidence'
+            Assert ($result.Count -eq 2 -and ($result|ConvertTo-Json -Compress) -cnotmatch 'private|cleanup|Recovery') 'diagnostics do not expose errors or carry recovery decisions'
+            if (-not $captureFailure) {Assert ($null -eq $result.capture) 'no failure capture on verified sequence'}
+        }
+    }
 }
 $fixture=Get-AcceptanceSupplierFixture
 Assert ($fixture.noAutoGroups -eq $true -and $fixture.providers.Count -eq 1) 'ordinary single provider fixture'
@@ -53,6 +69,7 @@ Assert ($text.Contains('if (-not $sequenceEntered -and $null -eq $report.sequenc
 Assert ($text.Contains('Invoke-OriginalDesktopSequence -Connect') -and $text.Contains('Invoke-OriginalConnectAction -Mode Restore')) 'caller routes original Connect and Restore through bounded actions'
 Assert ($text.IndexOf('$report.stage=''owned-window-evidence''') -gt $text.IndexOf('$safeCleanup=$report.sequence.cleanupAllowed')) 'captures only after recovery'
 Assert ($text.Contains('if ($safeCleanup)') -and $text.Contains('if ($null -ne $context -and $context.Evidence.activated)')) 'cleanup requires recovery and held activation authority'
+Assert ($text.Contains("Save-AcceptanceReport`n    # Diagnostics follow") -and $text.IndexOf('$diagnostics=Get-AcceptanceDiagnostics') -gt $text.IndexOf('$safeCleanup=$report.sequence.cleanupAllowed')) 'diagnostics follow saved final sequence without changing recovery'
 Assert ($text.Contains('restoredDesktopStartVerified=$false') -and $text.Contains('backendHandshakeVerified=$false') -and $text.Contains('zeroEgressProven=$false')) 'bounded claims retained'
 Assert (-not $text.Contains("RemoveAll") -and -not $text.Contains(".Delete(")) 'coordinator preserves recovery files'
 Assert ($package.Extent.Text.Contains('$DiscoverOriginalConnect -or $env:MAGPIE_ORIGINAL_CONNECT_DISCOVERY')) 'discovery and action gates exclusive'

@@ -45,8 +45,8 @@ function Invoke-OriginalConnectAction {
     $start.Arguments=$quoted -join ' '
     $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$started=$false;$startAttempted=$false
     $result=[ordered]@{schema=1;scope='original-magpie-ui-action';mode=$Mode;status='blocked';stage='supervisor';
-        actionsAttempted=0;selectionVerified=$false;restorationVerified=$false;desktopVerified=$false;preserveRecovery=$true;configureReadiness=(New-OriginalConfigureReadiness)}
-    $result.configureReadiness.status='unavailable'
+        actionsAttempted=0;selectionVerified=$false;restorationVerified=$false;desktopVerified=$false;preserveRecovery=$true;configureReadiness=(New-OriginalConfigureReadiness);postActionReadback=(New-OriginalPostActionReadback)}
+    $result.configureReadiness.status='unavailable';$result.postActionReadback.status='unavailable'
     try {
         # After process start, loss of output is uncertain regardless of whether
         # a marker has become visible. Never infer zero actions from a timeout.
@@ -96,6 +96,15 @@ function Invoke-OriginalConnectAction {
         }
         Assert-OriginalConfigureReadiness $readiness
         if ($Mode -ceq 'Connect' -and $r.status -ceq 'verified' -and $readiness.status -cne 'ready') { throw 'Missing configure readiness.' }
+        $post=@{}
+        foreach ($property in $r.postActionReadback.PSObject.Properties) { $post[$property.Name]=$property.Value }
+        foreach ($field in @('firstComplete','lastComplete')) {
+            if ($null -ne $post[$field]) {
+                $o=@{};foreach ($property in $post[$field].PSObject.Properties) { $o[$property.Name]=$property.Value }
+                $post[$field]=$o
+            }
+        }
+        Assert-OriginalPostActionReadback $post
         $result=$r
     } catch { } finally {
         if ($started -or ($startAttempted -and $result.status -ceq 'uncertain')) {

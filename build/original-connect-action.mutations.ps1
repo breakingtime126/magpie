@@ -14,7 +14,11 @@ $cases=@(
     @{name='readiness-duplicate';old="if (`$all.Count -gt 1) { `$o.reason='duplicate' }";new="if (`$all.Count -gt 2) { `$o.reason='duplicate' }"},
     @{name='readiness-owner';old="`$Readiness.lastCompleteObservation=Get-OriginalConfigureObservation `$targets`n        `$Readiness.status='owner-check'; & `$CheckOwner";new='$Readiness.lastCompleteObservation=Get-OriginalConfigureObservation $targets'},
     @{name='readiness-deadline';old="`$Readiness.status='deadline';Assert-OriginalDeadline (& `$ReadElapsed) 15000`n        `$Readiness.status='reading'";new="`$Readiness.status='deadline';Assert-OriginalDeadline (& `$ReadElapsed) 16000`n        `$Readiness.status='reading'"},
-    @{name='readiness-report-fields';old="Assert-OriginalFields `$o @('total','enabledVisible','button','toggle','invoke','off','on','otherState','reason')";new='# mutation: accept unknown report fields'}
+    @{name='readiness-report-fields';old="Assert-OriginalFields `$o @('total','enabledVisible','button','toggle','invoke','off','on','otherState','reason')";new='# mutation: accept unknown report fields'},
+    @{name='post-action-unknown';old='if ($c.name -cnotin $labels)';new='if ($false)'},
+    @{name='post-action-first';old='if ($null -eq $Report.firstComplete)';new='if ($true)'},
+    @{name='post-action-read-failure';old="catch { `$Report.status='read-failed';throw }";new="catch { `$Report.status='observed';throw }"},
+    @{name='post-action-hidden-error';old='} elseif (-not $c.offscreen) {';new='} elseif ($true) {'}
 )
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('original-action-mutants-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($temp)

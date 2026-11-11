@@ -154,8 +154,12 @@ bounded to 15 seconds, and waits only on a missing, hidden or disabled exact
 control. Unknown reads, duplicates or changed control identity stop. Exact registry/journal readback establishes
 selection and restoration separately from UI appearance. Uncertain actions are
 not retried; clean snapshots alone cannot settle an asynchronous Connect.
-Unknown recovery retains the journal and running owner. Screenshots occur only
-after restoration. Reported root-process exits do not establish descendant drain.
+Unknown recovery retains the journal and running owner. Acceptance screenshots
+follow restoration. Separate bounded, diagnostic-only original-window capture
+and tray reads run only after the recovery checks return and the report is saved;
+their results cannot authorize cleanup or change uncertainty. Tray discovery is
+not a Quit action, and window close only hides this tray app. Reported root-process
+exits do not establish descendant drain.
 
 The official helper acquires the exact reviewed 26.1103.4239.0 release from
 the versioned official URL, not the rolling download alias. Its source and

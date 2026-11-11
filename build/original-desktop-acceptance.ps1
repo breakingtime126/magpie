@@ -6,6 +6,8 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-connect-action.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-package.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-sequence.ps1')
+. (Join-Path $PSScriptRoot 'original-desktop-quit-discovery.ps1')
+. (Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1')
 function Assert-AcceptanceContext {
     Assert-OriginalDesktopPackageRunner
     if ($env:GITHUB_EVENT_NAME -cne 'push' -or $SourceCommit -cnotmatch '^[0-9a-f]{40}$' -or
@@ -38,6 +40,15 @@ function Get-AcceptanceSupplierFixture {
         id='original-ui-fixture';name='AIHub isolated acceptance fixture';
         key='PUBLIC-INERT-NOT-A-CREDENTIAL';responses='https://aihub.friendtimes.net/v1';
         models=@('original-ui-fixture-model')})}
+}
+function Get-AcceptanceDiagnostics([bool]$CaptureFailure,[scriptblock]$Capture,[scriptblock]$Tray) {
+    $diagnostics=[ordered]@{capture=$null;tray=[ordered]@{status='unavailable'}}
+    if ($CaptureFailure) {
+        $diagnostics.capture=[ordered]@{status='unavailable'}
+        try { $diagnostics.capture=& $Capture } catch { }
+    }
+    try { $diagnostics.tray=& $Tray } catch { }
+    return $diagnostics
 }
 function Assert-AcceptanceOwner([Diagnostics.Process]$Process,[string]$Executable,[long]$Ticks) {
     $Process.Refresh()
@@ -88,7 +99,7 @@ namespace OriginalAcceptanceCapture {
     } finally { $bitmap.Dispose() }
 }
 $report=[ordered]@{schema=1;scope='original-magpie-connect-desktop-restore';sourceCommit=$SourceCommit;
-    status='blocked';stage='context';preparation=$null;package=$null;sequence=$null;images=$null;
+    status='blocked';stage='context';preparation=$null;package=$null;sequence=$null;images=$null;diagnosticCapture=$null;trayDiscovery=$null;
     originalWindowCaptured=$false;desktopWindowCaptured=$false;adapterImageObserved=$false;
     selectionRestored=$false;journalRemoved=$false;ownedRootExitsConfirmed=$false;descendantExitVerified=$false;cleanupScope='retained-process-roots-only';preserveRecovery=$true;
     nativeHomeInitiallyEmpty=$false;realAccountsUsed=$false;providerTurnAttempted=$false;
@@ -190,6 +201,15 @@ try {
     $report.selectionRestored=$report.sequence.selectionRestored;$report.journalRemoved=$report.sequence.journalRemoved
     $report.preserveRecovery=-not $safeCleanup
     if ($null -ne $report.images -and $report.images.status -ceq 'snapshot') { $report.adapterImageObserved=$report.images.adapterDirectChildren -gt 0 }
+    Save-AcceptanceReport
+    # Diagnostics follow the completed recovery checks and saved report. Neither
+    # result changes uncertainty, cleanup authority, or the original failure.
+    $diagnostics=Get-AcceptanceDiagnostics -CaptureFailure ($report.sequence.status -cne 'verified') -Capture {
+        Invoke-OriginalDesktopWindowCapture -OwnedProcess $process -ExpectedExecutable $exe -PrivateDirectory $root -EvidenceDirectory $EvidenceDirectory -SequenceReportSaved
+    } -Tray {
+        Invoke-OriginalQuitDiscovery -OwnedProcess $process -ExpectedExecutable $exe
+    }
+    $report.diagnosticCapture=$diagnostics.capture;$report.trayDiscovery=$diagnostics.tray
     Save-AcceptanceReport
     if ($report.sequence.status -cne 'verified') { throw 'Original transaction not verified.' }
     # Capture only after recovery. A slow/failing screenshot must never postpone

@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-connect-action-core.ps1')
 $result=[ordered]@{schema=1;scope='original-magpie-ui-action';mode=$Mode;status='blocked';stage='context';
-    actionsAttempted=0;selectionVerified=$false;restorationVerified=$false;desktopVerified=$false;preserveRecovery=$true;configureReadiness=(New-OriginalConfigureReadiness)}
+    actionsAttempted=0;selectionVerified=$false;restorationVerified=$false;desktopVerified=$false;preserveRecovery=$true;configureReadiness=(New-OriginalConfigureReadiness);postActionReadback=(New-OriginalPostActionReadback)}
 $process=$null;$ledger=@{}
 try {
     if ($Mode -cnotin @('Connect','Restore')) { throw 'Exact action mode required.' }
@@ -53,7 +53,7 @@ try {
     $root=[Windows.Automation.AutomationElement]::FromHandle([IntPtr]$TargetWindow)
     if ($null -eq $root -or $root.Current.ProcessId -ne $TargetProcessId) { throw 'Root identity changed.' }
     $walker=[Windows.Automation.TreeWalker]::RawViewWalker
-    function Find-Targets([string]$Label) {
+    function Find-Targets([string[]]$Label) {
         Assert-Owner
         $queue=[Collections.Generic.Queue[object]]::new();$queue.Enqueue(@{element=$root;depth=0})
         $found=[Collections.Generic.List[object]]::new();$nodes=0
@@ -61,7 +61,7 @@ try {
             Assert-Owner
             if ($nodes -ge 2048) { throw 'UIA node limit.' }
             $item=$queue.Dequeue();$nodes++;$e=$item.element;$c=$e.Current
-            if ($c.Name -ceq $Label) {
+            if ($c.Name -cin $Label) {
                 $toggle=$null;$invoke=$null;$pattern='';$state='';$handle=$null
                 if ($e.TryGetCurrentPattern([Windows.Automation.TogglePattern]::Pattern,[ref]$toggle)) {
                     $pattern='Toggle';$state=[string]$toggle.Current.ToggleState;$handle=$toggle
@@ -112,8 +112,13 @@ try {
             { $readinessWatch.ElapsedMilliseconds } { param($milliseconds) Start-Sleep -Milliseconds $milliseconds }
         Invoke-Target 'configure' 'Configure Codex launch selection' 'Toggle' 'Off' $ready
         $result.stage='selection-readback'
+        $nextObservation=0
         while ($true) {
             Assert-Owner
+            if ($watch.ElapsedMilliseconds -ge $nextObservation) {
+                Update-OriginalPostActionReadback $result.postActionReadback { Find-Targets (Get-OriginalPostActionLabels) }
+                $nextObservation=$watch.ElapsedMilliseconds+1000
+            }
             if (Test-JournalPresent) {
                 $journal=Read-Journal
                 if (Test-OriginalSelectionEqual (Read-OriginalSelection) $journal.installed) {

@@ -173,4 +173,54 @@ foreach ($required in @('Wait-OriginalConfigureTarget $result.configureReadiness
     "Invoke-Target 'configure' 'Configure Codex launch selection' 'Toggle' 'Off' `$ready")) {
     if (-not $worker.Contains($required)) { throw 'FAIL: readiness must feed retained target into original one-shot action' }
 }
+# Post-action diagnostics are observations only, never dispatch or recovery evidence.
+$labels=Get-OriginalPostActionLabels
+$configure=Copy-Object $target
+$restore=Copy-Object $target;$restore.name=$labels[1];$restore.enabled=$false;$restore.pattern='Invoke';$restore.state=''
+$errorNode=Copy-Object $target;$errorNode.name=$labels[2];$errorNode.role='ControlType.Text';$errorNode.pattern='';$errorNode.state=''
+$unknownError=Copy-Object $errorNode;$unknownError.name='arbitrary private error and path'
+$nearError=Copy-Object $errorNode;$nearError.name=$labels[2]+' extra'
+$post=New-OriginalPostActionReadback
+$result=@{actionsAttempted=1;selectionVerified=$false;restorationVerified=$false;preserveRecovery=$true}
+Update-OriginalPostActionReadback $post { return @($configure,$unknownError,$nearError) }
+if ($post.firstComplete.configureOff -ne 1 -or $post.sawKnownError -or $post.sawDisabledRestore) { throw 'FAIL: unknown error or off control is not dispatch evidence' }
+$firstObservation=$post.firstComplete
+Update-OriginalPostActionReadback $post { return @($restore) }
+if (-not $post.sawDisabledRestore -or $post.lastComplete.restoreDisabledVisible -ne 1 -or $post.lastComplete.restoreInvoke -ne 1) { throw 'FAIL: busy recovery observation lost' }
+Update-OriginalPostActionReadback $post { return @($configure,$errorNode) }
+if (-not [object]::ReferenceEquals($firstObservation,$post.firstComplete) -or -not $post.sawDisabledRestore -or
+    $post.firstComplete.unavailableErrors -ne 0 -or $post.firstComplete.configureOff -ne 1 -or $post.lastComplete.unavailableErrors -ne 1 -or -not $post.sawKnownError -or
+    $post.completedReads -ne 3 -or $post.readAttempts -ne 3) { throw 'FAIL: post-action first/last/history metadata' }
+if (($result | ConvertTo-Json -Compress) -notmatch '"actionsAttempted":1' -or $result.selectionVerified -or $result.restorationVerified -or -not $result.preserveRecovery) { throw 'FAIL: diagnostics must not promote action or restoration' }
+Assert-OriginalPostActionReadback $post
+$prior=$post.lastComplete
+Reject { Update-OriginalPostActionReadback $post { $configure;throw 'incomplete UIA traversal' } } 'incomplete post-action read'
+if ($post.status -cne 'read-failed' -or $post.completedReads -ne 3 -or $post.readAttempts -ne 4 -or
+    -not [object]::ReferenceEquals($prior,$post.lastComplete)) { throw 'FAIL: incomplete post-action data must not replace last complete snapshot' }
+Assert-OriginalPostActionReadback $post
+$changedOwner=Copy-Object $owner;$changedOwner.ticks++
+$post=New-OriginalPostActionReadback
+Reject { Update-OriginalPostActionReadback $post { Assert-OriginalOwnerIdentity $owner $changedOwner;return $configure } } 'post-action owner drift'
+if ($post.status -cne 'read-failed' -or $post.completedReads -ne 0 -or $null -ne $post.firstComplete) { throw 'FAIL: owner drift cannot publish observation' }
+foreach ($name in @($labels[2].ToUpperInvariant(),(' '+$labels[2]),($labels[2]+"`nprivate"),'private')) {
+    $n=Copy-Object $errorNode;$n.name=$name
+    $o=Get-OriginalPostActionObservation @($n)
+    if (($o.Values | Measure-Object -Sum).Sum -ne 0) { throw 'FAIL: error labels must match exactly' }
+}
+$errorNode.offscreen=$true;$o=Get-OriginalPostActionObservation @($errorNode)
+if ($o.unavailableErrors -ne 0) { throw 'FAIL: hidden error is not visible failure evidence' }
+$post=New-OriginalPostActionReadback;Update-OriginalPostActionReadback $post { return @($configure,$configure) }
+if ($post.lastComplete.configureTotal -ne 2) { throw 'FAIL: diagnostic duplicates must remain visible as counts' }
+$post.lastComplete.raw='private'
+Reject { Assert-OriginalPostActionReadback $post } 'no arbitrary post-action output'
+foreach ($required in @('[string[]]$Label','if ($c.Name -cin $Label)',
+    'Update-OriginalPostActionReadback $result.postActionReadback { Find-Targets (Get-OriginalPostActionLabels) }',
+    '$nextObservation=$watch.ElapsedMilliseconds+1000')) {
+    if (-not $worker.Contains($required)) { throw 'FAIL: bounded read-only post-action wiring' }
+}
+$observationAt=$worker.IndexOf('Update-OriginalPostActionReadback $result.postActionReadback')
+$journalAt=$worker.IndexOf('if (Test-JournalPresent)', $worker.IndexOf("`$result.stage='selection-readback'"))
+if ($observationAt -lt 0 -or $observationAt -gt $journalAt) { throw 'FAIL: missing journal must not suppress UI observations' }
+
+if ([regex]::Matches($worker,'\$result\.postActionReadback').Count -ne 1) { throw 'FAIL: diagnostic fields must not drive worker action or recovery decisions' }
 Write-Output 'ORIGINAL_CONNECT_ACTION_OFFLINE_TESTS_PASSED'

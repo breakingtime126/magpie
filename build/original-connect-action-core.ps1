@@ -234,3 +234,86 @@ function Assert-OriginalConfigureReadiness($Readiness) {
             ($field -cne 'total' -and $n -gt $o.total)) { throw 'Invalid observation count.' }
     }
 }
+
+# These labels come from nativeconnect's fixed public errors, not provider text.
+# A missing match proves nothing: a toast can be transient or a joined error.
+function Get-OriginalPostActionLabels {
+    return @('Configure Codex launch selection','Disconnect and restore Codex launch selection',
+        'native Codex launch selection unavailable',
+        'native Codex launch selection changed externally; nothing restored',
+        'native Codex launch selection partially changed; use Disconnect to recover',
+        'native Codex connection requires configured AIHub models',
+        'native Codex connection requires configured AIHub models: current provider settings or saved models could not be read; check Providers',
+        'native Codex connection requires configured AIHub models: supplier capability evidence is stale or changed',
+        'native Codex connection requires configured AIHub models: the current supplier route no longer matches its prepared profile',
+        'native Codex connection requires configured AIHub models: enable a direct AIHub provider, then select or fetch a model in Providers',
+        'native Codex connection requires configured AIHub models: use a direct AIHub model route without cross-provider fallback or model redirection')
+}
+function Get-OriginalPostActionObservation($Candidates) {
+    $o=[ordered]@{configureTotal=0;configureEnabledVisible=0;configureDisabledVisible=0;configureOff=0;
+        restoreTotal=0;restoreEnabledVisible=0;restoreDisabledVisible=0;restoreOn=0;restoreInvoke=0;
+        unavailableErrors=0;conflictErrors=0;uncertainErrors=0;catalogErrors=0}
+    $labels=Get-OriginalPostActionLabels
+    foreach ($c in @($Candidates)) {
+        if ($c.name -cnotin $labels) { continue }
+        if ($c.name -ceq $labels[0]) {
+            $o.configureTotal++
+            if (-not $c.offscreen) {
+                if ($c.enabled) { $o.configureEnabledVisible++ } else { $o.configureDisabledVisible++ }
+            }
+            if ($c.role -ceq 'ControlType.Button' -and $c.pattern -ceq 'Toggle' -and $c.state -ceq 'Off') { $o.configureOff++ }
+        } elseif ($c.name -ceq $labels[1]) {
+            $o.restoreTotal++
+            if (-not $c.offscreen) {
+                if ($c.enabled) { $o.restoreEnabledVisible++ } else { $o.restoreDisabledVisible++ }
+            }
+            if ($c.role -ceq 'ControlType.Button' -and $c.pattern -ceq 'Toggle' -and $c.state -ceq 'On') { $o.restoreOn++ }
+            if ($c.role -ceq 'ControlType.Button' -and $c.pattern -ceq 'Invoke') { $o.restoreInvoke++ }
+        } elseif (-not $c.offscreen) {
+            if ($c.name -ceq $labels[2]) { $o.unavailableErrors++ }
+            elseif ($c.name -ceq $labels[3]) { $o.conflictErrors++ }
+            elseif ($c.name -ceq $labels[4]) { $o.uncertainErrors++ }
+            else { $o.catalogErrors++ }
+        }
+    }
+    return $o
+}
+function New-OriginalPostActionReadback {
+    return @{status='not-started';readAttempts=0;completedReads=0;firstComplete=$null;lastComplete=$null;
+        sawDisabledRestore=$false;sawKnownError=$false}
+}
+function Update-OriginalPostActionReadback($Report,[scriptblock]$ReadTargets) {
+    $Report.status='reading';$Report.readAttempts++
+    try { $targets=@(& $ReadTargets) } catch { $Report.status='read-failed';throw }
+    $o=Get-OriginalPostActionObservation $targets
+    $Report.completedReads++
+    if ($null -eq $Report.firstComplete) { $Report.firstComplete=$o }
+    $Report.lastComplete=$o
+    if ($o.restoreDisabledVisible -gt 0) { $Report.sawDisabledRestore=$true }
+    if ($o.unavailableErrors+$o.conflictErrors+$o.uncertainErrors+$o.catalogErrors -gt 0) { $Report.sawKnownError=$true }
+    $Report.status='observed'
+}
+function Assert-OriginalPostActionReadback($Report) {
+    Assert-OriginalFields $Report @('status','readAttempts','completedReads','firstComplete','lastComplete','sawDisabledRestore','sawKnownError')
+    if ($Report.status -cnotin @('unavailable','not-started','reading','read-failed','observed') -or
+        $Report.sawDisabledRestore -isnot [bool] -or $Report.sawKnownError -isnot [bool]) { throw 'Invalid post-action metadata.' }
+    foreach ($field in @('readAttempts','completedReads')) {
+        $n=$Report[$field]
+        if (($n -isnot [int] -and $n -isnot [long]) -or $n -lt 0 -or $n -gt 46) { throw 'Invalid post-action read count.' }
+    }
+    if ($Report.completedReads -gt $Report.readAttempts) { throw 'Invalid post-action completed count.' }
+    foreach ($field in @('firstComplete','lastComplete')) {
+        $o=$Report[$field]
+        if ($null -eq $o) {
+            if ($Report.completedReads -ne 0) { throw 'Missing post-action observation.' }
+            continue
+        }
+        if ($Report.completedReads -eq 0) { throw 'Unexpected post-action observation.' }
+        Assert-OriginalFields $o @('configureTotal','configureEnabledVisible','configureDisabledVisible','configureOff',
+            'restoreTotal','restoreEnabledVisible','restoreDisabledVisible','restoreOn','restoreInvoke',
+            'unavailableErrors','conflictErrors','uncertainErrors','catalogErrors')
+        foreach ($n in $o.Values) {
+            if (($n -isnot [int] -and $n -isnot [long]) -or $n -lt 0 -or $n -gt 2048) { throw 'Invalid post-action observation count.' }
+        }
+    }
+}
