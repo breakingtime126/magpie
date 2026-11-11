@@ -1,0 +1,8 @@
+2026/11/11 12:00:00 native-connect-preparation-v1 attempt=1 sequence=1 stage=connect outcome=entered
+2026/11/11 12:00:00 native-connect-preparation-v1 attempt=1 sequence=2 stage=query-start outcome=entered
+2026/11/11 12:00:00 native-connect-preparation-v1 attempt=1 sequence=3 stage=query-start outcome=completed
+2026/11/11 12:00:00 native-connect-preparation-v1 attempt=1 sequence=4 stage=query-wait outcome=entered
+2026/11/11 12:00:00 native-connect-preparation-v1 attempt=1 sequence=5 stage=query-wait-failure outcome=entered
+2026/11/11 12:00:00 native-connect-preparation-v1 attempt=1 sequence=6 stage=query-wait-failure outcome=failed
+2026/11/11 12:00:00 native-connect-preparation-v1 attempt=1 sequence=7 stage=query-wait outcome=failed
+2026/11/11 12:00:00 native-connect-preparation-v1 attempt=1 sequence=8 stage=connect outcome=failed

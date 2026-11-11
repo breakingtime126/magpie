@@ -27,6 +27,20 @@ Assert ($observed.status -ceq 'complete' -and $observed.recordCount -eq 16 -and 
 Assert ($observed.stages['runtime-discovery'].entered -eq 2 -and $observed.stages['runtime-discovery'].completed -eq 2) 'actual nested discovery replay'
 Assert ($observed.stages['runtime-version'].failed -eq 1 -and $observed.stages['probe-cleanup'].failed -eq 1 -and
     $observed.stages['probe-directory'].completed -eq 1 -and $observed.stages.connect.failed -eq 1) 'actual primary failure and separate cleanup replay'
+# Actual new inert Go query runner trace; no PowerShell/native query was run.
+$queryReplay=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'testdata/original-connect-stages/query-wait-failure.log'))
+$queryObserved=ConvertFrom-OriginalConnectStageLog $queryReplay
+Assert ($queryObserved.status -ceq 'complete' -and $queryObserved.recordCount -eq 8 -and
+    $queryObserved.firstFailedStage -ceq 'query-wait-failure' -and $queryObserved.attemptOutcome -ceq 'failed') 'actual original-query observer replay'
+Assert ($queryObserved.stages['query-start'].completed -eq 1 -and $queryObserved.stages['query-wait'].failed -eq 1 -and
+    $queryObserved.stages['query-wait-failure'].failed -eq 1) 'query nested branch ordering'
+foreach ($queryStage in @('query-environment','query-start','query-wait','query-deadline','query-cancelled',
+    'query-exit-two','query-exit-three','query-exit-nonzero','query-wait-failure','query-output-bound','query-json','query-identity')) {
+    $queryTrace=(Line 1 connect entered)+(Line 2 $queryStage entered)+(Line 3 $queryStage failed)+(Line 4 connect failed)
+    $queryReport=ConvertFrom-OriginalConnectStageLog (Bytes $queryTrace)
+    Assert ($queryReport.status -ceq 'complete' -and $queryReport.firstFailedStage -ceq $queryStage -and
+        -not $queryReport.changesRecoveryDecision -and -not $queryReport.authorizesAction) 'fixed query stage allowlist'
+}
 $success=(Line 1 connect entered)+(Line 2 connect completed)
 Assert ((ConvertFrom-OriginalConnectStageLog (Bytes $success)).firstFailedStage -ceq 'unknown') 'no invented failure on success'
 Assert ((ConvertFrom-OriginalConnectStageLog (Bytes $success)).attemptOutcome -ceq 'completed') 'complete success is observer outcome only'
@@ -98,7 +112,7 @@ $guiEntry=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '../internal/cli/gui_o
 Assert ($appLog.Contains('log.SetOutput(io.MultiWriter(quiet{os.Stderr}, w))') -and $appLog -notmatch 'log\.Set(Flags|Prefix)\(') 'production app logger preserves standard prefix'
 Assert ($guiEntry.Contains('startLog("app")') -and $guiEntry.Contains('applog.Start(version, how)')) 'original GUI starts file logger'
 $packager=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'package-native-magpie-windows.ps1'))
-foreach ($gate in @('./internal/nativeprepdiag', '^TestRuntimePreparationDiagnosticsObserveOriginalCalls$', '^TestOriginalConnectDiagnosticsBoundToOriginalInvocation$')) {
+foreach ($gate in @('./internal/nativeprepdiag', '^(TestRuntimePreparationDiagnosticsObserveOriginalCalls|TestInstalledQueryBranches|TestInstalledQuerySourceContract)$', '^TestOriginalConnectDiagnosticsBoundToOriginalInvocation$')) {
     Assert ($packager.IndexOf($gate) -ge 0 -and $packager.IndexOf($gate) -lt $packager.IndexOf('& go run github.com/tc-hib/go-winres')) 'offline Windows observer gates precede packaging'
 }
 Write-Output 'PASS strict protocol, nesting, bounds, partial unknown, redaction, immutable recovery and caller ordering'

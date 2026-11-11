@@ -373,6 +373,11 @@ records to change uncertainty, cleanup eligibility, recovery or authorize any
 retry. These records cannot reconstruct an older invocation that discarded its
 errors before instrumentation existed.
 
+Nested `query-*` stages classify the existing installed-package query without
+running another query. Exit-two/three are observed process-code categories,
+not proof of package absence. See the [query-stage contract](../../build/original-connect-stages.md#original-package-query-branches)
+for original command/ownership invariants and offline replay provenance.
+
 Inert tests cover the original endpoint, fixed redaction, original operation
 counts/order, cancellation/lifetime separation, runtime and host failures,
 cleanup, sink panic, bounded output and one-shot finish. Live Windows execution

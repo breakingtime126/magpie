@@ -41,7 +41,7 @@ Assert-Exit 'Synthetic native-mode write protection'
 Assert-Exit 'Synthetic launch selection transaction'
 & go test -tags nogui,nativecodex -count=1 -timeout=2m ./internal/nativeprepdiag
 Assert-Exit 'Synthetic Connect stage observer'
-& go test -tags nogui,nativecodex -count=1 -timeout=2m -run '^TestRuntimePreparationDiagnosticsObserveOriginalCalls$' ./internal/nativepreview
+& go test -tags nogui,nativecodex -count=1 -timeout=2m -run '^(TestRuntimePreparationDiagnosticsObserveOriginalCalls|TestInstalledQueryBranches|TestInstalledQuerySourceContract)$' ./internal/nativepreview
 Assert-Exit 'Synthetic runtime preparation diagnostics'
 & go test -tags nogui,nativecodex -count=1 -timeout=2m -run '^TestOriginalConnectDiagnosticsBoundToOriginalInvocation$' ./internal/gui
 Assert-Exit 'Synthetic original Connect diagnostics binding'

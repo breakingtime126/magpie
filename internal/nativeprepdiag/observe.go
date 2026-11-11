@@ -47,6 +47,18 @@ const (
 	SelectionProfile
 	SelectionPublication
 	PreparationCleanup
+	QueryEnvironment
+	QueryStart
+	QueryWait
+	QueryDeadline
+	QueryCancelled
+	QueryExitTwo
+	QueryExitThree
+	QueryExitNonzero
+	QueryWaitFailure
+	QueryOutputBound
+	QueryJSON
+	QueryIdentity
 )
 
 var names = [...]string{
@@ -85,6 +97,18 @@ var names = [...]string{
 	SelectionProfile:     "selection-profile",
 	SelectionPublication: "selection-publication",
 	PreparationCleanup:   "preparation-cleanup",
+	QueryEnvironment:     "query-environment",
+	QueryStart:           "query-start",
+	QueryWait:            "query-wait",
+	QueryDeadline:        "query-deadline",
+	QueryCancelled:       "query-cancelled",
+	QueryExitTwo:         "query-exit-two",
+	QueryExitThree:       "query-exit-three",
+	QueryExitNonzero:     "query-exit-nonzero",
+	QueryWaitFailure:     "query-wait-failure",
+	QueryOutputBound:     "query-output-bound",
+	QueryJSON:            "query-json",
+	QueryIdentity:        "query-identity",
 }
 
 const MaxEvents = 128

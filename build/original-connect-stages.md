@@ -80,3 +80,36 @@ before live acceptance. Windows-only fixtures exercise the real bounded file
 reader, old-file rejection, exclusive-lock failure and a junction ancestor.
 Local Linux Core results do not establish those Windows filesystem checks or
 actual Connect acceptance.
+
+## Original package-query branches
+
+The same original installed-package query now records nested `query-*` stages.
+It is not rerun by the collector. The command, query bytes, inherited environment,
+10-second budget, strict process owner, and Stop(one second)-then-Wait drain are
+unchanged. Query failure records still contain no output, path, error text,
+credentials or arbitrary numeric exit values.
+
+Stages distinguish environment admission, process start, wait, output bound,
+JSON syntax/decoding and identity validation. `query-deadline` and
+`query-cancelled` identify the existing context branch. `query-wait-failure`
+identifies a wait error without a recognized positive process exit;
+`query-exit-nonzero` is the other-positive-exit fallback. `query-exit-two` and
+`query-exit-three` identify only those observed typed process exit codes. The
+unchanged script reserves those values for package-count and native-leaf checks,
+but a PowerShell exit alone does not prove either script branch was reached.
+Do not report these categories as proof that a package or executable is absent.
+Wait errors retain precedence over output overflow.
+
+The successful current Connect path has 100 fixed records by source-path count:
+76 surrounding records plus 12 for each of the two existing package queries.
+The limit remains 128. A query runner success fixture pins its ten internal
+phase records (plus the fixture's two attempt boundaries). This arithmetic is
+not a claim that a live Connect or native launch succeeded.
+
+`testdata/original-connect-stages/query-wait-failure.log` comes from actual offline
+Go observer execution using `TestInstalledQueryBranches/wait-error`; only its
+standard date/time prefix is normalized. The injected process has no OS process
+and returns an authored error. The replay has eight records and first failure
+`query-wait-failure`. Separate exit fixtures run only the current authored Go
+test binary to obtain typed exit errors; they never run PowerShell, a native
+runtime, a provider, or the package query.
