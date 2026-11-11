@@ -15,12 +15,14 @@ import (
 
 type checkedProbeLease struct {
 	*fakeLease
+	started           chan struct{}
 	finish            chan struct{}
 	validated         chan error
 	completionContext context.Context
 }
 
 func (l *checkedProbeLease) ValidateProbe(ctx context.Context, check func(context.Context) error) error {
+	close(l.started)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -63,7 +65,7 @@ func probeFixture(t *testing.T, admission func(context.Context) error) (*Host, *
 	cfg.StartupProbe = appserverbridge.StartupProbeCompareUnrestricted167
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	lease := &checkedProbeLease{fakeLease: &fakeLease{ctx: ctx, cancel: cancel}, finish: make(chan struct{}), validated: make(chan error, 1)}
+	lease := &checkedProbeLease{fakeLease: &fakeLease{ctx: ctx, cancel: cancel}, started: make(chan struct{}), finish: make(chan struct{}), validated: make(chan error, 1)}
 	probeOwner := &checkedOwner{ready: make(chan struct{}), lease: lease, awaiting: make(chan struct{})}
 	launchOwner := &checkedOwner{ready: make(chan struct{}), lease: launch.lease, awaiting: make(chan struct{})}
 	var record nativebootstrap.Record
@@ -104,6 +106,18 @@ func waitHostState(t *testing.T, condition func() bool) {
 		}
 	}
 }
+
+// phase 1 reserves probe admission before Await's second peer check. Waiting
+// for ValidateProbe instead proves that Await transferred the lease to Host.
+func waitProbeLease(t *testing.T, lease *checkedProbeLease) {
+	t.Helper()
+	select {
+	case <-lease.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("probe lease was not acquired")
+	}
+}
+
 func TestProbeCompletesWithoutConsumingJSONL(t *testing.T) {
 	h, p, j, l, _, _ := probeFixture(t, nil)
 	close(p.ready)
@@ -160,7 +174,7 @@ func TestProbeCompletionRevalidatesSourceAndLauncher(t *testing.T) {
 				return nil
 			})
 			close(p.ready)
-			waitHostState(t, func() bool { return h.phase.Load() == 1 })
+			waitProbeLease(t, l)
 			switch mode {
 			case "source":
 				stale.Store(true)
@@ -192,7 +206,7 @@ func TestProbeRevocationDrainsBothOwners(t *testing.T) {
 			h, p, j, l, _, _ := probeFixture(t, nil)
 			if active {
 				close(p.ready)
-				waitHostState(t, func() bool { return h.phase.Load() == 1 })
+				waitProbeLease(t, l)
 			}
 			if err := closeHost(t, h); err != nil {
 				t.Fatal(err)
@@ -208,9 +222,9 @@ func TestProbeRevocationDrainsBothOwners(t *testing.T) {
 }
 
 func TestJSONLRejectsOverlappingProbe(t *testing.T) {
-	h, p, j, _, _, _ := probeFixture(t, nil)
+	h, p, j, l, _, _ := probeFixture(t, nil)
 	close(p.ready)
-	waitHostState(t, func() bool { return h.phase.Load() == 1 })
+	waitProbeLease(t, l)
 	close(j.ready)
 	waitHostState(t, func() bool { _, done := h.Outcome(); return done })
 	if h.Consumed() {
