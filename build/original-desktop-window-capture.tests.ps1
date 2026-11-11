@@ -116,6 +116,26 @@ try {
     Assert ($null -ne $prefixLiteral) 'prefix fixture has explicit inert encoded code'
     [void][Management.Automation.Language.Parser]::ParseInput($prefixLiteral.Value,[ref]$prefixTokens,[ref]$prefixErrors)
     Assert ($prefixErrors.Count -eq 0 -and $prefixLiteral.Value -notmatch '::(Capture|Matches)|Get-Process|PrintWindow') 'prefix encoded code parses and contains no target/window invocation'
+    # A throwing path cmdlet proves the actual helper load and real filesystem
+    # guards do not depend on command/module discovery. No UI/native call occurs.
+    $loadRoot=[IO.Path]::Combine($root,'path-only')
+    $loadPrivate=[IO.Path]::Combine($loadRoot,('original-desktop-acceptance-'+[guid]::NewGuid().ToString('N')))
+    $loadEvidence=[IO.Path]::Combine($loadRoot,'native-magpie-evidence')
+    foreach ($directory in @($loadRoot,$loadPrivate,$loadEvidence,[IO.Path]::Combine($loadPrivate,'app'))) { [void][IO.Directory]::CreateDirectory($directory) }
+    $loadExe=[IO.Path]::Combine($loadPrivate,'app','Magpie-Native-Codex-Experimental.exe')
+    [IO.File]::WriteAllBytes($loadExe,[byte[]]::new(0))
+    $savedRunnerTemp=$env:RUNNER_TEMP
+    try {
+        $env:RUNNER_TEMP=$loadRoot
+        & {
+            function Join-Path { throw 'path-cmdlet-forbidden' }
+            try {
+                . ([IO.Path]::Combine($PSScriptRoot,'original-desktop-window-capture.ps1'))
+                Assert-OriginalCapturePaths $loadExe $loadPrivate $loadEvidence
+                Assert-OriginalCaptureRegularPath ([IO.Path]::Combine($loadPrivate,'window-capture','original-magpie-uncertain.png'))
+            } catch { Assert $false 'fixed helper loading and real path guards do not invoke path cmdlets' }
+        }
+    } finally { $env:RUNNER_TEMP=$savedRunnerTemp }
     # Deterministic stream model: even an empty autoflushed writer sends its BOM.
     foreach ($bom in @($true,$false)) {
         $stream=[IO.MemoryStream]::new();$writer=[IO.StreamWriter]::new($stream,[Text.UTF8Encoding]::new($bom),128,$true)
@@ -225,7 +245,7 @@ function Initialize-OriginalCaptureNative {
 }
 '@
     [IO.File]::WriteAllText((Join-Path $workerFixture 'original-desktop-window-capture.ps1'),$workerStub)
-    $workerCode="& '"+$workerPath.Replace("'","''")+"' -PrivateDirectory '"+$workerFixture.Replace("'","''")+"'"
+    $workerCode="function Join-Path { throw 'path-cmdlet-forbidden' }; & '"+$workerPath.Replace("'","''")+"' -PrivateDirectory '"+$workerFixture.Replace("'","''")+"'"
     $workerFailure=Invoke-OriginalCaptureChild (New-TestStart $workerCode)
     Assert (-not $workerFailure.Success -and $workerFailure.ExitConfirmed -and $workerFailure.Reason -eq 'child-failed' -and
         $workerFailure.Phase -eq 'native-compile') 'worker suppresses only progress and preserves real initialization failure'

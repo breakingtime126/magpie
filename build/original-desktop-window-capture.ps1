@@ -2,7 +2,8 @@
 # is saved. Caller must retain its original failure, uncertainty and cleanup decision.
 # PrivateDirectory is the fresh fixture root, not an arbitrary output directory.
 # This file never recovers, retries Connect/Restore, launches Desktop or cleans up.
-. (Join-Path $PSScriptRoot 'original-desktop-window-capture-native.ps1')
+# Fixed filesystem suffixes need no provider/module discovery in the cleared child.
+. ([IO.Path]::Combine($PSScriptRoot,'original-desktop-window-capture-native.ps1'))
 function Assert-OriginalCaptureContext {
     if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'push' -or
         $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
@@ -27,8 +28,8 @@ function Assert-OriginalCapturePaths([string]$Executable,[string]$PrivateDirecto
     foreach ($path in @($env:RUNNER_TEMP,$Executable,$PrivateDirectory,$EvidenceDirectory)) { Assert-OriginalCaptureRegularPath $path }
     if ([IO.Path]::GetDirectoryName($PrivateDirectory) -cne $env:RUNNER_TEMP -or
         [IO.Path]::GetFileName($PrivateDirectory) -cnotmatch '^original-desktop-acceptance-[0-9a-f]{32}$' -or
-        $Executable -cne (Join-Path $PrivateDirectory 'app\Magpie-Native-Codex-Experimental.exe') -or
-        $EvidenceDirectory -cne (Join-Path $env:RUNNER_TEMP 'native-magpie-evidence') -or
+        $Executable -cne [IO.Path]::Combine($PrivateDirectory,'app','Magpie-Native-Codex-Experimental.exe') -or
+        $EvidenceDirectory -cne [IO.Path]::Combine($env:RUNNER_TEMP,'native-magpie-evidence') -or
         -not [IO.Directory]::Exists($PrivateDirectory) -or -not [IO.Directory]::Exists($EvidenceDirectory) -or
         -not [IO.File]::Exists($Executable)) { throw 'Capture fixture unavailable.' }
 }

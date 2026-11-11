@@ -44,3 +44,20 @@ code, not a mode or alternate success path in the production worker. There is no
 new coordinator/workflow invocation. Fixed `PREFIX_PROBE` facts never include
 raw errors, paths or arbitrary child text. The earlier inherited-environment
 compile-only probe remains a narrower comparison, not production startup parity.
+
+## Fixed path loading
+
+The child prefix uses `IO.Path.Combine` for both script paths, the expected
+executable/evidence paths, and the private output path. These are filesystem
+roots plus fixed literal suffixes, so they do not require PowerShell provider
+resolution or first-use `Join-Path` module discovery. Existing absolute-path,
+ancestor/reparse-point, path-shape, existence, context and identity guards remain.
+Parent-only setup/publication path calls are outside this cleared-child prefix
+and are unchanged.
+
+The inert prefix fixture reports an additional test-only `script-path-ready`
+boundary between path composition and helper dot-sourcing. This does not change
+the production phase protocol. Portable tests trap `Join-Path` during actual
+helper loading, real path validation and the inert worker; mutations restore
+those calls and must fail. Removing this dependency is source-supported, but
+Windows CI is still required to establish whether it resolves the observed stall.

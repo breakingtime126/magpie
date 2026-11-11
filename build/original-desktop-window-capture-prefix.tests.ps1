@@ -20,13 +20,15 @@ $ProgressPreference='SilentlyContinue'
 $ErrorActionPreference='Stop'
 try {
     [Console]::Out.Write("worker-entered`n");[Console]::Out.Flush()
-    . (Join-Path '__HELPER_DIRECTORY__' 'original-desktop-window-capture.ps1')
+    $helper=[IO.Path]::Combine('__HELPER_DIRECTORY__','original-desktop-window-capture.ps1')
+    [Console]::Out.Write("script-path-ready`n");[Console]::Out.Flush()
+    . $helper
     [Console]::Out.Write("helper-loaded`n");[Console]::Out.Flush()
     Assert-OriginalCaptureContext
     [Console]::Out.Write("context-checked`n");[Console]::Out.Flush()
     Assert-OriginalCapturePaths '__EXECUTABLE__' '__PRIVATE__' '__EVIDENCE__'
     [Console]::Out.Write("fixture-checked`n");[Console]::Out.Flush()
-    $output=Join-Path '__PRIVATE__' 'window-capture\original-magpie-uncertain.png'
+    $output=[IO.Path]::Combine('__PRIVATE__','window-capture','original-magpie-uncertain.png')
     Assert-OriginalCaptureRegularPath $output
     [Console]::Out.Write("native-compile`n");[Console]::Out.Flush()
     Initialize-OriginalCaptureNative
@@ -38,7 +40,7 @@ try {
         $prefixCode=$prefixCode.Replace($pair[0],$pair[1].Replace("'","''"))
     }
     Assert ($prefixCode -notmatch '::(Capture|Matches)|Get-Process|PrintWindow') 'prefix fixture contains no target/window invocation'
-    $expected="worker-entered`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`nprefix-ready"
+    $expected="worker-entered`nscript-path-ready`nhelper-loaded`ncontext-checked`nfixture-checked`nnative-compile`nprefix-ready"
     Assert ([Text.Encoding]::UTF8.GetByteCount($expected) -le 256) 'prefix fixture fits unchanged stream bound'
     foreach ($contextAllowed in @($true,$false)) {
         # New-OriginalCaptureStart chooses the actual fixed Desktop host, clears
@@ -61,7 +63,16 @@ try {
             $watch=[Diagnostics.Stopwatch]::StartNew()
             while (-not $child.Drained -and $watch.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 10 }
             $exact=$child.Output -ceq $expected
-            $phase=if ($exact) { 'prefix-ready' } else { Get-OriginalCapturePhase $child.Output }
+            $phase=if ($exact) { 'prefix-ready' } else { 'unverified' }
+            # Test-only boundary separates fixed path composition from dot-source.
+            # It does not extend the production capture protocol or success path.
+            if (-not $exact) {
+                $observedPrefix=''
+                foreach ($label in @('worker-entered','script-path-ready','helper-loaded','context-checked','fixture-checked','native-compile')) {
+                    $observedPrefix+=$label+"`n"
+                    if ($child.Output -ceq $observedPrefix) { $phase=$label;break }
+                }
+            }
             $facts=[ordered]@{contextAllowed=$contextAllowed;phase=$phase;waitCompleted=[bool]$waited;deadline=[bool]$child.TimedOut;
                 overflowOrReadError=[bool]$child.Overflow;stderrPresent=[bool]$child.ErrorOutput;streamsComplete=[bool]$child.Drained;
                 exitConfirmed=[bool]$child.Exited;exitZero=($child.Exited -and $child.ExitCode -eq 0);outputExact=[bool]$exact}
