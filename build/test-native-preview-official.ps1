@@ -55,7 +55,9 @@ $report = [ordered]@{schema=1;scope=$scope;source_commit=$head;
 $process = $null; $started = $false
 try {
     $package = Join-Path $root 'official.msix'
-    Save-StandalonePublicInput 'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix' $package 4294967296
+    # Microsoft's winget 26.1103.4239.0 manifest names this fixed official URL
+    # with the same package SHA pinned below. The rolling URL can move ahead.
+    Save-StandalonePublicInput 'https://persistent.oaistatic.com/codex-app-prod/releases/26.1103.4239.0/ChatGPT-x64.msix' $package 4294967296
     $report.stage = 'signature'
     $signatureExit = Get-StandaloneSignatureExit $package
     $signature = Get-AuthenticodeSignature -LiteralPath $package
