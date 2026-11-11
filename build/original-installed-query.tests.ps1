@@ -121,6 +121,41 @@ $wrongManifest=$fakeImport.Replace('[IO.Path]::GetFullPath($loaded[0].Path)','[I
 . ([scriptblock]::Create($wrongManifest))
 Refuses { Import-FixtureModule 'Microsoft.PowerShell.Management' } 'wrong imported manifest rejected with matching name and base'
 
+# Exercise the Appx-only binary identity using an actual typed module and
+# CmdletInfo, substituting only unavailable Appx metadata with authored values.
+$appxFixtureImport=$fakeImport.Replace('$loaded[0].Name','$script:appxFixtureName').Replace('$loaded[0].ModuleBase','$script:appxFixtureBase').Replace('$loaded[0].Path','$script:appxFixturePath').Replace('Get-QueryCommand $loaded[0] ''Get-AppxPackage''', 'Get-QueryCommand $script:appxFixtureExports ''Get-AppxPackage''').Replace('$appxCommand.ImplementingType.Assembly','$script:appxFixtureAssembly')
+. ([scriptblock]::Create($appxFixtureImport))
+$appxFixtureCommand=[Management.Automation.CmdletInfo]::new('Get-AppxPackage',$joinPath.ImplementingType)
+$appxCases=@('valid','wrong-name','wrong-base','missing-path','relative-path','wrong-path','missing-assembly','wrong-assembly-name','missing-location','relative-location','wrong-location','missing-export','wrong-export','both-relative')
+if ([IO.Path]::DirectorySeparatorChar -eq '\') {$appxCases+=@('drive-relative','root-relative')}
+foreach ($case in $appxCases) {
+    $script:appxFixtureName='Appx'
+    $script:appxFixtureBase=[IO.Path]::Combine($PSHOME,'Modules','Appx')
+    $script:appxFixturePath=[IO.Path]::Combine($PSHOME,'authored-assembly.dll')
+    $script:appxFixtureAssembly=[pscustomobject]@{Location=$script:appxFixturePath;SimpleName='Microsoft.Windows.Appx.PackageManager.Commands'}
+    $script:appxFixtureAssembly|Add-Member -MemberType ScriptMethod -Name GetName -Value { return [pscustomobject]@{Name=$this.SimpleName} }
+    $script:appxFixtureExports=[pscustomobject]@{ExportedCommands=@{'Get-AppxPackage'=$appxFixtureCommand}}
+    switch ($case) {
+        both-relative {$script:appxFixturePath='authored-assembly.dll';$script:appxFixtureAssembly.Location=$script:appxFixturePath}
+        drive-relative {$script:appxFixturePath='C:authored-assembly.dll';$script:appxFixtureAssembly.Location=$script:appxFixturePath}
+        root-relative {$script:appxFixturePath='\authored-assembly.dll';$script:appxFixtureAssembly.Location=$script:appxFixturePath}
+        wrong-name {$script:appxFixtureName='Other'}
+        wrong-base {$script:appxFixtureBase=$PSHOME}
+        missing-path {$script:appxFixturePath=''}
+        relative-path {$script:appxFixturePath='authored-assembly.dll'}
+        wrong-path {$script:appxFixturePath=[IO.Path]::Combine($PSHOME,'different.dll')}
+        missing-assembly {$script:appxFixtureAssembly=$null}
+        wrong-assembly-name {$script:appxFixtureAssembly.SimpleName='Other'}
+        missing-location {$script:appxFixtureAssembly.Location=''}
+        relative-location {$script:appxFixtureAssembly.Location='authored-assembly.dll'}
+        wrong-location {$script:appxFixtureAssembly.Location=[IO.Path]::Combine($PSHOME,'different.dll')}
+        missing-export {$script:appxFixtureExports.ExportedCommands=@{}}
+        wrong-export {$script:appxFixtureExports.ExportedCommands=@{'Get-AppxPackage'=$joinPath}}
+    }
+    if ($case -ceq 'valid') { Assert ($null -ne (Import-FixtureModule 'Appx')) 'matching Appx binary identity accepted' }
+    else { Refuses { Import-FixtureModule 'Appx' } ('Appx identity refuses '+$case) }
+}
+
 # Query body uses authored package objects only; no Appx cmdlet is invoked.
 $tail=$query.Substring($query.IndexOf('$p=@(',[StringComparison]::Ordinal))
 Assert ($tail.Contains('if($p.Count -ne 1){exit 2}') -and $tail.Contains('if(-not (& $testPath -LiteralPath $f -PathType Leaf)){exit 3}')) 'count and literal-leaf exits unchanged'

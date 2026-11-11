@@ -23,7 +23,17 @@ function Import-QueryModule([string]$moduleName) {
     if ($loaded.Count -ne 1 -or $loaded[0] -isnot [System.Management.Automation.PSModuleInfo] -or $loaded[0].Name -cne $moduleName) { throw 'native query module unavailable' }
     $sameBase=[string]::Equals([IO.Path]::GetFullPath($loaded[0].ModuleBase),[IO.Path]::GetFullPath($moduleRoot),[StringComparison]::OrdinalIgnoreCase)
     if ($moduleName -cne 'Appx') { $sameBase=$sameBase -or [string]::Equals([IO.Path]::GetFullPath($loaded[0].ModuleBase),[IO.Path]::GetFullPath($PSHOME),[StringComparison]::OrdinalIgnoreCase) }
-    if (-not $sameBase -or -not [string]::Equals([IO.Path]::GetFullPath($loaded[0].Path),[IO.Path]::GetFullPath($manifest),[StringComparison]::OrdinalIgnoreCase)) { throw 'native query module unavailable' }
+    if (-not $sameBase) { throw 'native query module unavailable' }
+    if ($moduleName -ceq 'Appx') {
+        $appxCommand=Get-QueryCommand $loaded[0] 'Get-AppxPackage'
+        $assembly=$appxCommand.ImplementingType.Assembly
+        if ($null -eq $assembly -or $assembly.GetName().Name -cne 'Microsoft.Windows.Appx.PackageManager.Commands' -or
+            [string]::IsNullOrEmpty($loaded[0].Path) -or [string]::IsNullOrEmpty($assembly.Location) -or
+            -not [IO.Path]::IsPathRooted($loaded[0].Path) -or -not [IO.Path]::IsPathRooted($assembly.Location) -or
+            -not [string]::Equals([IO.Path]::GetPathRoot($loaded[0].Path),[IO.Path]::GetPathRoot([IO.Path]::GetFullPath($loaded[0].Path)),[StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals([IO.Path]::GetPathRoot($assembly.Location),[IO.Path]::GetPathRoot([IO.Path]::GetFullPath($assembly.Location)),[StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals([IO.Path]::GetFullPath($loaded[0].Path),[IO.Path]::GetFullPath($assembly.Location),[StringComparison]::OrdinalIgnoreCase)) { throw 'native query module unavailable' }
+    } elseif (-not [string]::Equals([IO.Path]::GetFullPath($loaded[0].Path),[IO.Path]::GetFullPath($manifest),[StringComparison]::OrdinalIgnoreCase)) { throw 'native query module unavailable' }
     return $loaded[0]
 }
 function Get-QueryCommand($moduleInfo,[string]$commandName) {
