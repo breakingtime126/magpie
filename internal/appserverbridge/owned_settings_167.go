@@ -86,6 +86,9 @@ func (r *Router) parseOwnedSettingsWrite167(line []byte) (object, *string, bool)
 }
 
 func (r *Router) ownedSettingsValues167(value object) bool {
+	if r.ownedCatalog.nativeLists {
+		return nativeSettingsValues167(r.ownedCatalog.projection, value)
+	}
 	if len(value) != 2 || !requirementsEnum(value["model_reasoning_effort"], "none") || !experimentalFeatureString(value["model"], 1024) {
 		return false
 	}
@@ -199,7 +202,11 @@ func (r *Router) ownedSettingsCatalogSession167(catalogDefault string) (*control
 	}
 	seed := len(value) == 0
 	if seed {
-		value = object{"model": raw(catalogDefault), "model_reasoning_effort": raw("none")}
+		effort := raw("none")
+		if r.ownedCatalog.nativeLists {
+			effort = r.ownedCatalog.projection[catalogDefault]["defaultReasoningEffort"]
+		}
+		value = object{"model": raw(catalogDefault), "model_reasoning_effort": effort}
 	}
 	if !r.ownedSettingsValues167(value) {
 		return nil, errors.New(ownedSettingsUnavailable167)

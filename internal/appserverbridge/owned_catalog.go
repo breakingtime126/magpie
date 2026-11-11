@@ -22,6 +22,8 @@ const ownedCatalogLimit = 64 << 10
 type ownedAliasCatalog struct {
 	path, home, digest, defaultModel string
 	identity                         os.FileInfo
+	nativeLists                      bool // Full genuine model/list snapshots, not an owned alias file.
+	nativeSnapshot                   json.RawMessage
 	projection                       map[string]object
 	refreshing, failed               bool
 }
@@ -137,6 +139,9 @@ func prioritiesContains(values map[string]int32, key string) bool {
 }
 
 func (c *ownedAliasCatalog) verify() error {
+	if c.nativeLists {
+		return c.verifyNativeSettingsCatalog167()
+	}
 	data, info, err := readOwnedCatalog(c.home, c.path)
 	if err != nil || c.failed || !os.SameFile(c.identity, info) || info.Size() != c.identity.Size() || !info.ModTime().Equal(c.identity.ModTime()) {
 		return errors.New(ownedCatalogUnavailable)
@@ -219,6 +224,9 @@ func ownedModelProjection(m object) (object, int32, error) {
 }
 
 func (c *ownedAliasCatalog) validateNative(results map[string][]json.RawMessage, backends []Backend) error {
+	if c.nativeLists {
+		return c.validateNativeSettingsLists167(results, backends)
+	}
 	bad := errors.New(ownedCatalogUnavailable)
 	if c.verify() != nil || len(results) != 2 {
 		return bad

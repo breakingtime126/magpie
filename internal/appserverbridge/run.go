@@ -92,7 +92,7 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 	nativeHomes := map[string]string{}
 	if cfg.ControlPlane == ControlPlaneRouting167 {
 		var err error
-		if cfg.BridgeModelSettings == BridgeModelSettingsOwned167 && ownedSettingsCheckHome(cfg.ControlHome) != nil {
+		if cfg.BridgeModelSettings != "" && ownedSettingsCheckHome(cfg.ControlHome) != nil {
 			return errors.New(ownedSettingsUnavailable167)
 		}
 		controlHome, err = filepath.EvalSymlinks(cfg.ControlHome)
@@ -117,8 +117,14 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 			return err
 		}
 	}
-	if cfg.BridgeModelSettings == BridgeModelSettingsOwned167 {
-		router.ownedSettings, err = openOwnedSettingsStore(controlHome)
+	if cfg.BridgeModelSettings == BridgeModelSettingsNative167 {
+		router.ownedCatalog, err = newNativeSettingsCatalog167(cfg)
+		if err != nil {
+			return err
+		}
+	}
+	if cfg.BridgeModelSettings != "" {
+		router.ownedSettings, err = openOwnedSettingsStoreMode(controlHome, cfg.BridgeModelSettings == BridgeModelSettingsNative167)
 		if err != nil {
 			return err
 		}

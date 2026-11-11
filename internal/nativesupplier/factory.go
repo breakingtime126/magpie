@@ -127,6 +127,7 @@ func newFactory(root string, environment []string, d dependencies) nativeconnect
 			ExperimentalFeatureList: appserverbridge.ExperimentalFeatureListCompare167,
 			AuthStatus:              appserverbridge.AuthStatusPrimaryTrustedStdio167,
 			DesktopPluginOverride:   appserverbridge.DesktopPluginCodexAppTools167,
+			BridgeModelSettings:     appserverbridge.BridgeModelSettingsNative167,
 			SharedNativeRoute: &appserverbridge.SharedNativeRoute167{
 				Mode: appserverbridge.SharedNativeHome167,
 				// Replaced only by the retained native endpoint, never dialed by

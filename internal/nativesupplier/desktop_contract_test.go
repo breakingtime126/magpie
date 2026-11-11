@@ -112,6 +112,11 @@ func factoryDesktopChild() int {
 				config["model_providers"] = map[string]any{provider: selected}
 				config["model_catalog_json"] = unquote(overrides["model_catalog_json"])
 			}
+			var params map[string]any
+			json.Unmarshal(m["params"], &params)
+			if cwd, ok := params["cwd"].(string); ok {
+				config["projects"] = map[string]any{cwd: map[string]any{"trust_level": "trusted"}}
+			}
 			result = map[string]any{"config": config, "origins": map[string]any{}}
 		case "model/list":
 			models := []string{"synthetic-official"}
@@ -142,11 +147,27 @@ func factoryDesktopChild() int {
 					models = append(models, m.Slug)
 				}
 			}
+			if provider == "openai" && strings.HasPrefix(mode(), "picker") {
+				models = append(models, "synthetic-official-extra", "synthetic-hidden")
+			}
 			rows := []any{}
 			for i, model := range models {
-				rows = append(rows, map[string]any{"id": model, "model": model, "displayName": model, "description": "authored synthetic model/list; no vendor capability claim", "hidden": false, "isDefault": i == 0, "supportsPersonality": false, "supportedReasoningEfforts": []any{}, "defaultReasoningEffort": "medium", "inputModalities": []string{"text"}})
+				rows = append(rows, map[string]any{"id": model, "model": model, "displayName": model, "description": "authored synthetic model/list; no vendor capability claim", "hidden": model == "synthetic-hidden", "isDefault": i == 0, "supportsPersonality": false, "supportedReasoningEfforts": []any{map[string]any{"reasoningEffort": "medium", "description": "authored medium"}, map[string]any{"reasoningEffort": "high", "description": "authored high"}}, "defaultReasoningEffort": "medium", "inputModalities": []string{"text"}})
+			}
+			if mode() == "picker-no-high" {
+				for _, row := range rows {
+					row.(map[string]any)["supportedReasoningEfforts"] = []any{map[string]any{"reasoningEffort": "medium", "description": "authored medium"}}
+				}
+			}
+			if mode() == "picker-invalid" && provider == "openai" {
+				rows[0].(map[string]any)["defaultReasoningEffort"] = "none"
+			}
+			if mode() == "picker-drift" && provider == "openai" {
+				rows[len(rows)-1].(map[string]any)["description"] = "changed hidden metadata"
 			}
 			result = map[string]any{"data": rows, "nextCursor": nil}
+		case "thread/start":
+			result = map[string]any{"modelProvider": provider, "thread": map[string]any{"id": "synthetic-thread-" + provider, "modelProvider": provider}}
 		case "getAuthStatus":
 			if provider != "openai" {
 				return 84
@@ -253,7 +274,7 @@ func factoryDesktopProfile(t *testing.T, models ...string) (appserverbridge.Conf
 
 func TestFactoryPreparedProfileSelectsReviewedDesktopContracts(t *testing.T) {
 	cfg, profile := factoryDesktopProfile(t)
-	if cfg.StartupProbe != appserverbridge.StartupProbeCompareUnrestricted167 || cfg.RequirementsRead != appserverbridge.ConfigRequirementsCompareNull167 || cfg.ExperimentalFeatureList != appserverbridge.ExperimentalFeatureListCompare167 || cfg.AuthStatus != appserverbridge.AuthStatusPrimaryTrustedStdio167 || cfg.DesktopPluginOverride != appserverbridge.DesktopPluginCodexAppTools167 {
+	if cfg.StartupProbe != appserverbridge.StartupProbeCompareUnrestricted167 || cfg.RequirementsRead != appserverbridge.ConfigRequirementsCompareNull167 || cfg.ExperimentalFeatureList != appserverbridge.ExperimentalFeatureListCompare167 || cfg.AuthStatus != appserverbridge.AuthStatusPrimaryTrustedStdio167 || cfg.DesktopPluginOverride != appserverbridge.DesktopPluginCodexAppTools167 || cfg.BridgeModelSettings != appserverbridge.BridgeModelSettingsNative167 {
 		t.Fatal("normal Desktop contract absent from actual factory profile")
 	}
 	if cfg.Attestation != "" || cfg.GatewayOAuth != "" || cfg.SharedNativeRoute == nil || cfg.ControlPlane != appserverbridge.ControlPlaneRouting167 {

@@ -184,7 +184,7 @@ func (r *Router) controlPlaneSessionConfig167(defaultModel string) object {
 		}),
 		"provenance": raw(provenance), "backends": raw(backends),
 	}
-	if r.ownedCatalog != nil && defaultModel != "" {
+	if r.ownedCatalog != nil && !r.ownedCatalog.nativeLists && defaultModel != "" {
 		config["model_catalog_json"] = raw(r.ownedCatalog.path)
 		provenance["model_catalog_json"] = raw("bridge-owned-alias-catalog")
 		extension["provenance"] = raw(provenance)

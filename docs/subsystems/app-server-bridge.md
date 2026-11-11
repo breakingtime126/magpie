@@ -2633,3 +2633,14 @@ retention). The pure synthetic tests exercise admission ordering, rejection,
 thread ownership, unchanged writable parameters and cleanup without accounts or
 native execution. Go, gofmt, Windows and actual native/GUI checks were not run
 during candidate preparation; source review is not runtime acceptance.
+
+### Picker settings against complete native lists
+
+`BridgeModelSettingsNative167` is a separate opt-in from the strict owned-alias
+catalog mode. [`native_settings_167.go`](../../internal/appserverbridge/native_settings_167.go)
+keeps genuine complete native model descriptors and uses their reasoning choices
+for the two-key bridge-owned store. It shares the existing policy, publication,
+read-wait and write guards without publishing a fabricated `model_catalog_json`.
+The old mode and settings-off behavior are unchanged. See
+[Native picker defaults](native-codex-connect.md#native-picker-defaults) for
+factory selection, persistence lifetime, refresh drift and thread/default limits.

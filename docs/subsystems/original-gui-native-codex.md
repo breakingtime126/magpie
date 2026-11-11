@@ -125,7 +125,15 @@ entry and does not establish real-account or same-window usability.
 The current source no longer requires complete supplier-native metadata. It
 supports direct ordinary AIHub configuration and uses documented client defaults
 for optional unknown fields. No real provider request or credential test is part
-of that mapping. Official Desktop handshake, real GPT/AIHub chat, tool execution,
-original-thread backend switching and restored-start acceptance remain
-unverified. Do not present a successful build or selection transaction as a
+of that mapping. Official Desktop handshake, real GPT/AIHub chat, tool execution
+and restored-start acceptance remain unverified. Existing-thread provider
+switching is unsupported and explicitly rejected; choose another provider in a
+new thread. Do not present a successful build or selection transaction as a
 completed same-window release.
+
+The original Connect factory now opts into bridge-owned native picker defaults.
+It persists only the model/effort pair in its isolated generation control home,
+using genuine complete native model lists and matched null native requirements.
+This adds no original GUI controls and does not establish same-window acceptance.
+See [Native picker defaults](native-codex-connect.md#native-picker-defaults) for
+restart scope, refusal behavior and the unchanged fixed-per-thread provider rule.

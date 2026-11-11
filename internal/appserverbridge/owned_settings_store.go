@@ -27,21 +27,26 @@ var errOwnedSettingsConflict = errors.New("bridge-owned settings version conflic
 // native config. The exclusive marker coordinates bridge instances, not an
 // adversarial same-user writer ignoring the marker. Stale locks fail closed.
 type ownedSettingsStore struct {
-	mu       sync.Mutex
-	home     string
-	path     string
-	present  bool
-	root     *os.Root
-	identity os.FileInfo
-	lock     *os.File
-	lockInfo os.FileInfo
-	version  string
-	failed   bool
-	closed   bool
-	replace  func(string, string, bool) error
+	nativeEfforts bool
+	mu            sync.Mutex
+	home          string
+	path          string
+	present       bool
+	root          *os.Root
+	identity      os.FileInfo
+	lock          *os.File
+	lockInfo      os.FileInfo
+	version       string
+	failed        bool
+	closed        bool
+	replace       func(string, string, bool) error
 }
 
 func openOwnedSettingsStore(controlHome string) (*ownedSettingsStore, error) {
+	return openOwnedSettingsStoreMode(controlHome, false)
+}
+
+func openOwnedSettingsStoreMode(controlHome string, nativeEfforts bool) (*ownedSettingsStore, error) {
 	if !filepath.IsAbs(controlHome) || ownedSettingsCheckHome(controlHome) != nil {
 		return nil, errOwnedSettingsUnavailable
 	}
@@ -54,7 +59,7 @@ func openOwnedSettingsStore(controlHome string) (*ownedSettingsStore, error) {
 	if err != nil {
 		return nil, errOwnedSettingsUnavailable
 	}
-	s := &ownedSettingsStore{home: home, path: filepath.Join(home, ownedSettingsFilename), root: root, identity: identity, replace: ownedSettingsReplace}
+	s := &ownedSettingsStore{nativeEfforts: nativeEfforts, home: home, path: filepath.Join(home, ownedSettingsFilename), root: root, identity: identity, replace: ownedSettingsReplace}
 	ok := false
 	defer func() {
 		if !ok {
@@ -139,7 +144,7 @@ func (s *ownedSettingsStore) load() (object, string, error) {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, "", errOwnedSettingsUnavailable
 		}
-		return parseOwnedSettings(nil)
+		return parseOwnedSettingsMode(nil, s.nativeEfforts)
 	}
 	if err != nil || !before.Mode().IsRegular() || before.Size() > ownedSettingsLimit ||
 		ownedSettingsCheckReparse(filepath.Join(s.home, ownedSettingsFilename)) != nil {
@@ -167,10 +172,14 @@ func (s *ownedSettingsStore) load() (object, string, error) {
 		s.checkLock() != nil || ownedSettingsCheckReparse(filepath.Join(s.home, ownedSettingsFilename)) != nil {
 		return nil, "", errOwnedSettingsUnavailable
 	}
-	return parseOwnedSettings(data)
+	return parseOwnedSettingsMode(data, s.nativeEfforts)
 }
 
 func parseOwnedSettings(data []byte) (object, string, error) {
+	return parseOwnedSettingsMode(data, false)
+}
+
+func parseOwnedSettingsMode(data []byte, nativeEfforts bool) (object, string, error) {
 	if len(data) > ownedSettingsLimit || !utf8.Valid(data) {
 		return nil, "", errOwnedSettingsUnavailable
 	}
@@ -186,15 +195,21 @@ func parseOwnedSettings(data []byte) (object, string, error) {
 		}
 		result[key] = raw(str)
 	}
-	if len(result) != 0 && !validOwnedSettings(result) {
+	if len(result) != 0 && !validOwnedSettingsMode(result, nativeEfforts) {
 		return nil, "", errOwnedSettingsUnavailable
 	}
 	version, err := ownedSettingsVersion(result)
 	return result, version, err
 }
 
-func validOwnedSettings(value object) bool {
-	if len(value) != 2 || !requirementsEnum(value["model_reasoning_effort"], "none") {
+func validOwnedSettings(value object) bool { return validOwnedSettingsMode(value, false) }
+
+func validOwnedSettingsMode(value object, nativeEfforts bool) bool {
+	effortOK := requirementsEnum(value["model_reasoning_effort"], "none")
+	if nativeEfforts {
+		effortOK = nativeSettingsEffort167(value["model_reasoning_effort"])
+	}
+	if len(value) != 2 || !effortOK {
 		return false
 	}
 	var model string
@@ -202,7 +217,7 @@ func validOwnedSettings(value object) bool {
 }
 
 func ownedSettingsVersion(value object) (string, error) {
-	if len(value) != 0 && !validOwnedSettings(value) {
+	if len(value) != 0 && !validOwnedSettingsMode(value, true) {
 		return "", errOwnedSettingsUnavailable
 	}
 	values := map[string]any{}
@@ -253,7 +268,7 @@ func (s *ownedSettingsStore) commit(expectedVersion *string, next object) (versi
 	if expectedVersion != nil && *expectedVersion != s.version {
 		return "", errOwnedSettingsConflict
 	}
-	if !validOwnedSettings(next) {
+	if !validOwnedSettingsMode(next, s.nativeEfforts) {
 		return "", errOwnedSettingsUnavailable
 	}
 	values := map[string]string{}
@@ -268,7 +283,7 @@ func (s *ownedSettingsStore) commit(expectedVersion *string, next object) (versi
 	if err != nil || len(data) > ownedSettingsLimit {
 		return "", errOwnedSettingsUnavailable
 	}
-	_, nextVersion, err := parseOwnedSettings(data)
+	_, nextVersion, err := parseOwnedSettingsMode(data, s.nativeEfforts)
 	if err != nil {
 		return "", errOwnedSettingsUnavailable
 	}

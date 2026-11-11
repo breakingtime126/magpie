@@ -259,3 +259,47 @@ factory → packaged host → authenticated probe → JSONL → actual Desktop r
 further integration boundary; source tests do not claim that it passed. No real
 account, credential refresh, provider request or native model cache is needed to
 run the authored fixtures.
+
+## Native picker defaults
+
+The factory additionally selects `owned-file-native-lists-v0.167.0-alpha.3.2`.
+This mode requires the existing exact Desktop contracts, shared-native route,
+runtime pins and supplier catalog digest. Other configurations remain default-off;
+the older owned-alias-file mode remains separate and retains its strict subset.
+
+The bridge gathers both complete native model lists, including hidden rows and
+all returned metadata, before publishing a routing/config snapshot. It does not
+replace the official catalog with a two-model declaration. Within a connection,
+subsequent complete lists must match the first snapshot, including hidden and
+optional capability metadata; drift closes the connection. Ordinary list output
+still honors hidden-row filtering. The independently authored supplier file is
+rechecked for identity and digest at each protocol dispatch.
+
+Only `model` and `model_reasoning_effort` can be written, together, into the
+separate generation control home's `config.toml`. Every write first obtains
+matching genuine null requirements from both native children. The choice must
+be a visible model in the validated snapshot and its advertised reasoning effort
+(or its effective default when native offers no selectable efforts). Initial
+seeding uses the genuine native default effort, never an invented `none`.
+Version conflicts, edits outside this pair, policies and invalid choices fail
+without changing the file. Neither the write nor the file reaches native homes.
+The existing exclusive store lock, atomic replacement, semantic version checks
+and path/reparse guards remain in force. This is not an adversarial same-user
+filesystem boundary or an atomic view of changes inside native processes.
+
+Refresh invalidates the published routes/config until both lists and policies
+are complete. Reads wait behind that barrier; writes cannot commit during it.
+A completed refresh retains the saved choice rather than reseeding it. A restart
+in the same generation reads the saved choice and validates it against the new
+complete native snapshot; an absent model or unsupported effort fails closed.
+A new Connect generation starts its own defaults. No cross-generation preference
+migration or cross-process native-list manifest is introduced.
+
+`config/read` reports the saved pair and actual user-layer provenance. An implicit
+new thread consumes the saved model alias. Existing threads keep their original
+backend/provider and reject cross-provider model changes. Reasoning effort is a
+frontend default exposed through config/read; this change does not inject it into
+an otherwise unspecified native turn or rewrite native per-thread defaults.
+The factory-profile subprocess tests and interleaved router tests cover these
+paths with authored metadata only. They are not actual Codex Desktop, account,
+Windows bootstrap, or live AIHub acceptance.

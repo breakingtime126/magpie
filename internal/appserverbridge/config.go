@@ -111,11 +111,16 @@ func (cfg Config) Validate() error {
 	if err := cfg.validateSharedNative167(); err != nil {
 		return err
 	}
-	if cfg.BridgeModelSettings != "" && cfg.BridgeModelSettings != BridgeModelSettingsOwned167 {
+	if cfg.BridgeModelSettings != "" && cfg.BridgeModelSettings != BridgeModelSettingsOwned167 && cfg.BridgeModelSettings != BridgeModelSettingsNative167 {
 		return errors.New("unsupported bridge_model_settings mode")
 	}
-	if cfg.BridgeModelSettings != "" && (cfg.ControlPlane != ControlPlaneRouting167 || cfg.BridgeModelCatalogJSON == "") {
+	if cfg.BridgeModelSettings == BridgeModelSettingsOwned167 && (cfg.ControlPlane != ControlPlaneRouting167 || cfg.BridgeModelCatalogJSON == "") {
 		return errors.New("bridge model settings require the owned catalog and routing control plane")
+	}
+	if cfg.BridgeModelSettings == BridgeModelSettingsNative167 {
+		if err := cfg.validateNativeSettings167(); err != nil {
+			return err
+		}
 	}
 	if cfg.ControlPlane != "" && cfg.ControlPlane != ControlPlaneRouting167 {
 		return errors.New("unsupported control_plane mode")
