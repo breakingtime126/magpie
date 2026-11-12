@@ -53,7 +53,12 @@ function ConvertFrom-OriginalHandshakeLog([byte[]]$Bytes,[string]$Role) {
         if ($received -le $position -or $ready -le $received -or $written -le $ready) { $result.reason='incomplete';return $result }
         foreach ($roleName in @('primary','secondary')) {
             $started=$stages.IndexOf($roleName+'-started');$sent=$stages.IndexOf($roleName+'-initialize-written');$reply=$stages.IndexOf($roleName+'-initialize-reply')
-            if ($started -le $position -or $started -ge $received -or $sent -le $received -or $reply -le $sent -or $reply -ge $ready) { $result.reason='incomplete';return $result }
+            if ($started -le $position -or $started -ge $sent -or $sent -le $received -or $reply -le $sent -or $reply -ge $ready) { $result.reason='incomplete';return $result }
+            if ($roleName -ceq 'primary' -and $started -ge $received) { $result.reason='incomplete';return $result }
+            if ($roleName -ceq 'secondary' -and $started -ge $received) {
+                $primaryReply=$stages.IndexOf('primary-initialize-reply')
+                if ($primaryReply -le $received -or $primaryReply -ge $started) { $result.reason='incomplete';return $result }
+            }
         }
         if ($stages.Contains('startup-probe-requested') -or $stages.Contains('probe-environment-admitted') -or
             $stages.Contains('probe-environment-rejected')) { $result.reason='malformed';return $result }

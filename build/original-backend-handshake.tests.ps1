@@ -95,3 +95,15 @@ $tokens=$null;$errors=$null
 $null=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'original-backend-handshake.ps1'),[ref]$tokens,[ref]$errors)
 Assert ($errors.Count -eq 0) 'runtime parses'
 Write-Output 'Original backend handshake fixed-observation fixtures passed.'
+
+# Shared-state startup may defer secondary until the genuine primary reply.
+$serial=@('adapter-entered','jsonl-requested','profile-authenticated','endpoint-allocated','primary-started','initialize-received','primary-initialize-written','primary-initialize-reply','secondary-started','secondary-initialize-written','secondary-initialize-reply','initialization-ready','initialize-output-written')
+$serialOK=ConvertFrom-OriginalHandshakeLog (Bytes $serial) 'bridge'
+Assert ($serialOK.status -ceq 'observed' -and $serialOK.initializeOutputWrittenObserved) 'serialized genuine initialize sequence'
+foreach ($missing in @('primary-initialize-reply','secondary-started','secondary-initialize-reply')) {
+    $bad=ConvertFrom-OriginalHandshakeLog (Bytes @($serial|Where-Object {$_ -cne $missing})) 'bridge'
+    Assert (-not $bad.initializeOutputWrittenObserved) 'serialized prerequisite cannot be omitted'
+}
+$premature=@($serial.Clone())
+$premature[7]='secondary-started';$premature[8]='primary-initialize-reply'
+Assert (-not (ConvertFrom-OriginalHandshakeLog (Bytes $premature) 'bridge').initializeOutputWrittenObserved) 'late secondary start requires earlier successful primary reply'

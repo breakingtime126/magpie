@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yetone/magpie/internal/appdir"
@@ -164,7 +165,7 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 		}
 		readers.Wait()
 	}()
-	for _, b := range cfg.Backends {
+	startBackend := func(b Backend) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -265,9 +266,23 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 			source = streams
 		}
 		go func(id string, src io.Reader) { defer readers.Done(); scanMessages(ctx, src, id, events) }(b.ID, source)
+		return nil
 	}
+	serial := newSharedInitializeGate(cfg)
+	for i, backend := range cfg.Backends {
+		if serial != nil && i == 1 {
+			continue
+		}
+		if err := startBackend(backend); err != nil {
+			return err
+		}
+	}
+	var clientEnded atomic.Bool
 	readers.Add(1)
-	go func() { defer readers.Done(); scanMessages(ctx, input, "", events) }()
+	go func() {
+		defer readers.Done()
+		scanMessagesWithEnd(ctx, input, "", events, func() { clientEnded.Store(true) })
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -291,10 +306,12 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 			var deliveries []Delivery
 			previous := router.phase
 			initReply := false
+			var primaryInitialize *request
 			if event.backend == "" {
 				deliveries, err = router.Client(event.line)
 				observation.client(router, previous, event.line, deliveries)
 			} else {
+				primaryInitialize = serial.pendingPrimary(router, event.backend, event.line)
 				initReply = observation.pending(router, event.backend, event.line)
 				deliveries, err = router.Server(event.backend, event.line)
 			}
@@ -302,7 +319,24 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 			if err != nil {
 				return errors.New("app-server bridge protocol failure")
 			}
+			if held, release := serial.validated(primaryInitialize); release {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if clientEnded.Load() {
+					return nil
+				}
+				if err := startBackend(cfg.Backends[1]); err != nil {
+					return err
+				}
+				deliveries = append(held, deliveries...)
+			}
 			for _, delivery := range deliveries {
+				if held, holdErr := serial.hold(delivery); holdErr != nil {
+					return holdErr
+				} else if held {
+					continue
+				}
 				target := output
 				if delivery.Backend != "" {
 					child, ok := children[delivery.Backend]
@@ -322,7 +356,14 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 }
 
 func scanMessages(ctx context.Context, input io.Reader, backend string, events chan<- bridgeEvent) {
+	scanMessagesWithEnd(ctx, input, backend, events, nil)
+}
+
+func scanMessagesWithEnd(ctx context.Context, input io.Reader, backend string, events chan<- bridgeEvent, ended func()) {
 	send := func(event bridgeEvent) bool {
+		if event.err != nil && ended != nil {
+			ended()
+		}
 		select {
 		case events <- event:
 			return true
