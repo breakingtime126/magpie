@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/yetone/magpie/internal/nativehandshake"
 )
 
 type modelRoute struct{ backend, model string }
@@ -1226,6 +1228,7 @@ func (r *Router) listResult(g *request) ([]Delivery, error) {
 	}
 	if g.method == "model/list" {
 		if r.ownedCatalog != nil && defaultModel != r.ownedCatalog.defaultModel {
+			r.ownedCatalog.failure(nativehandshake.CatalogReasonDefaultMismatch)
 			r.failOwnedCatalog()
 			return nil, errors.New(ownedCatalogUnavailable)
 		}

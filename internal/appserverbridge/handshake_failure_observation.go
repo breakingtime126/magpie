@@ -38,6 +38,7 @@ func (o *handshakeObservation) protocolFailure(r *Router, backend string, line [
 	}
 	nativehandshake.Emit(o.ctx, pending)
 	nativehandshake.Emit(o.ctx, protocolFailureClass(err))
+	if r.ownedCatalog != nil { nativehandshake.Emit(o.ctx, r.ownedCatalog.failureStage) }
 }
 
 func protocolFailureClass(err error) nativehandshake.Stage {
@@ -71,6 +72,7 @@ func protocolFailureClass(err error) nativehandshake.Stage {
 }
 
 func protocolPendingStage(g *request) nativehandshake.Stage {
+	if g.settingsPolicyStage { return nativehandshake.ProtocolPendingPolicy }
 	if g.sharedNativeAdmission167 {
 		if g.sharedNativePolicy167 {
 			return nativehandshake.ProtocolPendingPolicy

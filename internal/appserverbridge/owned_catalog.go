@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/yetone/magpie/internal/nativehandshake"
 )
 
 const ownedCatalogUnavailable = "bridge-owned model catalog unavailable; restart required"
@@ -20,6 +22,7 @@ const ownedCatalogLimit = 64 << 10
 // configuration. Only its public Model projection is verified against native
 // model/list. Instructions and non-public capabilities remain authored data.
 type ownedAliasCatalog struct {
+	failureStage nativehandshake.Stage // Fixed first-failure evidence only, never native data.
 	path, home, digest, defaultModel string
 	identity                         os.FileInfo
 	nativeLists                      bool // Full genuine model/list snapshots, not an owned alias file.
@@ -347,6 +350,7 @@ func (r *Router) catalogIndependentReadDuringRefresh(method string) bool {
 func (r *Router) Client(line []byte) ([]Delivery, error) {
 	if r.ownedSettings != nil {
 		if _, _, err := r.ownedSettings.snapshot(); err != nil {
+			if r.ownedCatalog != nil { r.ownedCatalog.failure(nativehandshake.CatalogReasonSettingsStore) }
 			r.failOwnedCatalog()
 			return nil, errors.New(ownedSettingsUnavailable167)
 		}
@@ -368,6 +372,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 	}
 	out, err := r.client(line)
 	if r.ownedCatalog != nil && (err != nil || r.ownedCatalog.failed) {
+		r.ownedCatalog.failure(nativehandshake.CatalogReasonRouter)
 		r.failOwnedCatalog()
 		return nil, errors.New(ownedCatalogUnavailable)
 	}
@@ -377,6 +382,7 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	if r.ownedSettings != nil {
 		if _, _, err := r.ownedSettings.snapshot(); err != nil {
+			if r.ownedCatalog != nil { r.ownedCatalog.failure(nativehandshake.CatalogReasonSettingsStore) }
 			r.failOwnedCatalog()
 			return nil, errors.New(ownedSettingsUnavailable167)
 		}
@@ -387,6 +393,7 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	}
 	out, err := r.server(backend, line)
 	if r.ownedCatalog != nil && (err != nil || r.ownedCatalog.failed) {
+		r.ownedCatalog.failure(nativehandshake.CatalogReasonRouter)
 		r.failOwnedCatalog()
 		return nil, errors.New(ownedCatalogUnavailable)
 	}
@@ -395,4 +402,12 @@ func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 		return nil, errors.New(ownedCatalogUnavailable)
 	}
 	return out, err
+}
+
+// Remember only the first fixed branch, so cleanup cannot erase the cause.
+func (c *ownedAliasCatalog) failure(reason nativehandshake.Stage) error {
+	if c.failureStage == 0 {
+		c.failureStage = reason
+	}
+	return errors.New(ownedCatalogUnavailable)
 }
