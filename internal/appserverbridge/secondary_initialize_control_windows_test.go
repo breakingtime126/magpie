@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,17 +31,16 @@ func TestOfficialSecondaryInitializeControl(t *testing.T) {
 	if !filepath.IsAbs(exe) {
 		t.Fatal("verified official executable unavailable")
 	}
-	outcomes := make([]string, 0, 2)
-	for _, explicit := range []bool{false, true} {
-		outcomes = append(outcomes, secondaryInitializeControl(t, exe, explicit))
-	}
-	fmt.Printf("native-preview-diagnostic stage=initialize-control-%s-%s class=passed\n", outcomes[0], outcomes[1])
+	_, baseline := secondaryInitializeControl(t, exe, false)
+	primary, secondary := secondaryInitializeControl(t, exe, true)
+	fmt.Printf("native-preview-diagnostic stage=initialize-shared-%s-%s-%s class=passed\n", baseline, primary, secondary)
 }
 
-func secondaryInitializeControl(t *testing.T, exe string, explicit bool) (outcome string) {
+func secondaryInitializeControl(t *testing.T, exe string, concurrent bool) (primaryOutcome, secondaryOutcome string) {
 	t.Helper()
-	// Each case gets fresh equivalent state; the primary is deliberately not
-	// launched. This tests secondary initialization, not dual-process integration.
+	// Each case has fresh equivalent state. Both use identical secondary options,
+	// catalog and environment. The only treatment is a simultaneously running
+	// primary sharing HOME/CODEX_HOME; no client model-selection override.
 	root := t.TempDir()
 	home, state := filepath.Join(root, "home"), filepath.Join(root, "state")
 	for _, dir := range []string{home, state} {
@@ -95,7 +96,7 @@ func secondaryInitializeControl(t *testing.T, exe string, explicit bool) (outcom
 	if err != nil {
 		t.Fatal("control environment unavailable")
 	}
-	args := secondaryInitializeControlArgs(cfg, secondary, explicit, model)
+	args := cfg.nativeArgs167(LaunchOptions{}, secondary)
 	cmd := proc.Command(exe, args...)
 	cmd.Env, cmd.Dir = environment, home
 	// Null stderr, as in production: no raw native content or private errors.
@@ -105,6 +106,33 @@ func secondaryInitializeControl(t *testing.T, exe string, explicit bool) (outcom
 	}
 	defer input.Close()
 	defer output.Close()
+	var primaryInput io.WriteCloser
+	var primaryOutput io.ReadCloser
+	if concurrent {
+		primaryEnv, err := cfg.sharedNativeEnvironment167(primary, filtered)
+		if err != nil { t.Fatal("primary control environment unavailable") }
+		primaryCmd := proc.Command(exe, cfg.nativeArgs167(LaunchOptions{}, primary)...)
+		primaryCmd.Env, primaryCmd.Dir = primaryEnv, home
+		var closePrimaryChild func()
+		primaryInput, primaryOutput, closePrimaryChild, err = ownedCommandPipes(primaryCmd)
+		if err != nil { t.Fatal("primary control pipes unavailable") }
+		defer primaryInput.Close()
+		defer primaryOutput.Close()
+		// Retain the Job until whole-tree drainage, not only root exit.
+		tree, startErr := proc.StartTreeDrained(primaryCmd)
+		closePrimaryChild()
+		if tree != nil {
+			defer func() {
+				cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+				defer stop()
+				stopErr := tree.Stop()
+				drainErr := tree.Wait(cleanup)
+				if drainErr != nil { go retainProbeDrain(tree) }
+				if stopErr != nil || drainErr != nil { t.Error("primary control cleanup unverified") }
+			}()
+		}
+		if startErr != nil || tree == nil { t.Fatal("primary control child unavailable") }
+	}
 	if err := ep.Start(cmd); err != nil {
 		closeChild()
 		t.Fatal("control child unavailable")
@@ -112,6 +140,19 @@ func secondaryInitializeControl(t *testing.T, exe string, explicit bool) (outcom
 	closeChild()
 	ctx, stop := context.WithTimeout(context.Background(), 35*time.Second)
 	defer stop()
+	if !concurrent {
+		return "unused", initializeControlExchange(ctx, input, output)
+	}
+	primaryResult := make(chan string, 1)
+	secondaryResult := make(chan string, 1)
+	go func() { primaryResult <- initializeControlExchange(ctx, primaryInput, primaryOutput) }()
+	go func() { secondaryResult <- initializeControlExchange(ctx, input, output) }()
+	// Both exchanges join before either child is retired. In particular, a
+	// quick primary reply must not close its stdin while secondary starts.
+	return <-primaryResult, <-secondaryResult
+}
+
+func initializeControlExchange(ctx context.Context, input io.WriteCloser, output io.ReadCloser) string {
 	written := make(chan error, 1)
 	go func() {
 		_, err := input.Write([]byte("{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"magpie_initialize_control\",\"version\":\"1\"},\"capabilities\":{\"experimentalApi\":true}}}\n"))
@@ -123,11 +164,16 @@ func secondaryInitializeControl(t *testing.T, exe string, explicit bool) (outcom
 			return "write"
 		}
 	case <-ctx.Done():
+		input.Close()
+		<-written
 		return "timeout"
 	}
 	result := make(chan string, 1)
 	readDone := make(chan struct{})
-	defer func() { output.Close(); <-readDone }()
+	defer func() {
+		if ctx.Err() != nil { output.Close() }
+		<-readDone
+	}()
 	go func() {
 		defer close(readDone)
 		scanner := bufio.NewScanner(output)
@@ -194,5 +240,30 @@ func TestSecondaryInitializeControlChangesOnlyModel(t *testing.T) {
 	}
 	if picked[len(base)] != "-c" || picked[len(base)+1] != "model="+strconv.Quote("fixture/model") {
 		t.Fatal("control changed more than explicit model")
+	}
+}
+
+func TestSecondaryInitializeControlExchangeKeepsStreamsOpen(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	server.SetDeadline(time.Now().Add(2 * time.Second))
+	fixture := make(chan bool, 1)
+	go func() {
+		reader := bufio.NewReader(server)
+		_, err := reader.ReadString('\n')
+		if err != nil { fixture <- false; return }
+		if _, err := server.Write([]byte("{\"id\":1,\"result\":{}}\n")); err != nil { fixture <- false; return }
+		value, err := reader.ReadByte()
+		fixture <- err == nil && value == 'x'
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if got := initializeControlExchange(ctx, client, client); got != "reply" {
+		t.Fatal("initialize response not classified")
+	}
+	client.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := client.Write([]byte{'x'}); err != nil || !<-fixture {
+		t.Fatal("quick initialize reply retired shared primary")
 	}
 }

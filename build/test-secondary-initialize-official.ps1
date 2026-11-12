@@ -43,7 +43,7 @@ Assert-PublicRegularPath $TestExecutable
 $root = Join-Path $env:RUNNER_TEMP ('secondary-initialize-control-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
 $reportName = 'secondary-initialize-control-report.json'
-$scope = 'official-secondary-initialize-only-model-control'
+$scope = 'official-secondary-bridge-shared-state-initialize-control'
 $reportPath = Join-Path $env:RUNNER_TEMP $reportName
 if (Test-Path -LiteralPath $reportPath) { throw 'Report already exists; no retry.' }
 $report = [ordered]@{schema=1;scope=$scope;source_commit=$head;
@@ -126,44 +126,16 @@ try {
     # Only a single exact allowlisted line is eligible for the public report.
     # No native response, source error or other stdout/stderr is published.
     $diagnostics = @($output -split '\r?\n' | Where-Object { $_.StartsWith('native-preview-diagnostic') })
-    $allowedStages = @(
-        'initialize-control-reply-reply',
-        'initialize-control-reply-error',
-        'initialize-control-reply-eof',
-        'initialize-control-reply-invalid',
-        'initialize-control-reply-write',
-        'initialize-control-reply-timeout',
-        'initialize-control-error-reply',
-        'initialize-control-error-error',
-        'initialize-control-error-eof',
-        'initialize-control-error-invalid',
-        'initialize-control-error-write',
-        'initialize-control-error-timeout',
-        'initialize-control-eof-reply',
-        'initialize-control-eof-error',
-        'initialize-control-eof-eof',
-        'initialize-control-eof-invalid',
-        'initialize-control-eof-write',
-        'initialize-control-eof-timeout',
-        'initialize-control-invalid-reply',
-        'initialize-control-invalid-error',
-        'initialize-control-invalid-eof',
-        'initialize-control-invalid-invalid',
-        'initialize-control-invalid-write',
-        'initialize-control-invalid-timeout',
-        'initialize-control-write-reply',
-        'initialize-control-write-error',
-        'initialize-control-write-eof',
-        'initialize-control-write-invalid',
-        'initialize-control-write-write',
-        'initialize-control-write-timeout',
-        'initialize-control-timeout-reply',
-        'initialize-control-timeout-error',
-        'initialize-control-timeout-eof',
-        'initialize-control-timeout-invalid',
-        'initialize-control-timeout-write',
-        'initialize-control-timeout-timeout'
-    )
+    # Exactly three fixed outcomes: independent secondary, shared primary,
+    # shared secondary. Never accept arbitrary native output.
+    $outcomes = @('reply','error','eof','invalid','write','timeout')
+    $allowedStages = @(foreach ($baseline in $outcomes) {
+        foreach ($primary in $outcomes) {
+            foreach ($secondary in $outcomes) {
+                'initialize-shared-' + $baseline + '-' + $primary + '-' + $secondary
+            }
+        }
+    })
     $allowedClasses = @('passed')
     $report.diagnostic_status = 'invalid'
     if ($diagnostics.Count -ne 1 -or
@@ -265,4 +237,4 @@ try {
     [IO.File]::WriteAllText($reportPath, ($report | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
 }
 if ($report.status -cne 'passed') { throw 'Official secondary initialize diagnostic failed; inspect fixed-stage report.' }
-Write-Output 'PASS: official native initialize-only control test; Desktop and real accounts not tested.'
+Write-Output 'PASS: secondary bridge shared-state initialize diagnostic; Desktop and real accounts not tested.'

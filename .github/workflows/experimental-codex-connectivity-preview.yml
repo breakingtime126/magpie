@@ -331,10 +331,10 @@ jobs:
           gofmt -w $file
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostic formatting failed.' }
           Copy-Item -LiteralPath $file -Destination "$env:RUNNER_TEMP/secondary_initialize_control_windows_test.go"
-      - name: Check argument contrast without native execution
+      - name: Check diagnostic helpers without native execution
         shell: pwsh
         run: |
-          go test -tags nogui -run '^TestSecondaryInitializeControlChangesOnlyModel$' -count=1 ./internal/appserverbridge
+          go test -tags nogui -run '^TestSecondaryInitializeControl' -count=1 ./internal/appserverbridge
           if ($LASTEXITCODE -ne 0) { throw 'Initialize argument contrast failed.' }
       - name: Compile synthetic test host without running it
         shell: pwsh
