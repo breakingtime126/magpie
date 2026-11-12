@@ -303,7 +303,7 @@ try {
             $report.backendHandshakeObservationFinal.observation=Get-OriginalBackendHandshake -OwnedRun $run -OriginalStartInfo $start -ProcessStartTicks $ticks -Sequence $report.sequence -RecoveryChecksCompleted -SequenceReportSaved
         } catch { $report.backendHandshakeObservationFinal.observation.reason='read-error' }
     }
-    if ($report.cleanup.status -cne 'verified') {
+    if ($report.cleanup.status -cne 'verified-retained-roots') {
         # Preserve the first operation's failure alongside cleanup evidence.
         if ($report.failureStage -ceq 'none') { $report.failureStage='owned-cleanup';$report.stage='owned-cleanup' }
         $report.status='blocked'

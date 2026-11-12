@@ -157,7 +157,7 @@ function Run-Coordinator([bool]$Recovery,[string]$Original='forced-exit',[string
     return @{report=$report;calls=($script:cleanupCalls -join ',')}
 }
 $r=Run-Coordinator $true
-Need ($r.report.ownedRootExitsConfirmed -and $r.report.status -ceq 'blocked') 'coordinator records forced root exit but blocks clean acceptance'
+Need ($r.report.ownedRootExitsConfirmed -and $r.report.status -ceq 'verified' -and $r.report.cleanup.status -ceq 'verified-retained-roots') 'coordinator verifies retained-root cleanup without graceful or tree-drain claims'
 Need ($r.calls -ceq 'desktop,original,original-disposal,package-disposal,save') 'coordinator cleans both owned roots then disposes and saves'
 foreach ($disposal in @('original','package','both')) {
     $r=Run-Coordinator $true 'forced-exit' 'forced-exit' $disposal
@@ -168,11 +168,11 @@ Need (-not $r.report.ownedRootExitsConfirmed -and $r.report.cleanup.confirmedRoo
 $r=Run-Coordinator $false
 Need ($r.calls -ceq 'original-disposal,package-disposal,save' -and $r.report.cleanup.originalQuit -ceq 'blocked-recovery') 'unknown recovery performs no root close or kill'
 $r=Run-Coordinator $true 'forced-exit' 'forced-exit' '' 'owned-window-evidence'
-Need ($r.report.failureStage -ceq 'owned-window-evidence' -and $r.report.stage -ceq 'owned-window-evidence' -and $r.report.cleanup.status -ceq 'blocked') 'cleanup preserves the prior operation failure'
+Need ($r.report.failureStage -ceq 'owned-window-evidence' -and $r.report.stage -ceq 'owned-window-evidence' -and $r.report.cleanup.status -ceq 'verified-retained-roots' -and $r.report.status -ceq 'blocked') 'cleanup preserves the prior operation failure'
 $r=Run-Coordinator $true 'forced-exit' 'forced-exit' '' 'none' $false
 Need ($r.calls -notmatch '^desktop,' -and -not $r.report.ownedRootExitsConfirmed -and $r.report.cleanup.requiredRoots -eq 2) 'uncertain activation is not acted on or claimed absent'
 $r=Run-Coordinator $true 'forced-exit' 'forced-exit' '' 'none' $true $true
-Need ($r.report.status -ceq 'diagnostic-only' -and $r.report.cleanup.status -ceq 'blocked') 'diagnostic status cannot conceal unknown cleanup'
+Need ($r.report.status -ceq 'diagnostic-only' -and $r.report.cleanup.status -ceq 'verified-retained-roots') 'diagnostic status remains separate from retained-root cleanup'
 foreach ($original in @('forced-exit','timeout')) {
     $r=Run-Coordinator -Recovery $true -Original $original -Handshake $true
     Need ($r.calls -ceq 'desktop,original,original-disposal,package-disposal,handshake-final,save') 'final handshake read follows both cleanup and disposal attempts'
@@ -196,4 +196,11 @@ foreach ($forbidden in @('GetProcessById','Get-Process','Stop-Process','taskkill
     Need (-not $adapter.Contains($forbidden) -and -not $core.Extent.Text.Contains($forbidden)) ('no cleanup authority expansion '+$forbidden)
 }
 Need ($adapter.Contains('$Process.Kill()') -and $adapter.Contains('Assert-AcceptanceOwner $Process $Executable $Ticks')) 'termination uses same retained checked process'
+
+$r=Run-Aggregate $forced $forced
+Need ($r.status -ceq 'verified-retained-roots') 'complete retained roots and resources admit only scoped cleanup'
+foreach ($c in @((Run-Aggregate $forced $unknown),(Run-Aggregate $forced $forced $true $true $true 'original'),(Run-Aggregate $forced $forced $false))) {
+    Need ($c.status -cne 'verified-retained-roots') 'partial, disposal failure and unrecovered cleanup stay blocked'
+}
+
 Write-Output 'ORIGINAL_DESKTOP_CLEANUP_TESTS_PASSED'

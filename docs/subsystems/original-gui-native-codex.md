@@ -282,3 +282,19 @@ The native-list diagnostic retains only the first fixed rejection branch
 overwrite that category. Settings-policy responses are classified as policy,
 even when the outer frontend request was model/list. No model records, IDs,
 field values or policy content are stored in these diagnostics.
+
+
+## Experimental hosted-runner cleanup scope
+
+This portable experimental package is not a production release. Its hosted-CI
+acceptance can record `verified-retained-roots` only after selection recovery,
+every attempted retained process root's observed exit, and resource disposal.
+Forced root termination is recorded as forced; it is not the original tray
+Quit action. Graceful shutdown and complete descendant drainage remain
+unverified, even when the scoped CI check passes. No live account or chat
+acceptance follows from this result.
+
+Recovery remains the original Magpie Restore action with selection readback and
+journal absence. An uncertain restore, unknown root exit, or failed disposal
+still blocks packaging. Do not use this experimental evidence to weaken the
+normal release checks or claim that no residual subprocess can remain.

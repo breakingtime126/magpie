@@ -17,7 +17,7 @@ $cases=@(
     @{name='skip-package-disposal';old="try { & `$entry[1];`$Cleanup[`$entry[0]]='disposed' } catch { }";new="try { & `$entry[1];`$Cleanup[`$entry[0]]='disposed' } catch { break }";expected='each disposal runs independently'},
     @{name='disposal-erases-root';old='$Cleanup.gracefulShutdownVerified=$false';new='$Cleanup.rootExitsConfirmed=$Cleanup.rootExitsConfirmed -and $Cleanup.resourcesDisposed; $Cleanup.gracefulShutdownVerified=$false';expected='disposal cannot erase known root exits: original'},
     @{name='ignore-recovery';caller=$true;old='    if ($safeCleanup) {';new='    if ($true) {';expected='unknown recovery performs no root close or kill'},
-    @{name='discard-original-result';caller=$true;old='$report.cleanup.originalRoot=Stop-AcceptanceOwner $process $exe $ticks';new='$null=Stop-AcceptanceOwner $process $exe $ticks';expected='coordinator records forced root exit but blocks clean acceptance'},
+    @{name='discard-original-result';caller=$true;old='$report.cleanup.originalRoot=Stop-AcceptanceOwner $process $exe $ticks';new='$null=Stop-AcceptanceOwner $process $exe $ticks';expected='coordinator verifies retained-root cleanup without graceful or tree-drain claims'},
     @{name='overwrite-operation-failure';caller=$true;old="if (`$report.failureStage -ceq 'none') { `$report.failureStage='owned-cleanup'";new="if (`$true) { `$report.failureStage='owned-cleanup'";expected='cleanup preserves the prior operation failure'}
 )
 if ($PSVersionTable.PSEdition -ceq 'Desktop') { $hostExe=Join-Path $PSHOME 'powershell.exe' }

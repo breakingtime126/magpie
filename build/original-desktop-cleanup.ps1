@@ -79,5 +79,7 @@ function Complete-AcceptanceCleanup {
     # particular, CloseMainWindow is not the original tray app's Quit action.
     $Cleanup.gracefulShutdownVerified=$false
     $Cleanup.descendantExitVerified=$false
-    $Cleanup.status=if ($RecoveryAllowsCleanup) { 'blocked' } else { 'recovery-preserved' }
+    $Cleanup.status=if (-not $RecoveryAllowsCleanup) { 'recovery-preserved' }
+        elseif ($Cleanup.rootExitsConfirmed -and $Cleanup.resourcesDisposed) { 'verified-retained-roots' }
+        else { 'blocked' }
 }
