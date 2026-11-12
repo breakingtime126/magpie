@@ -98,7 +98,7 @@ jobs:
           go test -race -tags nogui -count=1 -timeout=5m -run "^TestNativeGPT" ./internal/provider ./internal/gateway
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m -run "^TestNative(Codex|GPT)" ./internal/provider ./internal/gateway ./internal/agent ./internal/library ./internal/gui
           go test -race -tags nogui,nativecodex,nativehandshakediag -count=1 -timeout=5m -run '^TestHandshake' ./internal/nativehandshake ./internal/nativehost ./internal/nativelaunch ./internal/appserverbridge ./cmd/magpie-codex-bridge
-          go test -race -tags nogui -count=1 -timeout=3m -run '^Test(SharedSerial|Protocol)' ./internal/appserverbridge
+          go test -race -tags nogui -count=1 -timeout=3m -run '^Test(SharedSerial|Protocol|NativeSettings)' ./internal/appserverbridge
           node internal/codexsetup/app.test.cjs
       - name: Original page browser regressions, both engines and languages
         env:
@@ -335,7 +335,7 @@ jobs:
       - name: Check diagnostic helpers without native execution
         shell: pwsh
         run: |
-          go test -tags nogui -run '^Test(SecondaryInitializeControl|SharedSerial|Protocol)' -count=1 -timeout=3m ./internal/appserverbridge
+          go test -tags nogui -run '^Test(SecondaryInitializeControl|SharedSerial|Protocol|NativeSettings)' -count=1 -timeout=3m ./internal/appserverbridge
           if ($LASTEXITCODE -ne 0) { throw 'Initialize argument contrast failed.' }
       - name: Compile synthetic test host without running it
         shell: pwsh

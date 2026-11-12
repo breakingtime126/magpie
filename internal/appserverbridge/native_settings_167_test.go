@@ -233,21 +233,23 @@ func TestNativeSettingsNamedNewEffortsRetainMetadataGuards(t *testing.T) {
 				rows := nativeSettingsRows167(t)
 				m, _ := parseObject(rows["one"][0])
 				m["defaultReasoningEffort"] = raw(effort)
-				choices := []object{{"reasoningEffort":raw(effort),"description":raw("authored named effort")}}
+				choices := []object{{"reasoningEffort": raw(effort), "description": raw("authored named effort")}}
 				switch kind {
 				case "duplicate":
 					choices = append(choices, choices[0])
 				case "missing-default":
 					choices[0]["reasoningEffort"] = raw("medium")
 				case "custom-choice":
-					choices = append(choices, object{"reasoningEffort":raw("unreviewed-custom"),"description":raw("authored custom")})
+					choices = append(choices, object{"reasoningEffort": raw("unreviewed-custom"), "description": raw("authored custom")})
 				case "custom-default":
 					m["defaultReasoningEffort"] = raw("unreviewed-custom")
 				}
 				m["supportedReasoningEfforts"] = raw(choices)
 				rows["one"][0] = raw(m)
 				err := r.ownedCatalog.validateNative(rows, r.backends)
-				if (err == nil) != (kind == "valid") { t.Fatal("named effort weakened metadata guards") }
+				if (err == nil) != (kind == "valid") {
+					t.Fatal("named effort weakened metadata guards")
+				}
 			})
 		}
 	}

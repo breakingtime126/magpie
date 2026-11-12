@@ -346,7 +346,9 @@ func TestOfficialBridgeInitializeBarrier(t *testing.T) {
 	observed := nativehandshake.WithObserver(context.Background(), func(s nativehandshake.Stage) {
 		mu.Lock()
 		defer mu.Unlock()
-		if len(stages) < 128 { stages = append(stages, s) }
+		if len(stages) < 128 {
+			stages = append(stages, s)
+		}
 	})
 	ctx, cancel := context.WithTimeout(observed, 45*time.Second)
 	defer cancel()

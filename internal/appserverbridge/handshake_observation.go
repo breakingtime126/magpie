@@ -11,10 +11,10 @@ import (
 // It observes the actual router and completed writes, never alters a delivery.
 type handshakeObservation struct {
 	pendingStage nativehandshake.Stage
-	ctx     context.Context
-	id      json.RawMessage
-	ready   bool
-	written bool
+	ctx          context.Context
+	id           json.RawMessage
+	ready        bool
+	written      bool
 }
 
 func newHandshakeObservation(ctx context.Context) *handshakeObservation {

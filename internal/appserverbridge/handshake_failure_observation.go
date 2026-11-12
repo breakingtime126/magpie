@@ -33,7 +33,9 @@ func (o *handshakeObservation) protocolFailure(r *Router, backend string, line [
 	nativehandshake.Emit(o.ctx, source)
 	nativehandshake.Emit(o.ctx, shape)
 	pending := o.pendingStage
-	if pending == 0 { pending = nativehandshake.ProtocolPendingNone }
+	if pending == 0 {
+		pending = nativehandshake.ProtocolPendingNone
+	}
 	nativehandshake.Emit(o.ctx, pending)
 	nativehandshake.Emit(o.ctx, protocolFailureClass(err))
 }

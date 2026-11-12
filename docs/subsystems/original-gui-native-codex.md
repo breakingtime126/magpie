@@ -269,3 +269,10 @@ Protocol failures record only fixed source, envelope shape, pending-operation
 category and error class before the existing failure stage. Unknown content is
 reported as Other; payloads, request IDs, method names and raw errors are never
 written. These labels do not relax validation or confer handshake readiness.
+
+The pinned official ReasoningEffort enum also contains max, ultra and persistent.
+Native-list settings accept these three named wire values, as well as the
+previous six; arbitrary Custom strings remain unsupported. Duplicate efforts,
+a missing default among selectable efforts, hidden/default constraints and the
+complete-list snapshot checks are unchanged. The compatibility fixtures are
+authored examples, not copied model descriptors or account data.

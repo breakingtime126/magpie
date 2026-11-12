@@ -10,7 +10,7 @@ import (
 
 func TestProtocolFailureFixedClasses(t *testing.T) {
 	cases := []struct {
-		err error
+		err  error
 		want nativehandshake.Stage
 	}{
 		{errAuthCompatibility, nativehandshake.ProtocolClassEnvelope},
@@ -53,21 +53,27 @@ func TestProtocolFailureObservesRealRejectionWithoutPayload(t *testing.T) {
 
 func TestProtocolPendingFixedAdmissionStages(t *testing.T) {
 	cases := []struct {
-		g request
+		g    request
 		want nativehandshake.Stage
 	}{
-		{request{method:"initialize"}, nativehandshake.ProtocolPendingInitialize},
-		{request{method:"model/list",sharedNativeAdmission167:true,sharedNativePolicy167:true}, nativehandshake.ProtocolPendingPolicy},
-		{request{method:"model/list",sharedNativeAdmission167:true}, nativehandshake.ProtocolPendingConfig},
-		{request{method:"model/list"}, nativehandshake.ProtocolPendingCatalog},
-		{request{method:"config/read"}, nativehandshake.ProtocolPendingConfig},
-		{request{method:"PRIVATE_METHOD"}, nativehandshake.ProtocolPendingOther},
+		{request{method: "initialize"}, nativehandshake.ProtocolPendingInitialize},
+		{request{method: "model/list", sharedNativeAdmission167: true, sharedNativePolicy167: true}, nativehandshake.ProtocolPendingPolicy},
+		{request{method: "model/list", sharedNativeAdmission167: true}, nativehandshake.ProtocolPendingConfig},
+		{request{method: "model/list"}, nativehandshake.ProtocolPendingCatalog},
+		{request{method: "config/read"}, nativehandshake.ProtocolPendingConfig},
+		{request{method: "PRIVATE_METHOD"}, nativehandshake.ProtocolPendingOther},
 	}
 	for _, c := range cases {
-		if protocolPendingStage(&c.g) != c.want { t.Fatal("wrong fixed pending stage") }
+		if protocolPendingStage(&c.g) != c.want {
+			t.Fatal("wrong fixed pending stage")
+		}
 	}
 	for _, err := range []error{errors.New(ownedCatalogUnavailable), errors.New(ownedSettingsUnavailable167)} {
-		if protocolFailureClass(err) != nativehandshake.ProtocolClassCatalog { t.Fatal("catalog sentinel lost") }
+		if protocolFailureClass(err) != nativehandshake.ProtocolClassCatalog {
+			t.Fatal("catalog sentinel lost")
+		}
 	}
-	if protocolFailureClass(errors.New(sharedRouteUnavailable167)) != nativehandshake.ProtocolClassAdmission { t.Fatal("admission sentinel lost") }
+	if protocolFailureClass(errors.New(sharedRouteUnavailable167)) != nativehandshake.ProtocolClassAdmission {
+		t.Fatal("admission sentinel lost")
+	}
 }
