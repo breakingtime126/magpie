@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/appdir"
+	"github.com/yetone/magpie/internal/nativehandshake"
 	"github.com/yetone/magpie/internal/proc"
 )
 
@@ -147,6 +148,7 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 	router.controlNativeHomes167 = nativeHomes
 	router.auth = cfg.authCompatibility()
 	router.sharedNativeRoute167 = cfg.SharedNativeRoute
+	observation := newHandshakeObservation(parent)
 	ctx, cancel := context.WithCancel(parent)
 	processContext, stopProcesses := context.WithCancel(context.WithoutCancel(parent))
 	defer stopProcesses()
@@ -245,6 +247,11 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 			}
 		}
 		children[b.ID] = child
+		if b.ID == cfg.Backends[0].ID {
+			nativehandshake.Emit(parent, nativehandshake.PrimaryStarted)
+		} else {
+			nativehandshake.Emit(parent, nativehandshake.SecondaryStarted)
+		}
 		readers.Add(1)
 		var source io.Reader = out
 		if streams != nil {
@@ -272,11 +279,16 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 				return fmt.Errorf("backend %s stream ended or exceeded its limit", event.backend)
 			}
 			var deliveries []Delivery
+			previous := router.phase
+			initReply := false
 			if event.backend == "" {
 				deliveries, err = router.Client(event.line)
+				observation.client(router, previous, event.line, deliveries)
 			} else {
+				initReply = observation.pending(router, event.backend, event.line)
 				deliveries, err = router.Server(event.backend, event.line)
 			}
+			observation.routed(router, previous, event.backend, event.line, initReply, err)
 			if err != nil {
 				return errors.New("app-server bridge protocol failure")
 			}
@@ -289,8 +301,10 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 					}
 					target = child.input
 				}
-				if err := writeMessage(ctx, target, delivery.Message); err != nil {
-					return err
+				writeErr := writeMessage(ctx, target, delivery.Message)
+				observation.wrote(router, delivery, writeErr)
+				if writeErr != nil {
+					return writeErr
 				}
 			}
 		}

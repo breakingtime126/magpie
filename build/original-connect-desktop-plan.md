@@ -105,13 +105,34 @@ Tray discovery is read-only, externally bounded and fixed-field only. Its
 geometry and optional coincident UIA hit are not visibility, input ownership or
 authority to click. See [the source review](original-desktop-quit-review.md).
 Normal window close hides this tray app and cannot prove graceful Quit. The
-existing root-cleanup failure gate remains until an original Quit route is
-independently observed and reviewed. No second app launch or Quit action is
-added by these diagnostics. Forced root termination blocks clean
-shutdown acceptance. Root exits do not prove descendant cleanup; the report
-explicitly marks descendant exit unverified. On uncertain recovery the GUI,
-journal and generation are left intact for the disposable runner's remaining
-lifetime; there is no alternate rollback writer or deletion.
+cleanup adapter no longer sends that known-hide action to original Magpie.
+It waits at most five seconds, checks the same retained process identity again,
+and may use the existing retained-root termination fallback with a further
+five-second exit wait. Official Desktop retains its one window-close request
+before those waits. Neither route is presented as an original Quit operation.
+No second app launch, synthetic tray message, keyboard guess, loopback quit
+request or geometry-only click is added.
+
+Each root report keeps already-exited, exit-without-force and forced-exit
+facts separately from unknown reads, identity refusal, action exceptions and
+exit timeout. A confirmed forced root exit is retained instead of discarded
+by an exception. One root succeeding does not hide the other's failure. An
+attempted but unbound activation counts as unknown, and zero required roots
+is not proof of root exit. Disposal of the original process object and package
+query handles/locks is attempted independently; failure is reported separately
+from root exit, with no raw error text. Earlier operation failure stages remain
+intact beside the cleanup report.
+
+`ownedRootExitsConfirmed` may be true with `cleanup.status=blocked`.
+`gracefulShutdownVerified` and `descendantExitVerified` remain false, regardless
+of root exit or disposal results. `cleanup.originalQuit` explicitly distinguishes
+an already-exited original, unknown recovery/identity, and the missing verified
+original Quit control. Thus forced cleanup cannot pass full acceptance, nor can
+an unforced root exit stand in for unobserved host/descendant drain. Existing
+strict/drained Jobs only cover their own pre-resume enrolled trees; the normal
+AUMID activation does not provide such ownership. On uncertain recovery no root
+is closed or killed; the GUI, journal and generation remain intact for the
+disposable runner's remaining lifetime, without an alternate rollback writer.
 
 ## Reports, tests and limits
 
@@ -140,7 +161,15 @@ conversation acceptance or proof of future authenticated operation.
 
 Run the offline `original-connect-action.tests.ps1`, its `.mutations.ps1`,
 `original-desktop-package.tests.ps1`, `original-desktop-sequence.tests.ps1` and
-`original-desktop-acceptance.tests.ps1`. The Windows gate runs compatible
+`original-desktop-acceptance.tests.ps1`, `original-desktop-cleanup.tests.ps1`,
+`original-desktop-cleanup.mutations.ps1` and
+`original-desktop-cleanup-process.tests.ps1`. The cleanup fixtures execute the
+coordinator's real finally block with inert owner doubles and twelve deliberate
+mutations. The process fixture starts only its own retained PowerShell sleeper;
+the exact old adapter fails its forced-exit assertion after terminating that
+same sleeper, while the new adapter records the root exit. This is a root-
+accounting regression test, not original-GUI Quit or Windows descendant proof.
+The Windows gate runs compatible
 fixtures in both Core and Desktop hosts before any live action. The sequence's
 `-BreakRestoration` test must fail on missing registry/journal cleanup. Tests
 cover exact selectors, duplicate/disabled/hidden controls, deadlines, identity
@@ -184,3 +213,21 @@ and cannot publish the portable package. Structured evidence is uploaded even
 when the transaction is uncertain. Capture fixtures run honestly in their own
 independent job; their failure neither blocks this diagnostic transaction nor
 permits acceptance. Full mode retains its capture prerequisite and behavior.
+
+### Optional fixed handshake observation
+
+`[original-backend-handshake-v1]` is admitted only with both original/stage-only
+markers and the exact stage-diagnostics environment value. The packager and
+coordinator agree on exact GUI/adapter tags and boolean BUILD.json provenance.
+Normal builds keep their original tags. The [observer contract](original-backend-handshake.md)
+describes the fixed bootstrap and initialization milestones and their limits.
+
+This mode retains the entire existing 15-second image-observation budget,
+without an early image-hit break or any deadline extension. The preliminary
+`backendHandshakeObservation` is read after recovery and a successful report
+save. A separate `backendHandshakeObservationFinal` is read after cleanup and
+disposal attempts, only if recovery is safe, its report was saved and the
+source-bound diagnostic mode is enabled. It labels whether root exits were
+confirmed; descendant exit and trace completeness remain unverified. Both
+snapshots are preserved. A read failure changes only fixed diagnostic evidence,
+not the first operation failure, recovery, cleanup authority or acceptance.

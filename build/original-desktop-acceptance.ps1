@@ -6,11 +6,27 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-connect-action.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-package.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-sequence.ps1')
+. (Join-Path $PSScriptRoot 'original-desktop-cleanup.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-quit-discovery.ps1')
 $stageDiagnosticsOnly=$env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS -ceq 'stage-diagnostics-v1'
 if (-not $stageDiagnosticsOnly) { . (Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1') }
 . (Join-Path $PSScriptRoot 'original-connect-preconditions.ps1')
 . (Join-Path $PSScriptRoot 'original-connect-stages.ps1')
+. (Join-Path $PSScriptRoot 'original-backend-handshake.ps1')
+function Get-AcceptanceBuildTags([bool]$StageOnly,[string]$CommitMessage) {
+    $handshake=$CommitMessage.Contains('[original-backend-handshake-v1]')
+    if ($handshake -and (-not $StageOnly -or -not $CommitMessage.Contains('[original-connect-stages-only-v1]') -or
+        -not $CommitMessage.Contains('[original-connect-desktop-v1]'))) { throw 'Handshake diagnostics require original stage-only acceptance.' }
+    $gui='production,nativecodex';$adapter='nogui,nativecodex'
+    if ($handshake) { $gui+=',nativehandshakediag';$adapter+=',nativehandshakediag' }
+    return [ordered]@{gui=$gui;adapter=$adapter;handshakeDiagnostic=$handshake}
+}
+function Assert-AcceptanceBuildTags($Build,$Expected) {
+    if ($Build.buildTags -cne $Expected.gui -or $Build.adapterBuildTags -cne $Expected.adapter -or
+        $Build.handshakeDiagnostic -isnot [bool] -or $Build.handshakeDiagnostic -ne $Expected.handshakeDiagnostic) {
+        throw 'Original package build mode mismatch.'
+    }
+}
 function Assert-AcceptanceContext {
     Assert-OriginalDesktopPackageRunner
     if ($env:GITHUB_EVENT_NAME -cne 'push' -or $SourceCommit -cnotmatch '^[0-9a-f]{40}$' -or
@@ -29,6 +45,7 @@ function Assert-AcceptanceContext {
         -not [IO.Directory]::Exists($PackageDirectory) -or -not [IO.Directory]::Exists($EvidenceDirectory)) {
         throw 'Owned package and evidence directories required.'
     }
+    return Get-AcceptanceBuildTags $stageDiagnosticsOnly $message
 }
 function Test-AcceptanceJournal([string]$Path) {
     Assert-OriginalRegularPath $Path
@@ -61,18 +78,11 @@ function Assert-AcceptanceOwner([Diagnostics.Process]$Process,[string]$Executabl
     if ($Process.HasExited -or $Process.StartTime.ToUniversalTime().Ticks -ne $Ticks -or
         $Process.MainModule.FileName -ine $Executable) { throw 'Owned process identity changed.' }
 }
-function Stop-AcceptanceOwner([Diagnostics.Process]$Process,[string]$Executable,[long]$Ticks) {
-    $Process.Refresh()
-    if ($Process.HasExited) { return }
-    Assert-AcceptanceOwner $Process $Executable $Ticks
-    [void]$Process.CloseMainWindow()
-    if (-not $Process.WaitForExit(5000)) {
-        Assert-AcceptanceOwner $Process $Executable $Ticks
-        $Process.Kill()
-        if (-not $Process.WaitForExit(5000)) { throw 'Owned process exit unconfirmed.' }
-        # A forced root exit does not verify graceful host/descendant cleanup.
-        throw 'Forced root termination does not establish clean shutdown.'
-    }
+function Stop-AcceptanceOwner([Diagnostics.Process]$Process,[string]$Executable,[long]$Ticks,[switch]$RequestWindowClose) {
+    Invoke-AcceptanceRootCleanup -HasExited { $Process.Refresh();$Process.HasExited } `
+        -CheckIdentity { Assert-AcceptanceOwner $Process $Executable $Ticks } `
+        -CloseWindow { $Process.CloseMainWindow() } -WaitForExit { param($Milliseconds) $Process.WaitForExit($Milliseconds) } `
+        -Terminate { $Process.Kill() } -RequestWindowClose:$RequestWindowClose
 }
 function Save-AcceptanceWindow([Diagnostics.Process]$Process,[string]$Executable,[long]$Ticks,[string]$Path) {
     Assert-AcceptanceOwner $Process $Executable $Ticks
@@ -105,9 +115,9 @@ namespace OriginalAcceptanceCapture {
     } finally { $bitmap.Dispose() }
 }
 $report=[ordered]@{schema=1;scope='original-magpie-connect-desktop-restore';sourceCommit=$SourceCommit;
-    status='blocked';diagnosticOnly=[bool]$stageDiagnosticsOnly;stage='context';preparation=$null;package=$null;sequence=$null;images=$null;diagnosticCapture=$null;trayDiscovery=$null;connectPreconditions=$null;connectStages=$null;
+    status='blocked';diagnosticOnly=[bool]$stageDiagnosticsOnly;stage='context';failureStage='none';preparation=$null;package=$null;sequence=$null;images=$null;diagnosticCapture=$null;trayDiscovery=$null;connectPreconditions=$null;connectStages=$null;backendHandshakeObservation=(New-OriginalBackendHandshakeReport);backendHandshakeObservationFinal=$null;
     originalWindowCaptured=$false;desktopWindowCaptured=$false;adapterImageObserved=$false;
-    selectionRestored=$false;journalRemoved=$false;ownedRootExitsConfirmed=$false;descendantExitVerified=$false;cleanupScope='retained-process-roots-only';preserveRecovery=$true;
+    selectionRestored=$false;journalRemoved=$false;ownedRootExitsConfirmed=$false;descendantExitVerified=$false;gracefulShutdownVerified=$false;cleanupResourcesDisposed=$false;cleanup=(New-AcceptanceCleanup);cleanupScope='retained-process-roots-only';preserveRecovery=$true;
     nativeHomeInitiallyEmpty=$false;realAccountsUsed=$false;providerTurnAttempted=$false;
     desktopInteractionAttempted=$false;backendHandshakeVerified=$false;chatVerified=$false;
     restoredDesktopStartVerified=$false;zeroEgressProven=$false}
@@ -117,14 +127,15 @@ function Save-AcceptanceReport {
         [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'original-desktop-acceptance.json'),($report | ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
     }
 }
-$context=$null;$process=$null;$started=$false;$sequenceEntered=$false;$safeCleanup=$false;$baseline=$null;$journal='';$ticks=[long]0;$exe=''
+$context=$null;$process=$null;$started=$false;$startAttempted=$false;$sequenceEntered=$false;$recoveryReportSaved=$false;$safeCleanup=$false;$baseline=$null;$journal='';$ticks=[long]0;$exe=''
 try {
-    Assert-AcceptanceContext
+    $buildMode=Assert-AcceptanceContext
     $evidenceReady=$true;Save-AcceptanceReport
     $report.stage='package-provenance'
     $build=[IO.File]::ReadAllText((Join-Path $PackageDirectory 'BUILD.json')) | ConvertFrom-Json
+    Assert-AcceptanceBuildTags $build $buildMode
     if ($build.sourceCommit -cne $SourceCommit -or $build.originalGUI -ne $true -or
-        $build.buildTags -cne 'production,nativecodex' -or $build.portable -ne $true) { throw 'Original package provenance mismatch.' }
+        $build.portable -ne $true) { throw 'Original package provenance mismatch.' }
     foreach ($pair in @(@('Magpie-Native-Codex-Experimental.exe','guiSHA256'),@('magpie-codex-bridge.exe','adapterSHA256'))) {
         $path=Join-Path $PackageDirectory $pair[0];Assert-OriginalRegularPath $path
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $build.($pair[1])) {
@@ -170,7 +181,7 @@ try {
     foreach ($name in @('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','http_proxy','https_proxy','all_proxy','no_proxy','CODEX_CA_CERTIFICATE','SSL_CERT_FILE','SSL_CERT_DIR','CURL_CA_BUNDLE','REQUESTS_CA_BUNDLE','NODE_EXTRA_CA_CERTS')) {
         if ($parent.Contains($name)) { $start.EnvironmentVariables[$name]=[string]$parent[$name] }
     }
-    $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$started=$process.Start()
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$startAttempted=$true;$started=$process.Start()
     if (-not $started) { throw 'Original GUI did not start.' }
     $null=$process.Handle;$ticks=$process.StartTime.ToUniversalTime().Ticks
     $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -190,10 +201,12 @@ try {
         $null=Invoke-OriginalDesktopPackageActivation $context
         # Read-only bounded image observation before restoration. No Desktop UI
         # action, setup or login. Missing events never prove no child existed.
+        # Diagnostic builds use the full existing observation budget so an
+        # early image event does not abbreviate handshake evidence collection.
         $observation=[Diagnostics.Stopwatch]::StartNew()
         do {
             $report.images=Get-OriginalDesktopImageEvidence $context
-            if ($report.images.status -ceq 'snapshot' -and ($report.images.adapterDirectChildren -gt 0 -or $report.images.nativeDirectChildren -gt 0)) { break }
+            if (-not $buildMode.handshakeDiagnostic -and $report.images.status -ceq 'snapshot' -and ($report.images.adapterDirectChildren -gt 0 -or $report.images.nativeDirectChildren -gt 0)) { break }
             if ($observation.ElapsedMilliseconds -ge 15000) { break }
             Start-Sleep -Milliseconds 100
         } while ($true)
@@ -208,12 +221,24 @@ try {
     $report.preserveRecovery=-not $safeCleanup
     if ($null -ne $report.images -and $report.images.status -ceq 'snapshot') { $report.adapterImageObserved=$report.images.adapterDirectChildren -gt 0 }
     Save-AcceptanceReport
+    $recoveryReportSaved=$true
     # Fixed-stage log content is observed only after recovery decisions and their
     # report are saved. Never use this result to authorize an action or cleanup.
     $report.connectStages=New-OriginalConnectStageReport
     try {
         $report.connectStages=Get-OriginalConnectStages -OwnedRun $run -OriginalStartInfo $start -ProcessStartTicks $ticks -Sequence $report.sequence -RecoveryChecksCompleted -SequenceReportSaved
     } catch { $report.connectStages.reason='read-error' }
+    Save-AcceptanceReport
+    # Compile-only handshake traces are read after saved recovery. Their fixed
+    # milestones cannot authorize another action or promote acceptance claims.
+    if ($buildMode.handshakeDiagnostic) {
+        try {
+            $report.backendHandshakeObservation=Get-OriginalBackendHandshake -OwnedRun $run -OriginalStartInfo $start -ProcessStartTicks $ticks -Sequence $report.sequence -RecoveryChecksCompleted -SequenceReportSaved
+        } catch {
+            $report.backendHandshakeObservation=New-OriginalBackendHandshakeReport
+            $report.backendHandshakeObservation.reason='read-error'
+        }
+    }
     Save-AcceptanceReport
     # Diagnostics follow the completed recovery checks and saved report. Neither
     # result changes uncertainty, cleanup authority, or the original failure.
@@ -243,6 +268,7 @@ try {
 } catch {
     # Report fixed stages only, never arbitrary UI text, paths, child stderr,
     # profile data, credentials or full process command lines.
+    $report.failureStage=$report.stage
 } finally {
     if (-not $sequenceEntered -and $null -eq $report.sequence -and $null -ne $baseline -and $journal) {
         try {
@@ -252,19 +278,46 @@ try {
             $report.preserveRecovery=-not $safeCleanup
         } catch { $safeCleanup=$false;$report.preserveRecovery=$true }
     }
-    $cleanupError=$false
+    if ($startAttempted) { $report.cleanup.originalRoot.status='start-unconfirmed' }
+    if ($started) { $report.cleanup.originalRoot.status='not-attempted' }
+    $desktopAttempted=$null -ne $context -and $context.ActivationAttempted
+    if ($desktopAttempted) { $report.cleanup.desktopRoot.status='ownership-unverified' }
+    if ($null -ne $context -and $context.Evidence.activated) { $report.cleanup.desktopRoot.status='not-attempted' }
     # If recovery is unknown, leave original GUI and its journal untouched for
     # the disposable runner's remaining lifetime. No substitute rollback.
     if ($safeCleanup) {
         if ($null -ne $context -and $context.Evidence.activated) {
-            try { Stop-AcceptanceOwner $context.ActivationProcess $context.DesktopExecutable $context.ActivationCreatedTicks } catch { $cleanupError=$true }
+            $report.cleanup.desktopRoot=Stop-AcceptanceOwner $context.ActivationProcess $context.DesktopExecutable $context.ActivationCreatedTicks -RequestWindowClose
         }
-        if ($started) { try { Stop-AcceptanceOwner $process $exe $ticks } catch { $cleanupError=$true } }
-        $report.ownedRootExitsConfirmed=-not $cleanupError
+        if ($started) {
+            # Closing Magpie's main window only hides it. No original Quit
+            # control has been verified; do not disguise that as graceful exit.
+            $report.cleanup.originalRoot=Stop-AcceptanceOwner $process $exe $ticks
+        }
     }
-    if ($null -ne $process) { $process.Dispose() }
-    if ($null -ne $context) { try { Close-OriginalDesktopPackage $context } catch { $cleanupError=$true } }
-    if ($cleanupError) { $report.status='blocked';$report.stage='owned-cleanup' }
+    $disposeOriginal=$null;$disposePackage=$null
+    if ($null -ne $process) { $disposeOriginal={ $process.Dispose() } }
+    if ($null -ne $context) { $disposePackage={ Close-OriginalDesktopPackage $context } }
+    Complete-AcceptanceCleanup $report.cleanup $safeCleanup $startAttempted $desktopAttempted $disposeOriginal $disposePackage
+    $report.ownedRootExitsConfirmed=$report.cleanup.rootExitsConfirmed
+    $report.cleanupResourcesDisposed=$report.cleanup.resourcesDisposed
+    $report.gracefulShutdownVerified=$report.cleanup.gracefulShutdownVerified
+    $report.descendantExitVerified=$report.cleanup.descendantExitVerified
+    if ($safeCleanup -and $sequenceEntered -and $recoveryReportSaved -and $buildMode.handshakeDiagnostic) {
+        # This later snapshot preserves the preliminary one. Even confirmed
+        # roots do not prove all writers/descendants stopped or logs complete.
+        $report.backendHandshakeObservationFinal=[ordered]@{phase='after-cleanup-attempts';
+            rootExitsConfirmed=$report.ownedRootExitsConfirmed;descendantExitVerified=$false;
+            traceCompletenessVerified=$false;observation=(New-OriginalBackendHandshakeReport)}
+        try {
+            $report.backendHandshakeObservationFinal.observation=Get-OriginalBackendHandshake -OwnedRun $run -OriginalStartInfo $start -ProcessStartTicks $ticks -Sequence $report.sequence -RecoveryChecksCompleted -SequenceReportSaved
+        } catch { $report.backendHandshakeObservationFinal.observation.reason='read-error' }
+    }
+    if ($report.cleanup.status -cne 'verified') {
+        # Preserve the first operation's failure alongside cleanup evidence.
+        if ($report.failureStage -ceq 'none') { $report.failureStage='owned-cleanup';$report.stage='owned-cleanup' }
+        $report.status='blocked'
+    }
     if ($stageDiagnosticsOnly) { $report.status='diagnostic-only' }
     Save-AcceptanceReport
 }

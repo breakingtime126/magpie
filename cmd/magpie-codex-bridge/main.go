@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/yetone/magpie/internal/appserverbridge"
+	"github.com/yetone/magpie/internal/nativehandshake"
 	"github.com/yetone/magpie/internal/nativelaunch"
 	"github.com/yetone/magpie/internal/nativeprofile"
 )
@@ -316,6 +317,14 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 		fmt.Fprintln(output, identity, buildVersion)
 		return 0
 	}
+	if op == serve || op == startupProbe {
+		nativehandshake.Emit(ctx, nativehandshake.AdapterEntered)
+		if op == startupProbe {
+			nativehandshake.Emit(ctx, nativehandshake.StartupProbeRequested)
+		} else {
+			nativehandshake.Emit(ctx, nativehandshake.JSONLRequested)
+		}
+	}
 	path := deps.getenv(configEnv)
 	if !filepath.IsAbs(path) {
 		if op == startupProbe {
@@ -342,12 +351,15 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 					}
 					result, err := deps.trustedProbe(ctx, bytes.NewReader(data), options, clientInfo)
 					if err != nil || ctx.Err() != nil {
+						nativehandshake.Emit(ctx, nativehandshake.ProbeFailed)
 						return failStartupProbe(output, diagnostics)
 					}
 					line := append(result, '\n')
 					if n, err := output.Write(line); err != nil || n != len(line) {
+						nativehandshake.Emit(ctx, nativehandshake.StreamWriteFailed)
 						return 1
 					}
+					nativehandshake.Emit(ctx, nativehandshake.ProbeOutputWritten)
 					return 0
 				}
 				if op == primaryIdentity {
@@ -361,6 +373,7 @@ func execute(ctx context.Context, args []string, input io.ReadCloser, output io.
 					return 0
 				}
 				if err := deps.trustedRun(ctx, bytes.NewReader(data), options, input, output); err != nil {
+					nativehandshake.Emit(ctx, nativehandshake.JSONLFailed)
 					// Preserve cancellation plus cleanup failures; lease expiry is not a
 					// successful conversation or a clean process-tree shutdown.
 					fmt.Fprintln(diagnostics, "magpie-codex-bridge: trusted native launch failed")

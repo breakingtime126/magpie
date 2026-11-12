@@ -1,0 +1,95 @@
+// Package nativehandshake records fixed diagnostic milestones, never protocol
+// data. Ordinary builds have no filesystem observer or diagnostic authority.
+package nativehandshake
+
+import "context"
+
+type Stage uint8
+
+const (
+	HostListening Stage = iota + 1
+	HostProbeAdmitted
+	HostProbeAcknowledged
+	HostJSONLAdmitted
+	AdapterEntered
+	StartupProbeRequested
+	JSONLRequested
+	ProfileAuthenticated
+	EndpointAllocated
+	ProbeResultValidated
+	ProbeOutputWritten
+	ProbeFailed
+	JSONLFailed
+	PrimaryStarted
+	SecondaryStarted
+	InitializeReceived
+	PrimaryInitializeWritten
+	SecondaryInitializeWritten
+	PrimaryInitializeReply
+	SecondaryInitializeReply
+	PrimaryInitializeError
+	SecondaryInitializeError
+	InitializationRejected
+	InitializationReady
+	InitializeOutputWritten
+	ProtocolFailed
+	StreamWriteFailed
+)
+
+var names = [...]string{
+	HostListening: "host-listening", HostProbeAdmitted: "host-probe-admitted",
+	HostProbeAcknowledged: "host-probe-acknowledged", HostJSONLAdmitted: "host-jsonl-admitted",
+	AdapterEntered: "adapter-entered", StartupProbeRequested: "startup-probe-requested",
+	JSONLRequested: "jsonl-requested", ProfileAuthenticated: "profile-authenticated",
+	EndpointAllocated: "endpoint-allocated", ProbeResultValidated: "probe-result-validated",
+	ProbeOutputWritten: "probe-output-written", ProbeFailed: "probe-failed", JSONLFailed: "jsonl-failed",
+	PrimaryStarted: "primary-started", SecondaryStarted: "secondary-started",
+	InitializeReceived: "initialize-received", PrimaryInitializeWritten: "primary-initialize-written",
+	SecondaryInitializeWritten: "secondary-initialize-written", PrimaryInitializeReply: "primary-initialize-reply",
+	SecondaryInitializeReply: "secondary-initialize-reply", PrimaryInitializeError: "primary-initialize-error",
+	SecondaryInitializeError: "secondary-initialize-error", InitializationRejected: "initialization-rejected",
+	InitializationReady: "initialization-ready", InitializeOutputWritten: "initialize-output-written",
+	ProtocolFailed: "protocol-failed", StreamWriteFailed: "stream-write-failed",
+}
+
+func (s Stage) String() string {
+	if s == 0 || int(s) >= len(names) {
+		return ""
+	}
+	return names[s]
+}
+
+type key struct{}
+type sink func(Stage)
+
+// WithObserver supplies an in-memory test observer. It does not change context
+// cancellation, grant access or enable a process/file observer in a normal build.
+// The callback must return promptly and be concurrency-safe. Panics are ignored.
+func WithObserver(ctx context.Context, observe func(Stage)) context.Context {
+	return context.WithValue(ctx, key{}, sink(observe))
+}
+
+func Enabled(ctx context.Context) bool {
+	if ctx != nil {
+		if s, ok := ctx.Value(key{}).(sink); ok {
+			return s != nil
+		}
+	}
+	return processEnabled()
+}
+
+func Emit(ctx context.Context, stage Stage) {
+	if stage.String() == "" {
+		return
+	}
+	defer func() { _ = recover() }()
+	if ctx != nil {
+		if s, ok := ctx.Value(key{}).(sink); ok {
+			if s != nil {
+				s(stage)
+			}
+			return
+		}
+	}
+	processEmit(stage)
+}

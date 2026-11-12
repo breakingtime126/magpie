@@ -21,10 +21,27 @@ foreach ($assignment in $assignments) {
 }
 $package=Parse 'package-native-magpie-windows.ps1'
 $sequence=Parse 'original-desktop-sequence.ps1'
-foreach ($name in @('Get-AcceptanceSupplierFixture','Test-AcceptanceJournal','Get-AcceptanceDiagnostics')) {
+foreach ($name in @('Get-AcceptanceSupplierFixture','Test-AcceptanceJournal','Get-AcceptanceDiagnostics','Get-AcceptanceBuildTags','Assert-AcceptanceBuildTags')) {
     $function=@($caller.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$false))
     Assert ($function.Count -eq 1) ('unique function '+$name)
     Invoke-Expression $function[0].Extent.Text
+}
+foreach ($diagnostic in @($false,$true)) {
+    $message='[original-connect-desktop-v1]'
+    if ($diagnostic) { $message+=' [original-connect-stages-only-v1] [original-backend-handshake-v1]' }
+    $expected=Get-AcceptanceBuildTags $diagnostic $message
+    foreach ($badField in @('none','buildTags','adapterBuildTags','handshakeDiagnostic','handshakeType')) {
+        $build=@{buildTags=$expected.gui;adapterBuildTags=$expected.adapter;handshakeDiagnostic=$diagnostic}
+        switch -CaseSensitive ($badField) {
+            'buildTags' { $build.buildTags+=',unreviewed' }
+            'adapterBuildTags' { $build.adapterBuildTags+=',unreviewed' }
+            'handshakeDiagnostic' { $build.handshakeDiagnostic=-not $diagnostic }
+            'handshakeType' { $build.handshakeDiagnostic=[string]$diagnostic }
+        }
+        $allowed=$true
+        try { Assert-AcceptanceBuildTags $build $expected } catch { $allowed=$false }
+        Assert ($allowed -eq ($badField -ceq 'none')) 'coordinator requires exact GUI and adapter tags plus boolean diagnostic provenance'
+    }
 }
 foreach ($captureFailure in @($false,$true)) {
     foreach ($captureThrows in @($false,$true)) {
@@ -131,3 +148,40 @@ try {
     }
 } finally {$env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS=$savedMode}
 Write-Output 'STAGE_DIAGNOSTICS_ONLY_CALLER_TESTS_PASSED'
+
+# Trace read failures remain independent of recovery and acceptance decisions.
+$handshakeGuards=@($caller.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+    $n.Extent.Text.StartsWith('if ($buildMode.handshakeDiagnostic)')},$true))
+Assert ($handshakeGuards.Count -eq 1) 'one compile-opted handshake observation block'
+function New-OriginalBackendHandshakeReport { return @{reason='unavailable';backendHandshakeVerified=$false} }
+function Get-OriginalBackendHandshake {
+    param($OwnedRun,$OriginalStartInfo,$ProcessStartTicks,$Sequence,[switch]$RecoveryChecksCompleted,[switch]$SequenceReportSaved)
+    Assert ($RecoveryChecksCompleted -and $SequenceReportSaved) 'handshake evidence requires saved recovery'
+    $script:handshakeReads++
+    if ($script:handshakeReadFails) { throw 'private-handshake-log-error' }
+    return @{reason='observed';backendHandshakeVerified=$false}
+}
+foreach ($enabled in @($false,$true)) {
+    foreach ($readFails in @($false,$true)) {
+        $buildMode=@{handshakeDiagnostic=$enabled};$script:handshakeReads=0;$script:handshakeReadFails=$readFails
+        $report=@{backendHandshakeObservation=(New-OriginalBackendHandshakeReport);sequence=@{status='verified'};
+            status='blocked';backendHandshakeVerified=$false;selectionRestored=$true;journalRemoved=$true}
+        $safeCleanup=$true;$run='owned-run';$start=[Diagnostics.ProcessStartInfo]::new();$ticks=1
+        Invoke-Expression $handshakeGuards[0].Extent.Text
+        Assert ($script:handshakeReads -eq [int]$enabled) 'no diagnostic file read without compile-mode opt-in'
+        Assert ($safeCleanup -and $report.selectionRestored -and $report.journalRemoved -and $report.status -ceq 'blocked' -and
+            -not $report.backendHandshakeVerified) 'handshake observation cannot alter recovery or success'
+        if ($enabled -and $readFails) { Assert ($report.backendHandshakeObservation.reason -ceq 'read-error') 'read failure is unknown fixed evidence' }
+        Assert (($report | ConvertTo-Json -Depth 5 -Compress) -cnotmatch 'private') 'no arbitrary handshake exception export'
+    }
+}
+Assert ($text.IndexOf('$report.backendHandshakeObservation=Get-OriginalBackendHandshake') -gt $text.IndexOf('$safeCleanup=$report.sequence.cleanupAllowed')) 'handshake collector follows recovery'
+Assert ($text.Contains("Save-AcceptanceReport`n    # Compile-only handshake traces")) 'handshake collector follows saved report'
+Assert ($text.Contains("if (-not `$buildMode.handshakeDiagnostic -and `$report.images.status -ceq 'snapshot'") -and
+    $text.Contains('if ($observation.ElapsedMilliseconds -ge 15000) { break }')) 'handshake mode uses full existing image budget without extending deadline'
+Assert ($text.Contains("Save-AcceptanceReport`n    `$recoveryReportSaved=`$true")) 'final observer gate records successful recovery report save'
+Write-Output 'ORIGINAL_BACKEND_HANDSHAKE_CALLER_TESTS_PASSED'
+
+# The cleanup suite exercises the coordinator's actual finally block with inert
+# retained-owner doubles. It never starts the acceptance coordinator.
+& (Join-Path $PSScriptRoot 'original-desktop-cleanup.tests.ps1') -CallerPath $CallerPath

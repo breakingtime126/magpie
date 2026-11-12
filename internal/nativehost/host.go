@@ -19,6 +19,7 @@ import (
 	"github.com/yetone/magpie/internal/nativebootstrap"
 	"github.com/yetone/magpie/internal/nativechannel"
 	"github.com/yetone/magpie/internal/nativeconnect"
+	"github.com/yetone/magpie/internal/nativehandshake"
 	"github.com/yetone/magpie/internal/nativeprepdiag"
 	"github.com/yetone/magpie/internal/nativeprofile"
 )
@@ -295,6 +296,7 @@ func startWithProbeListener(parent context.Context, captured capability, cfg app
 	if h.owner == nil || ctx.Err() != nil || !captured.Valid() {
 		return fail(ErrUnavailable)
 	}
+	nativehandshake.Emit(h.ctx, nativehandshake.HostListening)
 	go h.serve(captured)
 	trace.Complete()
 	return h, nil

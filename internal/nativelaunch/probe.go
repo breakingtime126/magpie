@@ -8,6 +8,7 @@ import (
 
 	"github.com/yetone/magpie/internal/appserverbridge"
 	"github.com/yetone/magpie/internal/nativechannel"
+	"github.com/yetone/magpie/internal/nativehandshake"
 	"github.com/yetone/magpie/internal/nativeprofile"
 )
 
@@ -63,6 +64,7 @@ func probeStartup(parent context.Context, profile io.Reader, options appserverbr
 	if ctx.Err() != nil || owner.Context().Err() != nil || record.Generation != generation || record.VerifyProfile(data) != nil {
 		return nil, ErrUnavailable
 	}
+	nativehandshake.Emit(parent, nativehandshake.ProfileAuthenticated)
 	cfg, err := nativeprofile.LoadConfig(data)
 	if err != nil {
 		return nil, err
@@ -77,6 +79,7 @@ func probeStartup(parent context.Context, profile io.Reader, options appserverbr
 	if ep == nil {
 		return nil, ErrUnavailable
 	}
+	nativehandshake.Emit(parent, nativehandshake.EndpointAllocated)
 	defer func() {
 		closeCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
 		defer stop()
@@ -104,5 +107,6 @@ func probeStartup(parent context.Context, profile io.Reader, options appserverbr
 	if ctx.Err() != nil || owner.Context().Err() != nil {
 		return nil, ErrUnavailable
 	}
+	nativehandshake.Emit(parent, nativehandshake.ProbeResultValidated)
 	return result, nil
 }

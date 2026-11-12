@@ -3,6 +3,8 @@ package nativehost
 import (
 	"context"
 	"errors"
+
+	"github.com/yetone/magpie/internal/nativehandshake"
 )
 
 type awaitResult struct {
@@ -18,7 +20,9 @@ func (h *Host) acceptLaunch(lease ownerLease, err error) {
 		h.baseErr = ErrUnavailable
 	}
 	if err == nil && lease != nil {
-		h.consumed.Store(true)
+		if h.consumed.CompareAndSwap(false, true) {
+			nativehandshake.Emit(h.ctx, nativehandshake.HostJSONLAdmitted)
+		}
 		select {
 		case <-lease.Context().Done():
 		case <-h.ctx.Done():
@@ -46,11 +50,15 @@ func (h *Host) serveWithProbe() {
 		}
 		if err == nil {
 			h.probeAdmitted.Store(true)
+			nativehandshake.Emit(h.ctx, nativehandshake.HostProbeAdmitted)
 			probe, ok := lease.(probeLease)
 			if !ok {
 				err = ErrUnavailable
 			} else {
 				err = probe.ValidateProbe(probeCtx, h.probeCheck)
+				if err == nil {
+					nativehandshake.Emit(h.ctx, nativehandshake.HostProbeAcknowledged)
+				}
 			}
 		}
 		if err == nil {
@@ -88,7 +96,9 @@ func (h *Host) serveWithProbe() {
 	}
 	h.lease = launch.lease
 	if launch.err == nil && launch.lease != nil {
-		h.consumed.Store(true)
+		if h.consumed.CompareAndSwap(false, true) {
+			nativehandshake.Emit(h.ctx, nativehandshake.HostJSONLAdmitted)
+		}
 	}
 	if !probeJoined {
 		result := <-probeDone

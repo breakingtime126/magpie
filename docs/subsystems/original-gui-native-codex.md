@@ -163,8 +163,29 @@ validated fixed phases without extending its deadline. A separate read-only
 observer reuses retained package metadata and the original environment to report
 bounded path preconditions; it performs no package query or native execution and
 does not prove the original version probe or host preparation. Tray discovery is
-not a Quit action, and window close only hides this tray app. Reported root-process
-exits do not establish descendant drain.
+not a Quit action, and window close only hides this tray app.
+
+The [cleanup reporter](../../build/original-desktop-cleanup.ps1) separates each
+retained root's exit from graceful shutdown, descendant drain and resource
+release. It records already-exited, exit-without-force and forced-exit outcomes,
+and retains partial success if the other root cannot be confirmed. A failed
+identity check never authorizes termination. Unknown recovery still permits no
+root action; an attempted but unbound Desktop activation remains unknown, not
+absent. Magpie's main window is no longer closed as a substitute for Quit.
+After a bounded wait, the existing forced-cleanup fallback targets only the
+same checked retained root. Official Desktop retains its prior window-close
+request before that fallback. Neither operation establishes graceful Quit.
+
+`ownedRootExitsConfirmed` can therefore be true while cleanup is blocked.
+`cleanupResourcesDisposed` reports query-handle/lock release separately, and
+one disposal failure does not skip the other or erase an observed root exit.
+`cleanup.originalQuit` distinguishes no start, an already-exited process,
+unknown recovery, unavailable identity and the lack of a verified original
+Quit control. Both `gracefulShutdownVerified` and `descendantExitVerified`
+remain false. The coordinator preserves an earlier operation's `failureStage`
+alongside cleanup evidence, and never promotes these root facts to full
+acceptance. The strict/drained Job helpers in `internal/proc` own only trees
+enrolled before resume; they cannot retroactively prove AUMID descendants.
 
 The official helper acquires the exact reviewed 26.1103.4239.0 release from
 the versioned official URL, not the rolling download alias. Its source and
@@ -176,3 +197,12 @@ The pre-existing 4239 treatment-only entry guard is unchanged. See
 exact evidence, host boundary, source exclusions and offline mutation tests.
 Until the real Windows report passes its stages, this remains an unverified
 acceptance implementation, not a usable package or working chat claim.
+
+A stage-only run can additionally opt into the compile-only
+[fixed handshake observer](../../build/original-backend-handshake.md) with
+`[original-backend-handshake-v1]`. Both packaged binaries and BUILD.json must
+carry the exact corresponding diagnostic tags. It preserves a preliminary
+post-recovery snapshot and a separately labeled post-cleanup snapshot, without
+turning bootstrap or initialization milestones into backend/desktop acceptance.
+The existing 15-second image-observation budget is used in full in this mode;
+no deadline is extended. Missing or incomplete traces remain unknown.

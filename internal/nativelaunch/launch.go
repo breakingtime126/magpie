@@ -11,6 +11,7 @@ import (
 	"github.com/yetone/magpie/internal/appserverbridge"
 	"github.com/yetone/magpie/internal/nativebootstrap"
 	"github.com/yetone/magpie/internal/nativechannel"
+	"github.com/yetone/magpie/internal/nativehandshake"
 	"github.com/yetone/magpie/internal/nativeprofile"
 )
 
@@ -76,6 +77,7 @@ func run(parent context.Context, profile io.Reader, options appserverbridge.Laun
 	if record.Generation != generation || record.VerifyProfile(data) != nil {
 		return ErrUnavailable
 	}
+	nativehandshake.Emit(parent, nativehandshake.ProfileAuthenticated)
 	// This is the first filesystem-aware Config operation. It uses the exact
 	// previously hashed bytes, not a reopened profile path.
 	cfg, err := nativeprofile.LoadConfig(data)
@@ -92,6 +94,7 @@ func run(parent context.Context, profile io.Reader, options appserverbridge.Laun
 	if ep == nil {
 		return ErrUnavailable
 	}
+	nativehandshake.Emit(parent, nativehandshake.EndpointAllocated)
 	if owner.Context().Err() != nil || parent.Err() != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()

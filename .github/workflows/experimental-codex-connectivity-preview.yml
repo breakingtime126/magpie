@@ -11,6 +11,7 @@ on:
       - internal/nativepreview/**
       - internal/nativeconnect/**
       - internal/nativeprepdiag/**
+      - internal/nativehandshake/**
       - internal/nativeconfigguard/**
       - internal/nativesupplier/**
       - internal/nativecatalog/**
@@ -33,6 +34,8 @@ on:
       - build/original-connect-stages.md
       - build/testdata/original-connect-stages/**
       - build/original-installed-query*.ps1
+      - build/original-backend-handshake*.ps1
+      - build/original-handshake-build.tests.ps1
       - build/original-desktop-*.ps1
       - build/mutate-bridge-shutdown-order.py
       - build/test-native-preview-official.ps1
@@ -67,8 +70,8 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/preview-format"
           mkdir -p "$out"
-          gofmt -d internal/nativeprepdiag internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
-          bad="$(gofmt -l internal/nativeprepdiag internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant)"
+          gofmt -d internal/nativeprepdiag internal/nativehandshake internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant | tee "$out/gofmt.diff"
+          bad="$(gofmt -l internal/nativeprepdiag internal/nativehandshake internal/codexsetup internal/nativepreview internal/nativeconnect internal/nativeconfigguard internal/nativesupplier internal/nativecatalog internal/nativehost internal/nativebootstrap internal/nativechannel internal/nativeendpoint internal/nativelaunch internal/nativeprofile internal/appserverbridge internal/proc cmd/magpie-codex-bridge internal/provider internal/gateway internal/gui internal/agent internal/library internal/buildvariant)"
           while IFS= read -r file; do
             test -n "$file" || continue
             mkdir -p "$out/$(dirname "$file")"
@@ -79,19 +82,20 @@ jobs:
         id: vet
         continue-on-error: true
         run: |
-          go vet -tags nogui ./internal/nativeprepdiag ./internal/nativepreview ./internal/nativeconnect ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/codexsetup ./internal/gui ./internal/agent ./internal/library
+          go vet -tags nogui ./internal/nativehandshake ./internal/nativeprepdiag ./internal/nativepreview ./internal/nativeconnect ./internal/nativeconfigguard ./internal/provider ./internal/gateway ./internal/codexsetup ./internal/gui ./internal/agent ./internal/library
           go vet -tags nogui,nativecodex ./internal/nativeconnect ./internal/provider ./internal/gateway ./internal/gui ./internal/agent ./internal/library
           go vet -tags nogui,nativecodex ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
       - name: Race and page-state regressions with synthetic inputs only
         run: |
           go test -race -tags nogui -count=1 -timeout=10m ./internal/nativepreview ./internal/codexsetup ./internal/agent ./internal/library ./internal/gui
-          go test -race -tags nogui -count=1 -timeout=5m ./internal/nativeprepdiag ./internal/nativeconnect ./internal/nativeconfigguard
+          go test -race -tags nogui -count=1 -timeout=5m ./internal/nativehandshake ./internal/nativeprepdiag ./internal/nativeconnect ./internal/nativeconfigguard
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativeconnect
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile
           go test -race -tags nogui -count=1 -timeout=5m -run '^TestConfiguredSupplier' ./internal/provider
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestConfiguredSupplier' ./internal/provider
           go test -race -tags nogui -count=1 -timeout=5m -run "^TestNativeGPT" ./internal/provider ./internal/gateway
           go test -race -tags nogui,nativecodex -count=1 -timeout=5m -run "^TestNative(Codex|GPT)" ./internal/provider ./internal/gateway ./internal/agent ./internal/library ./internal/gui
+          go test -race -tags nogui,nativecodex,nativehandshakediag -count=1 -timeout=5m -run '^TestHandshake' ./internal/nativehandshake ./internal/nativehost ./internal/nativelaunch ./internal/appserverbridge ./cmd/magpie-codex-bridge
           node internal/codexsetup/app.test.cjs
       - name: Original page browser regressions, both engines and languages
         env:
@@ -140,6 +144,16 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           foreach ($hostName in @('pwsh', 'powershell')) {
+            & $hostName -NoProfile -NonInteractive -File build/original-desktop-cleanup.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Owned root cleanup evidence fixtures failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-desktop-cleanup-process.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Retained process cleanup fixture failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-desktop-cleanup.mutations.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Owned root cleanup evidence mutations failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-handshake-build.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Diagnostic handshake build scope fixtures failed.' }
+            & $hostName -NoProfile -NonInteractive -File build/original-backend-handshake.tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Fixed backend handshake observer fixtures failed.' }
             & $hostName -NoProfile -NonInteractive -File build/original-desktop-package.tests.ps1
             if ($LASTEXITCODE -ne 0) { throw 'Official package safety fixtures failed.' }
             & $hostName -NoProfile -NonInteractive -File build/original-desktop-sequence.tests.ps1

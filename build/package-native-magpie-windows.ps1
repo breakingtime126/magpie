@@ -4,9 +4,21 @@ param([switch]$DiscoverOriginalConnect,[switch]$AcceptOriginalConnect)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 function Assert-Exit([string]$Name) { if ($LASTEXITCODE -ne 0) { throw "$Name failed." } }
+function Get-OriginalPackageBuildTags([bool]$Acceptance,[string]$StageMode,[string]$CommitMessage) {
+    $diagnostic=$CommitMessage.Contains('[original-backend-handshake-v1]')
+    if ($diagnostic -and (-not $Acceptance -or $StageMode -cne 'stage-diagnostics-v1' -or
+        -not $CommitMessage.Contains('[original-connect-desktop-v1]') -or
+        -not $CommitMessage.Contains('[original-connect-stages-only-v1]'))) {
+        throw 'Handshake diagnostics require exact original stage-only acceptance.'
+    }
+    $gui='production,nativecodex';$adapter='nogui,nativecodex'
+    if ($diagnostic) { $gui+=',nativehandshakediag';$adapter+=',nativehandshakediag' }
+    return [ordered]@{gui=$gui;adapter=$adapter;handshakeDiagnostic=$diagnostic}
+}
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or
     $env:GITHUB_REPOSITORY -cne 'breakingtime126/magpie' -or
     $env:GITHUB_REF -cne 'refs/heads/experiment/app-server-bridge-v0.1.3035') { throw 'Scoped temporary CI required.' }
+$message=''
 $head = (& git rev-parse HEAD).Trim(); Assert-Exit 'Read source'
 if ($head -cne $env:GITHUB_SHA) { throw 'Source mismatch.' }
 if ($AcceptOriginalConnect) {
@@ -27,6 +39,7 @@ if ($DiscoverOriginalConnect) {
  & (Join-Path $PSScriptRoot 'original-connect-discovery.tests.ps1')
  . (Join-Path $PSScriptRoot 'original-connect-discovery.ps1')
 } elseif ($env:MAGPIE_ORIGINAL_CONNECT_DISCOVERY) { throw 'Discovery marker without explicit option.' }
+$buildMode=Get-OriginalPackageBuildTags ([bool]$AcceptOriginalConnect) ([string]$env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS) $message
 $package = Join-Path $env:RUNNER_TEMP 'native-magpie-package'
 $evidence = Join-Path $env:RUNNER_TEMP 'native-magpie-evidence'
 [void](New-Item -ItemType Directory -Path $package -ErrorAction Stop)
@@ -55,11 +68,19 @@ Assert-Exit 'Windows supplier and ownership stack vet'
 Assert-Exit 'Synthetic supplier and ownership stack'
 & go test -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestConfiguredSupplier' ./internal/provider
 Assert-Exit 'Synthetic configured supplier source'
+if ($buildMode.handshakeDiagnostic) {
+    & go vet -tags nogui,nativecodex,nativehandshakediag ./internal/nativehandshake ./internal/nativehost ./internal/nativelaunch ./internal/appserverbridge ./cmd/magpie-codex-bridge
+    Assert-Exit 'Windows diagnostic handshake instrumentation vet'
+    & go test -tags nogui,nativecodex -count=1 -timeout=2m ./internal/nativehandshake
+    Assert-Exit 'Default handshake observer is inert'
+    & go test -tags nogui,nativecodex,nativehandshakediag -count=1 -timeout=5m -run '^TestHandshake' ./internal/nativehandshake ./internal/nativehost ./internal/nativelaunch ./internal/appserverbridge ./cmd/magpie-codex-bridge
+    Assert-Exit 'Bounded diagnostic handshake observer'
+}
 & go run github.com/tc-hib/go-winres@v0.3.3 make --in build/windows/winres.json --arch amd64 --out rsrc --file-version '0.0.0' --product-version '0.0.0'
 Assert-Exit 'Original Windows resources'
 $adapter = Join-Path $package 'magpie-codex-bridge.exe'
 # Console stdio component, not a new GUI or a bundled official Codex binary.
-& go build -tags nogui,nativecodex -trimpath -ldflags "-s -w -X main.buildVersion=$head" -o $adapter ./cmd/magpie-codex-bridge
+& go build -tags $buildMode.adapter -trimpath -ldflags "-s -w -X main.buildVersion=$head" -o $adapter ./cmd/magpie-codex-bridge
 Assert-Exit 'Same-source stdio adapter build'
 $adapterVersion = (& $adapter --version | Out-String).Trim()
 Assert-Exit 'Adapter identity only'
@@ -71,14 +92,14 @@ $exe = Join-Path $package 'Magpie-Native-Codex-Experimental.exe'
 $nativePins = "-X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSHA256=$adapterDigest -X github.com/yetone/magpie/internal/nativeconnect.packagedLauncherSourceRevision=$head"
 & go test -tags nogui,nativecodex -trimpath -ldflags $nativePins -count=1 -timeout=2m -run '^TestPackagedLauncherLinkerPins$' ./internal/nativeconnect -args "-native-package-sha256=$adapterDigest" "-native-package-revision=$head"
 Assert-Exit 'Compiled same-source launcher pin injection'
-& go build -tags production,nativecodex -trimpath -ldflags "-s -w -H windowsgui -X main.version=native-codex-$($head.Substring(0,8)) $nativePins" -o $exe .
+& go build -tags $buildMode.gui -trimpath -ldflags "-s -w -H windowsgui -X main.version=native-codex-$($head.Substring(0,8)) $nativePins" -o $exe .
 Assert-Exit 'Original Magpie GUI with pinned adapter build'
 $guiBuildInfo = & go version -m $exe
 Assert-Exit 'Read GUI build provenance'
 # Go deliberately omits -ldflags under -trimpath. Check source/tag provenance
 # here; the executed package test above checks the shared linker pin arguments.
 $provenance = $guiBuildInfo -join "`n"
-if ($provenance -notmatch '(?m)^\s*build\s+-tags=production,nativecodex\s*$' -or
+if ($provenance -notmatch ('(?m)^\s*build\s+-tags=' + [regex]::Escape($buildMode.gui) + '\s*$') -or
     $provenance -notmatch ('(?m)^\s*build\s+vcs\.revision=' + [regex]::Escape($head) + '\s*$')) { throw 'GUI source or native build tags do not match.' }
 Copy-Item -LiteralPath 'docs/subsystems/native-codex-connect.md' -Destination (Join-Path $package 'CONNECT-STATUS.md')
 
@@ -88,7 +109,7 @@ Copy-Item -LiteralPath 'docs/subsystems/original-gui-native-codex.md' -Destinati
 [void](New-Item -ItemType Directory -Path (Join-Path $package 'data'))
 # Native Magpie setting, not a fake account state; explicit logins remain actions.
 [IO.File]::WriteAllText((Join-Path $package 'data/settings.json'), '{"noAccountDiscovery":true,"lang":"zh","theme":"light","guideHidden":true}', [Text.UTF8Encoding]::new($false))
-@{sourceCommit=$head;adapterSHA256=(Get-FileHash $adapter -Algorithm SHA256).Hash.ToLowerInvariant();guiSHA256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant();unsigned=$true;originalGUI=$true;buildTags='production,nativecodex';portable=$true} |
+@{sourceCommit=$head;adapterSHA256=(Get-FileHash $adapter -Algorithm SHA256).Hash.ToLowerInvariant();guiSHA256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant();unsigned=$true;originalGUI=$true;buildTags=$buildMode.gui;adapterBuildTags=$buildMode.adapter;handshakeDiagnostic=[bool]$buildMode.handshakeDiagnostic;portable=$true} |
  ConvertTo-Json | Set-Content (Join-Path $package 'BUILD.json') -Encoding UTF8
 if ($AcceptOriginalConnect) {
  # Desktop host owns the retained official package/service/activation handles.
