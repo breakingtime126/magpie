@@ -277,11 +277,17 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 			return err
 		}
 	}
-	var clientEnded atomic.Bool
+	var clientEnded atomic.Int32
 	readers.Add(1)
 	go func() {
 		defer readers.Done()
-		scanMessagesWithEnd(ctx, input, "", events, func() { clientEnded.Store(true) })
+		scanMessagesWithEnd(ctx, input, "", events, func(err error) {
+			if errors.Is(err, io.EOF) {
+				clientEnded.Store(1)
+			} else {
+				clientEnded.Store(2)
+			}
+		})
 	}()
 	for {
 		select {
@@ -323,8 +329,11 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if clientEnded.Load() {
+				switch clientEnded.Load() {
+				case 1:
 					return nil
+				case 2:
+					return errors.New("cannot read client JSONL stream")
 				}
 				if err := startBackend(cfg.Backends[1]); err != nil {
 					return err
@@ -359,10 +368,10 @@ func scanMessages(ctx context.Context, input io.Reader, backend string, events c
 	scanMessagesWithEnd(ctx, input, backend, events, nil)
 }
 
-func scanMessagesWithEnd(ctx context.Context, input io.Reader, backend string, events chan<- bridgeEvent, ended func()) {
+func scanMessagesWithEnd(ctx context.Context, input io.Reader, backend string, events chan<- bridgeEvent, ended func(error)) {
 	send := func(event bridgeEvent) bool {
 		if event.err != nil && ended != nil {
-			ended()
+			ended(event.err)
 		}
 		select {
 		case events <- event:

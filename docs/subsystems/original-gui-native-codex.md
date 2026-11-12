@@ -248,3 +248,19 @@ The diagnostic-only handshake observer distinguishes client, primary and seconda
 stream termination, primary exit before bridge cancellation, and cancellation of
 the bridge loop. These fixed labels contain no backend output or error messages
 and do not change stream ownership, deadlines, retry behavior or acceptance.
+
+## Shared-state initialization ordering
+
+Only the explicitly shared-native route starts the primary first and defers the
+secondary until the router has accepted the primary's genuine initialize result.
+The original secondary initialize delivery and any early initialized notifications
+are retained in order, bounded to 128 deliveries and 32 MiB. A rejected response,
+stream failure or client cancellation does not authorize secondary startup.
+Ordinary isolated-backend mode retains parallel startup. Neither native home,
+history storage nor the existing Magpie proxy is changed.
+
+This removes concurrent first-start initialization as a source of interference;
+it is not proof of the exact underlying database failure or chat readiness.
+Both native replies and the existing policy/catalog checks are still required.
+The diagnostic reader accepts both the earlier parallel stage sequence and this
+ordered sequence, but does not infer a successful handshake from startup alone.
