@@ -9,7 +9,7 @@ function Get-OriginalConnectStageNames {
         'channel-start','channel-publication','bootstrap-listeners','prepared-plan','controller-validation',
         'selection-lock','selection-read','selection-profile','selection-publication','preparation-cleanup',
         'query-environment','query-start','query-wait','query-deadline','query-cancelled','query-exit-two','query-exit-three','query-exit-nonzero','query-wait-failure','query-output-bound','query-json','query-identity','query-root-running','query-root-exited','query-root-unknown',
-        'query-progress-unknown','query-progress-entry','query-progress-appx','query-progress-management',
+        'query-progress-unknown','query-progress-entry','query-progress-setup','query-progress-appx-import','query-progress-appx-return','query-progress-appx','query-progress-management',
         'query-progress-utility','query-progress-packages','query-progress-path','query-progress-json')
 }
 function New-OriginalConnectStageReport {

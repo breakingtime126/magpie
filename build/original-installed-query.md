@@ -70,10 +70,15 @@ tests or establish actual Connect success.
 
 ## Query progress observation
 
-The original script writes seven fixed ASCII lines to stderr, separately from
-its unchanged JSON stdout: `MAGPIE_QUERY_V1:entry`, then `:appx`, `:management`,
+The original script writes ten fixed ASCII lines to stderr, separately from
+its unchanged JSON stdout: `MAGPIE_QUERY_V1:entry`, then `:setup`, `:appx-import`,
+`:appx-return`, `:appx`, `:management`,
 `:utility`, `:packages`, `:path`, and `:json` with the same prefix. Entry is the
-first script statement; the next three follow successful fixed import/identity
+first script statement; setup follows the preference/encoding setup and helper
+definitions. The Appx-only import marker immediately precedes the actual fixed
+Import-Module call inside the helper; return immediately follows that call,
+before module/identity validation. Neither reports another module. The appx,
+management and utility markers follow successful fixed import/identity
 validation, packages follows enumeration/filtering before unique-count admission,
 path follows the literal leaf check, and json follows the original JSON pipeline.
 The snapshot names the last complete marker received, not the exact current
@@ -98,8 +103,8 @@ query-deadline/query-cancelled failure. Unknown remains a completed observation
 of missing evidence, never query success. No raw stdout/stderr, error text,
 paths, PIDs, credentials or native records are exported.
 
-The source-binding gate removes only those seven literal marker lines and
-requires the original reviewed query hash. It also verifies exact boundary
+The source-binding gate removes only those ten exact literal marker lines
+(including the two fixed Appx conditionals) and requires the original reviewed query hash. It also verifies exact boundary
 placement, authored package refusals, unchanged JSON, and separated stderr.
 Portable Go tests exercise parser corruption/partial input and concurrent
 snapshotting; Windows runtime tests and the original isolated GUI gate remain

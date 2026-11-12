@@ -395,8 +395,9 @@ Wait; see [query observation semantics](../../build/original-installed-query.md#
 
 The same cancellation branch samples fixed script-progress markers through a
 bounded stderr discard parser before Stop. These enum-only observations identify
-reached boundaries for entry, each fixed module import, package enumeration,
-path validation and JSON emission; unknown or malformed evidence cannot grant
-success. The added Cmd-owned stderr pipe drains in the unchanged single Wait.
+last complete recognized boundaries for entry, setup, the actual Appx import
+call and its return, each fixed module import/identity validation, package
+enumeration, path validation and JSON emission. Receipt may lag execution;
+unknown or malformed evidence cannot grant success. The added Cmd-owned stderr pipe drains in the unchanged single Wait.
 It changes diagnostic resources, not timeout, admission or recovery semantics;
 see [progress observation](../../build/original-installed-query.md#query-progress-observation).

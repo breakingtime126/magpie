@@ -125,7 +125,8 @@ adds two fixed records within the existing 128-record cap; successful queries
 keep their existing record count. See [retained observation semantics](original-installed-query.md#deadline-root-observation).
 
 A cancellation snapshot additionally reports exactly one completed
-`query-progress-unknown`, `query-progress-entry`, `query-progress-appx`,
+`query-progress-unknown`, `query-progress-entry`, `query-progress-setup`, `query-progress-appx-import`,
+`query-progress-appx-return`, `query-progress-appx`,
 `query-progress-management`, `query-progress-utility`, `query-progress-packages`,
 `query-progress-path`, or `query-progress-json`. It precedes the root snapshot
 and leaves query-deadline/query-cancelled as the first failure. Even json is

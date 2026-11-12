@@ -17,12 +17,20 @@ Assert ($begin -ge $marker.Length -and $end -gt $begin) 'embedded query found'
 $query=$sourceText.Substring($begin,$end-$begin)
 # Fixed markers are the only query-body delta. Removing their exact complete
 # source lines must recover the previously reviewed query byte-for-byte.
-$progressNames=@('entry','appx','management','utility','packages','path','json')
+$progressNames=@('entry','appx-import','appx-return','setup','appx','management','utility','packages','path','json')
 $progressLines=@($query -split "`n" | Where-Object { $_.Contains('MAGPIE_QUERY_V1') })
-Assert ($progressLines.Count -eq $progressNames.Count) 'only seven fixed progress markers'
+Assert ($progressLines.Count -eq $progressNames.Count) 'only ten fixed progress markers'
 for ($i=0;$i -lt $progressNames.Count;$i++) {
-    Assert ($progressLines[$i] -ceq ("[Console]::Error.WriteLine('MAGPIE_QUERY_V1:"+$progressNames[$i]+"')")) 'ordered fixed stderr marker literals'
+    $expected="[Console]::Error.WriteLine('MAGPIE_QUERY_V1:"+$progressNames[$i]+"')"
+    if ($progressNames[$i] -cin @('appx-import','appx-return')) { $expected="    if (`$moduleName -ceq 'Appx') { "+$expected+" }" }
+    Assert ($progressLines[$i] -ceq $expected) 'ordered fixed stderr marker literals'
 }
+Assert ($query.Contains("}`n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:setup')`n`$appxModule=Import-QueryModule 'Appx'")) 'setup completes before Appx helper invocation'
+$importBoundary="    if (`$moduleName -ceq 'Appx') { [Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx-import') }`n"+
+    '    $loaded=@(Microsoft.PowerShell.Core\Import-Module -Name $manifest -PassThru -ErrorAction Stop)'+"`n"+
+    "    if (`$moduleName -ceq 'Appx') { [Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx-return') }`n"+
+    '    if ($loaded.Count -ne 1'
+Assert ($query.Contains($importBoundary)) 'Appx markers immediately surround actual import before validation'
 $withoutProgress=($query -split "`n" | Where-Object { -not $_.Contains('MAGPIE_QUERY_V1') }) -join "`n"
 $sha=[Security.Cryptography.SHA256]::Create()
 try { $originalHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($withoutProgress)))).Replace('-','').ToLowerInvariant() }
@@ -129,6 +137,28 @@ Assert ($importDefinition.Contains($importCall)) 'fixed exact manifest import'
 function Get-FixtureModule { return $script:moduleFixture }
 $fakeImport=$importDefinition.Replace($importCall,'Get-FixtureModule').Replace('function Import-QueryModule','function Import-FixtureModule')
 . ([scriptblock]::Create($fakeImport))
+# Authored import failure distinguishes call entry from return. Validation failure
+# after a returned untyped value must still emit return, never appx completion.
+$savedImportError=[Console]::Error
+$importCapture=[IO.StringWriter]::new()
+try {
+    [Console]::SetError($importCapture)
+    foreach ($case in @('throw','invalid','management')) {
+        [void]$importCapture.GetStringBuilder().Clear()
+        $script:moduleFixture=[pscustomobject]@{Name='Appx'}
+        $fixtureDefinition=$fakeImport
+        if ($case -ceq 'throw') { $fixtureDefinition=$fakeImport.Replace('Get-FixtureModule','Throw-FixtureImport') }
+        function Throw-FixtureImport { throw 'authored import failure' }
+        . ([scriptblock]::Create($fixtureDefinition))
+        $module=if ($case -ceq 'management') {'Microsoft.PowerShell.Management'} else {'Appx'}
+        Refuses { Import-FixtureModule $module } 'authored import or validation failure remains refused'
+        $expected=''
+        if ($case -cne 'management') { $expected='MAGPIE_QUERY_V1:appx-import'+[Environment]::NewLine }
+        if ($case -ceq 'invalid') { $expected+='MAGPIE_QUERY_V1:appx-return'+[Environment]::NewLine }
+        Assert ($importCapture.ToString() -ceq $expected) 'Appx import markers distinguish throw from return without other module markers'
+    }
+} finally { [Console]::SetError($savedImportError);$importCapture.Dispose() }
+. ([scriptblock]::Create($fakeImport))
 $script:moduleFixture=$management
 Assert ((Import-FixtureModule 'Microsoft.PowerShell.Management').Name -ceq 'Microsoft.PowerShell.Management') 'matching imported root accepted'
 $script:moduleFixture=$utility
@@ -152,7 +182,12 @@ $appxFixtureImport=$fakeImport.Replace('$loaded[0].Name','$script:appxFixtureNam
 $appxFixtureCommand=[Management.Automation.CmdletInfo]::new('Get-AppxPackage',$joinPath.ImplementingType)
 $appxCases=@('valid','wrong-name','wrong-base','missing-path','relative-path','wrong-path','missing-assembly','wrong-assembly-name','missing-location','relative-location','wrong-location','missing-export','wrong-export','both-relative')
 if ([IO.Path]::DirectorySeparatorChar -eq '\') {$appxCases+=@('drive-relative','root-relative')}
+$savedAppxError=[Console]::Error
+$appxCapture=[IO.StringWriter]::new()
+try {
+    [Console]::SetError($appxCapture)
 foreach ($case in $appxCases) {
+    [void]$appxCapture.GetStringBuilder().Clear()
     $script:appxFixtureName='Appx'
     $script:appxFixtureBase=[IO.Path]::Combine($PSHOME,'Modules','Appx')
     $script:appxFixturePath=[IO.Path]::Combine($PSHOME,'authored-assembly.dll')
@@ -178,7 +213,9 @@ foreach ($case in $appxCases) {
     }
     if ($case -ceq 'valid') { Assert ($null -ne (Import-FixtureModule 'Appx')) 'matching Appx binary identity accepted' }
     else { Refuses { Import-FixtureModule 'Appx' } ('Appx identity refuses '+$case) }
+    Assert ($appxCapture.ToString() -ceq ('MAGPIE_QUERY_V1:appx-import'+[Environment]::NewLine+'MAGPIE_QUERY_V1:appx-return'+[Environment]::NewLine)) 'returned import marker precedes every identity verdict'
 }
+} finally { [Console]::SetError($savedAppxError);$appxCapture.Dispose() }
 
 # Query body uses authored package objects only; no Appx cmdlet is invoked.
 $tail=$query.Substring($query.IndexOf('$p=@(',[StringComparison]::Ordinal))

@@ -64,6 +64,9 @@ const (
 	QueryRootUnknown
 	QueryProgressUnknown
 	QueryProgressEntry
+	QueryProgressSetup
+	QueryProgressAppxImport
+	QueryProgressAppxReturn
 	QueryProgressAppx
 	QueryProgressManagement
 	QueryProgressUtility
@@ -125,6 +128,9 @@ var names = [...]string{
 	QueryRootUnknown:        "query-root-unknown",
 	QueryProgressUnknown:    "query-progress-unknown",
 	QueryProgressEntry:      "query-progress-entry",
+	QueryProgressSetup:      "query-progress-setup",
+	QueryProgressAppxImport: "query-progress-appx-import",
+	QueryProgressAppxReturn: "query-progress-appx-return",
 	QueryProgressAppx:       "query-progress-appx",
 	QueryProgressManagement: "query-progress-management",
 	QueryProgressUtility:    "query-progress-utility",

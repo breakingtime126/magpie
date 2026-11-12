@@ -20,7 +20,9 @@ function Import-QueryModule([string]$moduleName) {
     if ($moduleName -cnotin @('Appx','Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility')) { throw 'native query module unavailable' }
     $moduleRoot=[IO.Path]::Combine($PSHOME,'Modules',$moduleName)
     $manifest=[IO.Path]::Combine($moduleRoot,$moduleName+'.psd1')
+    if ($moduleName -ceq 'Appx') { [Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx-import') }
     $loaded=@(Microsoft.PowerShell.Core\Import-Module -Name $manifest -PassThru -ErrorAction Stop)
+    if ($moduleName -ceq 'Appx') { [Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx-return') }
     if ($loaded.Count -ne 1 -or $loaded[0] -isnot [System.Management.Automation.PSModuleInfo] -or $loaded[0].Name -cne $moduleName) { throw 'native query module unavailable' }
     $sameBase=[string]::Equals([IO.Path]::GetFullPath($loaded[0].ModuleBase),[IO.Path]::GetFullPath($moduleRoot),[StringComparison]::OrdinalIgnoreCase)
     if ($moduleName -cne 'Appx') { $sameBase=$sameBase -or [string]::Equals([IO.Path]::GetFullPath($loaded[0].ModuleBase),[IO.Path]::GetFullPath($PSHOME),[StringComparison]::OrdinalIgnoreCase) }
@@ -43,6 +45,7 @@ function Get-QueryCommand($moduleInfo,[string]$commandName) {
         $commandInfo.CommandType -ne [System.Management.Automation.CommandTypes]::Cmdlet) { throw 'native query command unavailable' }
     return $commandInfo
 }
+[Console]::Error.WriteLine('MAGPIE_QUERY_V1:setup')
 $appxModule=Import-QueryModule 'Appx'
 [Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')
 $managementModule=Import-QueryModule 'Microsoft.PowerShell.Management'

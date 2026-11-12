@@ -239,11 +239,14 @@ func TestInstalledQuerySourceContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Removing only the seven fixed observation statements must recover
+			// Removing only the ten fixed observation statements must recover
 			// the reviewed query exactly, including filters, exit codes and JSON.
 			semantic := query
 			for _, marker := range queryProgressMarkers {
 				line := "[Console]::Error.WriteLine('" + marker + "')"
+				if marker == "MAGPIE_QUERY_V1:appx-import" || marker == "MAGPIE_QUERY_V1:appx-return" {
+					line = "    if ($moduleName -ceq 'Appx') { " + line + " }"
+				}
 				if strings.Count(semantic, line) != 1 {
 					t.Fatal("missing/duplicate progress boundary")
 				}
@@ -253,7 +256,7 @@ func TestInstalledQuerySourceContract(t *testing.T) {
 			if fmt.Sprintf("%x", sha256.Sum256([]byte(semantic))) != "22d3baf0d80dd8d5b7446e88414afa7d929c1b70dcfb89f98d943a9cc6c3140b" {
 				t.Fatal("query semantics changed beyond progress markers")
 			}
-			if fmt.Sprintf("%x", sha256.Sum256([]byte(query))) != "87450a7f893a23a6e9f0ee7b4b03ee15d773521714c7eafe20326e17c82ad727" {
+			if fmt.Sprintf("%x", sha256.Sum256([]byte(query))) != "d90ba13aa248ef5a5d646d59457b64ea63e226141c2242635260f95a992d63e9" {
 				t.Fatal("reviewed query bytes changed")
 			}
 			queryFound = true

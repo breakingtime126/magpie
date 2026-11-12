@@ -30,7 +30,7 @@ func TestInstalledQueryProgressBeforeStop(t *testing.T) {
 		}
 		found, err := runInstalledQuery(ctx, cmd, func(*exec.Cmd) (queryProcess, error) {
 			return queryFixtureProcess{wait: func() error {
-				writes("PRIVATE-CANARY\nMAGPIE_QUERY_V1:entry\r\nMAGPIE_QUERY_V1:appx\r\n")
+				writes("PRIVATE-CANARY\nMAGPIE_QUERY_V1:entry\r\nMAGPIE_QUERY_V1:setup\r\nMAGPIE_QUERY_V1:appx-import\r\nMAGPIE_QUERY_V1:appx-return\r\nMAGPIE_QUERY_V1:appx\r\n")
 				close(cancelled)
 				<-release
 				return nil
@@ -73,7 +73,7 @@ func TestInstalledQueryProgressParser(t *testing.T) {
 	for _, tc := range []struct{ name, input, want string }{
 		{"none", "PRIVATE-PATH-KEY\n", "unknown"},
 		{"entry", prefix + "entry\n", "entry"},
-		{"crlf", prefix + "entry\r\n" + prefix + "appx\r\n", "appx"},
+		{"crlf", prefix + "entry\r\n" + prefix + "setup\r\n" + prefix + "appx-import\r\n" + prefix + "appx-return\r\n" + prefix + "appx\r\n", "appx"},
 		{"partial", prefix + "entry", "unknown"},
 		{"next-partial", prefix + "entry\n" + prefix + "app", "unknown"},
 		{"skipped", prefix + "appx\n", "unknown"},
@@ -84,7 +84,7 @@ func TestInstalledQueryProgressParser(t *testing.T) {
 		{"noise", strings.Repeat("PRIVATE", 10000) + "\n" + prefix + "entry\nSECRET\n", "entry"},
 		{"embedded", "SECRET" + prefix + "entry\n", "unknown"},
 		{"invalid-stays", prefix + "appx\n" + prefix + "entry\n", "unknown"},
-		{"all", prefix + "entry\n" + prefix + "appx\n" + prefix + "management\n" + prefix + "utility\n" + prefix + "packages\n" + prefix + "path\n" + prefix + "json\n", "json"},
+		{"all", prefix + "entry\n" + prefix + "setup\n" + prefix + "appx-import\n" + prefix + "appx-return\n" + prefix + "appx\n" + prefix + "management\n" + prefix + "utility\n" + prefix + "packages\n" + prefix + "path\n" + prefix + "json\n", "json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, size := range []int{1, 2, 7, 256, len(tc.input) + 1} {
@@ -247,5 +247,37 @@ func TestInstalledQueryProgressCancellationDrainsPipe(t *testing.T) {
 	text := strings.Join(lines, "\n")
 	if !strings.Contains(text, "query-progress-entry outcome=completed") || !strings.Contains(text, "query-cancelled outcome=failed") {
 		t.Fatal("marker-triggered cancellation missing", text)
+	}
+}
+
+func TestInstalledQueryProgressAppxBoundaries(t *testing.T) {
+	// Independent literals pin all ten boundaries, including mask bits 8 and 9.
+	names := []string{"entry", "setup", "appx-import", "appx-return", "appx", "management", "utility", "packages", "path", "json"}
+	var prefix string
+	for _, name := range names {
+		line := "MAGPIE_QUERY_V1:" + name + "\r\n"
+		for _, suffix := range []string{line, strings.TrimSuffix(line, "\r\n"), line[:len(line)-2] + "PRIVATE\n", line + line} {
+			for _, size := range []int{1, 2, 17, 256} {
+				p := &queryProgress{}
+				data := []byte(prefix + suffix)
+				for len(data) > 0 {
+					n := min(size, len(data))
+					_, _ = p.Write(data[:n])
+					data = data[n:]
+				}
+				var lines []string
+				ctx, finish := nativeprepdiag.Begin(context.Background(), func(s string) { lines = append(lines, s) })
+				p.snapshot(ctx)
+				finish(false)
+				want := "unknown"
+				if suffix == line {
+					want = name
+				}
+				if !strings.Contains(strings.Join(lines, "\n"), "stage=query-progress-"+want+" outcome=completed") {
+					t.Fatalf("boundary=%s chunk=%d want=%s: %v", name, size, want, lines)
+				}
+			}
+		}
+		prefix += line
 	}
 }

@@ -53,7 +53,7 @@ foreach ($rootStage in @('query-root-running','query-root-exited','query-root-un
 }
 # Progress snapshots remain completed observations, including unknown, and
 # neither overtake the original failure nor authorize recovery or success.
-foreach ($progressStage in @('query-progress-unknown','query-progress-entry','query-progress-appx',
+foreach ($progressStage in @('query-progress-unknown','query-progress-entry','query-progress-setup','query-progress-appx-import','query-progress-appx-return','query-progress-appx',
     'query-progress-management','query-progress-utility','query-progress-packages','query-progress-path','query-progress-json')) {
     foreach ($failure in @('query-deadline','query-cancelled')) {
         $trace=(Line 1 connect entered)+(Line 2 query-wait entered)+(Line 3 $progressStage entered)+
