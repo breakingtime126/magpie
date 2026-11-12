@@ -40,6 +40,7 @@ on:
       - build/original-desktop-window-capture-native.cs
       - build/mutate-bridge-shutdown-order.py
       - build/test-native-preview-official.ps1
+      - build/test-secondary-initialize-official.ps1
       - .github/workflows/experimental-codex-connectivity-preview.yml
       - docs/subsystems/original-gui-native-codex.md
 permissions:
@@ -299,5 +300,46 @@ jobs:
           path: |
             ${{ runner.temp }}/native-preview-text-report.json
             ${{ runner.temp }}/native-supplier-catalog-text-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  secondary-initialize-control:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && contains(github.event.head_commit.message, '[secondary-initialize-control-v1]')
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: '0'
+      GOFLAGS: -mod=readonly
+      GOTOOLCHAIN: local
+      GOTELEMETRY: 'off'
+      PREVIEW_NATIVE_TEXT_OPT_IN: native-preview-text-v1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Compile synthetic test host without running it
+        shell: pwsh
+        run: |
+          go test -c -tags nogui -o "$env:RUNNER_TEMP/secondary-initialize-tests.exe" ./internal/appserverbridge
+          if ($LASTEXITCODE -ne 0) { throw 'Test host compilation failed.' }
+      - name: Verify official package and run only the opted-in loopback test
+        shell: pwsh
+        run: |
+          $testExecutable = Join-Path $env:RUNNER_TEMP 'secondary-initialize-tests.exe'
+          $message = (& git log -1 --format=%B) -join "`n"
+          $testName = 'TestOfficialSecondaryInitializeControl'
+          ./build/test-secondary-initialize-official.ps1 -TestExecutable $testExecutable -TestName $testName
+      - name: Upload fixed-label acceptance report only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: secondary-initialize-control-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/secondary-initialize-control-report.json
           if-no-files-found: warn
           retention-days: 7
