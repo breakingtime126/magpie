@@ -5,6 +5,11 @@ try {
     foreach ($mutation in @('identity','output','exit','report','start-return','input-preamble','worker-progress','compile-progress','worker-prefix','phase-prefix','worker-load-path','helper-load-path','fixture-path-cmdlet','sleep-exit','phase-deadline')) {
         $work=Join-Path $root $mutation;[void][IO.Directory]::CreateDirectory($work)
         Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'original-desktop-window-capture*.ps1' | Copy-Item -Destination $work
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'original-desktop-window-capture-native.cs') -Destination $work
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            # Same CI-built input, never recompilation or a missing-DLL false red.
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'original-desktop-window-capture-native.dll') -Destination $work -ErrorAction Stop
+        }
         $filename=if ($mutation -eq 'start-return') { 'original-desktop-window-capture-supervisor.ps1' } elseif ($mutation -in @('worker-progress','worker-prefix','worker-load-path')) { 'original-desktop-window-capture-worker.ps1' } elseif ($mutation -in @('input-preamble','compile-progress','sleep-exit','phase-deadline')) { 'original-desktop-window-capture.tests.ps1' } else { 'original-desktop-window-capture.ps1' }
         $path=Join-Path $work $filename
         $text=[IO.File]::ReadAllText($path)

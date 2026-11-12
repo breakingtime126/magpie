@@ -31,19 +31,24 @@ still block publication; partial images remain private.
 
 ## Offline checks
 
-Run `original-desktop-window-capture.tests.ps1` and
+In the disposable Windows CI job, first run
+`powershell -NoProfile -File build/original-desktop-window-capture-build.ps1`.
+It compiles the reviewed `.cs` source once with the installed .NET Framework
+compiler into the fixed sibling helper DLL. No compiled helper is committed or
+included in the user-facing Magpie package. Then run
+`original-desktop-window-capture.tests.ps1` and
 `original-desktop-window-capture.mutations.ps1`. Use Windows Desktop PowerShell
 for native tests; Linux Core runs portable checks with telemetry disabled.
 
 The main test automatically invokes `original-desktop-window-capture-prefix.tests.ps1`
 on Windows. It uses the actual production host/environment builder with fresh
 dummy fixture paths, the same helper loading and real context/path gates, then
-compiles native definitions without invoking a target/window method. A second
+loads the precompiled native definitions without invoking a target/window method. A second
 inert child verifies rejection of a disallowed branch. This is test-only encoded
 code, not a mode or alternate success path in the production worker. There is no
-new coordinator/workflow invocation. Fixed `PREFIX_PROBE` facts never include
+new target/window operation. CI prepares the DLL before these checks. Fixed `PREFIX_PROBE` facts never include
 raw errors, paths or arbitrary child text. The earlier inherited-environment
-compile-only probe remains a narrower comparison, not production startup parity.
+load-only probe remains a narrower comparison, not production startup parity.
 
 ## Fixed path loading
 
@@ -61,3 +66,23 @@ the production phase protocol. Portable tests trap `Join-Path` during actual
 helper loading, real path validation and the inert worker; mutations restore
 those calls and must fail. Removing this dependency is source-supported, but
 Windows CI is still required to establish whether it resolves the observed stall.
+
+## Precompiled native helper
+
+The C# window identity, capture and PNG validation implementation lives in
+`original-desktop-window-capture-native.cs`. Its code is unchanged from the
+previous inline definition. Runtime initialization uses only the fixed sibling
+DLL after the existing absolute-path and ancestor/reparse-point checks; a
+missing or invalid DLL, or a type already loaded from another path, is rejected.
+There is no source compilation, search-path fallback or environment expansion in
+the cleared screenshot child. The compatibility phase name `native-compile`
+now marks initialization by DLL loading, not an invocation of a compiler.
+
+The independent build step has a two-minute CI bound and runs before cleared
+children. Both initialization fixtures again use the actual eight-second child
+budget. This moves variable cold compilation work out of each screenshot attempt;
+it does not prove a specific cause of the earlier Add-Type stalls or bypass OS
+security checks. The supervisor and successful/failed image publication rules
+are unchanged. Native mutation fixtures copy this same built DLL and the source
+alongside their scripts, so missing build input cannot masquerade as a caught
+mutation. Missing/corrupt/helper-origin negatives run in fresh processes.

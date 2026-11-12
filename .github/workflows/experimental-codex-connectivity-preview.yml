@@ -37,6 +37,7 @@ on:
       - build/original-backend-handshake*.ps1
       - build/original-handshake-build.tests.ps1
       - build/original-desktop-*.ps1
+      - build/original-desktop-window-capture-native.cs
       - build/mutate-bridge-shutdown-order.py
       - build/test-native-preview-official.ps1
       - .github/workflows/experimental-codex-connectivity-preview.yml
@@ -179,6 +180,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Owned tray discovery fixtures failed.' }
           & pwsh -NoProfile -NonInteractive -File build/original-desktop-quit-discovery.mutations.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Owned tray discovery mutations failed.' }
+      - name: Precompile diagnostic capture helper
+        if: contains(github.event.head_commit.message, '[original-connect-desktop-v1]') && !contains(github.event.head_commit.message, '[original-connect-stages-only-v1]')
+        timeout-minutes: 2
+        shell: powershell
+        run: ./build/original-desktop-window-capture-build.ps1
       - name: Require capture fixtures for full acceptance
         if: contains(github.event.head_commit.message, '[original-connect-desktop-v1]') && !contains(github.event.head_commit.message, '[original-connect-stages-only-v1]')
         shell: pwsh
@@ -227,6 +233,10 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Precompile diagnostic capture helper
+        timeout-minutes: 2
+        shell: powershell
+        run: ./build/original-desktop-window-capture-build.ps1
       - name: Run independent capture fixtures
         id: capture_fixtures
         continue-on-error: true

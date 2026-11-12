@@ -233,10 +233,12 @@ turning bootstrap or initialization milestones into backend/desktop acceptance.
 The existing 15-second image-observation budget is used in full in this mode;
 no deadline is extended. Missing or incomplete traces remain unknown.
 
-The compile-only capture fixtures allow 30 seconds for cold `Add-Type` startup
-on hosted runners. They never call window identity or capture APIs. This is
-separate from the unchanged 8-second production capture deadline; successful
-compilation does not establish that real capture completed within that deadline.
+The disposable Windows job precompiles the unchanged capture C# helper once,
+before starting cleared-environment children. The runtime only loads that
+fixed-path DLL; missing, corrupt or other-origin helpers fail closed, with no
+compiler fallback. Initialization fixtures and real capture retain the 8-second
+limit. The separate build step has a 2-minute limit and proves compilation only,
+not successful window capture. See the [capture contract](../../build/original-desktop-window-capture.md).
 The post-sequence precondition observer guards optional Windows `HOME` access
 before indexing the environment under PowerShell strict mode. A missing `HOME`
 uses the existing `USERPROFILE` identity rule, while empty or mismatched values

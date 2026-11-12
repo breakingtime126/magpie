@@ -116,6 +116,21 @@ try {
     Assert ($null -ne $prefixLiteral) 'prefix fixture has explicit inert encoded code'
     [void][Management.Automation.Language.Parser]::ParseInput($prefixLiteral.Value,[ref]$prefixTokens,[ref]$prefixErrors)
     Assert ($prefixErrors.Count -eq 0 -and $prefixLiteral.Value -notmatch '::(Capture|Matches)|Get-Process|PrintWindow') 'prefix encoded code parses and contains no target/window invocation'
+    # Runtime initialization must load the CI-built helper, never compile source.
+    $loaderPath=Join-Path $PSScriptRoot 'original-desktop-window-capture-native.ps1'
+    $loaderTokens=$null;$loaderErrors=$null
+    $loaderAST=[Management.Automation.Language.Parser]::ParseFile($loaderPath,[ref]$loaderTokens,[ref]$loaderErrors)
+    Assert ($loaderErrors.Count -eq 0) 'precompiled native loader parses'
+    $loaderCommands=@($loaderAST.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst]},$true) | ForEach-Object { $_.GetCommandName() })
+    Assert ($loaderCommands -inotcontains 'Add-Type') 'runtime native helper never invokes a compiler cmdlet'
+    $loaderText=[IO.File]::ReadAllText($loaderPath)
+    Assert ($loaderText -notmatch 'CodeDom|CompileAssembly|csc\.exe' -and $loaderText.Contains('[Reflection.Assembly]::LoadFrom($assemblyPath)')) 'runtime helper has no compile fallback'
+    $sourcePath=Join-Path $PSScriptRoot 'original-desktop-window-capture-native.cs'
+    Assert ([IO.File]::Exists($sourcePath)) 'native source remains a reviewed build input'
+    $buildPath=Join-Path $PSScriptRoot 'original-desktop-window-capture-build.ps1'
+    $buildTokens=$null;$buildErrors=$null
+    [void][Management.Automation.Language.Parser]::ParseFile($buildPath,[ref]$buildTokens,[ref]$buildErrors)
+    Assert ($buildErrors.Count -eq 0) 'native helper build script parses'
     # A throwing path cmdlet proves the actual helper load and real filesystem
     # guards do not depend on command/module discovery. No UI/native call occurs.
     $loadRoot=[IO.Path]::Combine($root,'path-only')
@@ -305,28 +320,56 @@ function Initialize-OriginalCaptureNative {
     } finally { $phaseChild.Dispose() }
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         # Same Desktop executable and 8s child budget as production, but no target
-        # process/window and no Capture call. This isolates startup plus Add-Type.
+        # process/window and no Capture call. This isolates startup plus DLL load.
         # It inherits fixture environment, not the live child environment allowlist.
         Assert ($PSVersionTable.PSEdition -eq 'Desktop') 'Windows fixture uses production Desktop host'
         & (Join-Path $PSScriptRoot 'original-desktop-window-capture-prefix.tests.ps1')
-        $nativeScript=Join-Path $PSScriptRoot 'original-desktop-window-capture-native.ps1'
+        $nativeScript=Join-Path $PSScriptRoot 'original-desktop-window-capture.ps1'
         $compileCode=New-TestCompileCode $nativeScript
         $compileWatch=[Diagnostics.Stopwatch]::StartNew()
-        $compileChild=New-TestNoInputChild (New-TestStart $compileCode) -Deadline 30000
+        $compileChild=New-TestNoInputChild (New-TestStart $compileCode)
         try {
             $compileChild.CloseInput()
-            $compileWaited=$compileChild.Wait(30000)
+            $compileWaited=$compileChild.Wait(8000)
             if (-not $compileWaited -or -not $compileChild.Exited) {
                 'COMPILE_PROBE '+((Get-TestCompileFacts $compileChild) | ConvertTo-Json -Compress)
-                Assert $false 'compile-only child exits within its bounded compiler budget'
+                Assert $false 'precompiled native helper load exits within capture budget'
             }
             $drainWatch=[Diagnostics.Stopwatch]::StartNew()
             while (-not $compileChild.Drained -and $drainWatch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }
             $compileFacts=Get-TestCompileFacts $compileChild
             'COMPILE_PROBE '+($compileFacts | ConvertTo-Json -Compress)
-            Assert ($compileFacts.category -ceq 'none') 'native startup/compile succeeds without window access'
-            "PASS: Windows Desktop startup/native compile elapsedMs=$($compileWatch.ElapsedMilliseconds)"
+            Assert ($compileFacts.category -ceq 'none') 'native startup/load succeeds without window access'
+            "PASS: Windows Desktop startup/native load elapsedMs=$($compileWatch.ElapsedMilliseconds)"
         } finally { $compileChild.Dispose() }
+        # Fresh children prove missing/corrupt/redirected helpers fail closed.
+        # They never invoke a window method and cannot poison this host's type cache.
+        $builtHelper=Join-Path $PSScriptRoot 'original-desktop-window-capture-native.dll'
+        Assert ([IO.File]::Exists($builtHelper)) 'Windows fixture requires the CI-built helper'
+        foreach ($loadCase in @('missing','corrupt','other-origin')) {
+            $caseRoot=Join-Path $root ('native-load-'+$loadCase)
+            [void][IO.Directory]::CreateDirectory($caseRoot)
+            foreach ($name in @('original-desktop-window-capture.ps1','original-desktop-window-capture-native.ps1')) {
+                Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $caseRoot
+            }
+            $caseDLL=Join-Path $caseRoot 'original-desktop-window-capture-native.dll'
+            if ($loadCase -eq 'corrupt') { [IO.File]::WriteAllBytes($caseDLL,[byte[]](1,2,3)) }
+            elseif ($loadCase -eq 'other-origin') { Copy-Item -LiteralPath $builtHelper -Destination $caseDLL }
+            $caseCode=New-TestCompileCode (Join-Path $caseRoot 'original-desktop-window-capture.ps1')
+            if ($loadCase -eq 'other-origin') {
+                $caseCode="[void][Reflection.Assembly]::LoadFrom('"+$builtHelper.Replace("'","''")+"');"+$caseCode
+            }
+            $caseChild=New-TestNoInputChild (New-TestStart $caseCode)
+            try {
+                $caseChild.CloseInput()
+                Assert ($caseChild.Wait(8000) -and $caseChild.Exited) 'invalid helper child exits within load budget'
+                $caseWatch=[Diagnostics.Stopwatch]::StartNew()
+                while (-not $caseChild.Drained -and $caseWatch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }
+                $caseFacts=Get-TestCompileFacts $caseChild
+                Assert ($caseFacts.category -ceq 'exit-not-zero' -and $caseFacts.phase -ceq 'initialization-error' -and
+                    -not $caseFacts.stderrPresent -and $caseFacts.streamsComplete) ('precompiled helper refuses '+$loadCase)
+            } finally { $caseChild.Dispose() }
+        }
         Initialize-OriginalCaptureNative
         Add-Type -AssemblyName System.Drawing
         $bitmap=[Drawing.Bitmap]::new(2,2);$memory=[IO.MemoryStream]::new()
