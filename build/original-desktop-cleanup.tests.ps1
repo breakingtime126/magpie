@@ -169,6 +169,8 @@ $r=Run-Coordinator $false
 Need ($r.calls -ceq 'original-disposal,package-disposal,save' -and $r.report.cleanup.originalQuit -ceq 'blocked-recovery') 'unknown recovery performs no root close or kill'
 $r=Run-Coordinator $true 'forced-exit' 'forced-exit' '' 'owned-window-evidence'
 Need ($r.report.failureStage -ceq 'owned-window-evidence' -and $r.report.stage -ceq 'owned-window-evidence' -and $r.report.cleanup.status -ceq 'verified-retained-roots' -and $r.report.status -ceq 'blocked') 'cleanup preserves the prior operation failure'
+$r=Run-Coordinator $true 'timeout' 'forced-exit' '' 'owned-window-evidence'
+Need ($r.report.failureStage -ceq 'owned-window-evidence' -and $r.report.stage -ceq 'owned-window-evidence' -and $r.report.cleanup.status -ceq 'blocked' -and $r.report.status -ceq 'blocked') 'cleanup preserves the prior operation failure'
 $r=Run-Coordinator $true 'forced-exit' 'forced-exit' '' 'none' $false
 Need ($r.calls -notmatch '^desktop,' -and -not $r.report.ownedRootExitsConfirmed -and $r.report.cleanup.requiredRoots -eq 2) 'uncertain activation is not acted on or claimed absent'
 $r=Run-Coordinator $true 'forced-exit' 'forced-exit' '' 'none' $true $true
