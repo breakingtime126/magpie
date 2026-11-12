@@ -101,7 +101,8 @@ func (c *ownedAliasCatalog) validateNativeSettingsLists167(results map[string][]
 		for _, row := range rows {
 			// Duplicate keys are ambiguous even when the rest of the native descriptor
 			// contains optional fields unknown to this bridge. Preserve all those fields.
-			if validateRequirementsJSON(row) != nil {
+			if err := validateModelMetadataJSON(row); err != nil {
+				if errors.Is(err, errModelMetadataJSONLimit) { return c.failure(nativehandshake.CatalogReasonJSONLimit) }
 				return c.failure(nativehandshake.CatalogReasonJSON)
 			}
 			m, err := parseObject(row)

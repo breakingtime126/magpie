@@ -82,6 +82,7 @@ const (
 	CatalogReasonPolicySize
 	CatalogReasonPolicyMismatch
 	CatalogReasonPolicyNonNull
+	CatalogReasonJSONLimit
 )
 
 var names = [...]string{
@@ -143,6 +144,7 @@ var names = [...]string{
 	CatalogReasonPolicySize: "catalog-reason-policy-size",
 	CatalogReasonPolicyMismatch: "catalog-reason-policy-mismatch",
 	CatalogReasonPolicyNonNull: "catalog-reason-policy-nonnull",
+	CatalogReasonJSONLimit: "catalog-reason-json-limit",
 }
 
 func (s Stage) String() string {
