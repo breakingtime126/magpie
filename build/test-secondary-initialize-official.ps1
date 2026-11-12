@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$TestExecutable,
-    [ValidateSet('TestOfficialSecondaryInitializeControl')]
+    [ValidateSet('TestOfficialSecondaryInitializeControl', 'TestOfficialBridgeInitializeBarrier')]
     [string]$TestName = 'TestOfficialSecondaryInitializeControl'
 )
 Set-StrictMode -Version Latest
@@ -43,13 +43,13 @@ Assert-PublicRegularPath $TestExecutable
 $root = Join-Path $env:RUNNER_TEMP ('secondary-initialize-control-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
 $reportName = 'secondary-initialize-control-report.json'
-$scope = 'official-secondary-bridge-start-order-initialize-control'
+$scope = if ($TestName -ceq 'TestOfficialBridgeInitializeBarrier') { 'official-bridge-initialize-barrier' } else { 'official-secondary-bridge-start-order-initialize-control' }
 $reportPath = Join-Path $env:RUNNER_TEMP $reportName
 if (Test-Path -LiteralPath $reportPath) { throw 'Report already exists; no retry.' }
 $report = [ordered]@{schema=1;scope=$scope;source_commit=$head;
     status='failed';stage='download';package_verified=$false;test_passed=$false;cleanup_complete=$false;
     desktop_verified=$false;real_account_used=$false;zero_egress_proven=$false;
-    diagnostic_status='unavailable';native_stage=$null;native_class=$null;
+    diagnostic_status='unavailable';native_stage=$null;native_class=$null;bridge_stages=@();
     diagnostic_only=$true;chat_verified=$false;inference_attempted=$false;test_process_started=$false;host_error_line=0;host_error_category='none';
     cleanup_error_line=0;cleanup_error_category='none';cleanup_error_hresult=0;cleanup_delete_attempts=0;cleanup_sharing_retries=0}
 $process = $null; $started = $false
@@ -139,6 +139,9 @@ try {
             }
         }
     })
+    if ($TestName -ceq 'TestOfficialBridgeInitializeBarrier') {
+        $allowedStages = @($outcomes | ForEach-Object { 'bridge-initialize-' + $_ })
+    }
     $allowedClasses = @('passed')
     $report.diagnostic_status = 'invalid'
     if ($diagnostics.Count -ne 1 -or
@@ -148,6 +151,17 @@ try {
     $nativeStage = $Matches[1]; $nativeClass = $Matches[2]
     if ($allowedStages -cnotcontains $nativeStage -or $allowedClasses -cnotcontains $nativeClass) {
         throw 'Required fixed diagnostic is not allowlisted.'
+    }
+    $bridgeLines = @($output -split '\r?\n' | Where-Object { $_.StartsWith('native-bridge-stage') })
+    $fixedBridgeStages = @('host-listening','host-probe-admitted','host-probe-acknowledged','host-jsonl-admitted','adapter-entered','startup-probe-requested','jsonl-requested','profile-authenticated','endpoint-allocated','probe-result-validated','probe-output-written','probe-failed','jsonl-failed','primary-started','secondary-started','initialize-received','primary-initialize-written','secondary-initialize-written','primary-initialize-reply','secondary-initialize-reply','primary-initialize-error','secondary-initialize-error','initialization-rejected','initialization-ready','initialize-output-written','protocol-failed','stream-write-failed','probe-environment-admitted','probe-environment-rejected','primary-exited','bridge-context-cancelled','client-stream-ended','primary-stream-ended','secondary-stream-ended','protocol-source-client','protocol-source-primary','protocol-source-secondary','protocol-class-envelope','protocol-class-correlation','protocol-class-unscoped-request','protocol-class-thread-ownership','protocol-class-initialization','protocol-class-client-notification','protocol-class-other','protocol-shape-notification','protocol-shape-request','protocol-shape-response','protocol-shape-invalid','protocol-class-admission','protocol-class-catalog','protocol-pending-initialize','protocol-pending-policy','protocol-pending-config','protocol-pending-catalog','protocol-pending-none','protocol-pending-other')
+    if ($bridgeLines.Count -gt 128) { throw 'Bridge stage count exceeded.' }
+    foreach ($line in $bridgeLines) {
+        if ($line -cnotmatch '\Anative-bridge-stage stage=([a-z-]+)\z' -or
+            $fixedBridgeStages -cnotcontains $Matches[1]) { throw 'Bridge stage not allowlisted.' }
+        $report.bridge_stages += $Matches[1]
+    }
+    if ($TestName -ceq 'TestOfficialBridgeInitializeBarrier' -and $bridgeLines.Count -eq 0) {
+        throw 'Bridge observer evidence missing.'
     }
     $report.native_stage = $nativeStage; $report.native_class = $nativeClass
     $report.diagnostic_status = 'valid'

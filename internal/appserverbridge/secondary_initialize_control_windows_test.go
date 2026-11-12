@@ -13,11 +13,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/yetone/magpie/internal/nativecatalog"
 	"github.com/yetone/magpie/internal/nativeendpoint"
+	"github.com/yetone/magpie/internal/nativehandshake"
 	"github.com/yetone/magpie/internal/proc"
 )
 
@@ -294,4 +296,65 @@ func TestSecondaryInitializeControlExchangeKeepsStreamsOpen(t *testing.T) {
 	if _, err := client.Write([]byte{'x'}); err != nil || !<-fixture {
 		t.Fatal("quick initialize reply retired shared primary")
 	}
+}
+
+// Fast diagnostic of the complete real Router barrier, not Desktop acceptance.
+// No thread/turn/inference RPC is sent. The unused loopback reservation is not
+// an AIHub service or a model-response fixture.
+func TestOfficialBridgeInitializeBarrier(t *testing.T) {
+	if os.Getenv("MAGPIE_PREVIEW_OFFICIAL_TEXT_TEST") != "1" {
+		t.Skip("explicit hosted official-runtime opt-in required")
+	}
+	exe := os.Getenv("MAGPIE_PREVIEW_OFFICIAL_NATIVE")
+	if !filepath.IsAbs(exe) {
+		t.Fatal("verified official executable unavailable")
+	}
+	cfg := sharedNativeConfigFixture167(t)
+	catalog, err := nativecatalog.Render([]nativecatalog.Model{{ID: "original-ui-fixture/original-ui-fixture-model", Name: "original-ui-fixture-model"}})
+	if err != nil || os.WriteFile(cfg.SharedNativeRoute.SecondaryCatalog, catalog, 0600) != nil {
+		t.Fatal("fresh synthetic catalog unavailable")
+	}
+	reservation, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("loopback reservation unavailable")
+	}
+	defer reservation.Close()
+	cfg.SharedNativeRoute.GatewayURL = "http://" + reservation.Addr().String() + "/v1"
+	cfg.SharedNativeRoute.GatewayAuth = SharedNativeLocalGateway167
+	for i := range cfg.Backends {
+		cfg.Backends[i].Command = exe
+		cfg.Backends[i].StartupProbeSHA256 = windowsReadinessSHA167
+		cfg.Backends[i].InheritEnv = nil
+	}
+	t.Setenv("HOME", cfg.Backends[0].Home)
+	t.Setenv("USERPROFILE", cfg.Backends[0].Home)
+	t.Setenv("CODEX_HOME", cfg.Backends[0].CodexHome)
+	var mu sync.Mutex
+	var stages []nativehandshake.Stage
+	observed := nativehandshake.WithObserver(context.Background(), func(s nativehandshake.Stage) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(stages) < 128 { stages = append(stages, s) }
+	})
+	ctx, cancel := context.WithTimeout(observed, 45*time.Second)
+	defer cancel()
+	input, client := io.Pipe()
+	output, writer := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg, input, writer) }()
+	outcome := initializeControlExchange(ctx, client, output)
+	client.Close()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5*time.Second):
+		t.Fatal("bridge process cleanup unverified")
+	}
+	output.Close()
+	mu.Lock()
+	for _, s := range stages {
+		fmt.Printf("native-bridge-stage stage=%s\n", s.String())
+	}
+	mu.Unlock()
+	fmt.Printf("native-preview-diagnostic stage=bridge-initialize-%s class=passed\n", outcome)
 }
