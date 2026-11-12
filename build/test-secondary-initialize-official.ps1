@@ -11,7 +11,7 @@ if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or
     $env:GITHUB_EVENT_NAME -cne 'push' -or $env:GITHUB_REPOSITORY -cne 'breakingtime126/magpie' -or
     $env:GITHUB_REF -cne 'refs/heads/experiment/app-server-bridge-v0.1.3035' -or
     $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}\z' -or
-    $env:PREVIEW_NATIVE_TEXT_OPT_IN -cne 'native-preview-text-v1' -or
+    $env:PREVIEW_NATIVE_TEXT_OPT_IN -cne 'secondary-initialize-control-v1' -or
     -not [IO.Path]::IsPathFullyQualified($env:RUNNER_TEMP)) { throw 'Explicit isolated CI context required.' }
 # Presence, including an empty value, is a safety selection, not a value to erase.
 $parentEnvironment = [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process)
@@ -40,7 +40,7 @@ $definitions = foreach ($name in @('Get-StandaloneIdentityHelpers', 'Save-Standa
 . ([scriptblock]::Create(($definitions -join "`n")))
 . (Get-StandaloneIdentityHelpers (Join-Path $PSScriptRoot 'test-desktop-cold-start.ps1'))
 Assert-PublicRegularPath $TestExecutable
-$root = Join-Path $env:RUNNER_TEMP ('native-preview-text-' + [guid]::NewGuid().ToString('N'))
+$root = Join-Path $env:RUNNER_TEMP ('secondary-initialize-control-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
 $reportName = 'secondary-initialize-control-report.json'
 $scope = 'official-secondary-initialize-only-model-control'
@@ -71,7 +71,7 @@ try {
     $codex = Join-Path $root 'codex.exe'
     Export-Standalone4239Native $package $codex $identity
     $report.package_verified = $true
-    $report.stage = 'native-text-test'
+    $report.stage = 'secondary-initialize-only'
     $testHome = Join-Path $root 'test-home'
     [void][IO.Directory]::CreateDirectory($testHome)
     $psi = [Diagnostics.ProcessStartInfo]::new()
@@ -162,60 +162,9 @@ try {
         'initialize-control-timeout-eof',
         'initialize-control-timeout-invalid',
         'initialize-control-timeout-write',
-        'initialize-control-timeout-timeout',
-
-        'admission', 'cleanup', 'close',
-        'config-agents-enabled', 'config-cloud-skills-enabled', 'config-features-apps',
-        'config-features-code_mode', 'config-features-code_mode_host', 'config-features-code_mode_only',
-        'config-features-code_mode_prewarm', 'config-features-deferred_executor', 'config-features-executor_capability_discovery_v2',
-        'config-features-goals', 'config-features-hooks', 'config-features-image_generation',
-        'config-features-mcp_connection_sharing', 'config-features-memories', 'config-features-multi_agent_v2',
-        'config-features-multi_env_copy_file', 'config-features-plugin_hooks', 'config-features-plugins',
-        'config-features-request_permissions_tool', 'config-features-shell_tool', 'config-features-token_budget',
-        'config-features-tool_suggest', 'config-hooks-notify', 'config-mcp',
-        'config-orchestrator-mcp-enabled', 'config-provider', 'config-request',
-        'config-web_search', 'done', 'initialize',
-        'initialize-receipt', 'model-selection', 'models',
-        'notification-item-completed', 'notification-item-started', 'notification-thread-settings-updated',
-        'notification-thread-started', 'notification-thread-status-changed', 'notification-thread-tokenUsage-updated',
-        'notification-turn-completed', 'notification-turn-started', 'notification-unsupported',
-        'reply', 'start', 'test-isolation',
-        'test-setup', 'test-transport', 'thread-receipt',
-        'thread-request', 'turn-receipt', 'turn-request',
-        'turn-stream', 'unclassified', 'version',
-        'notification-configWarning', 'notification-warning', 'notification-account-updated',
-        'config-rpc-other', 'config-rpc-invalid-params', 'config-rpc-invalid-request',
-        'config-rpc-method-not-found', 'config-rpc-internal', 'config-rpc-server',
-        'notification-envelope', 'config-rpc-write', 'config-rpc-transport',
-        'config-rpc-canceled', 'config-rpc-eof', 'config-rpc-envelope',
-        'config-rpc-id', 'notification-error', 'notification-thread-readState-changed',
-        'notification-thread-archived', 'notification-thread-deleted', 'notification-thread-unarchived',
-        'notification-thread-closed', 'notification-thread-reverted', 'notification-skills-changed',
-        'notification-thread-name-updated', 'notification-thread-section-changed', 'notification-thread-attachment-updated',
-        'notification-thread-goal-updated', 'notification-thread-prediction-updated', 'notification-thread-goal-cleared',
-        'notification-thread-queue-changed', 'notification-project-changed', 'notification-thread-project-updated',
-        'notification-thread-environment-connected', 'notification-thread-environment-disconnected', 'notification-hook-started',
-        'notification-hook-completed', 'notification-turn-diff-updated', 'notification-turn-plan-updated',
-        'notification-item-autoApprovalReview-started', 'notification-item-autoApprovalReview-completed', 'notification-autoApprovalReview-strictReviewRequired',
-        'notification-rawResponseItem-completed', 'notification-rawResponse-completed', 'notification-item-agentMessage-delta',
-        'notification-item-plan-delta', 'notification-command-exec-outputDelta', 'notification-process-outputDelta',
-        'notification-process-exited', 'notification-item-commandExecution-outputDelta', 'notification-item-commandExecution-terminalInteraction',
-        'notification-item-fileChange-outputDelta', 'notification-item-fileChange-patchUpdated', 'notification-serverRequest-resolved',
-        'notification-item-mcpToolCall-progress', 'notification-mcpServer-oauthLogin-completed', 'notification-mcpServer-startupStatus-updated',
-        'notification-mcpServer-event-stream-notification', 'notification-account-gatewayOAuth-changed', 'notification-account-rateLimits-updated',
-        'notification-app-list-updated', 'notification-remoteControl-status-changed', 'notification-externalAgentConfig-import-progress',
-        'notification-externalAgentConfig-import-completed', 'notification-fs-changed', 'notification-item-reasoning-summaryTextDelta',
-        'notification-item-reasoning-summaryPartAdded', 'notification-item-reasoning-textDelta', 'notification-thread-compacted',
-        'notification-model-rerouted', 'notification-model-verification', 'notification-modelProvider-authRecoveryStarted',
-        'notification-modelProvider-authRecoveryCompleted', 'notification-turn-moderationMetadata', 'notification-model-safetyBuffering-updated',
-        'notification-guardianWarning', 'notification-deprecationNotice', 'notification-fuzzyFileSearch-sessionUpdated',
-        'notification-fuzzyFileSearch-sessionCompleted', 'notification-thread-realtime-started', 'notification-thread-realtime-itemAdded',
-        'notification-thread-realtime-item-started', 'notification-thread-realtime-item-transcript-delta', 'notification-thread-realtime-item-completed',
-        'notification-thread-realtime-transcript-delta', 'notification-thread-realtime-transcript-done', 'notification-thread-realtime-outputAudio-delta',
-        'notification-thread-realtime-sdp', 'notification-thread-realtime-error', 'notification-thread-realtime-closed',
-        'notification-windows-worldWritableWarning', 'notification-windowsSandbox-setupCompleted', 'notification-account-login-completed'
+        'initialize-control-timeout-timeout'
     )
-    $allowedClasses = @('passed','failed-no-request','failed-request-seen','failed-fixture-rejected')
+    $allowedClasses = @('passed')
     $report.diagnostic_status = 'invalid'
     if ($diagnostics.Count -ne 1 -or
         $diagnostics[0] -cnotmatch '\Anative-preview-diagnostic stage=([^ ]+) class=([^ ]+)\z') {
@@ -315,5 +264,5 @@ try {
     }
     [IO.File]::WriteAllText($reportPath, ($report | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
 }
-if ($report.status -cne 'passed') { throw 'Official native text test failed; inspect fixed-stage report.' }
-Write-Output 'PASS: official native loopback text test; Desktop and real accounts not tested.'
+if ($report.status -cne 'passed') { throw 'Official secondary initialize diagnostic failed; inspect fixed-stage report.' }
+Write-Output 'PASS: official native initialize-only control test; Desktop and real accounts not tested.'

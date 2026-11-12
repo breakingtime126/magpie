@@ -322,6 +322,43 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Format diagnostic source and retain exact build input
+        shell: pwsh
+        run: |
+          $file = 'internal/appserverbridge/secondary_initialize_control_windows_test.go'
+          gofmt -d $file | Out-File -Encoding utf8 "$env:RUNNER_TEMP/secondary-initialize-gofmt.diff"
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic format inspection failed.' }
+          gofmt -w $file
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic formatting failed.' }
+          Copy-Item -LiteralPath $file -Destination "$env:RUNNER_TEMP/secondary_initialize_control_windows_test.go"
+      - name: Check argument contrast without native execution
+        shell: pwsh
+        run: |
+          go test -tags nogui -run '^TestSecondaryInitializeControlChangesOnlyModel
+        shell: pwsh
+        run: |
+          go test -c -tags nogui -o "$env:RUNNER_TEMP/secondary-initialize-tests.exe" ./internal/appserverbridge
+          if ($LASTEXITCODE -ne 0) { throw 'Test host compilation failed.' }
+      - name: Verify official package and run only opted-in initialization
+        shell: pwsh
+        run: |
+          $testExecutable = Join-Path $env:RUNNER_TEMP 'secondary-initialize-tests.exe'
+          $message = (& git log -1 --format=%B) -join "`n"
+          $testName = 'TestOfficialSecondaryInitializeControl'
+          ./build/test-secondary-initialize-official.ps1 -TestExecutable $testExecutable -TestName $testName
+      - name: Upload fixed-label diagnostic report and formatted fixture source
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: secondary-initialize-control-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/secondary-initialize-control-report.json
+            ${{ runner.temp }}/secondary-initialize-gofmt.diff
+            ${{ runner.temp }}/secondary_initialize_control_windows_test.go
+          if-no-files-found: warn
+          retention-days: 7
+ -count=1 ./internal/appserverbridge
+          if ($LASTEXITCODE -ne 0) { throw 'Initialize argument contrast failed.' }
       - name: Compile synthetic test host without running it
         shell: pwsh
         run: |
