@@ -1,0 +1,65 @@
+name: Experimental Appx import order diagnostic
+
+on:
+  push:
+    branches: [experiment/app-server-bridge-v0.1.3035]
+    paths:
+      - build/appx-import-diagnostic/**
+      - .github/workflows/experimental-appx-import-order.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-appx-import-order-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import-order:
+    if: github.repository == 'breakingtime126/magpie' && github.ref == 'refs/heads/experiment/app-server-bridge-v0.1.3035' && github.event_name == 'push' && contains(github.event.head_commit.message, '[appx-import-order-v1]')
+    runs-on: windows-2025
+    timeout-minutes: 10
+    env:
+      GOTOOLCHAIN: local
+      GOTELEMETRY: 'off'
+      GOFLAGS: -mod=readonly
+      CGO_ENABLED: '0'
+    steps:
+      - name: Check out only the triggering revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify hosted repository revision and explicit opt-in
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or
+              $env:GITHUB_REPOSITORY -cne 'breakingtime126/magpie' -or $env:GITHUB_REF -cne 'refs/heads/experiment/app-server-bridge-v0.1.3035' -or
+              $env:GITHUB_EVENT_NAME -cne 'push' -or $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Diagnostic context refused.' }
+          $head=(& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:GITHUB_SHA) { throw 'Diagnostic revision refused.' }
+          $message=(& git log -1 --format=%B) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or -not $message.Contains('[appx-import-order-v1]')) { throw 'Diagnostic opt-in refused.' }
+          "APPX_DIAGNOSTIC_VERIFIED_SHA=$head" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'APPX_DIAGNOSTIC_OPT_IN=[appx-import-order-v1]' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set up pinned Go without credentials or GUI packaging
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run authored guards and strict synthetic child only
+        shell: pwsh
+        run: |
+          go test -count=1 -timeout=2m ./build/appx-import-diagnostic
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic tests failed.' }
+          go vet ./build/appx-import-diagnostic
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic vet failed.' }
+          go build -o "$env:RUNNER_TEMP\appx-import-diagnostic.exe" ./build/appx-import-diagnostic
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic build failed.' }
+      - name: Record A C C A import-only observations on this separate VM
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\appx-import-diagnostic.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic refused or cleanup unproven; later arms stopped.' }
+          Write-Output 'Diagnostic observations only. Original GUI acceptance and a causal fix were not tested.'
