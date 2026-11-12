@@ -15,9 +15,9 @@ $begin=$sourceText.IndexOf($marker,[StringComparison]::Ordinal)+$marker.Length
 $end=$sourceText.IndexOf('`',$begin,[StringComparison]::Ordinal)
 Assert ($begin -ge $marker.Length -and $end -gt $begin) 'embedded query found'
 $query=$sourceText.Substring($begin,$end-$begin)
-# Fixed markers are the only query-body delta. Removing their exact complete
-# source lines must recover the previously reviewed query byte-for-byte.
-$progressNames=@('entry','appx-import','appx-return','setup','appx','management','utility','packages','path','json')
+# Remove fixed marker lines and canonicalize only the allowed import reorder
+# to recover the previously reviewed query byte-for-byte.
+$progressNames=@('entry','appx-import','appx-return','setup','management','utility','appx','packages','path','json')
 $progressLines=@($query -split "`n" | Where-Object { $_.Contains('MAGPIE_QUERY_V1') })
 Assert ($progressLines.Count -eq $progressNames.Count) 'only ten fixed progress markers'
 for ($i=0;$i -lt $progressNames.Count;$i++) {
@@ -25,13 +25,20 @@ for ($i=0;$i -lt $progressNames.Count;$i++) {
     if ($progressNames[$i] -cin @('appx-import','appx-return')) { $expected="    if (`$moduleName -ceq 'Appx') { "+$expected+" }" }
     Assert ($progressLines[$i] -ceq $expected) 'ordered fixed stderr marker literals'
 }
-Assert ($query.Contains("}`n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:setup')`n`$appxModule=Import-QueryModule 'Appx'")) 'setup completes before Appx helper invocation'
+Assert ($query.Contains("}`n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:setup')`n`$managementModule=Import-QueryModule 'Microsoft.PowerShell.Management'")) 'setup completes before Management helper invocation'
 $importBoundary="    if (`$moduleName -ceq 'Appx') { [Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx-import') }`n"+
     '    $loaded=@(Microsoft.PowerShell.Core\Import-Module -Name $manifest -PassThru -ErrorAction Stop)'+"`n"+
     "    if (`$moduleName -ceq 'Appx') { [Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx-return') }`n"+
     '    if ($loaded.Count -ne 1'
 Assert ($query.Contains($importBoundary)) 'Appx markers immediately surround actual import before validation'
 $withoutProgress=($query -split "`n" | Where-Object { -not $_.Contains('MAGPIE_QUERY_V1') }) -join "`n"
+# Only the reviewed three-assignment permutation may differ from the original.
+$appxLine='$appxModule=Import-QueryModule ''Appx'''+"`n"
+$managementLine='$managementModule=Import-QueryModule ''Microsoft.PowerShell.Management'''+"`n"
+$utilityLine='$utilityModule=Import-QueryModule ''Microsoft.PowerShell.Utility'''+"`n"
+$orderedImports=$managementLine+$utilityLine+$appxLine
+Assert ($withoutProgress.Contains($orderedImports)) 'fixed imports run Management Utility Appx'
+$withoutProgress=$withoutProgress.Replace($orderedImports,$appxLine+$managementLine+$utilityLine)
 $sha=[Security.Cryptography.SHA256]::Create()
 try { $originalHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($withoutProgress)))).Replace('-','').ToLowerInvariant() }
 finally { $sha.Dispose() }

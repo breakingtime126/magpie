@@ -239,8 +239,15 @@ func TestInstalledQuerySourceContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Removing only the ten fixed observation statements must recover
-			// the reviewed query exactly, including filters, exit codes and JSON.
+			// Require the candidate order independently of the byte/hash guard.
+			management := "$managementModule=Import-QueryModule 'Microsoft.PowerShell.Management'\n"
+			utility := "$utilityModule=Import-QueryModule 'Microsoft.PowerShell.Utility'\n"
+			appx := "$appxModule=Import-QueryModule 'Appx'\n"
+			if !(strings.Index(query, management) < strings.Index(query, utility) && strings.Index(query, utility) < strings.Index(query, appx)) {
+				t.Fatal("fixed imports must run Management, Utility, Appx")
+			}
+			// Remove the ten fixed observations, then canonicalize only the import
+			// reorder to recover the reviewed filters, exit codes and JSON exactly.
 			semantic := query
 			for _, marker := range queryProgressMarkers {
 				line := "[Console]::Error.WriteLine('" + marker + "')"
@@ -253,10 +260,15 @@ func TestInstalledQuerySourceContract(t *testing.T) {
 				semantic = strings.Replace(semantic, line+"\n", "", 1)
 				semantic = strings.TrimSuffix(semantic, "\n"+line)
 			}
-			if fmt.Sprintf("%x", sha256.Sum256([]byte(semantic))) != "22d3baf0d80dd8d5b7446e88414afa7d929c1b70dcfb89f98d943a9cc6c3140b" {
-				t.Fatal("query semantics changed beyond progress markers")
+			if strings.Count(semantic, management+utility+appx) != 1 {
+				t.Fatal("fixed import assignments must remain contiguous and unique")
 			}
-			if fmt.Sprintf("%x", sha256.Sum256([]byte(query))) != "d90ba13aa248ef5a5d646d59457b64ea63e226141c2242635260f95a992d63e9" {
+			// Canonicalize only the approved three-assignment permutation.
+			semantic = strings.Replace(semantic, management+utility+appx, appx+management+utility, 1)
+			if fmt.Sprintf("%x", sha256.Sum256([]byte(semantic))) != "22d3baf0d80dd8d5b7446e88414afa7d929c1b70dcfb89f98d943a9cc6c3140b" {
+				t.Fatal("query semantics changed beyond progress markers and import order")
+			}
+			if fmt.Sprintf("%x", sha256.Sum256([]byte(query))) != "2ae02210429155e929cd583c488dc09f415f91ed8e99cfc4c5008d88ed28b23e" {
 				t.Fatal("reviewed query bytes changed")
 			}
 			queryFound = true

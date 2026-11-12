@@ -8,15 +8,15 @@ import (
 )
 
 var queryProgressMarkers = [...]string{
-	"MAGPIE_QUERY_V1:entry", "MAGPIE_QUERY_V1:setup", "MAGPIE_QUERY_V1:appx-import", "MAGPIE_QUERY_V1:appx-return",
-	"MAGPIE_QUERY_V1:appx", "MAGPIE_QUERY_V1:management",
-	"MAGPIE_QUERY_V1:utility", "MAGPIE_QUERY_V1:packages", "MAGPIE_QUERY_V1:path", "MAGPIE_QUERY_V1:json",
+	"MAGPIE_QUERY_V1:entry", "MAGPIE_QUERY_V1:setup", "MAGPIE_QUERY_V1:management", "MAGPIE_QUERY_V1:utility",
+	"MAGPIE_QUERY_V1:appx-import", "MAGPIE_QUERY_V1:appx-return", "MAGPIE_QUERY_V1:appx",
+	"MAGPIE_QUERY_V1:packages", "MAGPIE_QUERY_V1:path", "MAGPIE_QUERY_V1:json",
 }
 var queryProgressStages = [...]nativeprepdiag.Stage{
 	nativeprepdiag.QueryProgressUnknown, nativeprepdiag.QueryProgressEntry, nativeprepdiag.QueryProgressSetup,
+	nativeprepdiag.QueryProgressManagement, nativeprepdiag.QueryProgressUtility,
 	nativeprepdiag.QueryProgressAppxImport, nativeprepdiag.QueryProgressAppxReturn, nativeprepdiag.QueryProgressAppx,
-	nativeprepdiag.QueryProgressManagement, nativeprepdiag.QueryProgressUtility, nativeprepdiag.QueryProgressPackages,
-	nativeprepdiag.QueryProgressPath, nativeprepdiag.QueryProgressJSON,
+	nativeprepdiag.QueryProgressPackages, nativeprepdiag.QueryProgressPath, nativeprepdiag.QueryProgressJSON,
 }
 
 // queryProgress retains no input bytes. A fixed candidate mask and saturating

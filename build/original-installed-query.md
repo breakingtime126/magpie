@@ -34,6 +34,18 @@ an already-exited root at that sample, but does not identify the blocking call
 or prove the cause. Metadata gates may warm caches. A later passing run would demonstrate
 practical success, not establish cold-start causality.
 
+## Fixed import order candidate
+
+The three existing validated imports now run Management, Utility, then Appx;
+their adjacent completion markers move with them. No helper, validation or query
+suffix changes. A Windows 2025 diagnostic at `d6de6e03de5255922e0f32e856c076d5215a3124`
+(run 43149138174, job 130953908984) used fresh homes and the same cleared
+fixture environment in A,C,C,A order. Both Appx-first A arms reached the deadline
+at appx-import; both Management/Utility-first C arms completed, with owned cleanup
+confirmed. This is a stable order association, not a finding about Appx internals.
+The diagnostic console parent differs from the actual windowsgui parent; the
+original GUI Connect and independent A/C gates still need to verify this candidate.
+
 ## Deadline root observation
 
 After the existing context-cancellation branch wins, the query records one of
@@ -71,9 +83,8 @@ tests or establish actual Connect success.
 ## Query progress observation
 
 The original script writes ten fixed ASCII lines to stderr, separately from
-its unchanged JSON stdout: `MAGPIE_QUERY_V1:entry`, then `:setup`, `:appx-import`,
-`:appx-return`, `:appx`, `:management`,
-`:utility`, `:packages`, `:path`, and `:json` with the same prefix. Entry is the
+its unchanged JSON stdout: `MAGPIE_QUERY_V1:entry`, then `:setup`, `:management`,
+`:utility`, `:appx-import`, `:appx-return`, `:appx`, `:packages`, `:path`, and `:json` with the same prefix. Entry is the
 first script statement; setup follows the preference/encoding setup and helper
 definitions. The Appx-only import marker immediately precedes the actual fixed
 Import-Module call inside the helper; return immediately follows that call,
@@ -104,8 +115,11 @@ of missing evidence, never query success. No raw stdout/stderr, error text,
 paths, PIDs, credentials or native records are exported.
 
 The source-binding gate removes only those ten exact literal marker lines
-(including the two fixed Appx conditionals) and requires the original reviewed query hash. It also verifies exact boundary
+(including the two fixed Appx conditionals), canonicalizes only the three fixed
+import assignments back to Appx/Management/Utility, and requires the original
+reviewed query hash. The production order is separately required to be
+Management/Utility/Appx. It also verifies exact boundary
 placement, authored package refusals, unchanged JSON, and separated stderr.
 Portable Go tests exercise parser corruption/partial input and concurrent
 snapshotting; Windows runtime tests and the original isolated GUI gate remain
-necessary. This is diagnostic instrumentation, not a timeout fix.
+necessary. The import reorder is a candidate timeout correction, not established GUI acceptance.

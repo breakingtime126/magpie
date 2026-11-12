@@ -46,12 +46,12 @@ function Get-QueryCommand($moduleInfo,[string]$commandName) {
     return $commandInfo
 }
 [Console]::Error.WriteLine('MAGPIE_QUERY_V1:setup')
-$appxModule=Import-QueryModule 'Appx'
-[Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')
 $managementModule=Import-QueryModule 'Microsoft.PowerShell.Management'
 [Console]::Error.WriteLine('MAGPIE_QUERY_V1:management')
 $utilityModule=Import-QueryModule 'Microsoft.PowerShell.Utility'
 [Console]::Error.WriteLine('MAGPIE_QUERY_V1:utility')
+$appxModule=Import-QueryModule 'Appx'
+[Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')
 $getPackage=Get-QueryCommand $appxModule 'Get-AppxPackage'
 $joinPath=Get-QueryCommand $managementModule 'Join-Path'
 $testPath=Get-QueryCommand $managementModule 'Test-Path'

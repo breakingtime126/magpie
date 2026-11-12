@@ -41,7 +41,7 @@ func TestBoundScripts(t *testing.T) {
 			t.Fatal("wrong import order")
 		}
 	}
-	for _, change := range []string{strings.Replace(string(b), "$loaded.Count -ne 1", "$loaded.Count -ne 2", 1), strings.Replace(string(b), "const installedQuery", "var installedQuery", 1), string(b) + "\nconst installedQuery = `x`\n"} {
+	for _, change := range []string{strings.Replace(string(b), "$loaded.Count -ne 1", "$loaded.Count -ne 2", 1), strings.Replace(string(b), "const installedQuery", "var installedQuery", 1), string(b) + "\nconst installedQuery = `x`\n", strings.Replace(string(b), "exit 2", "exit 0", 1), strings.Replace(string(b), "-LiteralPath $f", "-Path $f", 1), strings.Replace(string(b), "MAGPIE_QUERY_V1:management", "MAGPIE_QUERY_V1:utility", 1)} {
 		if _, e := deriveScripts([]byte(change)); e == nil {
 			t.Fatal("changed source accepted")
 		}
@@ -50,6 +50,35 @@ func TestBoundScripts(t *testing.T) {
 		t.Fatal("order changed")
 	}
 }
+
+// Exercise derivation independently of the whole-source hash: changing the
+// reviewed production order must never silently turn A into C or repeat imports.
+func TestDeriveImportScriptsIndependentOfOrder(t *testing.T) {
+	appx := "$appxModule=Import-QueryModule 'Appx'\n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')\n"
+	management := "$managementModule=Import-QueryModule 'Microsoft.PowerShell.Management'\n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:management')\n"
+	utility := "$utilityModule=Import-QueryModule 'Microsoft.PowerShell.Utility'\n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:utility')\n"
+	prefix := "reviewed helpers\n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:setup')\n"
+	suffix := "$getPackage=Get-QueryCommand $appxModule 'Get-AppxPackage'\nnever execute package suffix"
+	end := "[Console]::Error.WriteLine('APPX_IMPORT_DIAG_V1:complete')\n"
+	want := map[string]string{"A": prefix + appx + management + utility + end, "C": prefix + management + utility + appx + end}
+	for _, imports := range []string{appx + management + utility, appx + utility + management, management + appx + utility, management + utility + appx, utility + appx + management, utility + management + appx} {
+		got, err := deriveImportScripts(prefix + imports + suffix)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("production import order altered diagnostic arms: %v", err)
+		}
+	}
+	for _, imports := range []string{management + utility, appx + management + utility + appx, appx + management + utility + "extra\n", strings.Replace(appx, ":appx'", ":wrong'", 1) + management + utility, appx + utility + strings.Replace(management, "Microsoft.PowerShell.Management", "Other", 1)} {
+		if _, err := deriveImportScripts(prefix + imports + suffix); err == nil {
+			t.Fatal("changed import block accepted")
+		}
+	}
+	for _, query := range []string{appx + management + utility + suffix, prefix + appx + management + utility, prefix + prefix + appx + management + utility + suffix, prefix + appx + management + utility + suffix + suffix} {
+		if _, err := deriveImportScripts(query); err == nil {
+			t.Fatal("missing or duplicate boundary accepted")
+		}
+	}
+}
+
 func TestEnvironment(t *testing.T) {
 	parent := map[string]string{"SystemRoot": `C:\Windows`, "WINDIR": `C:\Windows`, "ProgramFiles": `C:\Program Files`, "PSModulePath": "PRIVATE", "OPENAI_API_KEY": "PRIVATE", "GITHUB_TOKEN": "PRIVATE", "USERPROFILE": "PRIVATE", "HTTP_PROXY": "inherited-proxy", "SSL_CERT_FILE": "inherited-cert", "PATH": "PRIVATE"}
 	a := fixtureEnvironment(parent, `C:\owned\one`)

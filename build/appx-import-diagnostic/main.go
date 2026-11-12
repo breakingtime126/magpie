@@ -24,7 +24,7 @@ import (
 	"github.com/yetone/magpie/internal/proc"
 )
 
-const queryHash = "d90ba13aa248ef5a5d646d59457b64ea63e226141c2242635260f95a992d63e9"
+const queryHash = "2ae02210429155e929cd583c488dc09f415f91ed8e99cfc4c5008d88ed28b23e"
 const optIn = "[appx-import-order-v1]"
 
 var arms = []string{"A", "C", "C", "A"}
@@ -68,23 +68,37 @@ func deriveScripts(source []byte) (map[string]string, error) {
 	if count != 1 || hex.EncodeToString(sum[:]) != queryHash {
 		return nil, errors.New("source binding refused")
 	}
-	boundary := "$appxModule=Import-QueryModule 'Appx'\n"
+	return deriveImportScripts(query)
+}
+
+// Called only after exact source binding. Extract the reviewed helper prefix
+// and three complete assignment/marker blocks without assuming source order.
+func deriveImportScripts(query string) (map[string]string, error) {
+	boundary := "[Console]::Error.WriteLine('MAGPIE_QUERY_V1:setup')\n"
 	prefix, tail, ok := strings.Cut(query, boundary)
-	if !ok {
+	if !ok || strings.Count(query, boundary) != 1 {
 		return nil, errors.New("prefix unavailable")
 	}
 	suffix := "$getPackage=Get-QueryCommand $appxModule 'Get-AppxPackage'\n"
 	imports, _, ok := strings.Cut(tail, suffix)
-	if !ok {
+	if !ok || strings.Count(tail, suffix) != 1 {
 		return nil, errors.New("suffix unavailable")
 	}
-	appx := boundary + "[Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')\n"
-	if !strings.HasPrefix(imports, "[Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')\n") {
-		return nil, errors.New("import boundary unavailable")
+	appx := "$appxModule=Import-QueryModule 'Appx'\n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')\n"
+	management := "$managementModule=Import-QueryModule 'Microsoft.PowerShell.Management'\n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:management')\n"
+	utility := "$utilityModule=Import-QueryModule 'Microsoft.PowerShell.Utility'\n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:utility')\n"
+	for _, block := range []string{appx, management, utility} {
+		if strings.Count(imports, block) != 1 {
+			return nil, errors.New("import boundary unavailable")
+		}
+		imports = strings.Replace(imports, block, "", 1)
 	}
-	rest := strings.TrimPrefix(imports, "[Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')\n")
+	if imports != "" {
+		return nil, errors.New("unexpected import content")
+	}
+	prefix += boundary
 	end := "[Console]::Error.WriteLine('APPX_IMPORT_DIAG_V1:complete')\n"
-	return map[string]string{"A": prefix + appx + rest + end, "C": prefix + rest + appx + end}, nil
+	return map[string]string{"A": prefix + appx + management + utility + end, "C": prefix + management + utility + appx + end}, nil
 }
 
 // This is the acceptance GUI allowlist, not the hosted runner environment.

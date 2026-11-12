@@ -1,10 +1,11 @@
 # Appx import-order diagnostic
 
 This standalone hosted-Windows diagnostic tests a concrete difference between
-Connect and its passing metadata gate. The original query imports Appx first;
-`build/original-installed-query.tests.ps1` imports Management and Utility first.
-It is not a production fix, package query, Desktop acceptance or cold-cache proof.
-No production code or original acceptance workflow changes.
+Connect and its passing metadata gate. The earlier original query imported Appx first;
+the candidate production query now imports Management and Utility first, as does
+`build/original-installed-query.tests.ps1`. The diagnostic preserves both arms.
+The diagnostic itself is not a production fix, package query, Desktop acceptance
+or cold-cache proof. It does not change original acceptance workflow gates.
 
 ## Fixed experiment
 
@@ -17,8 +18,12 @@ fresh owned home and empty `.codex` directory:
 Both arms run all three imports and identical manifest/export identity checks.
 Go AST extracts `installedQuery` from the checked-out source and requires its
 full SHA-256 to equal
-`d90ba13aa248ef5a5d646d59457b64ea63e226141c2242635260f95a992d63e9`
-(reviewed at `6d2a978d5915f3f199008b9a36eb95aa849be020`). Only the three
+`2ae02210429155e929cd583c488dc09f415f91ed8e99cfc4c5008d88ed28b23e`
+(the candidate differs from the query at `d6de6e03de5255922e0f32e856c076d5215a3124`
+only by reordering the three assignment/marker blocks). After that exact binding,
+the helper prefix and each complete import block are extracted independently of
+production order; missing, duplicate or extra import content is refused. A always
+remains Appx-first and C always remains Management/Utility-first. Only these three
 import blocks are reordered. Both scripts end before the command binding and
 invocation of the installed-package query. The helper inspects Get-AppxPackage's
 exported CmdletInfo/implementing assembly but never executes that cmdlet.
