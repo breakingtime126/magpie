@@ -109,6 +109,20 @@ func (c *ownedAliasCatalog) validateNativeSettingsLists167(results map[string][]
 			if err != nil || validateModel(m) != nil || !requirementsBool(m["hidden"]) || !requirementsBool(m["isDefault"]) {
 				return c.failure(nativehandshake.CatalogReasonModelSchema)
 			}
+			// Display descriptions may contain line breaks; routing identifiers
+			// retain the preexisting strict text profile.
+			if !startupText(text(m, "id")) || !startupText(text(m, "model")) {
+				return c.failure(nativehandshake.CatalogReasonModelSchema)
+			}
+			var modalities []string
+			if json.Unmarshal(m["inputModalities"], &modalities) != nil {
+				return c.failure(nativehandshake.CatalogReasonModelSchema)
+			}
+			for _, modality := range modalities {
+				if !startupText(modality) {
+					return c.failure(nativehandshake.CatalogReasonModelSchema)
+				}
+			}
 			if requirementsNull(m["supportedReasoningEfforts"]) { return c.failure(nativehandshake.CatalogReasonEffortNull) }
 			if !nativeSettingsEffort167(m["defaultReasoningEffort"]) { return c.failure(nativehandshake.CatalogReasonEffortUnknown) }
 			model := text(m, "model")

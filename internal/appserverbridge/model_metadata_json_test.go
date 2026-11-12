@@ -65,3 +65,30 @@ func TestNativeSettingsMultilineModelDescriptions(t *testing.T) {
 	got := r.ownedCatalog.projection[alias("one",text(m,"model"))]
 	if !sameJSON(got["description"],m["description"]) || !sameJSON(got["supportedReasoningEfforts"],m["supportedReasoningEfforts"]) {t.Fatal("display metadata rewritten")}
 }
+
+func TestNativeSettingsRoutingIdentifiersKeepStrictText(t *testing.T) {
+	for _, field := range []string{"id", "model", "inputModalities"} {
+		for _, whitespace := range []string{"\n", "\r", "\t"} {
+			t.Run(field+"/"+strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(whitespace, "\n", "LF"), "\r", "CR"), "\t", "TAB"), func(t *testing.T) {
+				r := nativeSettingsRouter167(t)
+				rows := nativeSettingsRows167(t)
+				m, err := parseObject(rows["one"][0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if field == "inputModalities" {
+					m[field] = raw([]string{"text"+whitespace+"image"})
+				} else {
+					m[field] = raw(text(m, field)+whitespace+"suffix")
+				}
+				rows["one"] = []json.RawMessage{raw(m)}
+				if validateModelMetadataJSON(rows["one"][0]) != nil {
+					t.Fatal("fixture did not reach field-specific validation")
+				}
+				if r.ownedCatalog.validateNative(rows, r.backends) == nil {
+					t.Fatal("routing identifier accepted display whitespace")
+				}
+			})
+		}
+	}
+}
