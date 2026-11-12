@@ -57,9 +57,11 @@ try {
         $allowed=@('SystemRoot','WINDIR','TEMP','TMP','RUNNER_TEMP','GITHUB_ACTIONS','GITHUB_EVENT_NAME','RUNNER_OS',
             'RUNNER_ENVIRONMENT','GITHUB_REPOSITORY','GITHUB_REF','MAGPIE_ORIGINAL_CONNECT_ACTION','MAGPIE_ORIGINAL_WINDOW_CAPTURE')
         foreach ($name in $start.EnvironmentVariables.Keys) { Assert ($name -in $allowed) 'production child environment has no inherited extra key' }
-        $child=New-TestNoInputChild $start
+        # Compilation-only fixture: cold Add-Type on a loaded runner is not a
+        # screenshot operation. Production capture keeps its 8-second deadline.
+        $child=New-TestNoInputChild $start -Deadline 30000
         try {
-            $child.CloseInput();$waited=$child.Wait(8000)
+            $child.CloseInput();$waited=$child.Wait(30000)
             $watch=[Diagnostics.Stopwatch]::StartNew()
             while (-not $child.Drained -and $watch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }
             $exact=$child.Output -ceq $expected
@@ -78,7 +80,7 @@ try {
                 exitConfirmed=[bool]$child.Exited;exitZero=($child.Exited -and $child.ExitCode -eq 0);outputExact=[bool]$exact}
             'PREFIX_PROBE '+($facts | ConvertTo-Json -Compress)
             Assert ($waited -and $child.Exited -and -not $child.TimedOut -and -not $child.Overflow -and
-                -not $child.ErrorOutput -and $child.Drained) 'prefix fixture remains within unchanged transport bounds'
+                -not $child.ErrorOutput -and $child.Drained) 'prefix fixture remains within bounded compile-only transport'
             if ($contextAllowed) { Assert ($child.ExitCode -eq 0 -and $exact) 'cleared-environment prefix and compilation succeed without window access' }
             else { Assert ($child.ExitCode -ne 0 -and $phase -ceq 'helper-loaded' -and -not $exact) 'real context gate rejects before fixture/compile stages' }
         } finally { $child.Dispose() }

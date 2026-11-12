@@ -63,14 +63,14 @@ function Get-TestNoInputEncoding([Text.Encoding]$Encoding) {
     }
     return [Text.UTF8Encoding]::new($false)
 }
-function New-TestNoInputChild($Start) {
+function New-TestNoInputChild($Start,[int]$Deadline=8000) {
     $saved=[Console]::InputEncoding;$selected=Get-TestNoInputEncoding $saved
     $change=-not [object]::ReferenceEquals($saved,$selected);$child=$null
     try {
         try {
             if ($change) { [Console]::InputEncoding=$selected }
             Assert ([Console]::InputEncoding.CodePage -eq $saved.CodePage -and [Console]::InputEncoding.GetPreamble().Length -eq 0) 'fixture startup preserves code page and sends no preamble'
-            $child=[OriginalCaptureSupervisor.BoundedProcess]::new($Start,256,8000)
+            $child=[OriginalCaptureSupervisor.BoundedProcess]::new($Start,256,$Deadline)
         } finally {
             if ($change) { [Console]::InputEncoding=$saved }
             Assert ([Console]::InputEncoding.CodePage -eq $saved.CodePage -and
@@ -312,13 +312,13 @@ function Initialize-OriginalCaptureNative {
         $nativeScript=Join-Path $PSScriptRoot 'original-desktop-window-capture-native.ps1'
         $compileCode=New-TestCompileCode $nativeScript
         $compileWatch=[Diagnostics.Stopwatch]::StartNew()
-        $compileChild=New-TestNoInputChild (New-TestStart $compileCode)
+        $compileChild=New-TestNoInputChild (New-TestStart $compileCode) -Deadline 30000
         try {
             $compileChild.CloseInput()
-            $compileWaited=$compileChild.Wait(8000)
+            $compileWaited=$compileChild.Wait(30000)
             if (-not $compileWaited -or -not $compileChild.Exited) {
                 'COMPILE_PROBE '+((Get-TestCompileFacts $compileChild) | ConvertTo-Json -Compress)
-                Assert $false 'native startup/compile child exits within existing budget'
+                Assert $false 'compile-only child exits within its bounded compiler budget'
             }
             $drainWatch=[Diagnostics.Stopwatch]::StartNew()
             while (-not $compileChild.Drained -and $drainWatch.ElapsedMilliseconds -lt 1000) { [Threading.Thread]::Sleep(10) }

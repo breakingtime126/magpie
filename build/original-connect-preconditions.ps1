@@ -102,7 +102,11 @@ function Get-OriginalConnectPreconditions {
     try {
         $facts=Get-OriginalPreparedRegistrationFacts $PackageContext
         $envs=$OriginalStartInfo.EnvironmentVariables
-        $system=[string]$envs['SystemRoot'];$launchHome=[string]$envs['HOME'];$userProfilePath=[string]$envs['USERPROFILE'];$codex=[string]$envs['CODEX_HOME']
+        $system=[string]$envs['SystemRoot'];$userProfilePath=[string]$envs['USERPROFILE'];$codex=[string]$envs['CODEX_HOME']
+        # HOME is optional on Windows. Under StrictMode, indexing a missing key
+        # can throw before the explicit presence predicate gets to run.
+        $launchHome=''
+        if ($envs.ContainsKey('HOME')) { $launchHome=[string]$envs['HOME'] }
         $facts.systemRootAbsolute=($system -match '^[A-Za-z]:\\' -and [IO.Path]::GetFullPath($system) -ieq $system)
         $facts.homeUserProfileAgree=((-not $envs.ContainsKey('HOME') -or $launchHome -ieq $userProfilePath) -and $userProfilePath -ine '')
         $facts.homeMatchesLaunchIdentity=($facts.homeUserProfileAgree -and $userProfilePath -ieq $LaunchIdentityHome -and $LaunchIdentityHome -ine $OwnedHome -and $LaunchIdentityHome -match '^[A-Za-z]:\\' -and [IO.Path]::GetFullPath($LaunchIdentityHome) -ieq $LaunchIdentityHome)

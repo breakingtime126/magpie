@@ -232,3 +232,12 @@ post-recovery snapshot and a separately labeled post-cleanup snapshot, without
 turning bootstrap or initialization milestones into backend/desktop acceptance.
 The existing 15-second image-observation budget is used in full in this mode;
 no deadline is extended. Missing or incomplete traces remain unknown.
+
+The compile-only capture fixtures allow 30 seconds for cold `Add-Type` startup
+on hosted runners. They never call window identity or capture APIs. This is
+separate from the unchanged 8-second production capture deadline; successful
+compilation does not establish that real capture completed within that deadline.
+The post-sequence precondition observer guards optional Windows `HOME` access
+before indexing the environment under PowerShell strict mode. A missing `HOME`
+uses the existing `USERPROFILE` identity rule, while empty or mismatched values
+remain rejected.
