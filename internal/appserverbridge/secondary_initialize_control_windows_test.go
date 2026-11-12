@@ -5,6 +5,8 @@ package appserverbridge
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -314,6 +316,16 @@ func TestOfficialBridgeInitializeBarrier(t *testing.T) {
 	if err != nil || os.WriteFile(cfg.SharedNativeRoute.SecondaryCatalog, catalog, 0600) != nil {
 		t.Fatal("fresh synthetic catalog unavailable")
 	}
+	// Match the production native-settings contract rather than the legacy
+	// no-owned-catalog path. This also requests genuine includeHidden lists.
+	cfg.BridgeModelSettings = BridgeModelSettingsNative167
+	cfg.StartupProbe = StartupProbeCompareUnrestricted167
+	cfg.RequirementsRead = ConfigRequirementsCompareNull167
+	cfg.ExperimentalFeatureList = ExperimentalFeatureListCompare167
+	cfg.AuthStatus = AuthStatusPrimaryTrustedStdio167
+	cfg.DesktopPluginOverride = DesktopPluginCodexAppTools167
+	catalogSHA := sha256.Sum256(catalog)
+	cfg.SharedNativeRoute.SecondaryCatalogSHA256 = hex.EncodeToString(catalogSHA[:])
 	reservation, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("loopback reservation unavailable")

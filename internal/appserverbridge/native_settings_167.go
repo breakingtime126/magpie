@@ -54,8 +54,10 @@ func (c *ownedAliasCatalog) verifyNativeSettingsCatalog167() error {
 	return nil
 }
 
+// Pinned c40729ea protocol/openai_models.rs ReasoningEffort::as_str.
+// Accept the nine named variants, not its open-ended Custom(String) branch.
 func nativeSettingsEffort167(value json.RawMessage) bool {
-	return requirementsEnum(value, "none", "minimal", "low", "medium", "high", "xhigh")
+	return requirementsEnum(value, "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent")
 }
 
 func nativeSettingsValues167(projection map[string]object, value object) bool {

@@ -143,7 +143,7 @@ func TestNativeSettingsSnapshotRejectsCapabilityDrift(t *testing.T) {
 }
 
 func TestNativeSettingsReasoningUsesActualNativeChoices(t *testing.T) {
-	for _, effort := range []string{"none", "minimal", "low", "medium", "high", "xhigh"} {
+	for _, effort := range []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"} {
 		t.Run(effort, func(t *testing.T) {
 			r := nativeSettingsRouter167(t)
 			rows := nativeSettingsRows167(t)
@@ -177,7 +177,7 @@ func TestNativeSettingsReasoningUsesActualNativeChoices(t *testing.T) {
 			m, _ := parseObject(rows["one"][0])
 			switch kind {
 			case "unknown":
-				m["defaultReasoningEffort"] = raw("ultra")
+				m["defaultReasoningEffort"] = raw("unreviewed-custom")
 			case "duplicate":
 				m["supportedReasoningEfforts"] = raw([]object{{"reasoningEffort": raw("medium"), "description": raw("a")}, {"reasoningEffort": raw("medium"), "description": raw("b")}})
 			case "default-absent":
@@ -222,5 +222,33 @@ func TestNativeSettingsWaitsForCompleteHiddenPagination(t *testing.T) {
 	}
 	if _, err := os.Stat(r.ownedSettings.path); err != nil {
 		t.Fatal("complete validated list did not seed", err)
+	}
+}
+
+func TestNativeSettingsNamedNewEffortsRetainMetadataGuards(t *testing.T) {
+	for _, effort := range []string{"max", "ultra", "persistent"} {
+		for _, kind := range []string{"valid", "duplicate", "missing-default", "custom-choice", "custom-default"} {
+			t.Run(effort+"/"+kind, func(t *testing.T) {
+				r := nativeSettingsRouter167(t)
+				rows := nativeSettingsRows167(t)
+				m, _ := parseObject(rows["one"][0])
+				m["defaultReasoningEffort"] = raw(effort)
+				choices := []object{{"reasoningEffort":raw(effort),"description":raw("authored named effort")}}
+				switch kind {
+				case "duplicate":
+					choices = append(choices, choices[0])
+				case "missing-default":
+					choices[0]["reasoningEffort"] = raw("medium")
+				case "custom-choice":
+					choices = append(choices, object{"reasoningEffort":raw("unreviewed-custom"),"description":raw("authored custom")})
+				case "custom-default":
+					m["defaultReasoningEffort"] = raw("unreviewed-custom")
+				}
+				m["supportedReasoningEfforts"] = raw(choices)
+				rows["one"][0] = raw(m)
+				err := r.ownedCatalog.validateNative(rows, r.backends)
+				if (err == nil) != (kind == "valid") { t.Fatal("named effort weakened metadata guards") }
+			})
+		}
 	}
 }
