@@ -113,3 +113,8 @@ foreach ($stage in @('protocol-source-client','protocol-source-primary','protoco
     $partial=ConvertFrom-OriginalHandshakeLog (Bytes @('adapter-entered','jsonl-requested',$stage,'protocol-failed')) 'bridge'
     Assert ($partial.status -ceq 'observed' -and -not $partial.initializeOutputWrittenObserved) 'fixed failure category is metadata only'
 }
+
+foreach ($stage in @('catalog-reason-pin','catalog-reason-backend-count','catalog-reason-empty-list','catalog-reason-json','catalog-reason-model-schema','catalog-reason-effort-null','catalog-reason-effort-unknown','catalog-reason-duplicate-model','catalog-reason-duplicate-effort','catalog-reason-default-unsupported','catalog-reason-no-visible-default','catalog-reason-snapshot','catalog-reason-settings-store','catalog-reason-router','catalog-reason-default-mismatch','catalog-reason-policy-schema','catalog-reason-policy-size','catalog-reason-policy-mismatch','catalog-reason-policy-nonnull')) {
+    $partial=ConvertFrom-OriginalHandshakeLog (Bytes @('adapter-entered','jsonl-requested',$stage,'protocol-failed')) 'bridge'
+    Assert ($partial.status -ceq 'observed' -and -not $partial.initializeOutputWrittenObserved) 'catalog failure reason has no readiness authority'
+}

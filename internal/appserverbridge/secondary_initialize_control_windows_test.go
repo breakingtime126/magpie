@@ -361,7 +361,7 @@ func TestOfficialBridgeInitializeBarrier(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(5*time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("bridge process cleanup unverified")
 	}
 	output.Close()

@@ -276,3 +276,9 @@ previous six; arbitrary Custom strings remain unsupported. Duplicate efforts,
 a missing default among selectable efforts, hidden/default constraints and the
 complete-list snapshot checks are unchanged. The compatibility fixtures are
 authored examples, not copied model descriptors or account data.
+
+The native-list diagnostic retains only the first fixed rejection branch
+(pin, schema, choices/defaults, snapshot or policy category). Later cleanup cannot
+overwrite that category. Settings-policy responses are classified as policy,
+even when the outer frontend request was model/list. No model records, IDs,
+field values or policy content are stored in these diagnostics.
