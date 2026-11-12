@@ -10,6 +10,7 @@ import (
 // handshakeObservation retains only the initializing request's ID in memory.
 // It observes the actual router and completed writes, never alters a delivery.
 type handshakeObservation struct {
+	pendingStage nativehandshake.Stage
 	ctx     context.Context
 	id      json.RawMessage
 	ready   bool
@@ -27,6 +28,7 @@ func (o *handshakeObservation) client(r *Router, previous string, line []byte, d
 	if o == nil {
 		return
 	}
+	o.pendingStage = nativehandshake.ProtocolPendingNone
 	m, err := parseObject(line)
 	if err != nil || text(m, "method") != "initialize" {
 		return
@@ -46,9 +48,10 @@ func (o *handshakeObservation) client(r *Router, previous string, line []byte, d
 }
 
 func (o *handshakeObservation) pending(r *Router, backend string, line []byte) bool {
-	if o == nil || r.phase != "initializing" {
+	if o == nil {
 		return false
 	}
+	o.pendingStage = nativehandshake.ProtocolPendingNone
 	m, err := parseObject(line)
 	if err != nil {
 		return false
@@ -58,7 +61,11 @@ func (o *handshakeObservation) pending(r *Router, backend string, line []byte) b
 		return false
 	}
 	p, ok := r.pending[key]
-	return ok && p.backend == backend && p.group.method == "initialize"
+	if !ok || p.backend != backend {
+		return false
+	}
+	o.pendingStage = protocolPendingStage(p.group)
+	return r.phase == "initializing" && p.group.method == "initialize"
 }
 
 func (o *handshakeObservation) routed(r *Router, previous, backend string, line []byte, initReply bool, routeErr error) {
@@ -66,6 +73,7 @@ func (o *handshakeObservation) routed(r *Router, previous, backend string, line 
 		return
 	}
 	if routeErr != nil {
+		o.protocolFailure(r, backend, line, routeErr)
 		nativehandshake.Emit(o.ctx, nativehandshake.ProtocolFailed)
 		return
 	}
