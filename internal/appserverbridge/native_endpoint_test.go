@@ -66,7 +66,7 @@ func init() {
 		}
 		if text(message, "method") == "initialize" {
 			result := object{"userAgent": raw("owned-endpoint-fixture"),
-				"codexHome": raw(os.Getenv("CODEX_HOME")),
+				"codexHome":      raw(os.Getenv("CODEX_HOME")),
 				"platformFamily": raw("synthetic"), "platformOs": raw("synthetic")}
 			if _, err := fmt.Fprintln(os.Stdout, string(raw(object{"id": message["id"], "result": raw(result)}))); err != nil {
 				os.Exit(9)
