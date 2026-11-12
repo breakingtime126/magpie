@@ -312,7 +312,7 @@ jobs:
       GOFLAGS: -mod=readonly
       GOTOOLCHAIN: local
       GOTELEMETRY: 'off'
-      PREVIEW_NATIVE_TEXT_OPT_IN: native-preview-text-v1
+      PREVIEW_NATIVE_TEXT_OPT_IN: secondary-initialize-control-v1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
