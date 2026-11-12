@@ -40,7 +40,9 @@ func validateModelMetadataJSON(data []byte) error {
 }
 
 func modelMetadataText(value string) bool {
-	if !utf8.ValidString(value) { return false }
+	if !utf8.ValidString(value) {
+		return false
+	}
 	for _, r := range value {
 		if r == utf8.RuneError || (unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t') {
 			return false
@@ -51,34 +53,56 @@ func modelMetadataText(value string) bool {
 
 func modelMetadataJSONValue(d *json.Decoder, depth int) error {
 	token, err := d.Token()
-	if err != nil { return errModelMetadataJSON }
+	if err != nil {
+		return errModelMetadataJSON
+	}
 	if value, ok := token.(string); ok {
-		if !modelMetadataText(value) { return errModelMetadataJSON }
+		if !modelMetadataText(value) {
+			return errModelMetadataJSON
+		}
 		return nil
 	}
 	delim, container := token.(json.Delim)
-	if !container { return nil }
-	if depth >= modelMetadataJSONDepth { return errModelMetadataJSONLimit }
+	if !container {
+		return nil
+	}
+	if depth >= modelMetadataJSONDepth {
+		return errModelMetadataJSONLimit
+	}
 	switch delim {
 	case '{':
 		seen := map[string]bool{}
 		for count := 0; d.More(); count++ {
-			if count >= modelMetadataContainerLimit { return errModelMetadataJSONLimit }
+			if count >= modelMetadataContainerLimit {
+				return errModelMetadataJSONLimit
+			}
 			key, err := d.Token()
 			name, ok := key.(string)
-			if err != nil || !ok || !startupText(name) || seen[name] { return errModelMetadataJSON }
+			if err != nil || !ok || !startupText(name) || seen[name] {
+				return errModelMetadataJSON
+			}
 			seen[name] = true
-			if err := modelMetadataJSONValue(d, depth+1); err != nil { return err }
+			if err := modelMetadataJSONValue(d, depth+1); err != nil {
+				return err
+			}
 		}
 		last, err := d.Token()
-		if err != nil || last != json.Delim('}') { return errModelMetadataJSON }
+		if err != nil || last != json.Delim('}') {
+			return errModelMetadataJSON
+		}
 	case '[':
 		for count := 0; d.More(); count++ {
-			if count >= modelMetadataContainerLimit { return errModelMetadataJSONLimit }
-			if err := modelMetadataJSONValue(d, depth+1); err != nil { return err }
+			if count >= modelMetadataContainerLimit {
+				return errModelMetadataJSONLimit
+			}
+			if err := modelMetadataJSONValue(d, depth+1); err != nil {
+				return err
+			}
 		}
 		last, err := d.Token()
-		if err != nil || last != json.Delim(']') { return errModelMetadataJSON }
+		if err != nil || last != json.Delim(']') {
+			return errModelMetadataJSON
+		}
 	default:
 		return errModelMetadataJSON
 	}

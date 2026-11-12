@@ -87,8 +87,12 @@ func nativeSettingsValues167(projection map[string]object, value object) bool {
 }
 
 func (c *ownedAliasCatalog) validateNativeSettingsLists167(results map[string][]json.RawMessage, backends []Backend) error {
-	if c.verify() != nil { return c.failure(nativehandshake.CatalogReasonPin) }
-	if len(results) != len(backends) { return c.failure(nativehandshake.CatalogReasonBackendCount) }
+	if c.verify() != nil {
+		return c.failure(nativehandshake.CatalogReasonPin)
+	}
+	if len(results) != len(backends) {
+		return c.failure(nativehandshake.CatalogReasonBackendCount)
+	}
 	projection := map[string]object{}
 	snapshot := object{}
 	defaultModel := ""
@@ -102,7 +106,9 @@ func (c *ownedAliasCatalog) validateNativeSettingsLists167(results map[string][]
 			// Duplicate keys are ambiguous even when the rest of the native descriptor
 			// contains optional fields unknown to this bridge. Preserve all those fields.
 			if err := validateModelMetadataJSON(row); err != nil {
-				if errors.Is(err, errModelMetadataJSONLimit) { return c.failure(nativehandshake.CatalogReasonJSONLimit) }
+				if errors.Is(err, errModelMetadataJSONLimit) {
+					return c.failure(nativehandshake.CatalogReasonJSONLimit)
+				}
 				return c.failure(nativehandshake.CatalogReasonJSON)
 			}
 			m, err := parseObject(row)
@@ -123,8 +129,12 @@ func (c *ownedAliasCatalog) validateNativeSettingsLists167(results map[string][]
 					return c.failure(nativehandshake.CatalogReasonModelSchema)
 				}
 			}
-			if requirementsNull(m["supportedReasoningEfforts"]) { return c.failure(nativehandshake.CatalogReasonEffortNull) }
-			if !nativeSettingsEffort167(m["defaultReasoningEffort"]) { return c.failure(nativehandshake.CatalogReasonEffortUnknown) }
+			if requirementsNull(m["supportedReasoningEfforts"]) {
+				return c.failure(nativehandshake.CatalogReasonEffortNull)
+			}
+			if !nativeSettingsEffort167(m["defaultReasoningEffort"]) {
+				return c.failure(nativehandshake.CatalogReasonEffortUnknown)
+			}
 			model := text(m, "model")
 			if exists(backendRows, model) {
 				return c.failure(nativehandshake.CatalogReasonDuplicateModel)
@@ -139,8 +149,12 @@ func (c *ownedAliasCatalog) validateNativeSettingsLists167(results map[string][]
 			seen := map[string]bool{}
 			for _, effort := range efforts {
 				e := text(effort, "reasoningEffort")
-				if !nativeSettingsEffort167(effort["reasoningEffort"]) { return c.failure(nativehandshake.CatalogReasonEffortUnknown) }
-				if seen[e] { return c.failure(nativehandshake.CatalogReasonDuplicateEffort) }
+				if !nativeSettingsEffort167(effort["reasoningEffort"]) {
+					return c.failure(nativehandshake.CatalogReasonEffortUnknown)
+				}
+				if seen[e] {
+					return c.failure(nativehandshake.CatalogReasonDuplicateEffort)
+				}
 				seen[e] = true
 			}
 			if len(efforts) != 0 && !seen[text(m, "defaultReasoningEffort")] {
@@ -153,7 +167,9 @@ func (c *ownedAliasCatalog) validateNativeSettingsLists167(results map[string][]
 		snapshot[b.ID] = raw(backendRows)
 	}
 	encoded := raw(snapshot)
-	if defaultModel == "" { return c.failure(nativehandshake.CatalogReasonNoVisibleDefault) }
+	if defaultModel == "" {
+		return c.failure(nativehandshake.CatalogReasonNoVisibleDefault)
+	}
 	if c.nativeSnapshot != nil && (!sameJSON(c.nativeSnapshot, encoded) || c.defaultModel != defaultModel) {
 		return c.failure(nativehandshake.CatalogReasonSnapshot)
 	}

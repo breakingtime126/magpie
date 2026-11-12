@@ -149,7 +149,9 @@ func (r *Router) ownedSettingsPolicyResponse167(g *request, backend string, line
 	}
 	g.bytes += len(m["result"])
 	if g.bytes > requirementsJSONLimit {
-		if r.ownedCatalog != nil { r.ownedCatalog.failure(nativehandshake.CatalogReasonPolicySize) }
+		if r.ownedCatalog != nil {
+			r.ownedCatalog.failure(nativehandshake.CatalogReasonPolicySize)
+		}
 		return r.reject(g, -32000, "bridge-owned settings policy precondition failed"), nil
 	}
 	g.results[backend] = []json.RawMessage{m["result"]}
@@ -158,7 +160,9 @@ func (r *Router) ownedSettingsPolicyResponse167(g *request, backend string, line
 		return nil, nil
 	}
 	if !sameJSON(g.results[r.backends[0].ID][0], g.results[r.backends[1].ID][0]) {
-		if r.ownedCatalog != nil { r.ownedCatalog.failure(nativehandshake.CatalogReasonPolicyMismatch) }
+		if r.ownedCatalog != nil {
+			r.ownedCatalog.failure(nativehandshake.CatalogReasonPolicyMismatch)
+		}
 		return r.reject(g, -32000, "bridge-owned settings policy precondition failed"), nil
 	}
 	g.settingsPolicyStage = false

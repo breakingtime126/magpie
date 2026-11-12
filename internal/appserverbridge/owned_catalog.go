@@ -22,7 +22,7 @@ const ownedCatalogLimit = 64 << 10
 // configuration. Only its public Model projection is verified against native
 // model/list. Instructions and non-public capabilities remain authored data.
 type ownedAliasCatalog struct {
-	failureStage nativehandshake.Stage // Fixed first-failure evidence only, never native data.
+	failureStage                     nativehandshake.Stage // Fixed first-failure evidence only, never native data.
 	path, home, digest, defaultModel string
 	identity                         os.FileInfo
 	nativeLists                      bool // Full genuine model/list snapshots, not an owned alias file.
@@ -350,7 +350,9 @@ func (r *Router) catalogIndependentReadDuringRefresh(method string) bool {
 func (r *Router) Client(line []byte) ([]Delivery, error) {
 	if r.ownedSettings != nil {
 		if _, _, err := r.ownedSettings.snapshot(); err != nil {
-			if r.ownedCatalog != nil { r.ownedCatalog.failure(nativehandshake.CatalogReasonSettingsStore) }
+			if r.ownedCatalog != nil {
+				r.ownedCatalog.failure(nativehandshake.CatalogReasonSettingsStore)
+			}
 			r.failOwnedCatalog()
 			return nil, errors.New(ownedSettingsUnavailable167)
 		}
@@ -382,7 +384,9 @@ func (r *Router) Client(line []byte) ([]Delivery, error) {
 func (r *Router) Server(backend string, line []byte) ([]Delivery, error) {
 	if r.ownedSettings != nil {
 		if _, _, err := r.ownedSettings.snapshot(); err != nil {
-			if r.ownedCatalog != nil { r.ownedCatalog.failure(nativehandshake.CatalogReasonSettingsStore) }
+			if r.ownedCatalog != nil {
+				r.ownedCatalog.failure(nativehandshake.CatalogReasonSettingsStore)
+			}
 			r.failOwnedCatalog()
 			return nil, errors.New(ownedSettingsUnavailable167)
 		}
