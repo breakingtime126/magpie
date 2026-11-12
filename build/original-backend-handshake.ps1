@@ -8,7 +8,8 @@ function Get-OriginalHandshakeStages {
         'secondary-initialize-reply','primary-initialize-error','secondary-initialize-error','initialization-rejected',
         'initialization-ready','initialize-output-written','protocol-failed','stream-write-failed',
         'probe-environment-admitted','probe-environment-rejected',
-        'primary-exited','bridge-context-cancelled','client-stream-ended','primary-stream-ended','secondary-stream-ended')
+        'primary-exited','bridge-context-cancelled','client-stream-ended','primary-stream-ended','secondary-stream-ended',
+        'protocol-source-client','protocol-source-primary','protocol-source-secondary','protocol-class-envelope','protocol-class-correlation','protocol-class-unscoped-request','protocol-class-thread-ownership','protocol-class-initialization','protocol-class-client-notification','protocol-class-other','protocol-shape-notification','protocol-shape-request','protocol-shape-response','protocol-shape-invalid','protocol-class-admission','protocol-class-catalog','protocol-pending-initialize','protocol-pending-policy','protocol-pending-config','protocol-pending-catalog','protocol-pending-none','protocol-pending-other')
 }
 function New-OriginalBackendHandshakeReport {
     return [ordered]@{schema=1;scope='read-only-original-backend-handshake';status='unknown';reason='missing';

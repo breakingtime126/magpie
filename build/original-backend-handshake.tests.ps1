@@ -107,3 +107,9 @@ foreach ($missing in @('primary-initialize-reply','secondary-started','secondary
 $premature=@($serial.Clone())
 $premature[7]='secondary-started';$premature[8]='primary-initialize-reply'
 Assert (-not (ConvertFrom-OriginalHandshakeLog (Bytes $premature) 'bridge').initializeOutputWrittenObserved) 'late secondary start requires earlier successful primary reply'
+
+# Fixed source/shape/pending/class facts never establish readiness.
+foreach ($stage in @('protocol-source-client','protocol-source-primary','protocol-source-secondary','protocol-class-envelope','protocol-class-correlation','protocol-class-unscoped-request','protocol-class-thread-ownership','protocol-class-initialization','protocol-class-client-notification','protocol-class-other','protocol-shape-notification','protocol-shape-request','protocol-shape-response','protocol-shape-invalid','protocol-class-admission','protocol-class-catalog','protocol-pending-initialize','protocol-pending-policy','protocol-pending-config','protocol-pending-catalog','protocol-pending-none','protocol-pending-other')) {
+    $partial=ConvertFrom-OriginalHandshakeLog (Bytes @('adapter-entered','jsonl-requested',$stage,'protocol-failed')) 'bridge'
+    Assert ($partial.status -ceq 'observed' -and -not $partial.initializeOutputWrittenObserved) 'fixed failure category is metadata only'
+}

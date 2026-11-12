@@ -264,3 +264,8 @@ it is not proof of the exact underlying database failure or chat readiness.
 Both native replies and the existing policy/catalog checks are still required.
 The diagnostic reader accepts both the earlier parallel stage sequence and this
 ordered sequence, but does not infer a successful handshake from startup alone.
+
+Protocol failures record only fixed source, envelope shape, pending-operation
+category and error class before the existing failure stage. Unknown content is
+reported as Other; payloads, request IDs, method names and raw errors are never
+written. These labels do not relax validation or confer handshake readiness.

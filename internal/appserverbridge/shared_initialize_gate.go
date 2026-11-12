@@ -6,9 +6,9 @@ import "errors"
 // mode. Router remains the protocol authority; no synthetic initialize request
 // or response is created. Ordinary isolated backends retain parallel startup.
 type sharedInitializeGate struct {
-	primary, secondary string
-	queued []Delivery
-	bytes int
+	primary, secondary           string
+	queued                       []Delivery
+	bytes                        int
 	initQueued, released, failed bool
 }
 
