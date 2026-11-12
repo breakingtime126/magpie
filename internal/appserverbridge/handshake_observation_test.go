@@ -248,3 +248,27 @@ func TestHandshakeLocalInitializeRejectionIsObserved(t *testing.T) {
 		}
 	}
 }
+
+func TestHandshakeStreamEndFixedSource(t *testing.T) {
+	r, err := NewRouter([]Backend{{ID: "primary", Provider: "openai"}, {ID: "secondary", Provider: "custom"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		backend string
+		want    nativehandshake.Stage
+	}{
+		{"", nativehandshake.ClientStreamEnded},
+		{"primary", nativehandshake.PrimaryStreamEnded},
+		{"secondary", nativehandshake.SecondaryStreamEnded},
+	} {
+		events := &handshakeEvents{}
+		o := newHandshakeObservation(nativehandshake.WithObserver(context.Background(), events.record))
+		o.streamEnded(r, tc.backend)
+		if len(events.events) != 1 || events.events[0] != tc.want {
+			t.Fatal("stream source observation changed")
+		}
+	}
+	var disabled *handshakeObservation
+	disabled.streamEnded(r, "primary")
+}

@@ -243,7 +243,14 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 			if tree != nil {
 				waited := make(chan struct{})
 				child.waited = waited
-				go func() { _ = tree.Wait(); close(waited); owned.cancel() }()
+				go func() {
+					_ = tree.Wait()
+					if ctx.Err() == nil {
+						nativehandshake.Emit(parent, nativehandshake.PrimaryExited)
+					}
+					close(waited)
+					owned.cancel()
+				}()
 			}
 		}
 		children[b.ID] = child
@@ -264,12 +271,15 @@ func runWithEndpoint(parent context.Context, cfg Config, options LaunchOptions, 
 	for {
 		select {
 		case <-ctx.Done():
+			nativehandshake.Emit(parent, nativehandshake.BridgeContextCancelled)
 			return ctx.Err()
 		case event := <-events:
 			if ctx.Err() != nil {
+				nativehandshake.Emit(parent, nativehandshake.BridgeContextCancelled)
 				return ctx.Err()
 			}
 			if event.err != nil {
+				observation.streamEnded(router, event.backend)
 				if event.backend == "" && errors.Is(event.err, io.EOF) {
 					return nil
 				}

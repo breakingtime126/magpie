@@ -24,6 +24,10 @@ foreach ($stage in @('probe-environment-admitted','probe-environment-rejected'))
     $mixed=ConvertFrom-OriginalHandshakeLog (Bytes @($all+$stage)) 'bridge'
     Assert ($mixed.status -ceq 'unknown' -and -not $mixed.initializeOutputWrittenObserved) 'probe environment cannot combine with JSONL acknowledgement'
 }
+foreach ($stage in @('primary-exited','bridge-context-cancelled','client-stream-ended','primary-stream-ended','secondary-stream-ended')) {
+    $failure=ConvertFrom-OriginalHandshakeLog (Bytes @('adapter-entered','jsonl-requested',$stage,'jsonl-failed')) 'bridge'
+    Assert ($failure.status -ceq 'observed' -and -not $failure.initializeOutputWrittenObserved) 'fixed stream end is not successful initialization'
+}
 foreach ($bytes in @([Text.Encoding]::UTF8.GetBytes("native-backend-handshake-v1 sequence=1 stage=adapter-entered"),[Text.Encoding]::UTF8.GetBytes("native-backend-handshake-v1 sequence=2 stage=adapter-entered`n"),[Text.Encoding]::UTF8.GetBytes("native-backend-handshake-v1 sequence=1 stage=PRIVATE_DATA`n"),(Bytes @('adapter-entered','adapter-entered')))) {
     $bad=ConvertFrom-OriginalHandshakeLog $bytes 'bridge'
     Assert ($bad.status -ceq 'unknown' -and -not $bad.initializeOutputWrittenObserved -and ($bad|ConvertTo-Json -Depth 5) -notmatch 'PRIVATE_DATA') 'malformed or repeated records stay unknown'

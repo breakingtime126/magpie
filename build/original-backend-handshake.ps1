@@ -7,7 +7,8 @@ function Get-OriginalHandshakeStages {
         'initialize-received','primary-initialize-written','secondary-initialize-written','primary-initialize-reply',
         'secondary-initialize-reply','primary-initialize-error','secondary-initialize-error','initialization-rejected',
         'initialization-ready','initialize-output-written','protocol-failed','stream-write-failed',
-        'probe-environment-admitted','probe-environment-rejected')
+        'probe-environment-admitted','probe-environment-rejected',
+        'primary-exited','bridge-context-cancelled','client-stream-ended','primary-stream-ended','secondary-stream-ended')
 }
 function New-OriginalBackendHandshakeReport {
     return [ordered]@{schema=1;scope='read-only-original-backend-handshake';status='unknown';reason='missing';

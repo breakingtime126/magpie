@@ -241,3 +241,8 @@ The post-sequence precondition observer guards optional Windows `HOME` access
 before indexing the environment under PowerShell strict mode. A missing `HOME`
 uses the existing `USERPROFILE` identity rule, while empty or mismatched values
 remain rejected.
+
+The diagnostic-only handshake observer distinguishes client, primary and secondary
+stream termination, primary exit before bridge cancellation, and cancellation of
+the bridge loop. These fixed labels contain no backend output or error messages
+and do not change stream ownership, deadlines, retry behavior or acceptance.

@@ -36,6 +36,11 @@ const (
 	StreamWriteFailed
 	ProbeEnvironmentAdmitted
 	ProbeEnvironmentRejected
+	PrimaryExited
+	BridgeContextCancelled
+	ClientStreamEnded
+	PrimaryStreamEnded
+	SecondaryStreamEnded
 )
 
 var names = [...]string{
@@ -53,6 +58,9 @@ var names = [...]string{
 	InitializationReady: "initialization-ready", InitializeOutputWritten: "initialize-output-written",
 	ProtocolFailed: "protocol-failed", StreamWriteFailed: "stream-write-failed",
 	ProbeEnvironmentAdmitted: "probe-environment-admitted", ProbeEnvironmentRejected: "probe-environment-rejected",
+	PrimaryExited: "primary-exited", BridgeContextCancelled: "bridge-context-cancelled",
+	ClientStreamEnded: "client-stream-ended", PrimaryStreamEnded: "primary-stream-ended",
+	SecondaryStreamEnded: "secondary-stream-ended",
 }
 
 func (s Stage) String() string {

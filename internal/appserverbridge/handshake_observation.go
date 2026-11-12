@@ -122,3 +122,19 @@ func (o *handshakeObservation) wrote(r *Router, d Delivery, err error) {
 	o.written = true
 	nativehandshake.Emit(o.ctx, nativehandshake.InitializeOutputWritten)
 }
+
+// streamEnded records only the fixed source identity, never input or error text.
+func (o *handshakeObservation) streamEnded(r *Router, backend string) {
+	if o == nil {
+		return
+	}
+	stage := nativehandshake.ClientStreamEnded
+	if backend != "" {
+		if backend == r.backends[0].ID {
+			stage = nativehandshake.PrimaryStreamEnded
+		} else {
+			stage = nativehandshake.SecondaryStreamEnded
+		}
+	}
+	nativehandshake.Emit(o.ctx, stage)
+}
