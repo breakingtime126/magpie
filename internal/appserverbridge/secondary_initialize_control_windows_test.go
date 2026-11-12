@@ -31,16 +31,17 @@ func TestOfficialSecondaryInitializeControl(t *testing.T) {
 	if !filepath.IsAbs(exe) {
 		t.Fatal("verified official executable unavailable")
 	}
-	_, baseline := secondaryInitializeControl(t, exe, false)
-	primary, secondary := secondaryInitializeControl(t, exe, true)
-	fmt.Printf("native-preview-diagnostic stage=initialize-shared-%s-%s-%s class=passed\n", baseline, primary, secondary)
+	concurrentPrimary, concurrentSecondary := secondaryInitializeControl(t, exe, false)
+	orderedPrimary, orderedSecondary := secondaryInitializeControl(t, exe, true)
+	fmt.Printf("native-preview-diagnostic stage=initialize-order-%s-%s-%s-%s class=passed\n", concurrentPrimary, concurrentSecondary, orderedPrimary, orderedSecondary)
 }
 
-func secondaryInitializeControl(t *testing.T, exe string, concurrent bool) (primaryOutcome, secondaryOutcome string) {
+func secondaryInitializeControl(t *testing.T, exe string, ordered bool) (primaryOutcome, secondaryOutcome string) {
 	t.Helper()
 	// Each case has fresh equivalent state. Both use identical secondary options,
-	// catalog and environment. The only treatment is a simultaneously running
-	// primary sharing HOME/CODEX_HOME; no client model-selection override.
+	// catalog, environment and shared HOME/CODEX_HOME. The only treatment is
+	// waiting for the primary initialize reply before starting the secondary.
+	// No initialized notification, thread, turn or model-selection override.
 	root := t.TempDir()
 	home, state := filepath.Join(root, "home"), filepath.Join(root, "state")
 	for _, dir := range []string{home, state} {
@@ -106,9 +107,10 @@ func secondaryInitializeControl(t *testing.T, exe string, concurrent bool) (prim
 	}
 	defer input.Close()
 	defer output.Close()
+	defer closeChild()
 	var primaryInput io.WriteCloser
 	var primaryOutput io.ReadCloser
-	if concurrent {
+	{
 		primaryEnv, err := cfg.sharedNativeEnvironment167(primary, filtered)
 		if err != nil {
 			t.Fatal("primary control environment unavailable")
@@ -143,6 +145,14 @@ func secondaryInitializeControl(t *testing.T, exe string, concurrent bool) (prim
 			t.Fatal("primary control child unavailable")
 		}
 	}
+	if ordered {
+		primaryContext, stopPrimary := context.WithTimeout(context.Background(), 35*time.Second)
+		primaryOutcome = initializeControlExchange(primaryContext, primaryInput, primaryOutput)
+		stopPrimary()
+		if primaryOutcome != "reply" {
+			return primaryOutcome, "notstarted"
+		}
+	}
 	if err := ep.Start(cmd); err != nil {
 		closeChild()
 		t.Fatal("control child unavailable")
@@ -150,8 +160,8 @@ func secondaryInitializeControl(t *testing.T, exe string, concurrent bool) (prim
 	closeChild()
 	ctx, stop := context.WithTimeout(context.Background(), 35*time.Second)
 	defer stop()
-	if !concurrent {
-		return "unused", initializeControlExchange(ctx, input, output)
+	if ordered {
+		return primaryOutcome, initializeControlExchange(ctx, input, output)
 	}
 	primaryResult := make(chan string, 1)
 	secondaryResult := make(chan string, 1)

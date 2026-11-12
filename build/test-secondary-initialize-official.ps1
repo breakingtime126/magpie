@@ -43,7 +43,7 @@ Assert-PublicRegularPath $TestExecutable
 $root = Join-Path $env:RUNNER_TEMP ('secondary-initialize-control-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
 $reportName = 'secondary-initialize-control-report.json'
-$scope = 'official-secondary-bridge-shared-state-initialize-control'
+$scope = 'official-secondary-bridge-start-order-initialize-control'
 $reportPath = Join-Path $env:RUNNER_TEMP $reportName
 if (Test-Path -LiteralPath $reportPath) { throw 'Report already exists; no retry.' }
 $report = [ordered]@{schema=1;scope=$scope;source_commit=$head;
@@ -96,7 +96,7 @@ try {
     }
     $psi.Environment['MAGPIE_PREVIEW_OFFICIAL_TEXT_TEST'] = '1'
     $psi.Environment['MAGPIE_PREVIEW_OFFICIAL_NATIVE'] = $codex
-    foreach ($argument in @('-test.run',('^' + [regex]::Escape($TestName) + '$'),'-test.v','-test.timeout','120s')) {
+    foreach ($argument in @('-test.run',('^' + [regex]::Escape($TestName) + '$'),'-test.v','-test.timeout','150s')) {
         $psi.ArgumentList.Add($argument)
     }
     $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
@@ -110,7 +110,7 @@ try {
     $closed = @($false, $false)
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while (-not ($closed[0] -and $closed[1] -and $process.HasExited)) {
-        if ($watch.ElapsedMilliseconds -gt 135000) { throw 'Test timed out.' }
+        if ($watch.ElapsedMilliseconds -gt 165000) { throw 'Test timed out.' }
         for ($i = 0; $i -lt 2; $i++) {
             if (-not $closed[$i] -and $reads[$i].IsCompleted) {
                 $count = $reads[$i].GetAwaiter().GetResult()
@@ -126,13 +126,16 @@ try {
     # Only a single exact allowlisted line is eligible for the public report.
     # No native response, source error or other stdout/stderr is published.
     $diagnostics = @($output -split '\r?\n' | Where-Object { $_.StartsWith('native-preview-diagnostic') })
-    # Exactly three fixed outcomes: independent secondary, shared primary,
-    # shared secondary. Never accept arbitrary native output.
+    # Fixed result tuple: concurrent primary/secondary, ordered primary/secondary.
+    # A failed primary initialization prevents ordered secondary startup.
     $outcomes = @('reply','error','eof','invalid','write','timeout')
-    $allowedStages = @(foreach ($baseline in $outcomes) {
-        foreach ($primary in $outcomes) {
-            foreach ($secondary in $outcomes) {
-                'initialize-shared-' + $baseline + '-' + $primary + '-' + $secondary
+    $allowedStages = @(foreach ($concurrentPrimary in $outcomes) {
+        foreach ($concurrentSecondary in $outcomes) {
+            foreach ($orderedPrimary in $outcomes) {
+                $secondaryOutcomes = if ($orderedPrimary -ceq 'reply') { $outcomes } else { @('notstarted') }
+                foreach ($orderedSecondary in $secondaryOutcomes) {
+                    'initialize-order-' + $concurrentPrimary + '-' + $concurrentSecondary + '-' + $orderedPrimary + '-' + $orderedSecondary
+                }
             }
         }
     })
@@ -237,4 +240,4 @@ try {
     [IO.File]::WriteAllText($reportPath, ($report | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
 }
 if ($report.status -cne 'passed') { throw 'Official secondary initialize diagnostic failed; inspect fixed-stage report.' }
-Write-Output 'PASS: secondary bridge shared-state initialize diagnostic; Desktop and real accounts not tested.'
+Write-Output 'PASS: secondary bridge start-order initialize diagnostic; Desktop and real accounts not tested.'
