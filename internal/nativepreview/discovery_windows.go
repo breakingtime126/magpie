@@ -69,5 +69,5 @@ func installedExecutable(parent context.Context) (string, error) {
 	trace.Complete()
 	return runInstalledQuery(ctx, command, func(cmd *exec.Cmd) (queryProcess, error) {
 		return proc.StartTreeStrict(cmd)
-	})
+	}, observeInstalledQueryRoot)
 }

@@ -154,7 +154,7 @@ func TestInstalledQueryBranches(t *testing.T) {
 					return done
 				}}, nil
 			}
-			found, err := runInstalledQuery(ctx, cmd, start)
+			found, err := runInstalledQuery(ctx, cmd, start, nil)
 			finish(err == nil)
 			wantCalls := "start,wait,wait-return"
 			if kind == "start" {
@@ -247,6 +247,15 @@ func TestInstalledQuerySourceContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls[rendered.String()]++
+			if function, ok := call.Fun.(*ast.Ident); ok && function.Name == "runInstalledQuery" {
+				if len(call.Args) != 4 {
+					t.Fatal("missing production root observer")
+				}
+				observer, ok := call.Args[3].(*ast.Ident)
+				if !ok || observer.Name != "observeInstalledQueryRoot" {
+					t.Fatal("wrong production root observer")
+				}
+			}
 		}
 		if assign, ok := node.(*ast.AssignStmt); ok {
 			for _, left := range assign.Lhs {
@@ -266,5 +275,163 @@ func TestInstalledQuerySourceContract(t *testing.T) {
 		if calls[call] != 1 {
 			t.Fatal("production wiring changed", call, calls[call])
 		}
+	}
+}
+
+// A root snapshot adds no authority: all observations must still stop, fully
+// wait and return the original refusal. The fixture injects cancellation, not
+// elapsed-time thresholds, and never launches PowerShell or a native runtime.
+func TestInstalledQueryRootObservation(t *testing.T) {
+	for _, state := range []queryRootState{queryRootUnknown, queryRootRunning, queryRootExited, 255} {
+		for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+			t.Run(fmt.Sprintf("state=%d/cause=%v", state, cause), func(t *testing.T) {
+				var mu sync.Mutex
+				var calls []string
+				note := func(s string) { mu.Lock(); defer mu.Unlock(); calls = append(calls, s) }
+				cancelled := make(chan struct{})
+				release := make(chan struct{})
+				parent := queryFixtureContext{Context: context.Background(), done: cancelled, cause: cause}
+				var lines []string
+				ctx, finish := nativeprepdiag.Begin(parent, func(s string) { lines = append(lines, s) })
+				cmd := &exec.Cmd{Path: "never-started"}
+				start := func(got *exec.Cmd) (queryProcess, error) {
+					note("start")
+					return queryFixtureProcess{wait: func() error {
+						note("wait")
+						close(cancelled)
+						<-release
+						note("wait-return")
+						return errors.New("PRIVATE-CANARY")
+					}, stop: func(grace time.Duration) <-chan struct{} {
+						note("stop")
+						if grace != time.Second {
+							t.Error("stop grace changed")
+						}
+						close(release)
+						done := make(chan struct{})
+						close(done)
+						return done
+					}}, nil
+				}
+				observe := func(got *exec.Cmd) queryRootObservation {
+					note("retain")
+					if got != cmd {
+						t.Error("observed foreign command")
+					}
+					return queryRootObservation{state: func() queryRootState { note("observe"); return state }, close: func() { note("close") }}
+				}
+				found, err := runInstalledQuery(ctx, cmd, start, observe)
+				finish(err == nil)
+				if found != "" || err != ErrUnavailable {
+					t.Fatal("root observation changed refusal")
+				}
+				if strings.Join(calls, ",") != "start,retain,wait,observe,stop,wait-return,close" {
+					t.Fatal("root snapshot lifecycle/order", calls)
+				}
+				want := "query-root-unknown"
+				if state == queryRootRunning {
+					want = "query-root-running"
+				}
+				if state == queryRootExited {
+					want = "query-root-exited"
+				}
+				text := strings.Join(lines, "\n")
+				if !strings.Contains(text, "stage="+want+" outcome=completed") {
+					t.Fatal("missing fixed root observation", text)
+				}
+				firstFailure := "query-cancelled"
+				if cause == context.DeadlineExceeded {
+					firstFailure = "query-deadline"
+				}
+				for _, line := range lines {
+					if strings.HasSuffix(line, "outcome=failed") {
+						if !strings.Contains(line, "stage="+firstFailure+" ") {
+							t.Fatal("observation obscured original failure", lines)
+						}
+						break
+					}
+				}
+				if strings.Contains(text, "PRIVATE") || len(lines) != 10 {
+					t.Fatal("root observation leaked or changed event budget", lines)
+				}
+			})
+		}
+	}
+}
+
+func TestInstalledQueryRootObservationOtherBranches(t *testing.T) {
+	for _, kind := range []string{"success", "wait-error", "start-error", "pre-cancel", "capture-unavailable"} {
+		t.Run(kind, func(t *testing.T) {
+			var mu sync.Mutex
+			var calls []string
+			note := func(s string) { mu.Lock(); defer mu.Unlock(); calls = append(calls, s) }
+			parent, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if kind == "pre-cancel" {
+				cancel()
+			}
+			var lines []string
+			ctx, finish := nativeprepdiag.Begin(parent, func(s string) { lines = append(lines, s) })
+			cmd := &exec.Cmd{Path: "never-started"}
+			path := filepath.Join(t.TempDir(), "never-executed.exe")
+			data, _ := json.Marshal(map[string]any{"path": path, "family": "OpenAI.Codex_2p2nqsd0c76g0", "signatureKind": "Store"})
+			release := make(chan struct{})
+			start := func(got *exec.Cmd) (queryProcess, error) {
+				note("start")
+				if kind == "start-error" {
+					return nil, errors.New("authored")
+				}
+				return queryFixtureProcess{wait: func() error {
+					note("wait")
+					if kind == "capture-unavailable" {
+						cancel()
+						<-release
+					}
+					_, _ = got.Stdout.Write(data)
+					note("wait-return")
+					if kind == "wait-error" {
+						return errors.New("authored")
+					}
+					return nil
+				}, stop: func(time.Duration) <-chan struct{} {
+					note("stop")
+					close(release)
+					done := make(chan struct{})
+					close(done)
+					return done
+				}}, nil
+			}
+			observe := func(*exec.Cmd) queryRootObservation {
+				note("retain")
+				if kind == "capture-unavailable" {
+					return queryRootObservation{}
+				}
+				return queryRootObservation{state: func() queryRootState { t.Error("unexpected snapshot"); return queryRootRunning }, close: func() { note("close") }}
+			}
+			found, err := runInstalledQuery(ctx, cmd, start, observe)
+			finish(err == nil)
+			want := "start,retain,wait,wait-return,close"
+			switch kind {
+			case "start-error":
+				want = "start"
+			case "pre-cancel":
+				want = ""
+			case "capture-unavailable":
+				want = "start,retain,wait,stop,wait-return"
+			}
+			if strings.Join(calls, ",") != want {
+				t.Fatal("other branch observation lifecycle", calls)
+			}
+			if kind == "success" {
+				if err != nil || found != path {
+					t.Fatal("success changed", err)
+				}
+			} else if err != ErrUnavailable || found != "" {
+				t.Fatal("refusal changed", err)
+			}
+			if kind == "capture-unavailable" && !strings.Contains(strings.Join(lines, "\n"), "stage=query-root-unknown outcome=completed") {
+				t.Fatal("capture failure was not unknown", lines)
+			}
+		})
 	}
 }

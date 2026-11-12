@@ -115,3 +115,11 @@ test binary to obtain typed exit errors; they never run PowerShell, a native
 runtime, a provider, or the package query.
 
 The current query body uses [fixed official-module bindings](original-installed-query.md); classification does not relax its checks or process ownership.
+
+A post-start cancellation also records one completed `query-root-running`,
+`query-root-exited`, or `query-root-unknown` snapshot before the failed deadline
+or cancellation stage. The original first-failure category and recovery rules
+are unchanged. This is the root state when sampled, not proof of its state at
+the exact deadline, nor proof that a pipe is the blocker. A query taking the post-start cancellation branch
+adds two fixed records within the existing 128-record cap; successful queries
+keep their existing record count. See [retained observation semantics](original-installed-query.md#deadline-root-observation).

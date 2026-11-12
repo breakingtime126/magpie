@@ -385,3 +385,10 @@ is a separate acceptance gate; portable tests do not prove the actual package
 probe or installed Desktop integration.
 
 The installed-package query [binds official exported cmdlets](../../build/original-installed-query.md) from fixed PSHOME manifests. Package checks and strict timeout/drain semantics remain unchanged; this is a targeted lookup correction, not a proven explanation of the observed timeout.
+
+A deadline/cancellation observation retains a wait-only handle of the query's
+exact owned root before Go's single Wait starts. Its enum-only snapshot says
+running, exited or unknown at sampling time, then the existing Stop/Wait and
+refusal still run. It neither identifies a pipe-only cause nor changes recovery
+authority. The extra process-object reference is released after the original
+Wait; see [query observation semantics](../../build/original-installed-query.md#deadline-root-observation).

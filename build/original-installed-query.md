@@ -32,3 +32,37 @@ proved only that strict Wait did not finish in budget, potentially including
 stdout draining; it did not prove the root process stayed alive or identify the
 cause. Metadata gates may warm caches. A later passing run would demonstrate
 practical success, not establish cold-start causality.
+
+## Deadline root observation
+
+After the existing context-cancellation branch wins, the query records one of
+`query-root-running`, `query-root-exited`, or `query-root-unknown` immediately
+before the original cancellation/deadline failure and Stop/Wait cleanup. It is
+an observation at sampling time, not an exact-deadline timestamp. Concurrent
+completion may report exited even when the Wait result became ready meanwhile;
+the selected cancellation branch still refuses the query.
+
+The Windows observer captures a noninheritable SYNCHRONIZE-only duplicate of
+the exact owned process handle after strict startup and before the sole Wait.
+This retains a kernel process-object reference until that Wait has completed;
+it does not extend process execution, change Job ownership, or grant termination
+authority. Go 1.26.8 releases its original handle before waiting for stdout
+copying, so sampling only through that released handle would lose this case.
+No PID is reopened and ProcessState is never read concurrently with Cmd.Wait.
+Capture/sample failures remain unknown. The extra observation handle is closed
+on both success and failure after the original Wait result has been received.
+
+An exited snapshot narrows the investigation but does not prove that pipe
+copying caused the deadline: Wait and job cleanup may be completing concurrently.
+No output bytes, stderr, paths, PIDs or error text enter these fixed records.
+The snapshot is completed, not failed, so the original query-deadline or
+query-cancelled remains the first failure. Observations authorize no retry,
+cleanup shortcut, partial-output acceptance or timeout change.
+
+Authored Windows subprocess tests hold the stdout writer behind a deterministic
+barrier while the root exits and Go releases its original handle. They cover
+running/exited/closed observations and ensure the duplicate is noninheritable
+and lacks termination access. Portable fixtures cover missing observation,
+invalid state, every cancellation classification, success/error cleanup order,
+and failure precedence. Cross-compilation alone does not execute these Windows
+tests or establish actual Connect success.

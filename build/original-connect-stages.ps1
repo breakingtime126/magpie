@@ -8,7 +8,7 @@ function Get-OriginalConnectStageNames {
         'host-inputs','launcher-resolution','launcher-verification','profile-preparation','host-admission',
         'channel-start','channel-publication','bootstrap-listeners','prepared-plan','controller-validation',
         'selection-lock','selection-read','selection-profile','selection-publication','preparation-cleanup',
-        'query-environment','query-start','query-wait','query-deadline','query-cancelled','query-exit-two','query-exit-three','query-exit-nonzero','query-wait-failure','query-output-bound','query-json','query-identity')
+        'query-environment','query-start','query-wait','query-deadline','query-cancelled','query-exit-two','query-exit-three','query-exit-nonzero','query-wait-failure','query-output-bound','query-json','query-identity','query-root-running','query-root-exited','query-root-unknown')
 }
 function New-OriginalConnectStageReport {
     return [ordered]@{schema=1;scope='read-only-original-connect-stages';status='unknown';reason='missing';

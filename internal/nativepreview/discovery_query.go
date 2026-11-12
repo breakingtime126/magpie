@@ -18,7 +18,22 @@ type queryProcess interface {
 	Stop(time.Duration) <-chan struct{}
 }
 
-func runInstalledQuery(ctx context.Context, command *exec.Cmd, start func(*exec.Cmd) (queryProcess, error)) (string, error) {
+type queryRootState uint8
+
+const (
+	queryRootUnknown queryRootState = iota
+	queryRootRunning
+	queryRootExited
+)
+
+// The observer owns only a retained wait handle, never process cleanup.
+// Its callbacks run serially in runInstalledQuery, including final release.
+type queryRootObservation struct {
+	state func() queryRootState
+	close func()
+}
+
+func runInstalledQuery(ctx context.Context, command *exec.Cmd, start func(*exec.Cmd) (queryProcess, error), observe func(*exec.Cmd) queryRootObservation) (string, error) {
 	trace := nativeprepdiag.Track(ctx, nativeprepdiag.QueryStart)
 	defer trace.End()
 	output := &queryOutput{}
@@ -32,6 +47,13 @@ func runInstalledQuery(ctx context.Context, command *exec.Cmd, start func(*exec.
 	tree, err := start(command)
 	if err != nil {
 		return "", ErrUnavailable
+	}
+	var root queryRootObservation
+	if observe != nil {
+		root = observe(command)
+		if root.close != nil {
+			defer root.close()
+		}
 	}
 	trace.Next(nativeprepdiag.QueryWait)
 	done := make(chan error, 1)
@@ -47,6 +69,7 @@ func runInstalledQuery(ctx context.Context, command *exec.Cmd, start func(*exec.
 			return "", ErrUnavailable
 		}
 	case <-ctx.Done():
+		queryRootSnapshot(ctx, root)
 		queryContextFailure(ctx)
 		<-tree.Stop(time.Second)
 		<-done
@@ -113,4 +136,21 @@ func (q *queryOutput) Write(data []byte) (int, error) {
 	}
 	q.data = append(q.data, data...)
 	return n, nil
+}
+
+// This is a post-cancellation snapshot, not proof of the exact deadline instant
+// or of what Cmd.Wait is waiting for. Observation never changes cleanup/result.
+func queryRootSnapshot(ctx context.Context, root queryRootObservation) {
+	state := queryRootUnknown
+	if root.state != nil {
+		state = root.state()
+	}
+	stage := nativeprepdiag.QueryRootUnknown
+	switch state {
+	case queryRootRunning:
+		stage = nativeprepdiag.QueryRootRunning
+	case queryRootExited:
+		stage = nativeprepdiag.QueryRootExited
+	}
+	nativeprepdiag.Track(ctx, stage).Complete()
 }

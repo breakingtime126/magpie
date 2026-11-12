@@ -59,6 +59,9 @@ const (
 	QueryOutputBound
 	QueryJSON
 	QueryIdentity
+	QueryRootRunning
+	QueryRootExited
+	QueryRootUnknown
 )
 
 var names = [...]string{
@@ -109,6 +112,9 @@ var names = [...]string{
 	QueryOutputBound:     "query-output-bound",
 	QueryJSON:            "query-json",
 	QueryIdentity:        "query-identity",
+	QueryRootRunning:     "query-root-running",
+	QueryRootExited:      "query-root-exited",
+	QueryRootUnknown:     "query-root-unknown",
 }
 
 const MaxEvents = 128

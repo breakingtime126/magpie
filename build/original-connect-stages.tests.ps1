@@ -41,6 +41,16 @@ foreach ($queryStage in @('query-environment','query-start','query-wait','query-
     Assert ($queryReport.status -ceq 'complete' -and $queryReport.firstFailedStage -ceq $queryStage -and
         -not $queryReport.changesRecoveryDecision -and -not $queryReport.authorizesAction) 'fixed query stage allowlist'
 }
+# Observation is a completed fixed snapshot, never the original failure.
+foreach ($rootStage in @('query-root-running','query-root-exited','query-root-unknown')) {
+    $trace=(Line 1 connect entered)+(Line 2 query-wait entered)+(Line 3 $rootStage entered)+
+        (Line 4 $rootStage completed)+(Line 5 query-deadline entered)+(Line 6 query-deadline failed)+
+        (Line 7 query-wait failed)+(Line 8 connect failed)
+    $rootReport=ConvertFrom-OriginalConnectStageLog (Bytes $trace)
+    Assert ($rootReport.status -ceq 'complete' -and $rootReport.firstFailedStage -ceq 'query-deadline' -and
+        $rootReport.stages[$rootStage].completed -eq 1 -and $rootReport.stages[$rootStage].failed -eq 0 -and
+        -not $rootReport.changesRecoveryDecision -and -not $rootReport.authorizesAction) 'root snapshot preserves deadline failure and no authority'
+}
 $success=(Line 1 connect entered)+(Line 2 connect completed)
 Assert ((ConvertFrom-OriginalConnectStageLog (Bytes $success)).firstFailedStage -ceq 'unknown') 'no invented failure on success'
 Assert ((ConvertFrom-OriginalConnectStageLog (Bytes $success)).attemptOutcome -ceq 'completed') 'complete success is observer outcome only'
@@ -112,7 +122,7 @@ $guiEntry=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '../internal/cli/gui_o
 Assert ($appLog.Contains('log.SetOutput(io.MultiWriter(quiet{os.Stderr}, w))') -and $appLog -notmatch 'log\.Set(Flags|Prefix)\(') 'production app logger preserves standard prefix'
 Assert ($guiEntry.Contains('startLog("app")') -and $guiEntry.Contains('applog.Start(version, how)')) 'original GUI starts file logger'
 $packager=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'package-native-magpie-windows.ps1'))
-foreach ($gate in @('./internal/nativeprepdiag', '^(TestRuntimePreparationDiagnosticsObserveOriginalCalls|TestInstalledQueryBranches|TestInstalledQuerySourceContract)$', '^TestOriginalConnectDiagnosticsBoundToOriginalInvocation$')) {
+foreach ($gate in @('./internal/nativeprepdiag', '^(TestRuntimePreparationDiagnosticsObserveOriginalCalls|TestInstalledQueryBranches|TestInstalledQuerySourceContract)$', '^TestOriginalConnectDiagnosticsBoundToOriginalInvocation$', '^TestInstalledQueryRoot')) {
     Assert ($packager.IndexOf($gate) -ge 0 -and $packager.IndexOf($gate) -lt $packager.IndexOf('& go run github.com/tc-hib/go-winres')) 'offline Windows observer gates precede packaging'
 }
 Write-Output 'PASS strict protocol, nesting, bounds, partial unknown, redaction, immutable recovery and caller ordering'
