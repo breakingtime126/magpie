@@ -2644,3 +2644,10 @@ read-wait and write guards without publishing a fabricated `model_catalog_json`.
 The old mode and settings-off behavior are unchanged. See
 [Native picker defaults](native-codex-connect.md#native-picker-defaults) for
 factory selection, persistence lifetime, refresh drift and thread/default limits.
+
+Model metadata values use a dedicated bounded JSON validator rather than the
+policy-text validator: escaped LF, CR and tab are legitimate display text.
+Duplicate decoded keys, malformed Unicode, other controls and structural limits
+remain rejected. Route identifiers retain strict text validation; policy JSON
+validation is unchanged. Only fixed diagnostic labels are emitted, not native
+model records.
