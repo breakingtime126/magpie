@@ -113,8 +113,8 @@ Write-Output 'PASS exact metadata, invalid context, redaction, provenance, saved
 if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     $fixture=Join-Path ([IO.Path]::GetTempPath()) ('precondition-fixture-'+[guid]::NewGuid().ToString('N'))
     try {
-        $run=Join-Path $fixture 'app';$fixtureHome=Join-Path $fixture 'home';$system=Join-Path $fixture 'system'
-        foreach ($relative in @('app\data\native-codex-connection\generation-123','app\data\native-codex-connection\profile-456','home\.codex','system\System32\WindowsPowerShell\v1.0')) {
+        $run=Join-Path $fixture 'app';$fixtureHome=Join-Path $fixture 'home';$system=Join-Path $fixture 'system';$identityHome=Join-Path $fixture 'session'
+        foreach ($relative in @('session','app\data\native-codex-connection\generation-123','app\data\native-codex-connection\profile-456','home\.codex','system\System32\WindowsPowerShell\v1.0')) {
             $null=[IO.Directory]::CreateDirectory((Join-Path $fixture $relative))
         }
         foreach ($relative in @('app\magpie-codex-bridge.exe','app\data\native-codex-connection\generation-123\supplier-catalog.json','app\data\native-codex-connection\generation-123\channel-0123456789abcdef0123456789abcdef.json','app\data\native-codex-connection\profile-456\bridge.json','system\System32\WindowsPowerShell\v1.0\powershell.exe')) {
@@ -122,15 +122,25 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         }
         $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=Join-Path $run 'Magpie-Native-Codex-Experimental.exe'
         $start.EnvironmentVariables.Clear();$start.EnvironmentVariables['SystemRoot']=$system
-        $start.EnvironmentVariables['HOME']=$fixtureHome;$start.EnvironmentVariables['USERPROFILE']=$fixtureHome;$start.EnvironmentVariables['CODEX_HOME']=Join-Path $fixtureHome '.codex'
-        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $fixtureHome -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
-        Assert ($r.status -ceq 'snapshot' -and $r.inspected.homeMatchesFixture -ceq 'passed' -and $r.inspected.nativeHomeSafe -ceq 'passed') 'Windows owned environment metadata'
+        $start.EnvironmentVariables['HOME']=$identityHome;$start.EnvironmentVariables['USERPROFILE']=$identityHome;$start.EnvironmentVariables['CODEX_HOME']=Join-Path $fixtureHome '.codex'
+        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $fixtureHome -LaunchIdentityHome $identityHome -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
+        Assert ($r.status -ceq 'snapshot' -and $r.inspected.homeMatchesLaunchIdentity -ceq 'passed' -and $r.inspected.nativeHomeSafe -ceq 'passed') 'Windows owned environment metadata'
         Assert ($r.artifacts.selectionJournal -ceq 'absent' -and $r.artifacts.generationDirectory -ceq 'present' -and $r.artifacts.supplierCatalog -ceq 'present' -and $r.artifacts.channelDescriptor -ceq 'present' -and $r.artifacts.bridgeProfile -ceq 'present') 'Windows fixed artifacts without content reads'
         Assert (($r|ConvertTo-Json -Depth 6 -Compress) -notmatch 'INERT_CONTENT_CANARY|precondition-fixture') 'Windows report leaks no content or fixture path'
+        $start.EnvironmentVariables.Remove('HOME')
+        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $fixtureHome -LaunchIdentityHome $identityHome -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
+        Assert ($r.status -ceq 'snapshot' -and $r.inspected.homeMatchesLaunchIdentity -ceq 'passed') 'Windows missing HOME retains USERPROFILE identity'
+        foreach ($badHome in @($fixtureHome,'relative','')) {
+            $start.EnvironmentVariables['HOME']=$badHome
+            $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $fixtureHome -LaunchIdentityHome $identityHome -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
+            Assert ($r.status -ceq 'unavailable' -and $r.inspected.homeMatchesLaunchIdentity -ceq 'failed') 'Windows mismatched HOME is not fixture identity'
+        }
+        $start.EnvironmentVariables['HOME']=$identityHome
         for ($i=0;$i -lt 129;$i++) { [IO.File]::WriteAllText((Join-Path $run ('data\unused-'+$i)), '') }
-        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $fixtureHome -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
+        $r=Get-OriginalConnectPreconditions -PackageContext (Context) -OriginalStartInfo $start -OwnedRun $run -OwnedHome $fixtureHome -LaunchIdentityHome $identityHome -Sequence $sequence -RecoveryChecksCompleted -SequenceReportSaved
         Assert ($r.status -ceq 'unavailable' -and $r.artifacts.generationDirectory -ceq 'unknown') 'bounded enumeration fails unknown, not absent'
         Assert (($sequence|ConvertTo-Json -Compress) -ceq $before) 'Windows observation preserves uncertain recovery'
         Write-Output 'PASS Windows inert filesystem collector fixtures'
     } finally { if ([IO.Directory]::Exists($fixture)) { [IO.Directory]::Delete($fixture,$true) } }
 } else { Write-Output 'NOT RUN Windows inert filesystem collector fixtures (non-Windows host)' }
+& (Join-Path $PSScriptRoot 'original-desktop-environment.tests.ps1')

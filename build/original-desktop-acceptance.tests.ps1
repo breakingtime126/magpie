@@ -84,6 +84,11 @@ foreach ($name in @('Set-EntryOverrides','Restore-EntryOverrides','Write-EntryUs
     Assert ($commands -cnotcontains $name) ('no fallback action '+$name)
 }
 $text=$caller.Extent.Text
+Assert ($text.Contains('$start=New-OriginalDesktopStartInfo -Executable $exe -OwnedRun $run -OwnedHome $homeRoot')) 'original launch must use session-identity environment construction'
+Assert ($text.Contains('-LaunchIdentityHome $launchIdentityHome') -and $text.Contains('$launchIdentityHome=[string]$start.EnvironmentVariables[''USERPROFILE'']')) 'observer separates session identity from owned native data'
+Assert ($text.IndexOf('$context=New-OriginalDesktopPackage') -lt $text.IndexOf('$start=New-OriginalDesktopStartInfo')) 'package freshness completes before environment construction'
+Assert ($text -notmatch "foreach \([^)]+@\('HOME','USERPROFILE','APPDATA'") 'no synthetic identity override in coordinator'
+
 Assert ($text.Contains("[original-connect-desktop-v1]") -and $text.Contains("'original-ui-v1'")) 'exact caller opt-in'
 Assert ($text.Contains('if (-not $sequenceEntered -and $null -eq $report.sequence') -and
     $text.IndexOf('$sequenceEntered=$true') -lt $text.IndexOf('$report.sequence=Invoke-OriginalDesktopSequence')) 'unexpected post-dispatch orchestration failure cannot use pre-sequence cleanup'

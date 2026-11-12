@@ -10,7 +10,7 @@ function New-OriginalPreconditionReport($Facts) {
         inspected=[ordered]@{};artifacts=[ordered]@{};
         notProven=@('same-environment-package-query','actual-cli-version-probe','runtime-identity-across-probe','embedded-launcher-pins','gateway-ownership','host-preparation','original-action-outcome');
         changesRecoveryDecision=$false;authorizesAction=$false}
-    foreach ($name in @('preparedContextOpen','exactPackageName','exactPackageFamily','storeSignatureKind','packageStatusOk','expectedPackageVersion','retainedNativePathMatches','systemRootAbsolute','homeUserProfileAgree','homeMatchesFixture','codexHomeMatchesFixture','unsupportedOverridesAbsent','nativeHomeSafe','magpieDataSafe','powershellFilePresent','originalExecutableName','siblingAdapterPresent')) {
+    foreach ($name in @('preparedContextOpen','exactPackageName','exactPackageFamily','storeSignatureKind','packageStatusOk','expectedPackageVersion','retainedNativePathMatches','systemRootAbsolute','homeUserProfileAgree','homeMatchesLaunchIdentity','codexHomeMatchesFixture','unsupportedOverridesAbsent','nativeHomeSafe','magpieDataSafe','powershellFilePresent','originalExecutableName','siblingAdapterPresent')) {
         $report.inspected[$name]=ConvertTo-OriginalPredicate $Facts[$name]
     }
     foreach ($name in @('connectionDirectory','selectionJournal','runtimeProbeDirectory','generationDirectory','supplierCatalog','channelDescriptor','profileDirectory','bridgeProfile')) {
@@ -87,7 +87,7 @@ function Get-OriginalPreparedRegistrationFacts($PackageContext) {
 }
 function Get-OriginalConnectPreconditions {
     [CmdletBinding()]
-    param($PackageContext,[Diagnostics.ProcessStartInfo]$OriginalStartInfo,[string]$OwnedRun,[string]$OwnedHome,
+    param($PackageContext,[Diagnostics.ProcessStartInfo]$OriginalStartInfo,[string]$OwnedRun,[string]$OwnedHome,[string]$LaunchIdentityHome,
         $Sequence,[switch]$RecoveryChecksCompleted,[switch]$SequenceReportSaved)
     # Both attestations belong to the caller's already-completed sequence. This
     # observer never runs recovery checks itself or updates their result.
@@ -104,15 +104,15 @@ function Get-OriginalConnectPreconditions {
         $envs=$OriginalStartInfo.EnvironmentVariables
         $system=[string]$envs['SystemRoot'];$launchHome=[string]$envs['HOME'];$userProfilePath=[string]$envs['USERPROFILE'];$codex=[string]$envs['CODEX_HOME']
         $facts.systemRootAbsolute=($system -match '^[A-Za-z]:\\' -and [IO.Path]::GetFullPath($system) -ieq $system)
-        $facts.homeUserProfileAgree=($launchHome -ine '' -and $launchHome -ieq $userProfilePath)
-        $facts.homeMatchesFixture=($launchHome -ieq $OwnedHome -and $userProfilePath -ieq $OwnedHome)
+        $facts.homeUserProfileAgree=((-not $envs.ContainsKey('HOME') -or $launchHome -ieq $userProfilePath) -and $userProfilePath -ine '')
+        $facts.homeMatchesLaunchIdentity=($facts.homeUserProfileAgree -and $userProfilePath -ieq $LaunchIdentityHome -and $LaunchIdentityHome -ine $OwnedHome -and $LaunchIdentityHome -match '^[A-Za-z]:\\' -and [IO.Path]::GetFullPath($LaunchIdentityHome) -ieq $LaunchIdentityHome)
         $facts.codexHomeMatchesFixture=($codex -ieq [IO.Path]::Combine($OwnedHome,'.codex'))
         $facts.unsupportedOverridesAbsent=$true
         foreach ($name in @('CODEX_WINDOWS_REGISTERED_CORE','CODEX_SQLITE_HOME','CODEX_CLI_PATH','MAGPIE_APP_SERVER_BRIDGE_CONFIG')) {
             if ($envs.ContainsKey($name)) { $facts.unsupportedOverridesAbsent=$false }
         }
         # Reject unexpected arguments before using supplied paths for metadata.
-        if (-not $facts.homeMatchesFixture -or -not $facts.codexHomeMatchesFixture -or
+        if (-not $facts.homeMatchesLaunchIdentity -or -not $facts.codexHomeMatchesFixture -or
             -not (Test-OriginalDiagnosticPath $OwnedRun $true) -or -not (Test-OriginalDiagnosticPath $OwnedHome $true)) { throw 'Owned fixture paths unavailable.' }
         $data=[IO.Path]::Combine($OwnedRun,'data');$connection=[IO.Path]::Combine($data,'native-codex-connection')
         $facts.nativeHomeSafe=Test-OriginalDiagnosticPath $codex $true

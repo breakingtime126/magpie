@@ -6,7 +6,8 @@ function Get-OriginalHandshakeStages {
         'probe-result-validated','probe-output-written','probe-failed','jsonl-failed','primary-started','secondary-started',
         'initialize-received','primary-initialize-written','secondary-initialize-written','primary-initialize-reply',
         'secondary-initialize-reply','primary-initialize-error','secondary-initialize-error','initialization-rejected',
-        'initialization-ready','initialize-output-written','protocol-failed','stream-write-failed')
+        'initialization-ready','initialize-output-written','protocol-failed','stream-write-failed',
+        'probe-environment-admitted','probe-environment-rejected')
 }
 function New-OriginalBackendHandshakeReport {
     return [ordered]@{schema=1;scope='read-only-original-backend-handshake';status='unknown';reason='missing';
@@ -53,7 +54,8 @@ function ConvertFrom-OriginalHandshakeLog([byte[]]$Bytes,[string]$Role) {
             $started=$stages.IndexOf($roleName+'-started');$sent=$stages.IndexOf($roleName+'-initialize-written');$reply=$stages.IndexOf($roleName+'-initialize-reply')
             if ($started -le $position -or $started -ge $received -or $sent -le $received -or $reply -le $sent -or $reply -ge $ready) { $result.reason='incomplete';return $result }
         }
-        if ($stages.Contains('startup-probe-requested')) { $result.reason='malformed';return $result }
+        if ($stages.Contains('startup-probe-requested') -or $stages.Contains('probe-environment-admitted') -or
+            $stages.Contains('probe-environment-rejected')) { $result.reason='malformed';return $result }
         $result.initializeOutputWrittenObserved=$true
     }
     $result.status='observed';$result.reason='none';$result.recordCount=$stages.Count;$result.stages=@($stages.ToArray())

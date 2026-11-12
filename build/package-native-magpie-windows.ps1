@@ -73,7 +73,7 @@ if ($buildMode.handshakeDiagnostic) {
     Assert-Exit 'Windows diagnostic handshake instrumentation vet'
     & go test -tags nogui,nativecodex -count=1 -timeout=2m ./internal/nativehandshake
     Assert-Exit 'Default handshake observer is inert'
-    & go test -v -tags nogui,nativecodex,nativehandshakediag -count=1 -timeout=5m -run '^TestHandshake' ./internal/nativehandshake ./internal/nativehost ./internal/nativelaunch ./internal/appserverbridge ./cmd/magpie-codex-bridge
+    & go test -v -tags nogui,nativecodex,nativehandshakediag -count=1 -timeout=5m -run '^Test(Handshake|OwnedStartupProbe)' ./internal/nativehandshake ./internal/nativehost ./internal/nativelaunch ./internal/appserverbridge ./cmd/magpie-codex-bridge
     Assert-Exit 'Bounded diagnostic handshake observer'
 }
 & go run github.com/tc-hib/go-winres@v0.3.3 make --in build/windows/winres.json --arch amd64 --out rsrc --file-version '0.0.0' --product-version '0.0.0'

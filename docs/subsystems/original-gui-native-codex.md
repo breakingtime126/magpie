@@ -148,6 +148,32 @@ and the original restore dialog/confirmation in finally. It uses only a fresh
 portable copy, empty native home and public inert provider fixture. No live
 account, inference, Desktop setup or permission adjustment is part of this run.
 
+The [environment fixture](../../build/original-desktop-environment.ps1) separates
+the fresh hosted Windows session identity from the isolated native state root.
+Magpie preserves that session's verified `USERPROFILE` and, only if present and
+matching, `HOME`. Normal AUMID Desktop activation does not inherit Magpie's
+private `ProcessStartInfo`; giving only Magpie a synthetic identity makes the
+bridge's unchanged shared-home check reject before either startup-probe child
+when Desktop retains the session identity. This source-level mismatch does not
+by itself prove the exact cause of a historical runtime failure. `CODEX_HOME`
+remains the explicitly fresh empty
+owned directory, and Magpie's portable data, APPDATA and temporary directories
+remain isolated. No process/user environment is rewritten and no Desktop launch
+override is injected. The native bridge still validates its own inherited
+environment, including all existing home, policy, transport and certificate
+checks.
+
+This fixture is gated to the explicitly opted-in disposable GitHub-hosted
+Windows job, never a user's computer or profile. Session identity paths are
+checked as metadata only; preexisting ambient `.codex`, unexpected native state
+overrides or nonempty isolated state block the run. Account discovery remains
+disabled. Fixed report booleans describe fixture construction, not account,
+Desktop or backend acceptance. The precondition observer receives launch
+identity and owned native/data roots separately and still runs after saved
+recovery. Authored construction and probe tests cover the previous mismatched
+identity rejection and a matching identity with a separate native state root;
+actual Windows results remain a separate acceptance check.
+
 The action supervisor holds the original process identity and gives a bounded
 Core worker one attempt per action. The initial Configure wait is read-only,
 bounded to 15 seconds, and waits only on a missing, hidden or disabled exact

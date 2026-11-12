@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'original-connect-action.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-package.ps1')
+. (Join-Path $PSScriptRoot 'original-desktop-environment.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-sequence.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-cleanup.ps1')
 . (Join-Path $PSScriptRoot 'original-desktop-quit-discovery.ps1')
@@ -118,7 +119,7 @@ $report=[ordered]@{schema=1;scope='original-magpie-connect-desktop-restore';sour
     status='blocked';diagnosticOnly=[bool]$stageDiagnosticsOnly;stage='context';failureStage='none';preparation=$null;package=$null;sequence=$null;images=$null;diagnosticCapture=$null;trayDiscovery=$null;connectPreconditions=$null;connectStages=$null;backendHandshakeObservation=(New-OriginalBackendHandshakeReport);backendHandshakeObservationFinal=$null;
     originalWindowCaptured=$false;desktopWindowCaptured=$false;adapterImageObserved=$false;
     selectionRestored=$false;journalRemoved=$false;ownedRootExitsConfirmed=$false;descendantExitVerified=$false;gracefulShutdownVerified=$false;cleanupResourcesDisposed=$false;cleanup=(New-AcceptanceCleanup);cleanupScope='retained-process-roots-only';preserveRecovery=$true;
-    nativeHomeInitiallyEmpty=$false;realAccountsUsed=$false;providerTurnAttempted=$false;
+    nativeHomeInitiallyEmpty=$false;launchIdentityMatchesSession=$false;isolatedNativeHomeVerified=$false;realAccountsUsed=$false;providerTurnAttempted=$false;
     desktopInteractionAttempted=$false;backendHandshakeVerified=$false;chatVerified=$false;
     restoredDesktopStartVerified=$false;zeroEgressProven=$false}
 $evidenceReady=$false
@@ -166,21 +167,10 @@ try {
     $context=New-OriginalDesktopPackage -Work (Join-Path $root 'official') -BridgeExecutable $launcher -PreparationEvidence $report.preparation
     $report.package=$context.Evidence
     $report.stage='original-window'
-    $parent=[Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process)
-    foreach ($name in @('CODEX_WINDOWS_REGISTERED_CORE','CODEX_SQLITE_HOME','CODEX_CLI_PATH','MAGPIE_APP_SERVER_BRIDGE_CONFIG')) {
-        if ($parent.Contains($name)) { throw 'Unexpected native override.' }
-    }
-    $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$exe;$start.Arguments='gui agents';$start.WorkingDirectory=$run;$start.UseShellExecute=$false
-    $start.EnvironmentVariables.Clear()
-    foreach ($name in @('SystemRoot','WINDIR','ProgramFiles','ProgramFiles(x86)','CommonProgramFiles','ProgramData')) {
-        if ($parent.Contains($name)) { $start.EnvironmentVariables[$name]=[string]$parent[$name] }
-    }
-    $start.EnvironmentVariables['PATH']=Join-Path $env:SystemRoot 'System32'
-    foreach ($name in @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP','XDG_CONFIG_HOME','XDG_CACHE_HOME')) { $start.EnvironmentVariables[$name]=$homeRoot }
-    $start.EnvironmentVariables['CODEX_HOME']=$nativeHome
-    foreach ($name in @('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','http_proxy','https_proxy','all_proxy','no_proxy','CODEX_CA_CERTIFICATE','SSL_CERT_FILE','SSL_CERT_DIR','CURL_CA_BUNDLE','REQUESTS_CA_BUNDLE','NODE_EXTRA_CA_CERTS')) {
-        if ($parent.Contains($name)) { $start.EnvironmentVariables[$name]=[string]$parent[$name] }
-    }
+    $start=New-OriginalDesktopStartInfo -Executable $exe -OwnedRun $run -OwnedHome $homeRoot
+    $launchIdentityHome=[string]$start.EnvironmentVariables['USERPROFILE']
+    $report.launchIdentityMatchesSession=$true
+    $report.isolatedNativeHomeVerified=$true
     $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$startAttempted=$true;$started=$process.Start()
     if (-not $started) { throw 'Original GUI did not start.' }
     $null=$process.Handle;$ticks=$process.StartTime.ToUniversalTime().Ticks
@@ -247,7 +237,7 @@ try {
     } -Tray {
         Invoke-OriginalQuitDiscovery -OwnedProcess $process -ExpectedExecutable $exe
     } -Preconditions {
-        Get-OriginalConnectPreconditions -PackageContext $context -OriginalStartInfo $start -OwnedRun $run -OwnedHome $homeRoot -Sequence $report.sequence -RecoveryChecksCompleted -SequenceReportSaved
+        Get-OriginalConnectPreconditions -PackageContext $context -OriginalStartInfo $start -OwnedRun $run -OwnedHome $homeRoot -LaunchIdentityHome $launchIdentityHome -Sequence $report.sequence -RecoveryChecksCompleted -SequenceReportSaved
     }
     $report.diagnosticCapture=$diagnostics.capture;$report.trayDiscovery=$diagnostics.tray;$report.connectPreconditions=$diagnostics.preconditions
     Save-AcceptanceReport

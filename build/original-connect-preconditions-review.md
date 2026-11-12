@@ -76,3 +76,27 @@ guard scans implementation, tests and mutation helpers on every platform,
 including dormant Windows branches. HOME and PROFILE are never used as locals.
 These portable tests do not exercise Windows filesystem IO or demonstrate a
 real acceptance-run diagnosis; Windows execution remains a separate check.
+
+## Session identity and isolated data
+
+The disposable hosted-runner fixture now keeps the Windows session USERPROFILE
+identity, checked against the OS known UserProfile directory. HOME is retained
+only when present and equal to that identity; missing HOME remains missing.
+The precondition observer receives LaunchIdentityHome separately from OwnedHome
+and reports homeMatchesLaunchIdentity. CODEX_HOME remains OwnedHome/.codex.
+The constructor verifies that isolated directory is empty and rejects any
+existing session-profile .codex using metadata only. APPDATA, LOCALAPPDATA,
+temporary directories and portable Magpie data remain isolated. The original
+package preparation still checks running native/Desktop processes and process,
+user and machine launch overrides. None of these checks reads native contents.
+
+The fixed launchIdentityMatchesSession and isolatedNativeHomeVerified booleans
+record constructor completion only, not proof of the environment inherited by
+COM activation, absence of all network traffic, startup success or credentials
+isolation on arbitrary computers. This is allowed only by the existing exact
+GitHub-hosted acceptance gate. No real user profile is supported. No recovery,
+action count, timeout, normal activation or cleanup-order semantics change.
+
+Portable tests exercise the actual child environment construction with authored
+directories and a stubbed host gate, plus caller source contracts. Windows
+metadata collector and actual hosted Desktop acceptance must run separately.

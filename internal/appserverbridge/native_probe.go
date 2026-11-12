@@ -12,6 +12,7 @@ import (
 
 	"github.com/yetone/magpie/internal/nativechannel"
 	"github.com/yetone/magpie/internal/nativeendpoint"
+	"github.com/yetone/magpie/internal/nativehandshake"
 	"github.com/yetone/magpie/internal/proc"
 )
 
@@ -110,10 +111,12 @@ func probeWithNativeEndpoint(parent context.Context, cfg Config, options LaunchO
 	for _, b := range cfg.Backends {
 		env, err := cfg.sharedNativeEnvironment167(b, os.Environ())
 		if err != nil {
+			nativehandshake.Emit(parent, nativehandshake.ProbeEnvironmentRejected)
 			return nil, errStartupProbe
 		}
 		environments[b.ID] = env
 	}
+	nativehandshake.Emit(parent, nativehandshake.ProbeEnvironmentAdmitted)
 	runner := func(runCtx context.Context, b Backend, directory string, args []string) ([]byte, error) {
 		if b.ID == cfg.Backends[0].ID {
 			return runProductionPrimaryProbe(runCtx, b, directory, args, environments[b.ID])

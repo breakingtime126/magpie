@@ -219,6 +219,15 @@ acceptance. Windows synthetic tests and a later authorized actual Desktop run
 must be reported separately. No real native model record, cache, credential or
 provider turn is required for these source-level checks.
 
+The compile-only [handshake observer](../../build/original-backend-handshake.md)
+also distinguishes the owned probe's existing shared-environment admission
+from its failure return, before native executable checks or child execution.
+It records fixed `probe-environment-admitted` or `probe-environment-rejected`
+milestones without paths, values or raw errors. This does not weaken admission
+or identify an individual failed predicate. Composed synthetic probe tests
+verify that differing inherited HOME/USERPROFILE identities start neither child,
+while a matching identity can use a separately pinned native state directory.
+
 
 ## Factory-generated Desktop contracts and test boundaries
 

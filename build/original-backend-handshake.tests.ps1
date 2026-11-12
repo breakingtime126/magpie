@@ -18,6 +18,12 @@ $hostTrace=ConvertFrom-OriginalHandshakeLog (Bytes @('host-listening','host-prob
 Assert ($hostTrace.status -ceq 'observed' -and -not $hostTrace.initializeOutputWrittenObserved) 'host bootstrap separate'
 $probe=ConvertFrom-OriginalHandshakeLog (Bytes @('adapter-entered','startup-probe-requested','profile-authenticated','endpoint-allocated','probe-result-validated','probe-output-written')) 'bridge'
 Assert ($probe.status -ceq 'observed' -and -not $probe.initializeOutputWrittenObserved) 'one-shot inspection separate'
+foreach ($stage in @('probe-environment-admitted','probe-environment-rejected')) {
+    $environment=ConvertFrom-OriginalHandshakeLog (Bytes @('adapter-entered','startup-probe-requested','profile-authenticated','endpoint-allocated',$stage)) 'bridge'
+    Assert ($environment.status -ceq 'observed' -and -not $environment.initializeOutputWrittenObserved) 'probe environment admission is not a native result'
+    $mixed=ConvertFrom-OriginalHandshakeLog (Bytes @($all+$stage)) 'bridge'
+    Assert ($mixed.status -ceq 'unknown' -and -not $mixed.initializeOutputWrittenObserved) 'probe environment cannot combine with JSONL acknowledgement'
+}
 foreach ($bytes in @([Text.Encoding]::UTF8.GetBytes("native-backend-handshake-v1 sequence=1 stage=adapter-entered"),[Text.Encoding]::UTF8.GetBytes("native-backend-handshake-v1 sequence=2 stage=adapter-entered`n"),[Text.Encoding]::UTF8.GetBytes("native-backend-handshake-v1 sequence=1 stage=PRIVATE_DATA`n"),(Bytes @('adapter-entered','adapter-entered')))) {
     $bad=ConvertFrom-OriginalHandshakeLog $bytes 'bridge'
     Assert ($bad.status -ceq 'unknown' -and -not $bad.initializeOutputWrittenObserved -and ($bad|ConvertTo-Json -Depth 5) -notmatch 'PRIVATE_DATA') 'malformed or repeated records stay unknown'

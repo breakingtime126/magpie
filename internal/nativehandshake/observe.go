@@ -34,6 +34,8 @@ const (
 	InitializeOutputWritten
 	ProtocolFailed
 	StreamWriteFailed
+	ProbeEnvironmentAdmitted
+	ProbeEnvironmentRejected
 )
 
 var names = [...]string{
@@ -50,6 +52,7 @@ var names = [...]string{
 	SecondaryInitializeError: "secondary-initialize-error", InitializationRejected: "initialization-rejected",
 	InitializationReady: "initialization-ready", InitializeOutputWritten: "initialize-output-written",
 	ProtocolFailed: "protocol-failed", StreamWriteFailed: "stream-write-failed",
+	ProbeEnvironmentAdmitted: "probe-environment-admitted", ProbeEnvironmentRejected: "probe-environment-rejected",
 }
 
 func (s Stage) String() string {

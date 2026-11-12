@@ -1,11 +1,18 @@
 # Original backend handshake observation
 
 This is a diagnostic, not a new launch path or an accepted Desktop integration.
-The previous original-Connect run verified selection, AUMID activation and
+The `dea499dc` original-Connect run verified selection, AUMID activation and
 Restore. Its image observer reported no exact direct-child image and one missed
 event. That is unknown, not evidence of absent invocation or failed handshake.
 No screenshot or native protocol trace was collected in that stage-only run;
 welcome/setup gating is therefore also unproven.
+
+The later `03c1f9e1` run observed an authenticated startup-probe admission and
+then `probe-failed`, without a successful owner acknowledgement or JSONL launch.
+Its preliminary and post-cleanup snapshots matched. Those fixed stages predate
+the environment milestones below and do not establish the exact failure cause.
+The matching-home/separate-native-home fixtures reproduce a supported admission
+path; they do not substitute for the next actual Windows result.
 
 ## Compile-time and path boundary
 
@@ -37,6 +44,13 @@ profile checks and endpoint allocation, preserving all existing failure gates.
 A validated probe result is not released until the existing deferred cleanup
 succeeds; the adapter records `probe-output-written` only after its actual
 complete output write. This is not the JSONL handshake.
+
+The owned probe also records `probe-environment-admitted` only after both
+backends' existing shared-environment checks pass, or `probe-environment-rejected`
+at their actual failure return. These fixed stages expose no environment values
+or error details. Admission precedes native executable verification and either
+probe command; it is not a native result. Rejection does not identify a specific
+environment predicate, such as a different home identity, by itself.
 
 The bridge records actual child starts, received initialize, completed writes
 to each child and correlated native replies/errors. Native replies are not

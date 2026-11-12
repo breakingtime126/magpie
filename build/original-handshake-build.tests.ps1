@@ -48,6 +48,7 @@ foreach ($acceptance in @($false,$true)) {
 }
 $text=$ast.Extent.Text
 Assert ($text.Contains('& go build -tags $buildMode.adapter') -and $text.Contains('& go build -tags $buildMode.gui')) 'actual builds use resolved tags'
+Assert ($text.Contains("& go test -v -tags nogui,nativecodex,nativehandshakediag -count=1 -timeout=5m -run '^Test(Handshake|OwnedStartupProbe)' ./internal/nativehandshake ./internal/nativehost ./internal/nativelaunch ./internal/appserverbridge ./cmd/magpie-codex-bridge")) 'Windows gate exercises actual probe environment admission and handshake observations'
 Assert ($text.Contains('[regex]::Escape($buildMode.gui)') -and $text.Contains('buildTags=$buildMode.gui;adapterBuildTags=$buildMode.adapter;handshakeDiagnostic=[bool]$buildMode.handshakeDiagnostic')) 'provenance checks and manifest use actual tags'
 Assert ($text.Contains("if (`$env:MAGPIE_ORIGINAL_STAGE_DIAGNOSTICS) { throw 'Stage diagnostics cannot publish an acceptance package.' }")) 'diagnostic build cannot publish acceptance package'
 $workflow=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '../.github/workflows/experimental-codex-connectivity-preview.yml'))
