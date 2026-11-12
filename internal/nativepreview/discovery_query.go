@@ -38,6 +38,8 @@ func runInstalledQuery(ctx context.Context, command *exec.Cmd, start func(*exec.
 	defer trace.End()
 	output := &queryOutput{}
 	command.Stdout = output
+	progress := &queryProgress{}
+	command.Stderr = progress
 	// Keep the host environment for the read-only Windows package query. No
 	// AIHub key has ever been put in it; no network/security setting is changed.
 	if ctx.Err() != nil {
@@ -69,6 +71,7 @@ func runInstalledQuery(ctx context.Context, command *exec.Cmd, start func(*exec.
 			return "", ErrUnavailable
 		}
 	case <-ctx.Done():
+		progress.snapshot(ctx)
 		queryRootSnapshot(ctx, root)
 		queryContextFailure(ctx)
 		<-tree.Stop(time.Second)

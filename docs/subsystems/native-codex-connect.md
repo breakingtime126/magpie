@@ -392,3 +392,11 @@ running, exited or unknown at sampling time, then the existing Stop/Wait and
 refusal still run. It neither identifies a pipe-only cause nor changes recovery
 authority. The extra process-object reference is released after the original
 Wait; see [query observation semantics](../../build/original-installed-query.md#deadline-root-observation).
+
+The same cancellation branch samples fixed script-progress markers through a
+bounded stderr discard parser before Stop. These enum-only observations identify
+reached boundaries for entry, each fixed module import, package enumeration,
+path validation and JSON emission; unknown or malformed evidence cannot grant
+success. The added Cmd-owned stderr pipe drains in the unchanged single Wait.
+It changes diagnostic resources, not timeout, admission or recovery semantics;
+see [progress observation](../../build/original-installed-query.md#query-progress-observation).

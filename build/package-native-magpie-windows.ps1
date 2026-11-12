@@ -45,6 +45,8 @@ Assert-Exit 'Synthetic Connect stage observer'
 Assert-Exit 'Synthetic runtime preparation diagnostics'
 & go test -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestInstalledQueryRoot' ./internal/nativepreview
 Assert-Exit 'Synthetic retained query-root observation'
+& go test -tags nogui,nativecodex -count=1 -timeout=5m -run '^TestInstalledQueryProgress' ./internal/nativepreview
+Assert-Exit 'Synthetic query progress observation and pipe drain'
 & go test -tags nogui,nativecodex -count=1 -timeout=2m -run '^TestOriginalConnectDiagnosticsBoundToOriginalInvocation$' ./internal/gui
 Assert-Exit 'Synthetic original Connect diagnostics binding'
 & go vet -tags nogui,nativecodex ./internal/nativesupplier ./internal/nativecatalog ./internal/nativehost ./internal/nativebootstrap ./internal/nativechannel ./internal/nativeendpoint ./internal/nativelaunch ./internal/nativeprofile

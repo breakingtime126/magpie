@@ -27,10 +27,11 @@ policy/trust/proxy settings, ten-second budget and strict full Wait/drain remain
 unchanged. Missing or blocked imports/exports fail closed. No alternate query,
 retry, WaitDelay, cache clearing or leaked-descendant success is introduced.
 
-This targets implicit command lookup as a hypothesis. The observed deadline
-proved only that strict Wait did not finish in budget, potentially including
-stdout draining; it did not prove the root process stayed alive or identify the
-cause. Metadata gates may warm caches. A later passing run would demonstrate
+The fixed-module binding targeted implicit command lookup as a hypothesis.
+A later isolated Windows Connect run observed `query-root-running` before
+`query-deadline`: the original root was still alive at sampling. This rules out
+an already-exited root at that sample, but does not identify the blocking call
+or prove the cause. Metadata gates may warm caches. A later passing run would demonstrate
 practical success, not establish cold-start causality.
 
 ## Deadline root observation
@@ -66,3 +67,40 @@ and lacks termination access. Portable fixtures cover missing observation,
 invalid state, every cancellation classification, success/error cleanup order,
 and failure precedence. Cross-compilation alone does not execute these Windows
 tests or establish actual Connect success.
+
+## Query progress observation
+
+The original script writes seven fixed ASCII lines to stderr, separately from
+its unchanged JSON stdout: `MAGPIE_QUERY_V1:entry`, then `:appx`, `:management`,
+`:utility`, `:packages`, `:path`, and `:json` with the same prefix. Entry is the
+first script statement; the next three follow successful fixed import/identity
+validation, packages follows enumeration/filtering before unique-count admission,
+path follows the literal leaf check, and json follows the original JSON pipeline.
+The snapshot names the last complete marker received, not the exact current
+PowerShell phase: pipe/copy scheduling can lag script execution. A marker names
+a reached boundary, not a successful Connect or a proven cause.
+
+The command's new stderr observation pipe is owned by Go's `exec.Cmd`: Start
+creates it, Go's copy goroutine feeds a bounded discard parser, and the original
+sole Wait drains and closes it. Startup failure uses Cmd's startup cleanup.
+Cancellation still invokes the strict owner's Stop(one second) before receiving
+the original Wait result; there is no second Wait, WaitDelay, or early pipe close.
+This adds a pipe/drain dependency, not cleanup or launch authority. A retained
+writer could delay draining just as with stdout; no partial output is accepted.
+
+The parser retains no arbitrary stderr bytes. It recognizes only complete,
+ordered fixed marker lines, discards other bytes, and synchronizes the enum
+snapshot with concurrent writes. Missing, partial, corrupt, or out-of-order
+marker evidence must not invent a later completed boundary. At the existing
+post-start cancellation branch, one completed `query-progress-*` stage reports
+that snapshot before Stop, followed by the independent root snapshot and original
+query-deadline/query-cancelled failure. Unknown remains a completed observation
+of missing evidence, never query success. No raw stdout/stderr, error text,
+paths, PIDs, credentials or native records are exported.
+
+The source-binding gate removes only those seven literal marker lines and
+requires the original reviewed query hash. It also verifies exact boundary
+placement, authored package refusals, unchanged JSON, and separated stderr.
+Portable Go tests exercise parser corruption/partial input and concurrent
+snapshotting; Windows runtime tests and the original isolated GUI gate remain
+necessary. This is diagnostic instrumentation, not a timeout fix.

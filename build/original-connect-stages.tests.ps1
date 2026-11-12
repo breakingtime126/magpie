@@ -51,6 +51,23 @@ foreach ($rootStage in @('query-root-running','query-root-exited','query-root-un
         $rootReport.stages[$rootStage].completed -eq 1 -and $rootReport.stages[$rootStage].failed -eq 0 -and
         -not $rootReport.changesRecoveryDecision -and -not $rootReport.authorizesAction) 'root snapshot preserves deadline failure and no authority'
 }
+# Progress snapshots remain completed observations, including unknown, and
+# neither overtake the original failure nor authorize recovery or success.
+foreach ($progressStage in @('query-progress-unknown','query-progress-entry','query-progress-appx',
+    'query-progress-management','query-progress-utility','query-progress-packages','query-progress-path','query-progress-json')) {
+    foreach ($failure in @('query-deadline','query-cancelled')) {
+        $trace=(Line 1 connect entered)+(Line 2 query-wait entered)+(Line 3 $progressStage entered)+
+            (Line 4 $progressStage completed)+(Line 5 query-root-running entered)+(Line 6 query-root-running completed)+
+            (Line 7 $failure entered)+(Line 8 $failure failed)+(Line 9 query-wait failed)+(Line 10 connect failed)
+        $progressReport=ConvertFrom-OriginalConnectStageLog (Bytes $trace)
+        Assert ($progressReport.status -ceq 'complete' -and $progressReport.firstFailedStage -ceq $failure -and
+            $progressReport.attemptOutcome -ceq 'failed' -and $progressReport.stages[$progressStage].completed -eq 1 -and
+            $progressReport.stages[$progressStage].failed -eq 0 -and -not $progressReport.changesRecoveryDecision -and
+            -not $progressReport.authorizesAction) 'progress snapshot preserves original failure and no authority'
+    }
+}
+Unknown ((Line 1 connect entered)+(Line 2 query-progress-private entered)+(Line 3 query-progress-private completed)+(Line 4 connect failed)) malformed
+Unknown ((Line 1 connect entered)+(Line 2 query-progress-json entered)) incomplete
 $success=(Line 1 connect entered)+(Line 2 connect completed)
 Assert ((ConvertFrom-OriginalConnectStageLog (Bytes $success)).firstFailedStage -ceq 'unknown') 'no invented failure on success'
 Assert ((ConvertFrom-OriginalConnectStageLog (Bytes $success)).attemptOutcome -ceq 'completed') 'complete success is observer outcome only'

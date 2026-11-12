@@ -128,7 +128,7 @@ func TestInstalledQueryBranches(t *testing.T) {
 			cmd := &exec.Cmd{Path: "inert-never-started", Args: []string{"inert", "fixed-argument"}}
 			start := func(got *exec.Cmd) (queryProcess, error) {
 				note("start")
-				if got != cmd || got.Env != nil || got.Dir != "" || got.Stderr != nil || !reflect.DeepEqual(got.Args, []string{"inert", "fixed-argument"}) {
+				if got != cmd || got.Env != nil || got.Dir != "" || got.Stderr == nil || !reflect.DeepEqual(got.Args, []string{"inert", "fixed-argument"}) {
 					t.Error("command/environment changed")
 				}
 				if kind == "start" {
@@ -203,6 +203,9 @@ func TestInstalledQueryBranches(t *testing.T) {
 			if len(stack) != 0 || len(records) >= nativeprepdiag.MaxEvents {
 				t.Fatal("unbounded/incomplete observation")
 			}
+			if kind != "cancel" && kind != "deadline" && strings.Contains(text, "stage=query-progress-") {
+				t.Fatal("progress sampled outside cancellation branch")
+			}
 			if kind == "success" && len(records) != 12 {
 				t.Fatal("query event budget changed", len(records))
 			}
@@ -236,7 +239,21 @@ func TestInstalledQuerySourceContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if fmt.Sprintf("%x", sha256.Sum256([]byte(query))) != "22d3baf0d80dd8d5b7446e88414afa7d929c1b70dcfb89f98d943a9cc6c3140b" {
+			// Removing only the seven fixed observation statements must recover
+			// the reviewed query exactly, including filters, exit codes and JSON.
+			semantic := query
+			for _, marker := range queryProgressMarkers {
+				line := "[Console]::Error.WriteLine('" + marker + "')"
+				if strings.Count(semantic, line) != 1 {
+					t.Fatal("missing/duplicate progress boundary")
+				}
+				semantic = strings.Replace(semantic, line+"\n", "", 1)
+				semantic = strings.TrimSuffix(semantic, "\n"+line)
+			}
+			if fmt.Sprintf("%x", sha256.Sum256([]byte(semantic))) != "22d3baf0d80dd8d5b7446e88414afa7d929c1b70dcfb89f98d943a9cc6c3140b" {
+				t.Fatal("query semantics changed beyond progress markers")
+			}
+			if fmt.Sprintf("%x", sha256.Sum256([]byte(query))) != "87450a7f893a23a6e9f0ee7b4b03ee15d773521714c7eafe20326e17c82ad727" {
 				t.Fatal("reviewed query bytes changed")
 			}
 			queryFound = true
@@ -351,7 +368,7 @@ func TestInstalledQueryRootObservation(t *testing.T) {
 						break
 					}
 				}
-				if strings.Contains(text, "PRIVATE") || len(lines) != 10 {
+				if strings.Contains(text, "PRIVATE") || len(lines) != 12 {
 					t.Fatal("root observation leaked or changed event budget", lines)
 				}
 			})

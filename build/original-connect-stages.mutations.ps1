@@ -33,6 +33,7 @@ $cases=@(
     @{name='no-authority';expected='complete report has no authority';old='changesRecoveryDecision=$false;authorizesAction=$false';new='changesRecoveryDecision=$true;authorizesAction=$true'},
     @{name='query-allowlist';expected='actual original-query observer replay';old="'query-wait-failure'";new="'query-unrecognized'"},
     @{name='root-allowlist';expected='root snapshot preserves deadline failure and no authority';old="'query-root-exited'";new="'query-root-unrecognized'"},
+    @{name='progress-allowlist';expected='progress snapshot preserves original failure and no authority';old="'query-progress-json'";new="'query-progress-unrecognized'"},
     @{name='failure-order';expected='actual Go observer replay binding';old="`$outcome -ceq 'failed' -and `$firstFailed -ceq 'unknown'";new="`$outcome -ceq 'failed'"}
 )
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('connect-stage-mutants-'+[guid]::NewGuid().ToString('N'))

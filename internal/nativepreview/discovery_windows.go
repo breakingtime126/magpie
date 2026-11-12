@@ -13,7 +13,8 @@ import (
 
 // This identity and relative backend path were observed by the existing signed
 // official package harness. No ASAR inspection, package edit or broad search.
-const installedQuery = `$ErrorActionPreference='Stop'
+const installedQuery = `[Console]::Error.WriteLine('MAGPIE_QUERY_V1:entry')
+$ErrorActionPreference='Stop'
 $OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 function Import-QueryModule([string]$moduleName) {
     if ($moduleName -cnotin @('Appx','Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility')) { throw 'native query module unavailable' }
@@ -43,17 +44,23 @@ function Get-QueryCommand($moduleInfo,[string]$commandName) {
     return $commandInfo
 }
 $appxModule=Import-QueryModule 'Appx'
+[Console]::Error.WriteLine('MAGPIE_QUERY_V1:appx')
 $managementModule=Import-QueryModule 'Microsoft.PowerShell.Management'
+[Console]::Error.WriteLine('MAGPIE_QUERY_V1:management')
 $utilityModule=Import-QueryModule 'Microsoft.PowerShell.Utility'
+[Console]::Error.WriteLine('MAGPIE_QUERY_V1:utility')
 $getPackage=Get-QueryCommand $appxModule 'Get-AppxPackage'
 $joinPath=Get-QueryCommand $managementModule 'Join-Path'
 $testPath=Get-QueryCommand $managementModule 'Test-Path'
 $toJSON=Get-QueryCommand $utilityModule 'ConvertTo-Json'
 $p=@(& $getPackage -Name 'OpenAI.Codex' -ErrorAction Stop | Microsoft.PowerShell.Core\Where-Object { $_.PackageFamilyName -ceq 'OpenAI.Codex_2p2nqsd0c76g0' -and [string]$_.SignatureKind -ceq 'Store' -and [string]$_.Status -ceq 'Ok' })
+[Console]::Error.WriteLine('MAGPIE_QUERY_V1:packages')
 if($p.Count -ne 1){exit 2}
 $f=& $joinPath $p[0].InstallLocation 'app\resources\codex.exe'
 if(-not (& $testPath -LiteralPath $f -PathType Leaf)){exit 3}
-@{path=$f;family=[string]$p[0].PackageFamilyName;signatureKind=[string]$p[0].SignatureKind}|& $toJSON -Compress`
+[Console]::Error.WriteLine('MAGPIE_QUERY_V1:path')
+@{path=$f;family=[string]$p[0].PackageFamilyName;signatureKind=[string]$p[0].SignatureKind}|& $toJSON -Compress
+[Console]::Error.WriteLine('MAGPIE_QUERY_V1:json')`
 
 func installedExecutable(parent context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)

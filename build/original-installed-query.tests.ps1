@@ -15,6 +15,30 @@ $begin=$sourceText.IndexOf($marker,[StringComparison]::Ordinal)+$marker.Length
 $end=$sourceText.IndexOf('`',$begin,[StringComparison]::Ordinal)
 Assert ($begin -ge $marker.Length -and $end -gt $begin) 'embedded query found'
 $query=$sourceText.Substring($begin,$end-$begin)
+# Fixed markers are the only query-body delta. Removing their exact complete
+# source lines must recover the previously reviewed query byte-for-byte.
+$progressNames=@('entry','appx','management','utility','packages','path','json')
+$progressLines=@($query -split "`n" | Where-Object { $_.Contains('MAGPIE_QUERY_V1') })
+Assert ($progressLines.Count -eq $progressNames.Count) 'only seven fixed progress markers'
+for ($i=0;$i -lt $progressNames.Count;$i++) {
+    Assert ($progressLines[$i] -ceq ("[Console]::Error.WriteLine('MAGPIE_QUERY_V1:"+$progressNames[$i]+"')")) 'ordered fixed stderr marker literals'
+}
+$withoutProgress=($query -split "`n" | Where-Object { -not $_.Contains('MAGPIE_QUERY_V1') }) -join "`n"
+$sha=[Security.Cryptography.SHA256]::Create()
+try { $originalHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($withoutProgress)))).Replace('-','').ToLowerInvariant() }
+finally { $sha.Dispose() }
+Assert ($originalHash -ceq '22d3baf0d80dd8d5b7446e88414afa7d929c1b70dcfb89f98d943a9cc6c3140b') 'query semantics unchanged except fixed marker lines'
+Assert ($query.StartsWith($progressLines[0]+"`n",[StringComparison]::Ordinal)) 'entry marker precedes script work'
+foreach ($boundary in @(
+    @('$appxModule=Import-QueryModule ''Appx''','appx'),
+    @('$managementModule=Import-QueryModule ''Microsoft.PowerShell.Management''','management'),
+    @('$utilityModule=Import-QueryModule ''Microsoft.PowerShell.Utility''','utility'),
+    @('if(-not (& $testPath -LiteralPath $f -PathType Leaf)){exit 3}','path'),
+    @('@{path=$f;family=[string]$p[0].PackageFamilyName;signatureKind=[string]$p[0].SignatureKind}|& $toJSON -Compress','json')
+)) {
+    Assert ($query.Contains($boundary[0]+"`n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:"+$boundary[1]+"')")) 'progress follows completed operation'
+}
+Assert ($query.Contains("`n[Console]::Error.WriteLine('MAGPIE_QUERY_V1:packages')`nif(`$p.Count -ne 1){exit 2}")) 'package marker follows enumeration before count admission'
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseInput($query,[ref]$tokens,[ref]$parseErrors)
 Assert ($parseErrors.Count -eq 0) 'query parses'
@@ -161,7 +185,10 @@ $tail=$query.Substring($query.IndexOf('$p=@(',[StringComparison]::Ordinal))
 Assert ($tail.Contains('if($p.Count -ne 1){exit 2}') -and $tail.Contains('if(-not (& $testPath -LiteralPath $f -PathType Leaf)){exit 3}')) 'count and literal-leaf exits unchanged'
 $body=[scriptblock]::Create($tail.Replace('exit 2','throw ''fixture-exit-two''').Replace('exit 3','throw ''fixture-exit-three'''))
 $fixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('bound-query-fixture-'+[guid]::NewGuid().ToString('N'))
+$savedConsoleError=[Console]::Error
+$progressCapture=[IO.StringWriter]::new()
 try {
+    [Console]::SetError($progressCapture)
     $resources=[IO.Path]::Combine($fixtureRoot,'app','resources')
     [void][IO.Directory]::CreateDirectory($resources)
     [IO.File]::WriteAllText([IO.Path]::Combine($resources,'codex.exe'),'inert, never executed')
@@ -175,6 +202,8 @@ try {
         function ConvertTo-Json { throw 'unexpected JSON name lookup' }
         & $body
     }
+    Assert ($progressCapture.ToString() -ceq ('MAGPIE_QUERY_V1:packages'+[Environment]::NewLine+'MAGPIE_QUERY_V1:path'+[Environment]::NewLine+'MAGPIE_QUERY_V1:json'+[Environment]::NewLine)) 'success emits only fixed completed boundaries to stderr'
+    Assert (@($result).Count -eq 1 -and -not ([string]$result).Contains('MAGPIE_QUERY_V1')) 'progress never pollutes JSON stdout'
     $parsed=$result|Microsoft.PowerShell.Utility\ConvertFrom-Json
     Assert ($parsed.path -ceq (& $joinPath $fixtureRoot 'app\resources\codex.exe') -and $parsed.family -ceq $good.PackageFamilyName -and $parsed.signatureKind -ceq 'Store') 'same success JSON'
     Assert (@($parsed.PSObject.Properties).Count -eq 3) 'only original JSON fields'
@@ -189,10 +218,12 @@ try {
             missing-leaf { $entry.InstallLocation=[IO.Path]::Combine($fixtureRoot,'missing');$script:packageFixture=@($entry) }
         }
         $expected=if ($kind -ceq 'missing-leaf') {'fixture-exit-three'} else {'fixture-exit-two'}
+        [void]$progressCapture.GetStringBuilder().Clear()
         $caught='';try { $null=& $body } catch { $caught=$_.Exception.Message }
         Assert ($caught -ceq $expected) ('same refusal '+$kind)
+        Assert ($progressCapture.ToString() -ceq ('MAGPIE_QUERY_V1:packages'+[Environment]::NewLine)) 'refusal does not invent path or JSON completion'
     }
-} finally { if ([IO.Directory]::Exists($fixtureRoot)) { [IO.Directory]::Delete($fixtureRoot,$true) } }
+} finally { [Console]::SetError($savedConsoleError);$progressCapture.Dispose();if ([IO.Directory]::Exists($fixtureRoot)) { [IO.Directory]::Delete($fixtureRoot,$true) } }
 # No ordinary command name lookup remains for non-Core commands.
 foreach ($binding in @('& $getPackage','& $joinPath','& $testPath','& $toJSON')) { Assert ($query.Contains($binding)) 'bound object invocation' }
 Assert ($query.Contains('Microsoft.PowerShell.Core\Where-Object') -and -not $query.Contains('Get-Command')) 'no command discovery'
