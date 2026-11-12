@@ -346,7 +346,7 @@ jobs:
         shell: pwsh
         run: |
           $testExecutable = Join-Path $env:RUNNER_TEMP 'secondary-initialize-tests.exe'
-          ./build/test-secondary-initialize-official.ps1 -TestExecutable $testExecutable -TestName 'TestOfficialSecondaryInitializeControl'
+          ./build/test-secondary-initialize-official.ps1 -TestExecutable $testExecutable -TestName 'TestOfficialBridgeInitializeBarrier'
       - name: Upload fixed-label diagnostic report and formatted fixture source
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
