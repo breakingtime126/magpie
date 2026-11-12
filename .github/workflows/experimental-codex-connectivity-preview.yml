@@ -337,6 +337,15 @@ jobs:
         run: |
           go test -tags nogui -run '^Test(SecondaryInitializeControl|SharedSerial|Protocol|NativeSettings|NativeCatalog|OwnedSettingsPolicyFailure|ModelMetadataJSON)' -count=1 -timeout=3m ./internal/appserverbridge
           if ($LASTEXITCODE -ne 0) { throw 'Initialize argument contrast failed.' }
+      - name: Verify synthetic launcher lease family cleanup
+        shell: pwsh
+        run: |
+          $file = 'internal/nativelaunch/launch_family_windows_test.go'
+          gofmt -w $file
+          if ($LASTEXITCODE -ne 0) { throw 'Family fixture formatting failed.' }
+          Copy-Item -LiteralPath $file -Destination "$env:RUNNER_TEMP/launch_family_windows_test.go"
+          go test -tags nogui -count=1 -timeout=120s -run '^TestWindowsLaunchLeaseDrainsBackendFamilies$' ./internal/nativelaunch
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic launcher lease family cleanup failed.' }
       - name: Compile synthetic test host without running it
         shell: pwsh
         run: |
@@ -356,5 +365,6 @@ jobs:
             ${{ runner.temp }}/secondary-initialize-control-report.json
             ${{ runner.temp }}/secondary-initialize-gofmt.diff
             ${{ runner.temp }}/secondary_initialize_control_windows_test.go
+            ${{ runner.temp }}/launch_family_windows_test.go
           if-no-files-found: warn
           retention-days: 7

@@ -1,5 +1,17 @@
 # Original Magpie GUI: native Codex experimental build
 
+## 实验包测试
+
+完整解压到新文件夹，运行 `Magpie-Native-Codex-Experimental.exe`，不要单独运行 bridge。
+使用原 Providers 页面配置 AIHub，再到 Agents → Codex 连接；重新打开官方 Codex 后测试新线程。
+不同 provider 使用新线程，现有线程不支持切换 provider。回退时先在 Magpie 中 Disconnect/Restore，
+确认恢复后重新打开 Codex；仅退出 Magpie 不会自动恢复启动选择。
+
+提交 `67dfc2b2` 已在隔离 Windows CI 通过原 GUI Connect、官方 Desktop 激活、Restore、
+窗口截图和保留根进程清理；完整配置的官方双后端初始化也已通过。
+这不是实际 GPT/AIHub 账号聊天验证。普通退出、全部后代进程排空及实际账号行为仍需验证；
+实验包未签名，保留原安装且遵守公司的运行限制。下文保留实现细节，不能用构建成功替代聊天验收。
+
 This build uses Magpie's original main, tray, window, navigation, Agents page,
 provider pages and controls. It is a partial integration, not a working
 Codex Desktop same-window release.

@@ -51,7 +51,28 @@ func init() {
 		_ = os.WriteFile(filepath.Join(os.Getenv("HOME"), id+".descendant"), []byte("started"), 0600)
 		os.Exit(0)
 	}
-	_, _ = io.Copy(io.Discard, os.Stdin)
+	// Shared-home production startup now waits for a validated primary
+	// initialize reply before starting the owned secondary. This fixture only
+	// supplies that real protocol prerequisite; it never claims catalog/chat
+	// readiness, and the secondary retains its original drain-only behavior.
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if id != "primary" {
+			continue
+		}
+		message, err := parseObject(scanner.Bytes())
+		if err != nil {
+			os.Exit(8)
+		}
+		if text(message, "method") == "initialize" {
+			result := object{"userAgent": raw("owned-endpoint-fixture"),
+				"codexHome": raw(os.Getenv("CODEX_HOME")),
+				"platformFamily": raw("synthetic"), "platformOs": raw("synthetic")}
+			if _, err := fmt.Fprintln(os.Stdout, string(raw(object{"id": message["id"], "result": raw(result)}))); err != nil {
+				os.Exit(9)
+			}
+		}
+	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), id+"-stubborn")); err == nil {
 		for {
 			time.Sleep(time.Hour)
@@ -261,6 +282,10 @@ func waitEndpointFile(t *testing.T, path string) []byte {
 }
 func runEndpointFixture(t *testing.T, f endpointRunFixture) (*io.PipeWriter, context.CancelFunc, <-chan error) {
 	t.Helper()
+	return runEndpointFixtureInitialize(t, f, true)
+}
+func runEndpointFixtureInitialize(t *testing.T, f endpointRunFixture, initialize bool) (*io.PipeWriter, context.CancelFunc, <-chan error) {
+	t.Helper()
 	in, writer := io.Pipe()
 	out, output := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -269,10 +294,24 @@ func runEndpointFixture(t *testing.T, f endpointRunFixture) (*io.PipeWriter, con
 		done <- runWithTrustedEndpoint(ctx, f.cfg, LaunchOptions{}, f.endpoint, f.reference, in, output)
 		close(done)
 	}()
+	// An asynchronous send also permits admission/Start failures before the
+	// client scanner exists. Cleanup closes the pipe and joins this writer.
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		if initialize {
+			_, _ = fmt.Fprintln(writer, `{"id":"owned-endpoint-init","method":"initialize","params":{"clientInfo":{"name":"owned-endpoint-fixture","version":"1"}}}`)
+		}
+	}()
 	t.Cleanup(func() {
 		cancel()
 		writer.Close()
 		out.Close()
+		select {
+		case <-sent:
+		case <-time.After(5 * time.Second):
+			t.Error("synthetic initialize writer did not drain")
+		}
 		select {
 		case <-done:
 		case <-time.After(15 * time.Second):
@@ -664,5 +703,26 @@ func TestOwnedEndpointRunnerEarlyRejectionClosesTransferredStreams(t *testing.T)
 				t.Fatal("early rejection started a child")
 			}
 		})
+	}
+}
+
+func TestOwnedEndpointRunnerClientEOFBeforeInitializeNeverStartsSecondary(t *testing.T) {
+	f := newEndpointRunFixture(t)
+	writer, _, done := runEndpointFixtureInitialize(t, f, false)
+	waitEndpointFile(t, filepath.Join(f.cfg.Backends[0].Home, "primary.json"))
+	writer.Close()
+	if err := waitEndpointRun(t, done); err != nil {
+		t.Fatal(err)
+	}
+	if f.endpoint.starts.Load() != 0 || f.endpoint.waits.Load() != 0 {
+		t.Fatal("secondary started without primary initialization")
+	}
+	if _, err := os.Stat(filepath.Join(f.cfg.Backends[0].Home, "secondary.json")); !os.IsNotExist(err) {
+		t.Fatal("secondary fixture ran without initialization")
+	}
+	conn, err := net.DialTimeout("tcp", f.endpoint.Addr().String(), 100*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		t.Fatal("unstarted owned listener survived client EOF")
 	}
 }
