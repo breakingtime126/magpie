@@ -58,3 +58,22 @@ func TestProtocolPendingOwnedSettingsPolicy(t *testing.T) {
 	g := &request{method:"model/list",settingsPolicyStage:true}
 	if protocolPendingStage(g) != nativehandshake.ProtocolPendingPolicy { t.Fatal("internal policy response misclassified as model list") }
 }
+
+func TestOwnedSettingsPolicyFailureKeepsFixedReason(t *testing.T) {
+	for _, kind := range []string{"schema","nonnull","size","mismatch"} {
+		t.Run(kind,func(t *testing.T) {
+			r := nativeSettingsRouter167(t)
+			g := &request{id:raw(1),method:"model/list",remaining:1,results:map[string][]json.RawMessage{},settingsPolicyStage:true}
+			line := raw(object{"id":raw("synthetic"),"result":json.RawMessage(controlPlaneNullRequirements)})
+			want := nativehandshake.CatalogReasonPolicySchema
+			switch kind {
+			case "schema": line = []byte(`{"id":"synthetic","result":{"private":"canary"}}`)
+			case "nonnull": line=[]byte(`{"id":"synthetic","result":{"requirements":{},"supportsIndependentSpeedModes":true}}`);want=nativehandshake.CatalogReasonPolicyNonNull
+			case "size": g.bytes=requirementsJSONLimit;want=nativehandshake.CatalogReasonPolicySize
+			case "mismatch": g.results[r.backends[1].ID]=[]json.RawMessage{raw(object{})};want=nativehandshake.CatalogReasonPolicyMismatch
+			}
+			out,err:=r.ownedSettingsPolicyResponse167(g,r.backends[0].ID,line)
+			if err!=nil || len(out)!=1 || r.ownedCatalog.failureStage!=want {t.Fatal("policy rejection reason missing")}
+		})
+	}
+}

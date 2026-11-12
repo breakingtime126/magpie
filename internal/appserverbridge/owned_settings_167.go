@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+
+	"github.com/yetone/magpie/internal/nativehandshake"
 )
 
 // BridgeModelSettingsOwned167 enables only the two persisted frontend defaults.
@@ -133,10 +135,21 @@ func (r *Router) ownedSettingsPolicyStart167(g *request) []Delivery {
 func (r *Router) ownedSettingsPolicyResponse167(g *request, backend string, line []byte) ([]Delivery, error) {
 	m, err := parseObject(line)
 	if validateRequirementsJSON(line) != nil || err != nil || len(m) != 2 || !NativeRequestID167Valid(m["id"]) || validateConfigRequirementsNull167(m["result"]) != nil {
+		if r.ownedCatalog != nil {
+			reason := nativehandshake.CatalogReasonPolicySchema
+			// Classify only the rejected shape in memory; never expose its value.
+			if result, parseErr := parseObject(m["result"]); parseErr == nil {
+				if value, present := result["requirements"]; present && !requirementsNull(value) {
+					reason = nativehandshake.CatalogReasonPolicyNonNull
+				}
+			}
+			r.ownedCatalog.failure(reason)
+		}
 		return r.reject(g, -32000, "bridge-owned settings policy precondition failed"), nil
 	}
 	g.bytes += len(m["result"])
 	if g.bytes > requirementsJSONLimit {
+		if r.ownedCatalog != nil { r.ownedCatalog.failure(nativehandshake.CatalogReasonPolicySize) }
 		return r.reject(g, -32000, "bridge-owned settings policy precondition failed"), nil
 	}
 	g.results[backend] = []json.RawMessage{m["result"]}
@@ -145,6 +158,7 @@ func (r *Router) ownedSettingsPolicyResponse167(g *request, backend string, line
 		return nil, nil
 	}
 	if !sameJSON(g.results[r.backends[0].ID][0], g.results[r.backends[1].ID][0]) {
+		if r.ownedCatalog != nil { r.ownedCatalog.failure(nativehandshake.CatalogReasonPolicyMismatch) }
 		return r.reject(g, -32000, "bridge-owned settings policy precondition failed"), nil
 	}
 	g.settingsPolicyStage = false

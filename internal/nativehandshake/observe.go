@@ -78,6 +78,10 @@ const (
 	CatalogReasonSettingsStore
 	CatalogReasonRouter
 	CatalogReasonDefaultMismatch
+	CatalogReasonPolicySchema
+	CatalogReasonPolicySize
+	CatalogReasonPolicyMismatch
+	CatalogReasonPolicyNonNull
 )
 
 var names = [...]string{
@@ -135,6 +139,10 @@ var names = [...]string{
 	CatalogReasonSettingsStore: "catalog-reason-settings-store",
 	CatalogReasonRouter: "catalog-reason-router",
 	CatalogReasonDefaultMismatch: "catalog-reason-default-mismatch",
+	CatalogReasonPolicySchema: "catalog-reason-policy-schema",
+	CatalogReasonPolicySize: "catalog-reason-policy-size",
+	CatalogReasonPolicyMismatch: "catalog-reason-policy-mismatch",
+	CatalogReasonPolicyNonNull: "catalog-reason-policy-nonnull",
 }
 
 func (s Stage) String() string {
