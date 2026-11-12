@@ -110,12 +110,16 @@ func secondaryInitializeControl(t *testing.T, exe string, concurrent bool) (prim
 	var primaryOutput io.ReadCloser
 	if concurrent {
 		primaryEnv, err := cfg.sharedNativeEnvironment167(primary, filtered)
-		if err != nil { t.Fatal("primary control environment unavailable") }
+		if err != nil {
+			t.Fatal("primary control environment unavailable")
+		}
 		primaryCmd := proc.Command(exe, cfg.nativeArgs167(LaunchOptions{}, primary)...)
 		primaryCmd.Env, primaryCmd.Dir = primaryEnv, home
 		var closePrimaryChild func()
 		primaryInput, primaryOutput, closePrimaryChild, err = ownedCommandPipes(primaryCmd)
-		if err != nil { t.Fatal("primary control pipes unavailable") }
+		if err != nil {
+			t.Fatal("primary control pipes unavailable")
+		}
 		defer primaryInput.Close()
 		defer primaryOutput.Close()
 		// Retain the Job until whole-tree drainage, not only root exit.
@@ -127,11 +131,17 @@ func secondaryInitializeControl(t *testing.T, exe string, concurrent bool) (prim
 				defer stop()
 				stopErr := tree.Stop()
 				drainErr := tree.Wait(cleanup)
-				if drainErr != nil { go retainProbeDrain(tree) }
-				if stopErr != nil || drainErr != nil { t.Error("primary control cleanup unverified") }
+				if drainErr != nil {
+					go retainProbeDrain(tree)
+				}
+				if stopErr != nil || drainErr != nil {
+					t.Error("primary control cleanup unverified")
+				}
 			}()
 		}
-		if startErr != nil || tree == nil { t.Fatal("primary control child unavailable") }
+		if startErr != nil || tree == nil {
+			t.Fatal("primary control child unavailable")
+		}
 	}
 	if err := ep.Start(cmd); err != nil {
 		closeChild()
@@ -171,7 +181,9 @@ func initializeControlExchange(ctx context.Context, input io.WriteCloser, output
 	result := make(chan string, 1)
 	readDone := make(chan struct{})
 	defer func() {
-		if ctx.Err() != nil { output.Close() }
+		if ctx.Err() != nil {
+			output.Close()
+		}
 		<-readDone
 	}()
 	go func() {
@@ -252,8 +264,14 @@ func TestSecondaryInitializeControlExchangeKeepsStreamsOpen(t *testing.T) {
 	go func() {
 		reader := bufio.NewReader(server)
 		_, err := reader.ReadString('\n')
-		if err != nil { fixture <- false; return }
-		if _, err := server.Write([]byte("{\"id\":1,\"result\":{}}\n")); err != nil { fixture <- false; return }
+		if err != nil {
+			fixture <- false
+			return
+		}
+		if _, err := server.Write([]byte("{\"id\":1,\"result\":{}}\n")); err != nil {
+			fixture <- false
+			return
+		}
 		value, err := reader.ReadByte()
 		fixture <- err == nil && value == 'x'
 	}()

@@ -326,10 +326,10 @@ jobs:
         shell: pwsh
         run: |
           $file = 'internal/appserverbridge/secondary_initialize_control_windows_test.go'
-          gofmt -d $file | Out-File -Encoding utf8 "$env:RUNNER_TEMP/secondary-initialize-gofmt.diff"
-          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic format inspection failed.' }
           gofmt -w $file
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostic formatting failed.' }
+          git diff -- $file | Out-File -Encoding utf8 "$env:RUNNER_TEMP/secondary-initialize-gofmt.diff"
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic format evidence failed.' }
           Copy-Item -LiteralPath $file -Destination "$env:RUNNER_TEMP/secondary_initialize_control_windows_test.go"
       - name: Check diagnostic helpers without native execution
         shell: pwsh
