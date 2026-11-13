@@ -9,6 +9,7 @@ on:
       - internal/buildvariant/**
       - internal/codexsetup/**
       - internal/nativepreview/**
+      - internal/nativeexepath/**
       - internal/nativeconnect/**
       - internal/nativeprepdiag/**
       - internal/nativehandshake/**
@@ -141,6 +142,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify handle identity and isolated WindowsApps enumeration-denial fixtures
+        shell: pwsh
+        run: |
+          go test -v -count=1 -timeout=2m ./internal/nativeexepath
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime path identity regression failed.' }
       - name: Verify original acceptance safety fixtures in both PowerShell hosts
         if: contains(github.event.head_commit.message, '[original-connect-desktop-v1]')
         shell: pwsh

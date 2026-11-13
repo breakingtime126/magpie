@@ -76,6 +76,9 @@ func TestRuntimeExecutableFailureDetails(t *testing.T) {
 			}
 			output := strings.Join(lines, "\n")
 			want := map[string]string{"missing": "runtime-path-resolution", "directory": "runtime-file-info", "read": "runtime-digest", "cancelled": "runtime-cancelled", "linked": "runtime-path-identity"}[failure]
+			if runtime.GOOS == "windows" && (failure == "directory" || failure == "linked") {
+				want = "runtime-path-resolution"
+			}
 			if want != "" && !strings.Contains(output, "stage="+want+" outcome=failed") {
 				t.Fatal("missing specific failure", output)
 			}

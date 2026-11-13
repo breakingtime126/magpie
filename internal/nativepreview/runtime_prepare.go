@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/yetone/magpie/internal/nativeexepath"
 	"github.com/yetone/magpie/internal/nativeprepdiag"
 )
 
@@ -146,7 +147,7 @@ func inspectInstalledRuntime(ctx context.Context, ops runtimePreparationOps) (st
 		return "", empty, ErrUnavailable
 	}
 	trace.Next(nativeprepdiag.RuntimeExecutable)
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := nativeexepath.Resolve(path)
 	// Do not turn a package-location result into authority for a linked
 	// executable outside that location. Windows comparison is case-insensitive.
 	if err != nil {
