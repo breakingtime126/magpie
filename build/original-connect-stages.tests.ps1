@@ -20,6 +20,13 @@ $r=ConvertFrom-OriginalConnectStageLog (Bytes $valid)
 Assert ($r.status -ceq 'complete' -and $r.attemptOutcome -ceq 'failed' -and $r.recordCount -eq 6) 'complete failed attempt'
 Assert ($r.stages['runtime-discovery'].entered -eq 2 -and $r.stages['runtime-discovery'].completed -eq 1 -and $r.stages['runtime-discovery'].failed -eq 1) 'same-stage nesting counts'
 Assert (-not $r.changesRecoveryDecision -and -not $r.authorizesAction) 'complete report has no authority'
+foreach ($detailStage in @('runtime-path-resolution','runtime-path-identity','runtime-file-info','runtime-digest','runtime-cancelled')) {
+    $detailTrace=(Line 1 connect entered)+(Line 2 runtime-executable entered)+(Line 3 $detailStage entered)+
+        (Line 4 $detailStage failed)+(Line 5 runtime-executable failed)+(Line 6 connect failed)
+    $detailReport=ConvertFrom-OriginalConnectStageLog (Bytes $detailTrace)
+    Assert ($detailReport.status -ceq 'complete' -and $detailReport.firstFailedStage -ceq $detailStage -and
+        -not $detailReport.changesRecoveryDecision -and -not $detailReport.authorizesAction) 'runtime executable detail classification'
+}
 # Actual offline Go observer execution, with only the date/time prefix normalized.
 $replay=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'testdata/original-connect-stages/version-cleanup.log'))
 $observed=ConvertFrom-OriginalConnectStageLog $replay
@@ -139,7 +146,7 @@ $guiEntry=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '../internal/cli/gui_o
 Assert ($appLog.Contains('log.SetOutput(io.MultiWriter(quiet{os.Stderr}, w))') -and $appLog -notmatch 'log\.Set(Flags|Prefix)\(') 'production app logger preserves standard prefix'
 Assert ($guiEntry.Contains('startLog("app")') -and $guiEntry.Contains('applog.Start(version, how)')) 'original GUI starts file logger'
 $packager=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'package-native-magpie-windows.ps1'))
-foreach ($gate in @('./internal/nativeprepdiag', '^(TestRuntimePreparationDiagnosticsObserveOriginalCalls|TestInstalledQueryBranches|TestInstalledQuerySourceContract)$', '^TestOriginalConnectDiagnosticsBoundToOriginalInvocation$', '^TestInstalledQueryRoot')) {
+foreach ($gate in @('./internal/nativeprepdiag', '^(TestRuntimePreparationDiagnosticsObserveOriginalCalls|TestRuntimeExecutableFailureDetails|TestInstalledQueryBranches|TestInstalledQuerySourceContract)$', '^TestOriginalConnectDiagnosticsBoundToOriginalInvocation$', '^TestInstalledQueryRoot')) {
     Assert ($packager.IndexOf($gate) -ge 0 -and $packager.IndexOf($gate) -lt $packager.IndexOf('& go run github.com/tc-hib/go-winres')) 'offline Windows observer gates precede packaging'
 }
 Write-Output 'PASS strict protocol, nesting, bounds, partial unknown, redaction, immutable recovery and caller ordering'

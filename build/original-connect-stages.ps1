@@ -3,6 +3,7 @@
 function Get-OriginalConnectStageNames {
     return @('connect','manager-admission','selection-inspection','supplier-metadata','supplier-freshness',
         'gateway-ownership','runtime-preparation','runtime-homes','runtime-discovery','runtime-executable',
+        'runtime-path-resolution','runtime-path-identity','runtime-file-info','runtime-digest','runtime-cancelled',
         'probe-directory','runtime-version','runtime-rediscovery','runtime-revalidation','probe-cleanup',
         'supplier-revalidation','generation-directory','supplier-catalog','bridge-configuration','host-preparation',
         'host-inputs','launcher-resolution','launcher-verification','profile-preparation','host-admission',
