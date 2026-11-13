@@ -310,3 +310,25 @@ Recovery remains the original Magpie Restore action with selection readback and
 journal absence. An uncertain restore, unknown root exit, or failed disposal
 still blocks packaging. Do not use this experimental evidence to weaken the
 normal release checks or claim that no residual subprocess can remain.
+
+
+## Runtime executable preparation diagnostics
+
+A failed `runtime-executable` stage does not imply that the installed Codex
+version is unsupported: the version probe has not run at this point. Failure-only
+nested stages distinguish `runtime-path-resolution`, `runtime-path-identity`,
+`runtime-file-info`, `runtime-digest`, and `runtime-cancelled`. These fixed
+labels contain no native paths, error messages, credentials, or model records.
+They preserve the existing admission decisions and normal-path operations.
+
+The portable log is `data/logs/app.log`. For support, extract only this attempt's
+`native-connect-preparation-v1` records, not a full application log or native
+configuration. A path-resolution failure is not permission-denial proof; a
+path-identity failure is not proof of malicious substitution. Investigate the
+specific operation before changing behavior. Do not recommend elevated launch,
+package relocation, or ACL changes as a blanket workaround.
+
+Inert WindowsApps-like path tests are not evidence of the user's installed
+package permissions. Hosted-CI installed-package checks likewise cover only
+that runner's Windows build and account. No real-user fix is claimed from a
+successful hosted run alone.
