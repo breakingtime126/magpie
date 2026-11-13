@@ -31,14 +31,16 @@ func failure(r result, stage string, err error) result {
  if errors.Is(err, os.ErrNotExist) { r.ErrorKind = "not-exist" }
  if errors.Is(err, os.ErrPermission) { r.ErrorKind = "permission" }
  var pe *os.PathError
- if errors.As(err, &pe) { r.Operation = pe.Op }
+ if errors.As(err, &pe) {
+  switch pe.Op { case "lstat", "stat", "FindFirstFile", "readlink", "CreateFile": r.Operation=pe.Op; default: r.Operation="other" }
+ }
  var code syscall.Errno
  if errors.As(err, &code) { r.ErrorCode = uint64(code) }
  return r
 }
 func inspect(path string) result {
  r := result{Schema:1, GoVersion:runtime.Version(), Stage:"input", Outcome:"failed"}
- if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Base(path), "codex.exe") { return r }
+ if !filepath.IsAbs(path) || strings.HasPrefix(path, `\\\\`) || strings.HasPrefix(path, "//") || !strings.EqualFold(filepath.Base(path), "codex.exe") { return r }
  resolved, err := filepath.EvalSymlinks(path)
  if err != nil { return failure(r, "runtime-path-resolution", err) }
  if !strings.EqualFold(filepath.Clean(path), filepath.Clean(resolved)) {

@@ -11,3 +11,7 @@ exit 2 = invalid usage/output error.
 A passing probe does not prove Magpie has the same process access, and does not
 test later digest, cancellation, version, bridge, provider or account stages.
 Built with Go 1.26.8 matching the diagnostic Magpie build toolchain.
+
+Use ONLY the previously verified local official installation on a fixed local drive.
+Do not supply network/mapped-drive paths. The probe has no network API; filesystem
+resolution can have OS side effects for redirected paths. UNC inputs are rejected.

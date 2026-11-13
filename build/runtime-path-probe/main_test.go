@@ -7,7 +7,8 @@ import (
  "testing"
 )
 func TestReadOnlyProbe(t *testing.T) {
- root:=t.TempDir()
+ root,err:=filepath.EvalSymlinks(t.TempDir())
+ if err!=nil {t.Fatal(err)}
  dir:=filepath.Join(root,"Program Files","WindowsApps","OpenAI.Codex_26.1106.6628.0_x64__2p2nqsd0c76g0","app","resources")
  if err:=os.MkdirAll(dir,0700);err!=nil {t.Fatal(err)}
  p:=filepath.Join(dir,"codex.exe")
