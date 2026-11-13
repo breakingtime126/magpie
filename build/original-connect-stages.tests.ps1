@@ -20,13 +20,6 @@ $r=ConvertFrom-OriginalConnectStageLog (Bytes $valid)
 Assert ($r.status -ceq 'complete' -and $r.attemptOutcome -ceq 'failed' -and $r.recordCount -eq 6) 'complete failed attempt'
 Assert ($r.stages['runtime-discovery'].entered -eq 2 -and $r.stages['runtime-discovery'].completed -eq 1 -and $r.stages['runtime-discovery'].failed -eq 1) 'same-stage nesting counts'
 Assert (-not $r.changesRecoveryDecision -and -not $r.authorizesAction) 'complete report has no authority'
-foreach ($detailStage in @('runtime-path-resolution','runtime-path-identity','runtime-file-info','runtime-digest','runtime-cancelled')) {
-    $detailTrace=(Line 1 connect entered)+(Line 2 runtime-executable entered)+(Line 3 $detailStage entered)+
-        (Line 4 $detailStage failed)+(Line 5 runtime-executable failed)+(Line 6 connect failed)
-    $detailReport=ConvertFrom-OriginalConnectStageLog (Bytes $detailTrace)
-    Assert ($detailReport.status -ceq 'complete' -and $detailReport.firstFailedStage -ceq $detailStage -and
-        -not $detailReport.changesRecoveryDecision -and -not $detailReport.authorizesAction) 'runtime executable detail classification'
-}
 # Actual offline Go observer execution, with only the date/time prefix normalized.
 $replay=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'testdata/original-connect-stages/version-cleanup.log'))
 $observed=ConvertFrom-OriginalConnectStageLog $replay
@@ -198,3 +191,11 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         $env:RUNNER_TEMP=$oldRunnerTemp
     }
 } else { Write-Output 'NOT RUN Windows filesystem fixtures (non-Windows host)' }
+
+foreach ($detailStage in @('runtime-path-resolution','runtime-path-identity','runtime-file-info','runtime-digest','runtime-cancelled')) {
+    $detailTrace=(Line 1 connect entered)+(Line 2 runtime-executable entered)+(Line 3 $detailStage entered)+
+        (Line 4 $detailStage failed)+(Line 5 runtime-executable failed)+(Line 6 connect failed)
+    $detailReport=ConvertFrom-OriginalConnectStageLog (Bytes $detailTrace)
+    Assert ($detailReport.status -ceq 'complete' -and $detailReport.firstFailedStage -ceq $detailStage -and
+        -not $detailReport.changesRecoveryDecision -and -not $detailReport.authorizesAction) 'runtime executable detail classification'
+}
