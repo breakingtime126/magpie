@@ -73,6 +73,11 @@ const (
 	QueryProgressPackages
 	QueryProgressPath
 	QueryProgressJSON
+	RuntimePathResolution
+	RuntimePathIdentity
+	RuntimeFileInfo
+	RuntimeDigest
+	RuntimeCancelled
 )
 
 var names = [...]string{
@@ -137,6 +142,11 @@ var names = [...]string{
 	QueryProgressPackages:   "query-progress-packages",
 	QueryProgressPath:       "query-progress-path",
 	QueryProgressJSON:       "query-progress-json",
+	RuntimePathResolution:   "runtime-path-resolution",
+	RuntimePathIdentity:     "runtime-path-identity",
+	RuntimeFileInfo:         "runtime-file-info",
+	RuntimeDigest:           "runtime-digest",
+	RuntimeCancelled:        "runtime-cancelled",
 }
 
 const MaxEvents = 128

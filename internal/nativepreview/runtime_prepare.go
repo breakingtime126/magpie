@@ -149,15 +149,26 @@ func inspectInstalledRuntime(ctx context.Context, ops runtimePreparationOps) (st
 	resolved, err := filepath.EvalSymlinks(path)
 	// Do not turn a package-location result into authority for a linked
 	// executable outside that location. Windows comparison is case-insensitive.
-	if err != nil || !sameRuntimePath(path, resolved) {
+	if err != nil {
+		nativeprepdiag.Track(ctx, nativeprepdiag.RuntimePathResolution).End()
+		return "", empty, ErrUnavailable
+	}
+	if !sameRuntimePath(path, resolved) {
+		nativeprepdiag.Track(ctx, nativeprepdiag.RuntimePathIdentity).End()
 		return "", empty, ErrUnavailable
 	}
 	info, err := os.Lstat(resolved)
 	if err != nil || !info.Mode().IsRegular() {
+		nativeprepdiag.Track(ctx, nativeprepdiag.RuntimeFileInfo).End()
 		return "", empty, ErrUnavailable
 	}
 	digest, err := ops.digest(resolved)
-	if err != nil || ctx.Err() != nil {
+	if err != nil {
+		nativeprepdiag.Track(ctx, nativeprepdiag.RuntimeDigest).End()
+		return "", empty, ErrUnavailable
+	}
+	if ctx.Err() != nil {
+		nativeprepdiag.Track(ctx, nativeprepdiag.RuntimeCancelled).End()
 		return "", empty, ErrUnavailable
 	}
 	trace.Complete()
