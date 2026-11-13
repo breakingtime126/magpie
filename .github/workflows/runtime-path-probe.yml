@@ -1,0 +1,49 @@
+name: Read-only runtime path probe
+on:
+  push:
+    branches: [experiment/app-server-bridge-v0.1.3035]
+    paths:
+      - build/runtime-path-probe/**
+      - .github/workflows/runtime-path-probe.yml
+permissions:
+  contents: read
+jobs:
+  windows-probe:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    env:
+      CGO_ENABLED: '0'
+      GOTOOLCHAIN: local
+      GOTELEMETRY: 'off'
+      GO111MODULE: 'off'
+      GOPROXY: 'off'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Test and build standard-library-only metadata probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -v ./build/runtime-path-probe
+          if ($LASTEXITCODE -ne 0) { throw 'Probe fixture failed' }
+          go vet ./build/runtime-path-probe
+          if ($LASTEXITCODE -ne 0) { throw 'Probe vet failed' }
+          $out = Join-Path $env:RUNNER_TEMP 'runtime-path-probe'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          go build -trimpath -ldflags='-s -w' -o "$out/runtime-path-probe.exe" ./build/runtime-path-probe
+          if ($LASTEXITCODE -ne 0) { throw 'Probe build failed' }
+          Copy-Item build/runtime-path-probe/README.txt "$out/README.txt"
+          Copy-Item build/runtime-path-probe/main.go "$out/main.go"
+          [IO.File]::WriteAllText("$out/source-commit.txt", "${{ github.sha }}")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-path-probe-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-path-probe
+          if-no-files-found: error
+          retention-days: 7
